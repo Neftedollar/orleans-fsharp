@@ -42,6 +42,8 @@
     <Compile Include="CompoundKeyTests.fs" />
     <Compile Include="OneWayTests.fs" />
     <Compile Include="BroadcastChannelTests.fs" />
+    <Compile Include="AdvancedReentrancyTests.fs" />
+    <Compile Include="AdvancedPlacementTests.fs" />
     <Compile Include="VersioningTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>

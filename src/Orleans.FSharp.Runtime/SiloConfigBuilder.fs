@@ -8,6 +8,7 @@ open Orleans
 open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.FSharp.Versioning
+open Orleans.Streams
 open Serilog
 
 /// <summary>
@@ -51,6 +52,8 @@ type StorageProvider =
 type StreamProvider =
     /// <summary>In-memory stream provider (suitable for development and testing).</summary>
     | MemoryStream
+    /// <summary>Persistent stream provider configured via an adapter factory and optional stream configurator.</summary>
+    | PersistentStream of adapterFactory: Func<IServiceProvider, string, IQueueAdapterFactory> * configurator: Action<ISiloPersistentStreamConfigurator>
     /// <summary>Custom stream provider configuration via an ISiloBuilder transformation.</summary>
     | CustomStream of (ISiloBuilder -> ISiloBuilder)
 
@@ -90,6 +93,8 @@ type SiloConfig =
         IncomingFilters: IIncomingGrainCallFilter list
         /// <summary>Outgoing grain call filters to register with the silo.</summary>
         OutgoingFilters: IOutgoingGrainCallFilter list
+        /// <summary>GrainService types to register with the silo. GrainServices run on every silo.</summary>
+        GrainServiceTypes: Type list
     }
 
 /// <summary>
@@ -113,6 +118,7 @@ module SiloConfig =
             VersioningConfig = None
             IncomingFilters = []
             OutgoingFilters = []
+            GrainServiceTypes = []
         }
 
     /// <summary>
@@ -205,6 +211,9 @@ module SiloConfig =
             | MemoryStream ->
                 siloBuilder.AddMemoryStreams(name) |> ignore
                 needsPubSubStore <- true
+            | PersistentStream(adapterFactory, configurator) ->
+                siloBuilder.AddPersistentStreams(name, adapterFactory, configurator) |> ignore
+                needsPubSubStore <- true
             | CustomStream f -> f siloBuilder |> ignore)
 
         // Memory streams require a PubSubStore grain storage.
@@ -235,6 +244,11 @@ module SiloConfig =
         config.OutgoingFilters
         |> List.iter (fun filter ->
             siloBuilder.AddOutgoingGrainCallFilter(filter) |> ignore)
+
+        // Apply grain service registrations
+        config.GrainServiceTypes
+        |> List.iter (fun serviceType ->
+            GrainServicesSiloBuilderExtensions.AddGrainService(siloBuilder.Services, serviceType) |> ignore)
 
     /// <summary>
     /// Applies the silo configuration to a HostApplicationBuilder.
@@ -530,6 +544,41 @@ type SiloConfigBuilder() =
     member _.UseGrainVersioning(config: SiloConfig, compatibility: CompatibilityStrategy, selector: VersionSelectorStrategy) =
         { config with
             VersioningConfig = Some(compatibility, selector)
+        }
+
+    /// <summary>
+    /// Registers a GrainService type with the silo.
+    /// GrainServices run on every silo and are useful for background processing.
+    /// The type must implement IGrainService.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="grainServiceType">The System.Type of the GrainService implementation.</param>
+    /// <returns>The updated silo configuration with the grain service registered.</returns>
+    [<CustomOperation("addGrainService")>]
+    member _.AddGrainService(config: SiloConfig, grainServiceType: Type) =
+        { config with
+            GrainServiceTypes = config.GrainServiceTypes @ [ grainServiceType ]
+        }
+
+    /// <summary>
+    /// Adds a persistent stream provider with the given name, adapter factory, and optional stream configurator.
+    /// Persistent streams survive silo restarts and are backed by durable queues (e.g., EventHub, Redis).
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="name">The name of the stream provider.</param>
+    /// <param name="adapterFactory">A factory function that creates the queue adapter.</param>
+    /// <param name="configurator">An action to configure the persistent stream provider.</param>
+    /// <returns>The updated silo configuration with the persistent stream provider added.</returns>
+    [<CustomOperation("addPersistentStreams")>]
+    member _.AddPersistentStreams
+        (
+            config: SiloConfig,
+            name: string,
+            adapterFactory: Func<IServiceProvider, string, IQueueAdapterFactory>,
+            configurator: Action<ISiloPersistentStreamConfigurator>
+        ) =
+        { config with
+            StreamProviders = config.StreamProviders |> Map.add name (PersistentStream(adapterFactory, configurator))
         }
 
     /// <summary>Returns the completed silo configuration.</summary>

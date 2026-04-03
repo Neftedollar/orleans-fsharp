@@ -20,6 +20,14 @@ type PlacementStrategy =
     | Random
     /// <summary>Places the grain based on a hash of the grain ID for consistent placement.</summary>
     | HashBased
+    /// <summary>Places the grain on the silo with the fewest activations. In C# CodeGen, maps to [ActivationCountBasedPlacement].</summary>
+    | ActivationCountBased
+    /// <summary>Places the grain based on resource usage metrics (CPU, memory, etc.). In C# CodeGen, maps to [ResourceOptimizedPlacement].</summary>
+    | ResourceOptimized
+    /// <summary>Places the grain on silos with the specified role. In C# CodeGen, maps to [SiloRoleBasedPlacement].</summary>
+    | SiloRoleBased of role: string
+    /// <summary>Uses a custom placement strategy type. The type must implement IPlacementStrategy. In C# CodeGen, the strategy attribute is applied to the grain class.</summary>
+    | Custom of strategyType: Type
 
 /// <summary>
 /// Provides access to grain infrastructure from within a grain handler.
@@ -201,6 +209,13 @@ type GrainDefinition<'State, 'Message> =
         /// <summary>Set of method names that should be marked with the [OneWay] attribute in C# CodeGen.
         /// One-way methods are fire-and-forget: the caller does not wait for the grain to finish processing.</summary>
         OneWayMethods: Set<string>
+        /// <summary>Set of method names that should be marked with [ReadOnly] in C# CodeGen.
+        /// Read-only methods allow interleaving for read-only calls, improving throughput for non-mutating operations.</summary>
+        ReadOnlyMethods: Set<string>
+        /// <summary>Optional name of a static predicate method for custom reentrancy decisions.
+        /// In C# CodeGen, maps to [MayInterleave("PredicateMethodName")] on the grain class.
+        /// The predicate receives the incoming InvokeMethodRequest and returns bool.</summary>
+        MayInterleavePredicate: string option
     }
 
 /// <summary>
@@ -379,6 +394,8 @@ type GrainBuilder() =
             PlacementStrategy = PlacementStrategy.Default
             AdditionalStates = Map.empty
             OneWayMethods = Set.empty
+            ReadOnlyMethods = Set.empty
+            MayInterleavePredicate = None
         }
 
     /// <summary>
@@ -714,6 +731,90 @@ type GrainBuilder() =
             OneWayMethods = definition.OneWayMethods |> Set.add methodName
         }
 
+    /// <summary>
+    /// Marks a specific interface method as read-only, allowing it to be interleaved (processed concurrently)
+    /// even on non-reentrant grains. Read-only methods must not modify grain state.
+    /// In C# CodeGen, this corresponds to the [ReadOnly] attribute on the interface method.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="methodName">The name of the method to mark as read-only.</param>
+    /// <returns>The updated grain definition with the method added to the read-only set.</returns>
+    [<CustomOperation("readOnly")>]
+    member _.ReadOnly(definition: GrainDefinition<'State, 'Message>, methodName: string) =
+        { definition with
+            ReadOnlyMethods = definition.ReadOnlyMethods |> Set.add methodName
+        }
+
+    /// <summary>
+    /// Sets a custom reentrancy predicate method name for the grain.
+    /// The named static method receives an InvokeMethodRequest and returns bool to decide
+    /// whether the incoming call may interleave with the current execution.
+    /// In C# CodeGen, this corresponds to [MayInterleave("PredicateMethodName")] on the grain class.
+    /// Note: call chain reentrancy (grain A -> grain B -> grain A) is automatic when the grain is [Reentrant].
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="predicateMethodName">The name of the static predicate method.</param>
+    /// <returns>The updated grain definition with the reentrancy predicate set.</returns>
+    [<CustomOperation("mayInterleave")>]
+    member _.MayInterleave(definition: GrainDefinition<'State, 'Message>, predicateMethodName: string) =
+        { definition with
+            MayInterleavePredicate = Some predicateMethodName
+        }
+
+    /// <summary>
+    /// Sets the grain placement strategy to ActivationCountBased.
+    /// Places the grain on the silo with the fewest active grain activations.
+    /// In C# CodeGen, this corresponds to the [ActivationCountBasedPlacement] attribute on the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <returns>The updated grain definition with ActivationCountBased placement.</returns>
+    [<CustomOperation("activationCountPlacement")>]
+    member _.ActivationCountPlacement(definition: GrainDefinition<'State, 'Message>) =
+        { definition with
+            PlacementStrategy = PlacementStrategy.ActivationCountBased
+        }
+
+    /// <summary>
+    /// Sets the grain placement strategy to ResourceOptimized.
+    /// Places the grain based on silo resource usage metrics (CPU, memory, etc.).
+    /// In C# CodeGen, this corresponds to the [ResourceOptimizedPlacement] attribute on the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <returns>The updated grain definition with ResourceOptimized placement.</returns>
+    [<CustomOperation("resourceOptimizedPlacement")>]
+    member _.ResourceOptimizedPlacement(definition: GrainDefinition<'State, 'Message>) =
+        { definition with
+            PlacementStrategy = PlacementStrategy.ResourceOptimized
+        }
+
+    /// <summary>
+    /// Sets the grain placement strategy to SiloRoleBased with the specified role.
+    /// Places the grain only on silos configured with the given role.
+    /// In C# CodeGen, this corresponds to the [SiloRoleBasedPlacement] attribute with the role parameter.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="role">The silo role name to target.</param>
+    /// <returns>The updated grain definition with SiloRoleBased placement.</returns>
+    [<CustomOperation("siloRolePlacement")>]
+    member _.SiloRolePlacement(definition: GrainDefinition<'State, 'Message>, role: string) =
+        { definition with
+            PlacementStrategy = PlacementStrategy.SiloRoleBased role
+        }
+
+    /// <summary>
+    /// Sets the grain placement strategy to a custom type.
+    /// The type must implement IPlacementStrategy.
+    /// In C# CodeGen, the custom strategy attribute is applied to the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="strategyType">The System.Type of the custom placement strategy.</param>
+    /// <returns>The updated grain definition with Custom placement.</returns>
+    [<CustomOperation("customPlacement")>]
+    member _.CustomPlacement(definition: GrainDefinition<'State, 'Message>, strategyType: Type) =
+        { definition with
+            PlacementStrategy = PlacementStrategy.Custom strategyType
+        }
+
     /// <summary>Returns the completed grain definition. Validates constraints:
     /// defaultState must be explicitly set, at least one handler must be registered,
     /// and stateless workers cannot use persistent state.</summary>
@@ -745,6 +846,8 @@ module GrainBuilderInstance =
     /// Supports custom operations: defaultState, handle, handleCancellable, handleWithContext,
     /// handleWithContextCancellable, handleWithServices, handleWithServicesCancellable, persist,
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
-    /// preferLocalPlacement, randomPlacement, hashBasedPlacement, oneWay.
+    /// preferLocalPlacement, randomPlacement, hashBasedPlacement, activationCountPlacement,
+    /// resourceOptimizedPlacement, siloRolePlacement, customPlacement,
+    /// reentrant, interleave, readOnly, mayInterleave, oneWay.
     /// </summary>
     let grain = GrainBuilder()
