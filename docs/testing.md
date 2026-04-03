@@ -4,6 +4,8 @@
 
 ## What you'll learn
 
+- How to test grain handler logic directly (pure function testing)
+- How to test the universal grain pattern (`FSharpGrain.ref/send`)
 - How to use TestHarness for integration tests
 - How to use GrainMock for isolated unit tests
 - How to write property tests with GrainArbitrary and FsCheck
@@ -17,6 +19,87 @@ dotnet add package FsCheck
 dotnet add package FsCheck.Xunit
 dotnet add package xunit
 dotnet add package Microsoft.Orleans.TestingHost
+```
+
+---
+
+---
+
+## Testing Handler Logic Directly (No Silo Required)
+
+The fastest way to test a grain is to call its handler function directly — no TestCluster, no DI setup.
+
+```fsharp
+open Orleans.FSharp
+open Xunit
+
+type CounterState = { Count: int }
+type CounterCommand = Increment | Decrement | GetValue
+
+let counter =
+    grain {
+        defaultState { Count = 0 }
+        handle (fun state cmd ->
+            task {
+                match cmd with
+                | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
+                | Decrement -> return { Count = state.Count - 1 }, box (state.Count - 1)
+                | GetValue  -> return state, box state.Count
+            })
+    }
+
+[<Fact>]
+let ``increment increases count`` () =
+    task {
+        let handler = GrainDefinition.getHandler counter
+        let! newState, result = handler { Count = 0 } Increment
+        Assert.Equal({ Count = 1 }, newState)
+        Assert.Equal(box 1, result)
+    }
+```
+
+`GrainDefinition.getHandler` extracts the pure `state -> command -> Task<state * obj>` function — no grain activation, no silo, instant feedback.
+
+---
+
+## Testing the Universal Grain Pattern
+
+Use `UniversalGrainHandlerRegistry` directly to verify dispatch behavior without a cluster:
+
+```fsharp
+open Orleans.FSharp.Runtime
+
+[<Fact>]
+let ``registry dispatches Increment`` () =
+    task {
+        let registry = UniversalGrainHandlerRegistry()
+        registry.Register<CounterState, CounterCommand>(counter)
+
+        let handler = registry :> IUniversalGrainHandler
+        let! result = handler.Handle(null, box Increment)
+        let state = result.NewState :?> CounterState
+        Assert.Equal(1, state.Count)
+    }
+```
+
+For integration tests with a real silo, wire up `AddFSharpGrain` in the cluster configurator:
+
+```fsharp
+type MySiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage("Default") |> ignore
+            // FSharpBinaryCodec is registered automatically — nothing else needed
+            siloBuilder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
+
+[<Fact>]
+let ``FSharpGrain.ref round-trip`` () =
+    task {
+        // Assumes a TestCluster started with MySiloConfigurator
+        let handle = FSharpGrain.ref<CounterState, CounterCommand> grainFactory "test-key"
+        let! state = handle |> FSharpGrain.send Increment
+        Assert.Equal(1, state.Count)
+    }
 ```
 
 ---

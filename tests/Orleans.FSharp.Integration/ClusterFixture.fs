@@ -90,15 +90,9 @@ type TestSiloConfigurator() =
                 options.MinimumReminderPeriod <- TimeSpan.FromSeconds(1.0))
             |> ignore
 
-            // Register F# binary serialization so F# types (DUs, records) used in
-            // IFSharpGrain.HandleMessage(object) have generalized codecs and copiers.
-            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
-                siloBuilder.Services,
-                System.Action<Orleans.Serialization.ISerializerBuilder>(fun b ->
-                    FSharpBinaryCodecRegistration.addToSerializerBuilder b |> ignore))
-            |> ignore
-
-            // Register the universal-pattern ping grain for FSharpGrain.ref tests
+            // Register the universal-pattern ping grain for FSharpGrain.ref tests.
+            // FSharpBinaryCodec is registered automatically by AddFSharpGrain — no manual
+            // FSharpBinaryCodecRegistration.addToSerializerBuilder call needed here.
             siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
             // Register the text-accumulator grain for field-carrying DU case dispatch tests
             siloBuilder.Services.AddFSharpGrain<TextState, TextCommand>(textGrain) |> ignore
