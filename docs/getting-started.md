@@ -133,7 +133,8 @@ let main _ =
 | `FSharpGrain.ref` | Create a string-keyed typed grain handle |
 | `FSharpGrain.refGuid` | Create a GUID-keyed typed grain handle |
 | `FSharpGrain.refInt` | Create an integer-keyed typed grain handle |
-| `FSharpGrain.send` | Send command, return typed state |
+| `FSharpGrain.send` | Send command, return typed state (`Task<'State>`) |
+| `FSharpGrain.ask` | Send command, return a different typed result (`Task<'R>`) |
 | `FSharpGrain.post` | Fire-and-forget command |
 | `AddFSharpGrain<S,M>` | Register a grain definition in DI |
 

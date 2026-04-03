@@ -92,6 +92,7 @@ module TestGrains2 =
     /// <summary>
     /// Query grain used to verify <c>FSharpGrain.ask</c>: every command returns a typed result
     /// that differs from the state, exercising the <c>'Result</c> type parameter of <c>ask</c>.
+    /// Uses the low-level <c>handle</c> CE variant with manual <c>box</c>.
     /// </summary>
     let queryGrain =
         grain {
@@ -109,6 +110,46 @@ module TestGrains2 =
                     | GetValue     -> return state, box state.Value    // int ← ask target
                     | GetLabel     -> return state, box state.Label    // string ← ask target
                     | GetSnapshot  -> return state, box (state.Value, state.Label)  // tuple ← ask target
+                })
+        }
+
+
+/// <summary>State for the calculator grain used to test <c>handleTyped</c>.</summary>
+[<Orleans.GenerateSerializer>]
+type CalcState =
+    { [<Orleans.Id(0u)>] LastResult: int
+      [<Orleans.Id(1u)>] OpCount: int }
+
+/// <summary>Commands for the calculator grain. Every command returns an <c>int</c> result.</summary>
+[<Orleans.GenerateSerializer>]
+type CalcCommand =
+    | [<Orleans.Id(0u)>] AddValues of int * int
+    | [<Orleans.Id(1u)>] MultiplyValues of int * int
+    | [<Orleans.Id(2u)>] GetLastResult
+    | [<Orleans.Id(3u)>] GetOpCount
+
+module TestGrains3 =
+    /// <summary>
+    /// Calculator grain defined with <c>handleTyped</c>: every command returns an <c>int</c>
+    /// result without any manual <c>box</c> call. Demonstrates the clean
+    /// <c>handleTyped</c> + <c>FSharpGrain.ask&lt;'S,'C,int&gt;</c> end-to-end pattern.
+    /// </summary>
+    let calcGrain =
+        grain {
+            defaultState { LastResult = 0; OpCount = 0 }
+            handleTyped (fun state (cmd: CalcCommand) ->
+                task {
+                    match cmd with
+                    | AddValues(a, b) ->
+                        let r = a + b
+                        return { LastResult = r; OpCount = state.OpCount + 1 }, r
+                    | MultiplyValues(a, b) ->
+                        let r = a * b
+                        return { LastResult = r; OpCount = state.OpCount + 1 }, r
+                    | GetLastResult ->
+                        return state, state.LastResult
+                    | GetOpCount ->
+                        return state, state.OpCount
                 })
         }
 
@@ -140,6 +181,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<TextState, TextCommand>(textGrain) |> ignore
             // Register the query grain for FSharpGrain.ask typed-result tests
             siloBuilder.Services.AddFSharpGrain<QueryState, QueryCommand>(TestGrains2.queryGrain) |> ignore
+            // Register the calculator grain for handleTyped + ask end-to-end tests
+            siloBuilder.Services.AddFSharpGrain<CalcState, CalcCommand>(TestGrains3.calcGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

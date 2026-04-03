@@ -50,6 +50,18 @@ type FSharpGrainIntHandle<'State, 'Command> =
 /// Eliminates the need for per-grain C# interfaces by using the universal
 /// IFSharpGrain proxy with type-safe wrappers.
 /// </summary>
+/// <remarks>
+/// <para>Choosing the right function:</para>
+/// <list type="bullet">
+///   <item><description><c>send</c> — handler returns <c>(newState, box newState)</c>;
+///     use when the caller needs the new state value.</description></item>
+///   <item><description><c>post</c> — fire-and-forget; use for commands that don't
+///     need a return value (e.g., state-changing side-effects).</description></item>
+///   <item><description><c>ask&lt;'S,'C,'R&gt;</c> — handler returns a <c>'R</c> value
+///     different from the state (e.g., <c>int</c>, <c>string</c>, a tuple); use with
+///     <c>handleTyped</c> or when the boxed result is not the new state.</description></item>
+/// </list>
+/// </remarks>
 [<RequireQualifiedAccess>]
 module FSharpGrain =
 
