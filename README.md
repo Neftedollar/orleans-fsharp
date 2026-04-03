@@ -7,7 +7,7 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Orleans 10](https://img.shields.io/badge/Orleans-10.0.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
-[![Tests](https://img.shields.io/badge/tests-804-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-928-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 
 ---
@@ -19,35 +19,30 @@ Orleans is a powerful virtual actor framework, but using it from F# means fighti
 ## Quick Start
 
 ```fsharp
-open Orleans
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
-// 1. Define grain state and commands as DUs
-[<GenerateSerializer>]
-type CounterState = | [<Id(0u)>] Zero | [<Id(1u)>] Count of int
+// 1. Define state and commands — plain F# types, no attributes needed
+type CounterState = { Count: int }
+type CounterCommand = Increment | Decrement | GetValue
 
-[<GenerateSerializer>]
-type CounterCommand = | [<Id(0u)>] Increment | [<Id(1u)>] GetValue
-
-// 2. Define the grain with a CE
+// 2. Define the grain with a computation expression
 let counter = grain {
-    defaultState Zero
+    defaultState { Count = 0 }
     handle (fun state cmd -> task {
-        match state, cmd with
-        | Zero, Increment -> return Count 1, box 1
-        | Count n, Increment -> return Count(n + 1), box(n + 1)
-        | _, GetValue ->
-            let v = match state with Zero -> 0 | Count n -> n
-            return state, box v
+        match cmd with
+        | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
+        | Decrement -> return { Count = state.Count - 1 }, box (state.Count - 1)
+        | GetValue  -> return state, box state.Count
     })
     persist "Default"
 }
 
-// 3. Configure and start the silo
+// 3. Configure the silo — clean F#, no C# extension method chains
 let config = siloConfig {
     useLocalhostClustering
     addMemoryStorage "Default"
+    useJsonFallbackSerialization  // enables clean types without Orleans attributes
 }
 ```
 
