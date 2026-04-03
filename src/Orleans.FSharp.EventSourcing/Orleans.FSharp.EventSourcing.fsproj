@@ -1,5 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <Description>Declarative event sourcing for Orleans grains in F# — eventSourcedGrain {} CE with apply/handle, JournaledGrain bridge, and Marten configuration helpers.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="Library.fs" />
     <Compile Include="EventSourcedGrainBuilder.fs" />

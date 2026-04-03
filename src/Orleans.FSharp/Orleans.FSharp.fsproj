@@ -1,5 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <Description>Idiomatic F# computation expressions and helpers for Microsoft Orleans grain development — grain {}, GrainState, GrainRef, Streaming, Reminders, Timers, Observers, Filters, Transactions, and more.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="Prelude.fs" />
     <Compile Include="GrainState.fs" />

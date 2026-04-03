@@ -2,7 +2,13 @@
 
   <PropertyGroup>
     <IsTestProject>false</IsTestProject>
+    <Description>Test utilities for Orleans.FSharp grains — TestHarness, GrainMock, GrainArbitrary (TypeShape-based FsCheck), FsCheckHelpers, and LogCapture.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Include="LogCapture.fs" />

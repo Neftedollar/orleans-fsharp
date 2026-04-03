@@ -1,9 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Description>F# analyzer detecting async {} usage in Orleans grain code and recommending task {} instead. Diagnostic OF0001 with [AllowAsync] opt-out.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- FSharp.Analyzers.SDK 0.36.0 pins FSharp.Core 10.0.101; we run 10.1.x -->
     <NoWarn>$(NoWarn);NU1608</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Include="Library.fs" />
