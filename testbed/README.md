@@ -1,7 +1,7 @@
 # Orleans.FSharp Testbed - Multi-Silo Cluster
 
-Two F# Orleans silos communicating via Redis, with F# Binary serialization.
-No serialization attributes. Clean F# types crossing silo boundaries.
+Two F# Orleans silos communicating via Redis, with FSharp.SystemTextJson fallback serialization.
+No serialization attributes on F# types. Clean DUs and records crossing silo boundaries.
 
 ## Run
 
@@ -18,9 +18,10 @@ docker compose down
 
 - 2 silos discovering each other via Redis clustering
 - Grain state persisted in Redis
-- F# Binary serialization (no [GenerateSerializer] attributes)
+- FSharp.SystemTextJson fallback serialization (no [GenerateSerializer] attributes on types)
 - Grain calls routed across silos
-- Clean F# types crossing silo boundaries
+- Clean F# types (DU, record, list) crossing silo boundaries
+- C# CodeGen bridge for Orleans source generators
 
 ## Architecture
 

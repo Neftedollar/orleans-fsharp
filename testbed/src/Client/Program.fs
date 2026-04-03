@@ -40,11 +40,14 @@ let runTests () =
             // Redis clustering for gateway discovery
             clientBuilder.UseRedisClustering(redisConn) |> ignore
 
-            // F# binary serialization
+            // F# JSON fallback serialization (must match silo configuration)
             Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
                 clientBuilder.Services,
                 Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
-                    Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder
+                    Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
+                        serializerBuilder,
+                        isSupported = Func<Type, bool>(fun _ -> true),
+                        jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
                     |> ignore))
             |> ignore)
         |> ignore

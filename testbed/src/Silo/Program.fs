@@ -125,11 +125,14 @@ builder.UseOrleans(fun (siloBuilder: ISiloBuilder) ->
             opts.ConfigurationOptions <- StackExchange.Redis.ConfigurationOptions.Parse(envRedisConn))
     |> ignore
 
-    // F# binary serialization
+    // F# JSON fallback serialization (handles DU, record, option, list without attributes)
     Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
         siloBuilder.Services,
         Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
-            Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder
+            Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
+                serializerBuilder,
+                isSupported = Func<Type, bool>(fun _ -> true),
+                jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
             |> ignore))
     |> ignore)
 |> ignore
