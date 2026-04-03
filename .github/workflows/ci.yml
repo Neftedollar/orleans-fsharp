@@ -1,5 +1,11 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -10,3 +16,17 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet build --verbosity quiet
       - run: dotnet test --verbosity quiet
+
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build --configuration Release --verbosity quiet
+      - run: dotnet pack --configuration Release --output ./nupkgs --verbosity quiet
+      - name: Push to NuGet.org
+        run: dotnet nuget push "nupkgs/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
