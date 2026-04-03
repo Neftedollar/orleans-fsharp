@@ -72,3 +72,8 @@ CLAUDE.md
 .env
 .env.*
 nupkgs/
+
+## Documentation website
+website/node_modules/
+website/dist/
+website/.astro/

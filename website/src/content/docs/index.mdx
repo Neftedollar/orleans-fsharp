@@ -1,0 +1,57 @@
+---
+title: Orleans.FSharp
+description: Idiomatic F# API for Microsoft Orleans — computation expressions, not boilerplate
+template: splash
+hero:
+  tagline: Full Orleans 10.0.1 parity with idiomatic F# computation expressions. 800+ tests. Zero boilerplate.
+  actions:
+    - text: Get Started
+      link: /orleans-fsharp/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/Neftedollar/orleans-fsharp
+      icon: external
+  image:
+    alt: Orleans.FSharp
+    html: '<div style="font-size:80px">🌾</div>'
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Features
+
+<CardGrid>
+  <Card title="grain { } CE" icon="pencil">
+    Define grains declaratively with 31 computation expression keywords. State machines, handlers, lifecycle — all in idiomatic F#.
+  </Card>
+  <Card title="siloConfig { } CE" icon="setting">
+    Configure clustering, storage, streaming, TLS, dashboard, health checks — 39 keywords covering every Orleans provider.
+  </Card>
+  <Card title="eventSourcedGrain { } CE" icon="document">
+    Event sourcing with pure apply/handle functions. JournaledGrain bridge handles persistence.
+  </Card>
+  <Card title="800+ Tests" icon="approve-check">
+    718 unit + 86 integration tests. Property-based testing with FsCheck. GrainArbitrary with TypeShape.
+  </Card>
+</CardGrid>
+
+## Quick Start
+
+```bash
+dotnet new install Orleans.FSharp.Templates
+dotnet new orleans-fsharp -n MyApp
+cd MyApp
+dotnet build && dotnet test
+```
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| `Orleans.FSharp` | Core: grain CE, modules, types |
+| `Orleans.FSharp.Runtime` | Silo + client configuration |
+| `Orleans.FSharp.CodeGen` | C# bridge for Orleans source generators |
+| `Orleans.FSharp.Testing` | TestHarness, GrainMock, GrainArbitrary |
+| `Orleans.FSharp.EventSourcing` | Event sourcing CE |
+| `Orleans.FSharp.Analyzers` | F# async usage analyzer |
