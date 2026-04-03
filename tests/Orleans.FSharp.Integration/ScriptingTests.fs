@@ -19,7 +19,7 @@ type ScriptingFixture() =
         member _.InitializeAsync() =
             task {
                 // Force the CodeGen assembly to be loaded
-                let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CounterGrainImpl>.Assembly
+                let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CodeGenAssemblyMarker>.Assembly
                 let _ = codeGenAssembly.GetTypes()
                 let! h = Scripting.startOnPorts 22221 33310
                 handle <- Some h

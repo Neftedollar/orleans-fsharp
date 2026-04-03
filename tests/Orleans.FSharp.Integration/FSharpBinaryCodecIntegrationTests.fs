@@ -62,7 +62,7 @@ type BinaryCodecClusterFixture() =
     interface IAsyncLifetime with
         member _.InitializeAsync() =
             task {
-                let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CounterGrainImpl>.Assembly
+                let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CodeGenAssemblyMarker>.Assembly
                 let _ = codeGenAssembly.GetTypes()
 
                 let builder = TestClusterBuilder()

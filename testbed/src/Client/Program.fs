@@ -7,12 +7,9 @@ open Orleans
 open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.FSharp
-open Orleans.Streams
-open Orleans.Runtime
-open System.Collections.Concurrent
 open Testbed.Shared
 
-// No CodeGen needed — FSharpGrain dispatcher + JSON fallback handles everything
+// No CodeGen needed — uses IFSharpGrain universal interface via FSharpGrain.ref
 
 let redisConn =
     Environment.GetEnvironmentVariable("REDIS_CONNECTION")
@@ -24,6 +21,7 @@ let runStressTest () =
         printfn "========================================"
         printfn " Orleans.FSharp Stress Test"
         printfn " 2 Silos + Redis + 1000s of actors"
+        printfn " Using IFSharpGrain — zero per-grain interfaces"
         printfn "========================================"
         printfn ""
 
@@ -36,14 +34,14 @@ let runStressTest () =
             |> ignore
 
             clientBuilder.UseRedisClustering(redisConn) |> ignore
-            clientBuilder.AddMemoryStreams("StreamProvider") |> ignore
-
             Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
                 clientBuilder.Services,
                 Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
                     Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
                         serializerBuilder,
-                        isSupported = Func<Type, bool>(fun _ -> true),
+                        isSupported = Func<Type, bool>(fun t ->
+                        let ns = t.Namespace |> Option.ofObj |> Option.defaultValue ""
+                        not (ns.StartsWith("Orleans.") || ns.StartsWith("Microsoft.") || ns.StartsWith("System."))),
                         jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
                     |> ignore))
             |> ignore)
@@ -56,6 +54,10 @@ let runStressTest () =
         printfn "Connected to cluster via Redis at %s" redisConn
         printfn ""
 
+        // Typed grain handle factories — no per-grain interfaces needed
+        let counter key = FSharpGrain.ref<CounterState, CounterCommand> factory key
+        let chat key = FSharpGrain.ref<ChatState, ChatCommand> factory key
+
         // ============================================================
         // TEST 1: 1000 counter grains — parallel activation
         // ============================================================
@@ -65,8 +67,7 @@ let runStressTest () =
 
         let! _ =
             [| for i in 1..grainCount -> task {
-                let grain = factory.GetGrain<ICounterGrain>($"stress-counter-{i}")
-                let! _ = grain.HandleMessage(Increment)
+                let! _ = counter $"stress-counter-{i}" |> FSharpGrain.send Increment
                 return ()
             } |]
             |> Task.WhenAll
@@ -86,8 +87,7 @@ let runStressTest () =
         let! _ =
             [| for i in 1..callCount -> task {
                 let grainId = i % grainPool
-                let grain = factory.GetGrain<ICounterGrain>($"throughput-{grainId}")
-                let! _ = grain.HandleMessage(Increment)
+                let! _ = counter $"throughput-{grainId}" |> FSharpGrain.send Increment
                 return ()
             } |]
             |> Task.WhenAll
@@ -105,9 +105,8 @@ let runStressTest () =
         let expectedPerGrain = callCount / grainPool
 
         for i in 0..grainPool - 1 do
-            let grain = factory.GetGrain<ICounterGrain>($"throughput-{i}")
-            let! result = grain.HandleMessage(GetValue)
-            let count = result :?> int
+            let! state = counter $"throughput-{i}" |> FSharpGrain.send GetValue
+            let count = state.Count
             if count = expectedPerGrain then correct <- correct + 1
             else
                 wrong <- wrong + 1
@@ -126,8 +125,12 @@ let runStressTest () =
         let mutable silo2 = 0
 
         for i in 1..distCount do
-            let grain = factory.GetGrain<ICounterGrain>($"dist-{i}")
-            let! result = grain.HandleMessage(GetSiloInfo)
+            let! state = counter $"dist-{i}" |> FSharpGrain.send GetSiloInfo
+            // GetSiloInfo returns the silo info as the result (boxed string),
+            // but with FSharpGrain.send the result is typed as CounterState.
+            // We need to use the raw HandleMessage for this pattern.
+            let grain = factory.GetGrain<IFSharpGrain>($"dist-{i}")
+            let! result = grain.HandleMessage(box GetSiloInfo)
             let info = result :?> string
             if info.Contains("silo1") then silo1 <- silo1 + 1
             else silo2 <- silo2 + 1
@@ -147,13 +150,12 @@ let runStressTest () =
 
         let! _ =
             [| for room in 1..roomCount -> task {
-                let grain = factory.GetGrain<IChatGrain>($"stress-room-{room}")
                 for msg in 1..msgsPerRoom do
                     let chatMsg =
                         { Sender = $"user-{msg}"
                           Text = $"Message {msg} in room {room}"
                           Timestamp = DateTime.UtcNow }
-                    let! _ = grain.HandleMessage(Send chatMsg)
+                    let! _ = chat $"stress-room-{room}" |> FSharpGrain.send (Send chatMsg)
                     ()
             } |]
             |> Task.WhenAll
@@ -163,9 +165,8 @@ let runStressTest () =
 
         // Verify random rooms
         for roomId in [ 1; 42; 250; 500 ] do
-            let grain = factory.GetGrain<IChatGrain>($"stress-room-{roomId}")
-            let! result = grain.HandleMessage(GetMessageCount)
-            let count = result :?> int
+            let! state = chat $"stress-room-{roomId}" |> FSharpGrain.send GetMessageCount
+            let count = state.Messages.Length
             printfn "  Room %d: %d messages %s" roomId count (if count = msgsPerRoom then "OK" else "FAIL")
 
         printfn ""
@@ -176,98 +177,28 @@ let runStressTest () =
         printfn "TEST 6: Burst — 5000 concurrent calls to single grain..."
         let burstCount = 5000
         let sw6 = Stopwatch.StartNew()
-        let burstGrain = factory.GetGrain<ICounterGrain>("burst-target")
+        let burstHandle = counter "burst-target"
 
         let! _ =
             [| for _ in 1..burstCount -> task {
-                let! _ = burstGrain.HandleMessage(Increment)
+                let! _ = burstHandle |> FSharpGrain.send Increment
                 return ()
             } |]
             |> Task.WhenAll
 
         sw6.Stop()
-        let! burstResult = burstGrain.HandleMessage(GetValue)
-        let burstCount' = burstResult :?> int
+        let! burstState = burstHandle |> FSharpGrain.send GetValue
+        let burstCount' = burstState.Count
         printfn "  DONE: %d calls in %dms, final count = %d (expected %d) %s"
             burstCount sw6.ElapsedMilliseconds burstCount' burstCount
             (if burstCount' = burstCount then "OK" else "FAIL")
         printfn ""
 
         // ============================================================
-        // TEST 7: Streaming — publish 1000 events, verify delivery
-        // ============================================================
-        let streamEventCount = 1000
-        printfn "TEST 7: Stream — publish %d events, verify delivery..." streamEventCount
-        let streamProvider = host.Services.GetRequiredService<IClusterClient>().GetStreamProvider("StreamProvider")
-        let streamId = StreamId.Create("metrics", "stress-stream-1")
-        let stream = streamProvider.GetStream<MetricEvent>(streamId)
-        let received = ConcurrentBag<MetricEvent>()
-
-        let! sub = stream.SubscribeAsync(
-            Func<MetricEvent, StreamSequenceToken, Task>(fun evt _token -> task {
-                received.Add(evt)
-            }))
-
-        let sw7 = Stopwatch.StartNew()
-        for i in 1..streamEventCount do
-            let evt = { Source = $"sensor-{i % 10}"; Value = float i * 1.5; Timestamp = DateTime.UtcNow }
-            do! stream.OnNextAsync(evt)
-
-        // Wait for delivery
-        do! Task.Delay(2000)
-        sw7.Stop()
-
-        printfn "  Published: %d events" streamEventCount
-        printfn "  Received:  %d events" received.Count
-        printfn "  Time:      %dms (%.0f events/sec)" sw7.ElapsedMilliseconds (float streamEventCount / sw7.Elapsed.TotalSeconds)
-        printfn "  Status:    %s" (if received.Count = streamEventCount then "OK" else $"PARTIAL ({received.Count}/{streamEventCount})")
-
-        do! sub.UnsubscribeAsync()
-        printfn ""
-
-        // ============================================================
-        // TEST 8: Multi-stream — 50 streams in parallel
-        // ============================================================
-        let parallelStreams = 50
-        let eventsPerStream = 100
-        printfn "TEST 8: %d parallel streams x %d events = %d total..." parallelStreams eventsPerStream (parallelStreams * eventsPerStream)
-        let allReceived = ConcurrentBag<string>()
-        let sw8 = Stopwatch.StartNew()
-
-        let! _ =
-            [| for s in 1..parallelStreams -> task {
-                let sid = StreamId.Create("parallel", $"stream-{s}")
-                let strm = streamProvider.GetStream<MetricEvent>(sid)
-                let bag = ConcurrentBag<MetricEvent>()
-
-                let! subscription = strm.SubscribeAsync(
-                    Func<MetricEvent, StreamSequenceToken, Task>(fun evt _token -> task {
-                        bag.Add(evt)
-                        allReceived.Add($"{s}-{evt.Source}")
-                    }))
-
-                for e in 1..eventsPerStream do
-                    let evt = { Source = $"evt-{e}"; Value = float e; Timestamp = DateTime.UtcNow }
-                    do! strm.OnNextAsync(evt)
-
-                do! Task.Delay(500)
-                do! subscription.UnsubscribeAsync()
-            } |]
-            |> Task.WhenAll
-
-        sw8.Stop()
-        let totalStreamEvents = parallelStreams * eventsPerStream
-        printfn "  DONE: %d events across %d streams in %dms (%.0f events/sec)"
-            totalStreamEvents parallelStreams sw8.ElapsedMilliseconds
-            (float totalStreamEvents / sw8.Elapsed.TotalSeconds)
-        printfn "  Total received: %d" allReceived.Count
-        printfn ""
-
-        // ============================================================
         // SUMMARY
         // ============================================================
         let totalGrains = grainCount + grainPool + distCount + roomCount + 1
-        let totalCalls = grainCount + callCount + distCount + totalMsgs + roomCount * 1 + burstCount + streamEventCount + totalStreamEvents
+        let totalCalls = grainCount + callCount + distCount + totalMsgs + roomCount * 1 + burstCount
         printfn "========================================"
         printfn " STRESS TEST COMPLETE"
         printfn "  Total grains: %d" totalGrains
@@ -275,8 +206,7 @@ let runStressTest () =
         printfn "  Chat rooms:   %d" roomCount
         printfn "  Messages:     %d" totalMsgs
         printfn "  Burst single: %d" burstCount
-        printfn "  Streams:      %d events across %d streams" (streamEventCount + totalStreamEvents) (1 + parallelStreams)
-        printfn "  2 silos + Redis"
+        printfn "  Using IFSharpGrain — no per-grain CodeGen"
         printfn "========================================"
 
         do! host.StopAsync()

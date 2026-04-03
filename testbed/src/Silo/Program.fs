@@ -123,17 +123,16 @@ builder.UseOrleans(fun (siloBuilder: ISiloBuilder) ->
             opts.ConfigurationOptions <- StackExchange.Redis.ConfigurationOptions.Parse(envRedisConn))
     |> ignore
 
-    // Memory streams for pub/sub testing
-    siloBuilder.AddMemoryStreams("StreamProvider") |> ignore
-    siloBuilder.AddMemoryGrainStorage("PubSubStore") |> ignore
-
     // F# JSON fallback serialization (handles DU, record, option, list without attributes)
     Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
         siloBuilder.Services,
         Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
             Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
                 serializerBuilder,
-                isSupported = Func<Type, bool>(fun _ -> true),
+                isSupported = Func<Type, bool>(fun t ->
+                    // Only use JSON for F# types — let Orleans handle its own internal types
+                    let ns = t.Namespace |> Option.ofObj |> Option.defaultValue ""
+                    not (ns.StartsWith("Orleans.") || ns.StartsWith("Microsoft.") || ns.StartsWith("System."))),
                 jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
             |> ignore))
     |> ignore)

@@ -79,6 +79,8 @@
     <Compile Include="EventSourcedGrainDiscoveryTests.fs" />
     <Compile Include="TypedResultTests.fs" />
     <Compile Include="TransactionalGrainDiscoveryTests.fs" />
+    <Compile Include="FSharpGrainRefTests.fs" />
+    <Compile Include="BehaviorPatternTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

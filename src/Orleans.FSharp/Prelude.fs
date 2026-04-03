@@ -4,6 +4,7 @@ open System.Text.Json
 open System.Text.Json.Serialization
 open System.Threading.Tasks
 open Orleans
+open Orleans.Runtime
 
 /// <summary>
 /// Marker type used to identify the Orleans.FSharp assembly for reflection and code generation.
@@ -11,6 +12,51 @@ open Orleans
 type AssemblyMarker =
     class
     end
+
+/// <summary>
+/// Universal grain interface for all F# grains using string keys.
+/// Orleans generates a proxy for this interface once during the CodeGen build.
+/// All F# grains use this single interface via the FSharpGrain dispatcher,
+/// eliminating the need for per-grain C# interfaces.
+/// </summary>
+type IFSharpGrain =
+    inherit IGrainWithStringKey
+    inherit IRemindable
+
+    /// <summary>
+    /// Dispatches a boxed message to the grain handler and returns a boxed result.
+    /// </summary>
+    /// <param name="message">The message to handle, boxed as object.</param>
+    /// <returns>A Task containing the boxed result.</returns>
+    abstract HandleMessage: message: obj -> Task<obj>
+
+/// <summary>
+/// GUID-keyed variant of the universal F# grain interface.
+/// </summary>
+type IFSharpGrainWithGuidKey =
+    inherit IGrainWithGuidKey
+    inherit IRemindable
+
+    /// <summary>
+    /// Dispatches a boxed message to the grain handler and returns a boxed result.
+    /// </summary>
+    /// <param name="message">The message to handle, boxed as object.</param>
+    /// <returns>A Task containing the boxed result.</returns>
+    abstract HandleMessage: message: obj -> Task<obj>
+
+/// <summary>
+/// Integer-keyed variant of the universal F# grain interface.
+/// </summary>
+type IFSharpGrainWithIntKey =
+    inherit IGrainWithIntegerKey
+    inherit IRemindable
+
+    /// <summary>
+    /// Dispatches a boxed message to the grain handler and returns a boxed result.
+    /// </summary>
+    /// <param name="message">The message to handle, boxed as object.</param>
+    /// <returns>A Task containing the boxed result.</returns>
+    abstract HandleMessage: message: obj -> Task<obj>
 
 /// <summary>
 /// Reexports of core Orleans grain interface types for convenient access from F# code.

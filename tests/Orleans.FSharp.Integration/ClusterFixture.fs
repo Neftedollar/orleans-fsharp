@@ -57,7 +57,7 @@ type ClusterFixture() =
             task {
                 // Force the CodeGen assembly to be loaded into the current AppDomain.
                 // Orleans discovers grains by scanning loaded assemblies for ApplicationPartAttribute.
-                let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CounterGrainImpl>.Assembly
+                let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CodeGenAssemblyMarker>.Assembly
                 let _ = codeGenAssembly.GetTypes()
 
                 let builder = TestClusterBuilder()

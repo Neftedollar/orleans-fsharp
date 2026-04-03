@@ -6,4 +6,5 @@
   </Folder>
   <Project Path="../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
   <Project Path="../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+  <Project Path="../src/Orleans.FSharp.CodeGen/Orleans.FSharp.CodeGen.csproj" />
 </Solution>

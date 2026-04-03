@@ -269,6 +269,15 @@ type FSharpGrain<'State, 'Message>
     /// </summary>
     member _.CurrentState = currentState
 
+    interface IFSharpGrain with
+        /// <summary>
+        /// Receives a boxed message, downcasts to the grain's typed message, and dispatches.
+        /// This is the universal entry point used by IFSharpGrain proxies.
+        /// </summary>
+        member this.HandleMessage(message: obj) : Task<obj> =
+            let typedMsg = message :?> 'Message
+            this.HandleMessage(typedMsg)
+
     interface IRemindable with
 
         /// <summary>

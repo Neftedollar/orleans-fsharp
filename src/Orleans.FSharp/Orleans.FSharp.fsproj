@@ -14,6 +14,7 @@
     <Compile Include="GrainState.fs" />
     <Compile Include="GrainRef.fs" />
     <Compile Include="GrainBuilder.fs" />
+    <Compile Include="BehaviorPattern.fs" />
     <Compile Include="Reminders.fs" />
     <Compile Include="Timers.fs" />
     <Compile Include="Streaming.fs" />
@@ -36,6 +37,7 @@
     <Compile Include="FSharpSerialization.fs" />
     <Compile Include="FSharpBinaryCodec.fs" />
     <Compile Include="Scripting.fs" />
+    <Compile Include="FSharpGrainRef.fs" />
     <Compile Include="AssemblyInfo.fs" />
   </ItemGroup>
 
