@@ -71,6 +71,7 @@
     <Compile Include="FSharpSerializationTests.fs" />
     <Compile Include="ApiParityTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
+    <Compile Include="InputValidationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

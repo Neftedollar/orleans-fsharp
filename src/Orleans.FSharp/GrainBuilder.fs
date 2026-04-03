@@ -560,6 +560,8 @@ type GrainBuilder() =
     /// <returns>The updated grain definition with persistence configured.</returns>
     [<CustomOperation("persist")>]
     member _.Persist(definition: GrainDefinition<'State, 'Message>, name: string) =
+        if String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
         { definition with
             PersistenceName = Some name
         }
@@ -607,6 +609,8 @@ type GrainBuilder() =
             name: string,
             handler: 'State -> string -> TickStatus -> Task<'State>
         ) =
+        if String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Reminder name cannot be empty or whitespace"
         { definition with
             ReminderHandlers = definition.ReminderHandlers |> Map.add name handler
         }
@@ -632,6 +636,8 @@ type GrainBuilder() =
             period: TimeSpan,
             handler: 'State -> Task<'State>
         ) =
+        if String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Timer name cannot be empty or whitespace"
         { definition with
             TimerHandlers = definition.TimerHandlers |> Map.add name (dueTime, period, handler)
         }
@@ -908,6 +914,8 @@ type GrainBuilder() =
     /// <returns>The updated grain definition with SiloRoleBased placement.</returns>
     [<CustomOperation("siloRolePlacement")>]
     member _.SiloRolePlacement(definition: GrainDefinition<'State, 'Message>, role: string) =
+        if String.IsNullOrWhiteSpace(role) then
+            invalidArg (nameof role) "Silo role name cannot be empty or whitespace"
         { definition with
             PlacementStrategy = PlacementStrategy.SiloRoleBased role
         }
@@ -995,6 +1003,8 @@ type GrainBuilder() =
     /// <returns>The updated grain definition with the grain type name set.</returns>
     [<CustomOperation("grainType")>]
     member _.GrainType(definition: GrainDefinition<'State, 'Message>, name: string) =
+        if String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Grain type name cannot be empty or whitespace"
         { definition with
             GrainTypeName = Some name
         }

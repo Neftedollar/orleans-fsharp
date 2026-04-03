@@ -263,6 +263,8 @@ type ClientConfigBuilder() =
     /// <returns>The updated client configuration with the memory stream provider added.</returns>
     [<CustomOperation("addMemoryStreams")>]
     member _.AddMemoryStreams(config: ClientConfig, name: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Stream provider name cannot be empty or whitespace"
         { config with
             StreamProviders = config.StreamProviders |> Map.add name MemoryStream
         }
@@ -283,6 +285,8 @@ type ClientConfigBuilder() =
     /// <summary>
     /// Configures TLS for the client using a certificate subject name from the certificate store.
     /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// WARNING: In production, always use valid certificates from a trusted CA.
+    /// Do not disable certificate validation in production environments.
     /// </summary>
     /// <param name="config">The current client configuration being built.</param>
     /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
@@ -294,6 +298,8 @@ type ClientConfigBuilder() =
     /// <summary>
     /// Configures TLS for the client using an X509Certificate2 instance.
     /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// WARNING: In production, always use valid certificates from a trusted CA.
+    /// Do not disable certificate validation in production environments.
     /// </summary>
     /// <param name="config">The current client configuration being built.</param>
     /// <param name="certificate">The X509Certificate2 to use for TLS.</param>
@@ -307,6 +313,8 @@ type ClientConfigBuilder() =
     /// <summary>
     /// Configures mutual TLS (mTLS) for the client using a certificate subject name from the certificate store.
     /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// WARNING: In production, always use valid certificates from a trusted CA.
+    /// Do not disable certificate validation in production environments.
     /// </summary>
     /// <param name="config">The current client configuration being built.</param>
     /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
@@ -326,6 +334,8 @@ type ClientConfigBuilder() =
     /// <returns>The updated client configuration with the cluster ID set.</returns>
     [<CustomOperation("clusterId")>]
     member _.ClusterId(config: ClientConfig, id: string) =
+        if System.String.IsNullOrWhiteSpace(id) then
+            invalidArg (nameof id) "Cluster ID cannot be empty or whitespace"
         { config with ClusterId = Some id }
 
     /// <summary>
@@ -337,6 +347,8 @@ type ClientConfigBuilder() =
     /// <returns>The updated client configuration with the service ID set.</returns>
     [<CustomOperation("serviceId")>]
     member _.ServiceId(config: ClientConfig, id: string) =
+        if System.String.IsNullOrWhiteSpace(id) then
+            invalidArg (nameof id) "Service ID cannot be empty or whitespace"
         { config with ServiceId = Some id }
 
     /// <summary>

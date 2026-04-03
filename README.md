@@ -106,6 +106,34 @@ dotnet new orleans-fsharp -n MyApp
 - **FsCheck** -- property-based testing
 - **xUnit** -- test framework
 
+## Security
+
+### Connection Strings
+
+Never inline connection strings containing passwords or secrets directly in source code. Instead, load them from configuration or environment variables at runtime.
+
+**Recommended:** Use `IConfiguration` or environment variables:
+
+```fsharp
+let connStr = Environment.GetEnvironmentVariable("REDIS_CONNECTION")
+
+let config = siloConfig {
+    useLocalhostClustering
+    addRedisStorage "Default" connStr
+}
+```
+
+**Avoid:** Hardcoding secrets in source files:
+
+```fsharp
+// DO NOT do this -- secrets will leak into version control
+addRedisStorage "Default" "redis://user:password@host:6379"
+```
+
+### TLS Certificates
+
+When using `useTls` or `useMutualTls`, always use valid certificates from a trusted certificate authority in production. Do not disable certificate validation in production environments.
+
 ## Contributing
 
 Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/orleans-fsharp/orleans-fsharp).

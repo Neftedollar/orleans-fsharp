@@ -455,6 +455,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the memory storage provider added.</returns>
     [<CustomOperation("addMemoryStorage")>]
     member _.AddMemoryStorage(config: SiloConfig, name: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name Memory
         }
@@ -469,6 +471,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the custom storage provider added.</returns>
     [<CustomOperation("addCustomStorage")>]
     member _.AddCustomStorage(config: SiloConfig, name: string, configure: ISiloBuilder -> ISiloBuilder) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name (CustomStorage configure)
         }
@@ -484,6 +488,10 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the Redis storage provider added.</returns>
     [<CustomOperation("addRedisStorage")>]
     member _.AddRedisStorage(config: SiloConfig, name: string, connectionString: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name (RedisStorage connectionString)
         }
@@ -497,6 +505,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with Redis clustering enabled.</returns>
     [<CustomOperation("addRedisClustering")>]
     member _.AddRedisClustering(config: SiloConfig, connectionString: string) =
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
         { config with
             ClusteringMode = Some(RedisClustering connectionString)
         }
@@ -512,6 +522,10 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the Azure Blob storage provider added.</returns>
     [<CustomOperation("addAzureBlobStorage")>]
     member _.AddAzureBlobStorage(config: SiloConfig, name: string, connectionString: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name (AzureBlobStorage connectionString)
         }
@@ -527,6 +541,10 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the Azure Table storage provider added.</returns>
     [<CustomOperation("addAzureTableStorage")>]
     member _.AddAzureTableStorage(config: SiloConfig, name: string, connectionString: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name (AzureTableStorage connectionString)
         }
@@ -540,6 +558,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with Azure Table clustering enabled.</returns>
     [<CustomOperation("addAzureTableClustering")>]
     member _.AddAzureTableClustering(config: SiloConfig, connectionString: string) =
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
         { config with
             ClusteringMode = Some(AzureTableClustering connectionString)
         }
@@ -556,6 +576,12 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the ADO.NET storage provider added.</returns>
     [<CustomOperation("addAdoNetStorage")>]
     member _.AddAdoNetStorage(config: SiloConfig, name: string, connectionString: string, invariant: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(invariant) then
+            invalidArg (nameof invariant) "Provider invariant cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name (AdoNetStorage(connectionString, invariant))
         }
@@ -570,6 +596,10 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with ADO.NET clustering enabled.</returns>
     [<CustomOperation("addAdoNetClustering")>]
     member _.AddAdoNetClustering(config: SiloConfig, connectionString: string, invariant: string) =
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(invariant) then
+            invalidArg (nameof invariant) "Provider invariant cannot be empty or whitespace"
         { config with
             ClusteringMode = Some(AdoNetClustering(connectionString, invariant))
         }
@@ -583,6 +613,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the memory stream provider added.</returns>
     [<CustomOperation("addMemoryStreams")>]
     member _.AddMemoryStreams(config: SiloConfig, name: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Stream provider name cannot be empty or whitespace"
         { config with
             StreamProviders = config.StreamProviders |> Map.add name MemoryStream
         }
@@ -670,6 +702,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the broadcast channel added.</returns>
     [<CustomOperation("addBroadcastChannel")>]
     member _.AddBroadcastChannel(config: SiloConfig, name: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Broadcast channel name cannot be empty or whitespace"
         { config with
             BroadcastChannels = config.BroadcastChannels @ [ name ]
         }
@@ -719,6 +753,8 @@ type SiloConfigBuilder() =
             adapterFactory: Func<IServiceProvider, string, IQueueAdapterFactory>,
             configurator: Action<ISiloPersistentStreamConfigurator>
         ) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Stream provider name cannot be empty or whitespace"
         { config with
             StreamProviders = config.StreamProviders |> Map.add name (PersistentStream(adapterFactory, configurator))
         }
@@ -750,6 +786,8 @@ type SiloConfigBuilder() =
     /// <summary>
     /// Configures TLS using a certificate subject name from the certificate store.
     /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// WARNING: In production, always use valid certificates from a trusted CA.
+    /// Do not disable certificate validation in production environments.
     /// </summary>
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
@@ -761,6 +799,8 @@ type SiloConfigBuilder() =
     /// <summary>
     /// Configures TLS using an X509Certificate2 instance.
     /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// WARNING: In production, always use valid certificates from a trusted CA.
+    /// Do not disable certificate validation in production environments.
     /// </summary>
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="certificate">The X509Certificate2 to use for TLS.</param>
@@ -774,6 +814,8 @@ type SiloConfigBuilder() =
     /// <summary>
     /// Configures mutual TLS (mTLS) using a certificate subject name from the certificate store.
     /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// WARNING: In production, always use valid certificates from a trusted CA.
+    /// Do not disable certificate validation in production environments.
     /// </summary>
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
@@ -787,6 +829,8 @@ type SiloConfigBuilder() =
     /// <summary>
     /// Configures mutual TLS (mTLS) using an X509Certificate2 instance.
     /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// WARNING: In production, always use valid certificates from a trusted CA.
+    /// Do not disable certificate validation in production environments.
     /// </summary>
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="certificate">The X509Certificate2 to use for mutual TLS.</param>
@@ -838,6 +882,12 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the Cosmos DB storage provider added.</returns>
     [<CustomOperation("addCosmosStorage")>]
     member _.AddCosmosStorage(config: SiloConfig, name: string, accountEndpoint: string, databaseName: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(accountEndpoint) then
+            invalidArg (nameof accountEndpoint) "Account endpoint cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(databaseName) then
+            invalidArg (nameof databaseName) "Database name cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name (CosmosStorage(accountEndpoint, databaseName))
         }
@@ -853,6 +903,10 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the DynamoDB storage provider added.</returns>
     [<CustomOperation("addDynamoDbStorage")>]
     member _.AddDynamoDbStorage(config: SiloConfig, name: string, region: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Storage provider name cannot be empty or whitespace"
+        if System.String.IsNullOrWhiteSpace(region) then
+            invalidArg (nameof region) "AWS region cannot be empty or whitespace"
         { config with
             StorageProviders = config.StorageProviders |> Map.add name (DynamoDbStorage region)
         }
@@ -866,6 +920,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the Redis reminder service configured.</returns>
     [<CustomOperation("addRedisReminderService")>]
     member _.AddRedisReminderService(config: SiloConfig, connectionString: string) =
+        if System.String.IsNullOrWhiteSpace(connectionString) then
+            invalidArg (nameof connectionString) "Connection string cannot be empty or whitespace"
         { config with
             ReminderProvider = Some(RedisReminder connectionString)
         }
@@ -879,6 +935,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the cluster ID set.</returns>
     [<CustomOperation("clusterId")>]
     member _.ClusterId(config: SiloConfig, id: string) =
+        if System.String.IsNullOrWhiteSpace(id) then
+            invalidArg (nameof id) "Cluster ID cannot be empty or whitespace"
         { config with ClusterId = Some id }
 
     /// <summary>
@@ -890,6 +948,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the service ID set.</returns>
     [<CustomOperation("serviceId")>]
     member _.ServiceId(config: SiloConfig, id: string) =
+        if System.String.IsNullOrWhiteSpace(id) then
+            invalidArg (nameof id) "Service ID cannot be empty or whitespace"
         { config with ServiceId = Some id }
 
     /// <summary>
@@ -901,6 +961,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the silo name set.</returns>
     [<CustomOperation("siloName")>]
     member _.SiloName(config: SiloConfig, name: string) =
+        if System.String.IsNullOrWhiteSpace(name) then
+            invalidArg (nameof name) "Silo name cannot be empty or whitespace"
         { config with SiloName = Some name }
 
     /// <summary>
