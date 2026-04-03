@@ -47,12 +47,15 @@ let ``IFSharpGrain inherits IGrainWithStringKey`` () =
     test <@ typeof<Orleans.IGrainWithStringKey>.IsAssignableFrom(typeof<IFSharpGrain>) @>
 
 [<Fact>]
-let ``IFSharpGrain inherits IRemindable`` () =
+let ``IFSharpGrain does not expose IRemindable (grain class implements it directly)`` () =
+    // IRemindable is implemented by FSharpGrain<'S,'M> in Orleans.FSharp.Runtime,
+    // not declared in the interface. Keeping it out of the interface avoids pulling
+    // Orleans.Reminders source generators into Orleans.FSharp.Abstractions.
     let iRemindable =
         typeof<IFSharpGrain>.GetInterfaces()
         |> Array.exists (fun i -> i.Name = "IRemindable")
 
-    test <@ iRemindable @>
+    test <@ not iRemindable @>
 
 [<Fact>]
 let ``IFSharpGrain has HandleMessage method`` () =
@@ -69,12 +72,12 @@ let ``IFSharpGrainWithGuidKey inherits IGrainWithGuidKey`` () =
     test <@ typeof<Orleans.IGrainWithGuidKey>.IsAssignableFrom(typeof<IFSharpGrainWithGuidKey>) @>
 
 [<Fact>]
-let ``IFSharpGrainWithGuidKey inherits IRemindable`` () =
+let ``IFSharpGrainWithGuidKey does not expose IRemindable (grain class implements it directly)`` () =
     let iRemindable =
         typeof<IFSharpGrainWithGuidKey>.GetInterfaces()
         |> Array.exists (fun i -> i.Name = "IRemindable")
 
-    test <@ iRemindable @>
+    test <@ not iRemindable @>
 
 [<Fact>]
 let ``IFSharpGrainWithGuidKey has HandleMessage method`` () =
@@ -91,12 +94,12 @@ let ``IFSharpGrainWithIntKey inherits IGrainWithIntegerKey`` () =
     test <@ typeof<Orleans.IGrainWithIntegerKey>.IsAssignableFrom(typeof<IFSharpGrainWithIntKey>) @>
 
 [<Fact>]
-let ``IFSharpGrainWithIntKey inherits IRemindable`` () =
+let ``IFSharpGrainWithIntKey does not expose IRemindable (grain class implements it directly)`` () =
     let iRemindable =
         typeof<IFSharpGrainWithIntKey>.GetInterfaces()
         |> Array.exists (fun i -> i.Name = "IRemindable")
 
-    test <@ iRemindable @>
+    test <@ not iRemindable @>
 
 [<Fact>]
 let ``IFSharpGrainWithIntKey has HandleMessage method`` () =

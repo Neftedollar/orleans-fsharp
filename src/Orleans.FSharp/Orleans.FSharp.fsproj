@@ -42,6 +42,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Orleans.FSharp.Abstractions\Orleans.FSharp.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0" />
     <PackageReference Include="Microsoft.Orleans.Core.Abstractions" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>C# bridge project enabling Orleans Roslyn source generators for F# grain definitions. Contains no runtime logic — only assembly attributes.</Description>
+    <Description>C# bridge project enabling Orleans Roslyn source generators for F# grain definitions. Add this project to your silo solution to generate proxy code for all F# grains — no per-grain C# stubs needed.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -19,9 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Orleans.FSharp\Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\Orleans.FSharp.Abstractions\Orleans.FSharp.Abstractions.csproj" />
+    <!-- Optional: add your grain project here to generate per-grain proxies (legacy pattern).
+         In the new universal interface pattern, only Abstractions is needed. -->
     <ProjectReference Include="..\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj" />
-    <ProjectReference Include="..\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
   </ItemGroup>
 
 </Project>

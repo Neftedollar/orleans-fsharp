@@ -55,10 +55,14 @@ type ClusterFixture() =
     interface IAsyncLifetime with
         member _.InitializeAsync() =
             task {
-                // Force the CodeGen assembly to be loaded into the current AppDomain.
+                // Force Orleans assemblies to be loaded into the current AppDomain.
                 // Orleans discovers grains by scanning loaded assemblies for ApplicationPartAttribute.
+                // - CodeGen: per-grain proxies for Sample grains (legacy ICounterGrain etc.)
+                // - Abstractions: universal IFSharpGrain proxies (new pattern)
                 let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CodeGenAssemblyMarker>.Assembly
                 let _ = codeGenAssembly.GetTypes()
+                let abstractionsAssembly = typeof<Orleans.FSharp.IFSharpGrain>.Assembly
+                let _ = abstractionsAssembly.GetTypes()
 
                 let builder = TestClusterBuilder()
                 builder.Options.InitialSilosCount <- 1s

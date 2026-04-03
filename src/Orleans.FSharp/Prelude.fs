@@ -13,27 +13,21 @@ type AssemblyMarker =
     class
     end
 
-// IFSharpGrain interfaces: defined here in F# for compile-time use.
-// Also defined in Orleans.FSharp.CodeGen (C#) for Orleans proxy generation.
-// TODO: refactor into Orleans.FSharp.Abstractions to eliminate duplication.
+// IFSharpGrain interfaces are defined in Orleans.FSharp.Abstractions (C#) so that
+// Orleans Roslyn source generators can produce proxy code. F# assemblies are invisible
+// to source generators. Type aliases here re-export them into the Orleans.FSharp namespace.
 
-/// <summary>Universal grain interface for all F# grains (string key).</summary>
-type IFSharpGrain =
-    inherit IGrainWithStringKey
-    inherit IRemindable
-    abstract HandleMessage: message: obj -> Task<obj>
+/// <summary>
+/// Universal grain interface for all F# grains (string key).
+/// Defined in C# (Orleans.FSharp.Abstractions) so Orleans can generate proxies.
+/// </summary>
+type IFSharpGrain = Orleans.FSharp.IFSharpGrain
 
-/// <summary>GUID-keyed variant.</summary>
-type IFSharpGrainWithGuidKey =
-    inherit IGrainWithGuidKey
-    inherit IRemindable
-    abstract HandleMessage: message: obj -> Task<obj>
+/// <summary>GUID-keyed variant of the universal F# grain interface.</summary>
+type IFSharpGrainWithGuidKey = Orleans.FSharp.IFSharpGrainWithGuidKey
 
-/// <summary>Integer-keyed variant.</summary>
-type IFSharpGrainWithIntKey =
-    inherit IGrainWithIntegerKey
-    inherit IRemindable
-    abstract HandleMessage: message: obj -> Task<obj>
+/// <summary>Integer-keyed variant of the universal F# grain interface.</summary>
+type IFSharpGrainWithIntKey = Orleans.FSharp.IFSharpGrainWithIntKey
 
 /// <summary>
 /// Reexports of core Orleans grain interface types for convenient access from F# code.

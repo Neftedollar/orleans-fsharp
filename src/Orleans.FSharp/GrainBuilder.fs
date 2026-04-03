@@ -466,6 +466,28 @@ module GrainDefinition =
         let handler = getCancellableContextHandler definition
         handler ctx state message ct
 
+    /// <summary>
+    /// Invokes the reminder handler registered under <paramref name="reminderName"/> in a GrainDefinition.
+    /// If no handler is registered for that name the state is returned unchanged.
+    /// Designed for C# interop in backward-compat grain stubs.
+    /// </summary>
+    /// <param name="definition">The grain definition containing reminder handlers.</param>
+    /// <param name="state">The current grain state.</param>
+    /// <param name="reminderName">The name of the reminder that fired.</param>
+    /// <param name="status">The tick status provided by Orleans.</param>
+    /// <returns>A Task containing the new grain state after the handler runs.</returns>
+    let invokeReminderHandler
+        (definition: GrainDefinition<'State, 'Message>)
+        (state: 'State)
+        (reminderName: string)
+        (status: Orleans.Runtime.TickStatus)
+        : Task<'State> =
+        task {
+            match definition.ReminderHandlers |> Map.tryFind reminderName with
+            | Some handler -> return! handler state reminderName status
+            | None -> return state
+        }
+
 /// <summary>
 /// Computation expression builder for declaratively defining grain behavior.
 /// Use the <c>grain {{ }}</c> syntax with custom operations to build a GrainDefinition.
