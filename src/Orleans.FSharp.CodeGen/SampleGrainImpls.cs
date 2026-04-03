@@ -243,4 +243,64 @@ public class AggregatorGrainImpl : Grain, IAggregatorGrain
     }
 }
 
+// ─── ObserverTest ────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Observer interface used by <see cref="ITestChatGrain"/> integration tests.
+/// Defined in C# so Orleans source generators produce the required observer proxy.
+/// </summary>
+public interface ITestChatObserver : IGrainObserver
+{
+    /// <summary>Called by the grain when a message is broadcast to all subscribers.</summary>
+    /// <param name="message">The broadcast message content.</param>
+    Task ReceiveMessage(string message);
+}
+
+/// <summary>
+/// Grain interface for testing <see cref="FSharpObserverManager{T}"/> in an end-to-end cluster.
+/// </summary>
+public interface ITestChatGrain : IGrainWithStringKey
+{
+    /// <summary>Registers an observer to receive future broadcasts.</summary>
+    Task Subscribe(ITestChatObserver observer);
+    /// <summary>Removes an observer from the subscription list.</summary>
+    Task Unsubscribe(ITestChatObserver observer);
+    /// <summary>Notifies all active subscribers with the given message.</summary>
+    Task Broadcast(string message);
+    /// <summary>Returns the number of currently active subscribers.</summary>
+    Task<int> GetSubscriberCount();
+}
+
+/// <summary>
+/// Concrete grain that exercises <see cref="FSharpObserverManager{T}"/> in a real cluster.
+/// Uses the C#-friendly <c>NotifyAsync</c> overload to dispatch to all subscribers.
+/// </summary>
+public class TestChatGrainImpl : Grain, ITestChatGrain
+{
+    private readonly FSharpObserverManager<ITestChatObserver> _manager =
+        new FSharpObserverManager<ITestChatObserver>(TimeSpan.FromMinutes(5));
+
+    /// <inheritdoc/>
+    public Task Subscribe(ITestChatObserver observer)
+    {
+        _manager.Subscribe(observer);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task Unsubscribe(ITestChatObserver observer)
+    {
+        _manager.Unsubscribe(observer);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task Broadcast(string message) =>
+        _manager.NotifyAsync(obs => obs.ReceiveMessage(message));
+
+    /// <inheritdoc/>
+    public Task<int> GetSubscriberCount() =>
+        Task.FromResult(_manager.Count);
+}
+
 #pragma warning restore CS1591
