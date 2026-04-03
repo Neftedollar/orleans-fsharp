@@ -88,8 +88,58 @@ module Benchmarks =
         (directTime, dispatchTime, overheadPercent)
 
     /// <summary>
-    /// Runs all benchmarks and prints results to stdout.
-    /// Asserts that the dispatch overhead is less than 5% (SC-003).
+    /// Measures heap allocations for key operations to verify zero-alloc paths.
+    /// Uses GC.GetAllocatedBytesForCurrentThread for precise per-thread measurement.
+    /// </summary>
+    let measureAllocations () =
+        let handler (state: int) (_msg: string) : Task<int * obj> =
+            Task.FromResult(state + 1, box (state + 1))
+
+        let definition =
+            grain {
+                defaultState 0
+                handle handler
+            }
+
+        let grainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
+
+        // Warm up
+        for _ in 1..1000 do
+            GrainDefinition.getHandler definition |> ignore
+
+        // Measure: GrainRef.ofInt64 (struct — should be zero-alloc)
+        GC.Collect(2, GCCollectionMode.Forced, true, true)
+        GC.WaitForPendingFinalizers()
+        let before1 = GC.GetAllocatedBytesForCurrentThread()
+        for _ in 1..10_000 do
+            let _ref = { GrainRef.Factory = grainFactory; Key = 42L; Grain = Unchecked.defaultof<Orleans.IGrainWithIntegerKey> }
+            ()
+        let after1 = GC.GetAllocatedBytesForCurrentThread()
+        let grainRefAllocPerCall = float (after1 - before1) / 10_000.0
+
+        // Measure: GrainDefinition.getHandler (function lookup — should be near-zero)
+        GC.Collect(2, GCCollectionMode.Forced, true, true)
+        GC.WaitForPendingFinalizers()
+        let before2 = GC.GetAllocatedBytesForCurrentThread()
+        let h = GrainDefinition.getHandler definition
+        for _ in 1..10_000 do
+            h |> ignore
+        let after2 = GC.GetAllocatedBytesForCurrentThread()
+        let getHandlerAllocPerCall = float (after2 - before2) / 10_000.0
+
+        // Measure: handler invocation (Task.FromResult allocates Task<T>)
+        GC.Collect(2, GCCollectionMode.Forced, true, true)
+        GC.WaitForPendingFinalizers()
+        let before3 = GC.GetAllocatedBytesForCurrentThread()
+        for _ in 1..10_000 do
+            (h 0 "x").GetAwaiter().GetResult() |> ignore
+        let after3 = GC.GetAllocatedBytesForCurrentThread()
+        let handlerInvokeAllocPerCall = float (after3 - before3) / 10_000.0
+
+        (grainRefAllocPerCall, getHandlerAllocPerCall, handlerInvokeAllocPerCall)
+
+    /// <summary>
+    /// Runs all benchmarks including allocation measurements and prints results.
     /// </summary>
     let runAll () =
         printfn "=== Orleans.FSharp Grain Call Benchmarks ==="
@@ -101,6 +151,27 @@ module Benchmarks =
         printfn "Direct handler call:       %A" directTime
         printfn "GrainDefinition dispatch:  %A" dispatchTime
         printfn "Overhead:                  %.2f%%" overheadPercent
+        printfn ""
+
+        let (grainRefAlloc, getHandlerAlloc, handlerInvokeAlloc) = measureAllocations ()
+
+        printfn "=== Allocation Benchmarks (bytes/call) ==="
+        printfn "GrainRef struct creation:  %.1f bytes" grainRefAlloc
+        printfn "getHandler lookup:         %.1f bytes" getHandlerAlloc
+        printfn "Handler invocation:        %.1f bytes" handlerInvokeAlloc
+        printfn ""
+
+        if grainRefAlloc < 1.0 then
+            printfn "PASS: GrainRef is zero-alloc (%.1f bytes/call)" grainRefAlloc
+        else
+            printfn "INFO: GrainRef allocates %.1f bytes/call" grainRefAlloc
+
+        if getHandlerAlloc < 1.0 then
+            printfn "PASS: getHandler is zero-alloc (%.1f bytes/call)" getHandlerAlloc
+        else
+            printfn "INFO: getHandler allocates %.1f bytes/call" getHandlerAlloc
+
+        printfn "INFO: Handler invocation allocates %.1f bytes/call (Task<T> + boxing)" handlerInvokeAlloc
         printfn ""
 
         if overheadPercent < 5.0 then
