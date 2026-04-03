@@ -7,6 +7,9 @@ open Orleans
 open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.FSharp
+open Orleans.Streams
+open Orleans.Runtime
+open System.Collections.Concurrent
 open Testbed.Shared
 
 let _ =
@@ -36,6 +39,7 @@ let runStressTest () =
             |> ignore
 
             clientBuilder.UseRedisClustering(redisConn) |> ignore
+            clientBuilder.AddMemoryStreams("StreamProvider") |> ignore
 
             Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
                 clientBuilder.Services,
@@ -193,10 +197,80 @@ let runStressTest () =
         printfn ""
 
         // ============================================================
+        // TEST 7: Streaming — publish 1000 events, verify delivery
+        // ============================================================
+        let streamEventCount = 1000
+        printfn "TEST 7: Stream — publish %d events, verify delivery..." streamEventCount
+        let streamProvider = host.Services.GetRequiredService<IClusterClient>().GetStreamProvider("StreamProvider")
+        let streamId = StreamId.Create("metrics", "stress-stream-1")
+        let stream = streamProvider.GetStream<MetricEvent>(streamId)
+        let received = ConcurrentBag<MetricEvent>()
+
+        let! sub = stream.SubscribeAsync(
+            Func<MetricEvent, StreamSequenceToken, Task>(fun evt _token -> task {
+                received.Add(evt)
+            }))
+
+        let sw7 = Stopwatch.StartNew()
+        for i in 1..streamEventCount do
+            let evt = { Source = $"sensor-{i % 10}"; Value = float i * 1.5; Timestamp = DateTime.UtcNow }
+            do! stream.OnNextAsync(evt)
+
+        // Wait for delivery
+        do! Task.Delay(2000)
+        sw7.Stop()
+
+        printfn "  Published: %d events" streamEventCount
+        printfn "  Received:  %d events" received.Count
+        printfn "  Time:      %dms (%.0f events/sec)" sw7.ElapsedMilliseconds (float streamEventCount / sw7.Elapsed.TotalSeconds)
+        printfn "  Status:    %s" (if received.Count = streamEventCount then "OK" else $"PARTIAL ({received.Count}/{streamEventCount})")
+
+        do! sub.UnsubscribeAsync()
+        printfn ""
+
+        // ============================================================
+        // TEST 8: Multi-stream — 50 streams in parallel
+        // ============================================================
+        let parallelStreams = 50
+        let eventsPerStream = 100
+        printfn "TEST 8: %d parallel streams x %d events = %d total..." parallelStreams eventsPerStream (parallelStreams * eventsPerStream)
+        let allReceived = ConcurrentBag<string>()
+        let sw8 = Stopwatch.StartNew()
+
+        let! _ =
+            [| for s in 1..parallelStreams -> task {
+                let sid = StreamId.Create("parallel", $"stream-{s}")
+                let strm = streamProvider.GetStream<MetricEvent>(sid)
+                let bag = ConcurrentBag<MetricEvent>()
+
+                let! subscription = strm.SubscribeAsync(
+                    Func<MetricEvent, StreamSequenceToken, Task>(fun evt _token -> task {
+                        bag.Add(evt)
+                        allReceived.Add($"{s}-{evt.Source}")
+                    }))
+
+                for e in 1..eventsPerStream do
+                    let evt = { Source = $"evt-{e}"; Value = float e; Timestamp = DateTime.UtcNow }
+                    do! strm.OnNextAsync(evt)
+
+                do! Task.Delay(500)
+                do! subscription.UnsubscribeAsync()
+            } |]
+            |> Task.WhenAll
+
+        sw8.Stop()
+        let totalStreamEvents = parallelStreams * eventsPerStream
+        printfn "  DONE: %d events across %d streams in %dms (%.0f events/sec)"
+            totalStreamEvents parallelStreams sw8.ElapsedMilliseconds
+            (float totalStreamEvents / sw8.Elapsed.TotalSeconds)
+        printfn "  Total received: %d" allReceived.Count
+        printfn ""
+
+        // ============================================================
         // SUMMARY
         // ============================================================
         let totalGrains = grainCount + grainPool + distCount + roomCount + 1
-        let totalCalls = grainCount + callCount + distCount + totalMsgs + roomCount * 1 + burstCount
+        let totalCalls = grainCount + callCount + distCount + totalMsgs + roomCount * 1 + burstCount + streamEventCount + totalStreamEvents
         printfn "========================================"
         printfn " STRESS TEST COMPLETE"
         printfn "  Total grains: %d" totalGrains
@@ -204,6 +278,7 @@ let runStressTest () =
         printfn "  Chat rooms:   %d" roomCount
         printfn "  Messages:     %d" totalMsgs
         printfn "  Burst single: %d" burstCount
+        printfn "  Streams:      %d events across %d streams" (streamEventCount + totalStreamEvents) (1 + parallelStreams)
         printfn "  2 silos + Redis"
         printfn "========================================"
 

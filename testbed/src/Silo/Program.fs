@@ -125,6 +125,10 @@ builder.UseOrleans(fun (siloBuilder: ISiloBuilder) ->
             opts.ConfigurationOptions <- StackExchange.Redis.ConfigurationOptions.Parse(envRedisConn))
     |> ignore
 
+    // Memory streams for pub/sub testing
+    siloBuilder.AddMemoryStreams("StreamProvider") |> ignore
+    siloBuilder.AddMemoryGrainStorage("PubSubStore") |> ignore
+
     // F# JSON fallback serialization (handles DU, record, option, list without attributes)
     Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
         siloBuilder.Services,
