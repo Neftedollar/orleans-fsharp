@@ -161,6 +161,8 @@ type SiloConfig =
         GrainCollectionAge: TimeSpan option
         /// <summary>Whether to register FSharp.SystemTextJson as a fallback serializer for types without [GenerateSerializer].</summary>
         UseJsonFallbackSerialization: bool
+        /// <summary>Whether to register FSharpBinaryCodec as a binary serializer for F# types without [GenerateSerializer] or [Id] attributes.</summary>
+        UseFSharpBinarySerialization: bool
     }
 
 /// <summary>
@@ -197,6 +199,7 @@ module SiloConfig =
             AdvertisedIpAddress = None
             GrainCollectionAge = None
             UseJsonFallbackSerialization = false
+            UseFSharpBinarySerialization = false
         }
 
     /// <summary>
@@ -396,6 +399,14 @@ module SiloConfig =
                         isSupported = System.Func<System.Type, bool>(fun _ -> true),
                         jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
                     |> ignore))
+            |> ignore
+
+        // Apply F# binary serialization (FSharpBinaryCodec for DU/record/option/list/map without attributes)
+        if config.UseFSharpBinarySerialization then
+            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                siloBuilder.Services,
+                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
+                    Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder |> ignore))
             |> ignore
 
         // Apply startup tasks
@@ -678,6 +689,19 @@ type SiloConfigBuilder() =
     [<CustomOperation("useJsonFallbackSerialization")>]
     member _.UseJsonFallbackSerialization(config: SiloConfig) =
         { config with UseJsonFallbackSerialization = true }
+
+    /// <summary>
+    /// Registers FSharpBinaryCodec as a binary serializer for F# types.
+    /// Types without [GenerateSerializer] or [Id] attributes will be serialized using
+    /// a compact binary format via FSharp.Reflection. Supports DUs, records, options,
+    /// lists, maps, sets, arrays, and tuples.
+    /// This eliminates the need for the C# CodeGen project entirely.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <returns>The updated silo configuration with F# binary serialization enabled.</returns>
+    [<CustomOperation("useFSharpBinarySerialization")>]
+    member _.UseFSharpBinarySerialization(config: SiloConfig) =
+        { config with UseFSharpBinarySerialization = true }
 
     /// <summary>
     /// Registers a custom service configuration function.

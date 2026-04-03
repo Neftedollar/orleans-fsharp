@@ -34,6 +34,7 @@
     <Compile Include="StreamProviders.fs" />
     <Compile Include="Kubernetes.fs" />
     <Compile Include="FSharpSerialization.fs" />
+    <Compile Include="FSharpBinaryCodec.fs" />
     <Compile Include="Scripting.fs" />
     <Compile Include="AssemblyInfo.fs" />
   </ItemGroup>

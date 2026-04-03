@@ -46,6 +46,8 @@ type ClientConfig =
         PreferredGatewayIndex: int option
         /// <summary>Whether to register FSharp.SystemTextJson as a fallback serializer for types without [GenerateSerializer].</summary>
         UseJsonFallbackSerialization: bool
+        /// <summary>Whether to register FSharpBinaryCodec as a binary serializer for F# types without [GenerateSerializer] or [Id] attributes.</summary>
+        UseFSharpBinarySerialization: bool
     }
 
 /// <summary>
@@ -68,6 +70,7 @@ module ClientConfig =
             GatewayListRefreshPeriod = None
             PreferredGatewayIndex = None
             UseJsonFallbackSerialization = false
+            UseFSharpBinarySerialization = false
         }
 
     /// <summary>
@@ -186,6 +189,14 @@ module ClientConfig =
                     |> ignore))
             |> ignore
 
+        // Apply F# binary serialization (FSharpBinaryCodec for DU/record/option/list/map without attributes)
+        if config.UseFSharpBinarySerialization then
+            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                clientBuilder.Services,
+                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
+                    Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder |> ignore))
+            |> ignore
+
         // Apply TLS configuration
         match config.TlsConfig with
         | Some(TlsSubject subject) ->
@@ -258,6 +269,19 @@ type ClientConfigBuilder() =
     [<CustomOperation("useJsonFallbackSerialization")>]
     member _.UseJsonFallbackSerialization(config: ClientConfig) =
         { config with UseJsonFallbackSerialization = true }
+
+    /// <summary>
+    /// Registers FSharpBinaryCodec as a binary serializer for F# types.
+    /// Types without [GenerateSerializer] or [Id] attributes will be serialized using
+    /// a compact binary format via FSharp.Reflection. Supports DUs, records, options,
+    /// lists, maps, sets, arrays, and tuples.
+    /// This eliminates the need for the C# CodeGen project entirely.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <returns>The updated client configuration with F# binary serialization enabled.</returns>
+    [<CustomOperation("useFSharpBinarySerialization")>]
+    member _.UseFSharpBinarySerialization(config: ClientConfig) =
+        { config with UseFSharpBinarySerialization = true }
 
     /// <summary>
     /// Configures the client to use localhost clustering for local development.

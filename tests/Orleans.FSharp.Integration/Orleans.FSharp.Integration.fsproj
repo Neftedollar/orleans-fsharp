@@ -24,6 +24,7 @@
     <Compile Include="BroadcastChannelIntegrationTests.fs" />
     <Compile Include="VersioningIntegrationTests.fs" />
     <Compile Include="SerializationModeIntegrationTests.fs" />
+    <Compile Include="FSharpBinaryCodecIntegrationTests.fs" />
     <Compile Include="TemplateTests.fs" />
   </ItemGroup>
 
