@@ -5,8 +5,44 @@
 ### New Packages
 - **`Orleans.FSharp.Abstractions`** — New C# shim package hosting `IFSharpGrain`, `IFSharpGrainWithGuidKey`, and `IFSharpGrainWithIntKey` interfaces. Orleans source generators run on this project and produce public `Proxy_IFSharpGrain*` classes in the same assembly. Reference this from your silo instead of `Orleans.FSharp.CodeGen`.
 
+### Universal Grain Pattern — code-gen-free grain calls
+
+A brand-new way to define and call F# grains with zero per-grain C# stubs:
+
+```fsharp
+// Register at silo startup
+siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain)
+
+// Call from any F# code — no ICounterGrain interface needed
+let handle = FSharpGrain.ref<PingState, PingCommand> factory "grain-id"
+let! state = handle |> FSharpGrain.send Ping
+
+// GUID and integer keys also supported
+let handle = FSharpGrain.refGuid<MyState, MyCmd> factory (Guid.NewGuid())
+let handle = FSharpGrain.refInt<MyState, MyCmd> factory 42L
+```
+
+**Implementation:**
+- `FSharpGrainImpl` — concrete `Grain` class for string-keyed grains (in Abstractions, auto-discovered by Orleans)
+- `FSharpGrainGuidImpl` — concrete `Grain` class for GUID-keyed grains
+- `FSharpGrainIntImpl` — concrete `Grain` class for integer-keyed grains
+- `UniversalGrainHandlerRegistry` — routes messages to registered F# handlers by DU type name
+- `IUniversalGrainHandler` / `GrainDispatchResult` — C#-to-F# dispatch interface
+- **Correct F# DU dispatch:** nullary DU cases in mixed DUs compile to private `_CaseName` nested types; the registry uses `BindingFlags.Public | BindingFlags.NonPublic` when scanning nested types so all case variants are routed correctly
+
+### New: Observer integration tests
+
+Full end-to-end integration test suite for `FSharpObserverManager<'T>` running in a real `TestCluster`:
+- `Observer.createRef` / `Observer.deleteRef` lifecycle
+- `Observer.subscribe` IDisposable pattern
+- Single and multiple observers, fan-out to N subscribers
+- `Unsubscribe` stops notification delivery
+- Empty broadcast completes without error
+
 ### Improvements
 - `GrainDefinition.invokeReminderHandler` — new C#-callable function for delegating to F# reminder handlers by name; used internally by backward-compat grain stubs
+- 30 new integration tests (universal pattern string/GUID/int keys + observers)
+- 39 new unit tests (GrainDispatchResult, impl class metadata, registry dispatch, FsCheck properties)
 
 ### Breaking changes
 - `IFSharpGrain` no longer inherits `IRemindable`. `IRemindable` is implemented directly by `FSharpGrain<'S,'M>` in `Orleans.FSharp.Runtime`. This avoids pulling the `Microsoft.Orleans.Reminders` source generator into the Abstractions project.
@@ -14,8 +50,9 @@
 ### Migration
 From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` pattern:
 1. Add `Orleans.FSharp.Abstractions` to your silo project
-2. Use `FSharpGrain.ref<'State,'Command> factory key` instead of per-grain `GrainRef.ofString<IMyGrain>`
-3. `Orleans.FSharp.CodeGen` is still available for backward compatibility
+2. Register grains: `services.AddFSharpGrain<State, Command>(myGrainDef)`
+3. Call grains: `FSharpGrain.ref<State, Command> factory "key" |> FSharpGrain.send MyCommand`
+4. `Orleans.FSharp.CodeGen` is still available for backward compatibility (per-grain C# stubs)
 
 ---
 
