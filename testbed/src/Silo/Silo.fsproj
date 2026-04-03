@@ -16,7 +16,8 @@
     <ProjectReference Include="..\Shared\Shared.fsproj" />
     <ProjectReference Include="..\..\..\src\Orleans.FSharp\Orleans.FSharp.fsproj" />
     <ProjectReference Include="..\..\..\src\Orleans.FSharp.Runtime\Orleans.FSharp.Runtime.fsproj" />
-    <ProjectReference Include="..\..\..\src\Orleans.FSharp.CodeGen\Orleans.FSharp.CodeGen.csproj" />
+    <!-- No CodeGen needed: Abstractions is transitively available via Orleans.FSharp
+         and provides Proxy_IFSharpGrain for the universal grain interface pattern. -->
   </ItemGroup>
 
   <ItemGroup>
