@@ -21,6 +21,9 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: nuget
+    permissions:
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -28,5 +31,8 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet build --configuration Release --verbosity quiet
       - run: dotnet pack --configuration Release --output ./nupkgs --verbosity quiet
-      - name: Publish to NuGet.org
-        run: dotnet nuget push "nupkgs/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+      - name: Publish to NuGet.org (trusted publisher)
+        run: |
+          dotnet nuget push "nupkgs/*.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
