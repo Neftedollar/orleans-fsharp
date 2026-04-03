@@ -402,3 +402,56 @@ let ``withFSharpGrain methods exist on GrainMock module`` () =
     test <@ methods |> Array.contains "withFSharpGrain" @>
     test <@ methods |> Array.contains "withFSharpGrainGuid" @>
     test <@ methods |> Array.contains "withFSharpGrainInt" @>
+
+// ── FsCheck property tests for withFSharpGrain ───────────────────────────
+
+open FsCheck
+open FsCheck.Xunit
+
+type AccumulatorCmd = | AddAcc of int | SubAcc of int | ZeroAcc
+
+[<Property>]
+let ``withFSharpGrain: state after n pings equals n`` (n: PositiveInt) =
+    let def =
+        grain {
+            defaultState { Count = 0 }
+            handle (fun state (cmd: MockPingCmd) ->
+                task {
+                    match cmd with
+                    | MockPing     -> let ns = { Count = state.Count + 1 } in return ns, box ns
+                    | MockGetCount -> return state, box state
+                })
+        }
+
+    let key = $"fscheck-ping-{n.Get}"
+    let factory = GrainMock.create() |> GrainMock.withFSharpGrain key def
+    let handle = FSharpGrain.ref<MockPingState, MockPingCmd> factory key
+
+    for _ in 1..n.Get do
+        (handle |> FSharpGrain.post MockPing).GetAwaiter().GetResult()
+
+    let state = (handle |> FSharpGrain.send MockGetCount).GetAwaiter().GetResult()
+    state.Count = n.Get
+
+[<Property>]
+let ``withFSharpGrain: ask result equals handler computation`` (a: PositiveInt) (b: PositiveInt) =
+    // Use ask to verify that the typed result from the handler is returned correctly
+    let def =
+        grain {
+            defaultState 0
+            handleTyped (fun state (cmd: AccumulatorCmd) ->
+                task {
+                    match cmd with
+                    | AddAcc n  -> return state + n, state + n
+                    | SubAcc n  -> return state - n, state - n
+                    | ZeroAcc   -> return 0, 0
+                })
+        }
+
+    let key = $"fscheck-ask-{a.Get}-{b.Get}"
+    let factory = GrainMock.create() |> GrainMock.withFSharpGrain key def
+    let handle = FSharpGrain.ref<int, AccumulatorCmd> factory key
+
+    let r1 = (handle |> FSharpGrain.ask<int, AccumulatorCmd, int> (AddAcc a.Get)).GetAwaiter().GetResult()
+    let r2 = (handle |> FSharpGrain.ask<int, AccumulatorCmd, int> (AddAcc b.Get)).GetAwaiter().GetResult()
+    r1 = a.Get && r2 = a.Get + b.Get
