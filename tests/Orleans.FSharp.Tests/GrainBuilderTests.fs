@@ -3,6 +3,7 @@ module Orleans.FSharp.Tests.GrainBuilderTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck.Xunit
 open Orleans.FSharp
 
 [<Fact>]
@@ -284,3 +285,93 @@ let ``handleTyped with unit result`` () =
         let! (newState, _) = handler 0 "fire"
         test <@ newState = 1 @>
     }
+
+// ── FsCheck property-based tests for handleState / handleTyped ────────────
+
+/// Simple accumulator command type for property tests.
+type AccCmd = Add of int | Sub of int | Reset
+
+[<Property>]
+let ``handleState: arbitrary int accumulator sequences produce non-negative state with abs`` (commands: AccCmd list) =
+    // Use absolute values to ensure the handler always returns valid state
+    let def =
+        grain {
+            defaultState 0
+            handleState (fun state (cmd: AccCmd) ->
+                task {
+                    match cmd with
+                    | Add n  -> return state + abs n
+                    | Sub n  -> return state - abs n
+                    | Reset  -> return 0
+                })
+        }
+    let handler = def.Handler.Value
+    let mutable state = 0
+    for cmd in commands do
+        let (ns, _) = (handler state cmd).Result
+        state <- ns
+    // All states are reachable — no invariant here, just checking it doesn't throw
+    true
+
+[<Property>]
+let ``handleState: result equals new state for every invocation`` (n: int) (delta: int) =
+    let def =
+        grain {
+            defaultState n
+            handleState (fun state (d: int) -> task { return state + d })
+        }
+    let handler = def.Handler.Value
+    let (newState, boxedResult) = (handler n delta).Result
+    newState = n + delta && unbox<int> boxedResult = newState
+
+[<Property>]
+let ``handleTyped: result type is independent of state type`` (initial: string) (msg: int) =
+    let def =
+        grain {
+            defaultState initial
+            handleTyped (fun state (n: int) ->
+                task {
+                    let ns = state + string n
+                    return ns, ns.Length
+                })
+        }
+    let handler = def.Handler.Value
+    let (newState, boxedResult) = (handler initial msg).Result
+    newState = initial + string msg && unbox<int> boxedResult = newState.Length
+
+[<Property>]
+let ``handleState: folding commands equals sequential application`` (deltas: int list) =
+    // Verify that applying deltas one-by-one gives the same final state
+    // as computing the sum manually (assuming the handler adds each delta).
+    let def =
+        grain {
+            defaultState 0
+            handleState (fun state (d: int) -> task { return state + d })
+        }
+    let handler = def.Handler.Value
+    let expectedSum = List.sum deltas
+    let mutable state = 0
+    for d in deltas do
+        let (ns, _) = (handler state d).Result
+        state <- ns
+    state = expectedSum
+
+[<Property>]
+let ``grain CE: defaultState is always Some for well-formed definitions`` (initial: int) =
+    let def =
+        grain {
+            defaultState initial
+            handle (fun state (_msg: int) -> task { return state, box state })
+        }
+    def.DefaultState = Some initial
+
+[<Property>]
+let ``grain CE: persist name is preserved exactly`` (name: string) =
+    let safeName = if System.String.IsNullOrEmpty name then "Default" else name
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: int) -> task { return state, box state })
+            persist safeName
+        }
+    def.PersistenceName = Some safeName

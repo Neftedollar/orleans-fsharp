@@ -206,10 +206,13 @@ Zero C# stubs. Register once with `AddFSharpGrain`, call from anywhere with `FSh
 | `FSharpGrain.refInt<'S,'M>` | `IGrainFactory -> int64 -> FSharpGrainIntHandle<'S,'M>` | Handle for int64-keyed grain |
 | `FSharpGrain.send<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task<'S>` | Send command, return typed state |
 | `FSharpGrain.post<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task` | Fire-and-forget command |
+| `FSharpGrain.ask<'S,'M,'R>` | `'M -> FSharpGrainHandle<'S,'M> -> Task<'R>` | Send command, return typed result (can differ from state) |
 | `FSharpGrain.sendGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task<'S>` | Send to GUID-keyed grain |
 | `FSharpGrain.postGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task` | Post to GUID-keyed grain |
+| `FSharpGrain.askGuid<'S,'M,'R>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task<'R>` | Ask GUID-keyed grain for typed result |
 | `FSharpGrain.sendInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task<'S>` | Send to int64-keyed grain |
 | `FSharpGrain.postInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task` | Post to int64-keyed grain |
+| `FSharpGrain.askInt<'S,'M,'R>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task<'R>` | Ask int64-keyed grain for typed result |
 
 DI registration (call once per grain definition at silo startup):
 
