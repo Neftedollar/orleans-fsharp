@@ -151,12 +151,22 @@ dotnet add package Orleans.FSharp
 dotnet add package Orleans.FSharp.Runtime
 ```
 
+Silo-side proxy generation (required for Orleans to locate your grains):
+
+```bash
+dotnet add package Orleans.FSharp.Abstractions
+```
+
 Optional packages:
 
 ```bash
 dotnet add package Orleans.FSharp.EventSourcing  # Event sourcing
 dotnet add package Orleans.FSharp.Testing         # Test harness + FsCheck
 ```
+
+> **Why `Orleans.FSharp.Abstractions`?** Orleans source generators only run on C# projects.
+> `Abstractions` is a tiny C# shim (no code to write) that lets the Orleans runtime generate
+> the proxy classes for `IFSharpGrain`. Reference it from your silo project — that's it.
 
 ## Project Template
 
@@ -189,8 +199,9 @@ dotnet new orleans-fsharp -n MyApp
 |---|---|
 | `Orleans.FSharp` | Core: grain CE, GrainRef, streaming, logging, reminders, timers, observers, serialization |
 | `Orleans.FSharp.Runtime` | Silo hosting, client config, grain discovery |
+| `Orleans.FSharp.Abstractions` | C# shim — Orleans proxy generation for `IFSharpGrain` (reference from silo) |
 | `Orleans.FSharp.EventSourcing` | Event-sourced grain CE |
-| `Orleans.FSharp.CodeGen` | C# code generation for F# grain types |
+| `Orleans.FSharp.CodeGen` | Optional: per-grain C# code generation for custom grain interfaces (legacy pattern) |
 | `Orleans.FSharp.Testing` | Test harness, GrainArbitrary, GrainMock, log capture |
 | `Orleans.FSharp.Templates` | `dotnet new` project template |
 

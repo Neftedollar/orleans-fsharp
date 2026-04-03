@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### New Packages
+- **`Orleans.FSharp.Abstractions`** — New C# shim package hosting `IFSharpGrain`, `IFSharpGrainWithGuidKey`, and `IFSharpGrainWithIntKey` interfaces. Orleans source generators run on this project and produce public `Proxy_IFSharpGrain*` classes in the same assembly. Reference this from your silo instead of `Orleans.FSharp.CodeGen`.
+
+### Improvements
+- `GrainDefinition.invokeReminderHandler` — new C#-callable function for delegating to F# reminder handlers by name; used internally by backward-compat grain stubs
+
+### Breaking changes
+- `IFSharpGrain` no longer inherits `IRemindable`. `IRemindable` is implemented directly by `FSharpGrain<'S,'M>` in `Orleans.FSharp.Runtime`. This avoids pulling the `Microsoft.Orleans.Reminders` source generator into the Abstractions project.
+
+### Migration
+From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` pattern:
+1. Add `Orleans.FSharp.Abstractions` to your silo project
+2. Use `FSharpGrain.ref<'State,'Command> factory key` instead of per-grain `GrainRef.ofString<IMyGrain>`
+3. `Orleans.FSharp.CodeGen` is still available for backward compatibility
+
+---
+
 ## [1.0.0] - 2026-04-03
 
 ### First stable release — full Orleans 10.0.1 parity from F#

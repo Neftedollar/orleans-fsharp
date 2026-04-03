@@ -6,6 +6,38 @@ open Microsoft.Extensions.DependencyInjection
 open Orleans.Hosting
 open Orleans.TestingHost
 open Xunit
+open Orleans.FSharp
+open Orleans.FSharp.Runtime
+
+// ── Test grain types for the universal IFSharpGrain pattern ──────────────────
+
+/// <summary>State for the integration-test ping grain (universal pattern).</summary>
+[<Orleans.GenerateSerializer>]
+type PingState = { [<Orleans.Id(0u)>] Count: int }
+
+/// <summary>Commands for the integration-test ping grain.</summary>
+[<Orleans.GenerateSerializer>]
+type PingCommand =
+    | [<Orleans.Id(0u)>] Ping
+    | [<Orleans.Id(1u)>] GetCount
+
+/// <summary>Definition of the ping grain used to test <c>FSharpGrain.ref</c>.</summary>
+[<AutoOpen>]
+module TestGrains =
+    let pingGrain =
+        grain {
+            defaultState { Count = 0 }
+            handle (fun state cmd ->
+                task {
+                    match cmd with
+                    | Ping      ->
+                        let ns = { Count = state.Count + 1 }
+                        // Return the new state as both the persisted state and the caller result
+                        // so that FSharpGrain.send<PingState, PingCommand> can cast the result.
+                        return ns, box ns
+                    | GetCount  -> return state, box state
+                })
+        }
 
 /// <summary>
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
@@ -27,6 +59,17 @@ type TestSiloConfigurator() =
                 options.MinimumReminderPeriod <- TimeSpan.FromSeconds(1.0))
             |> ignore
 
+            // Register F# binary serialization so F# types (DUs, records) used in
+            // IFSharpGrain.HandleMessage(object) have generalized codecs and copiers.
+            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                siloBuilder.Services,
+                System.Action<Orleans.Serialization.ISerializerBuilder>(fun b ->
+                    FSharpBinaryCodecRegistration.addToSerializerBuilder b |> ignore))
+            |> ignore
+
+            // Register the universal-pattern ping grain for FSharpGrain.ref tests
+            siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
+
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side
 /// for type alias resolution.
@@ -35,6 +78,14 @@ type TestClientConfigurator() =
     interface IClientBuilderConfigurator with
         member _.Configure(_configuration, clientBuilder: IClientBuilder) =
             clientBuilder.AddMemoryStreams("StreamProvider") |> ignore
+
+            // Register F# binary serialization on the client so the proxy can deep-copy
+            // F# types passed as `object` to IFSharpGrain.HandleMessage.
+            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                clientBuilder.Services,
+                System.Action<Orleans.Serialization.ISerializerBuilder>(fun b ->
+                    FSharpBinaryCodecRegistration.addToSerializerBuilder b |> ignore))
+            |> ignore
 
 /// <summary>
 /// Shared xUnit fixture that starts a TestCluster for integration tests.

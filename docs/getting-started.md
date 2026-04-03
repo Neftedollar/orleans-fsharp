@@ -33,7 +33,7 @@ dotnet new console -lang F# -n MyCounter.Silo
 cd MyCounter.Silo
 dotnet add package Orleans.FSharp
 dotnet add package Orleans.FSharp.Runtime
-dotnet add package Orleans.FSharp.CodeGen
+dotnet add package Orleans.FSharp.Abstractions   # C# shim — enables Orleans proxy generation
 dotnet add package Microsoft.Orleans.Server
 ```
 

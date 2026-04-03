@@ -347,17 +347,85 @@ module SiloBuilderExtensions =
         /// <summary>Gets the current set of registrations.</summary>
         member _.Registrations = registrations
 
+    /// <summary>
+    /// Runtime dispatcher for the universal <c>FSharpGrain.ref</c> pattern.
+    /// Aggregates all <c>AddFSharpGrain&lt;State, Message&gt;</c> registrations and routes
+    /// incoming messages to the correct F# handler by inspecting the message's runtime type.
+    /// Implements <see cref="IUniversalGrainHandler"/> so that <c>FSharpGrainImpl</c> (in
+    /// the C# Abstractions project) can dispatch without referencing F#-specific types.
+    /// </summary>
+    type UniversalGrainHandlerRegistry() =
+        // Keyed by message type full name (Type.FullName of the 'Message type parameter).
+        let mutable handlers: Map<string, obj option -> obj -> Task<GrainDispatchResult>> =
+            Map.empty
+
+        let mutable defaults: Map<string, obj> = Map.empty
+
+        /// <summary>
+        /// Registers a grain definition. Called once per <c>AddFSharpGrain&lt;S,M&gt;</c> invocation.
+        /// Not thread-safe — must be called only during silo startup (single-threaded configuration phase).
+        /// </summary>
+        member _.Register<'State, 'Message>(definition: GrainDefinition<'State, 'Message>) : unit =
+            let msgKey = typeof<'Message>.FullName
+            let simpleHandler = GrainDefinition.getHandler definition
+
+            let h (state: obj option) (msg: obj) : Task<GrainDispatchResult> =
+                task {
+                    let typedState =
+                        match state with
+                        | None ->
+                            match definition.DefaultState with
+                            | Some d -> d
+                            | None ->
+                                Unchecked.defaultof<'State>
+                        | Some s -> s :?> 'State
+
+                    let typedMsg = msg :?> 'Message
+                    let! (newState, result) = simpleHandler typedState typedMsg
+                    return GrainDispatchResult(box newState, result)
+                }
+
+            handlers <- Map.add msgKey h handlers
+
+            match definition.DefaultState with
+            | Some d -> defaults <- Map.add msgKey (box d) defaults
+            | None -> ()
+
+        interface IUniversalGrainHandler with
+
+            /// <inheritdoc/>
+            member _.GetDefaultState(messageType: Type) : obj =
+                defaults |> Map.tryFind messageType.FullName |> Option.defaultValue null
+
+            /// <inheritdoc/>
+            member _.Handle(currentState: obj, message: obj) : Task<GrainDispatchResult> =
+                let key = message.GetType().FullName
+
+                match handlers |> Map.tryFind key with
+                | None ->
+                    raise (
+                        InvalidOperationException(
+                            $"No handler registered for message type '{key}'. "
+                            + "Ensure AddFSharpGrain<State, Message>() was called in the silo configurator."
+                        )
+                    )
+                | Some h ->
+                    let state = if isNull currentState then None else Some currentState
+                    h state message
+
     type IServiceCollection with
 
         /// <summary>
         /// Registers an F# GrainDefinition as a singleton service that the FSharpGrain dispatcher can resolve.
+        /// Also wires the definition into the universal <see cref="IUniversalGrainHandler"/> so that
+        /// <c>FSharpGrain.ref&lt;State, Message&gt;</c> works without per-grain C# stubs.
         /// </summary>
         /// <param name="definition">The grain definition to register.</param>
         /// <returns>The service collection for chaining.</returns>
         member services.AddFSharpGrain<'State, 'Message>(definition: GrainDefinition<'State, 'Message>) : IServiceCollection =
             let key = $"{typeof<'State>.FullName}+{typeof<'Message>.FullName}"
 
-            // Get or create the registry
+            // ── GrainRegistry (duplicate-check tracking) ──────────────────────────
             let registry =
                 let existing =
                     services
@@ -374,4 +442,26 @@ module SiloBuilderExtensions =
                     r
 
             registry.Register(key, typeof<'State>)
+
+            // ── UniversalGrainHandlerRegistry (IUniversalGrainHandler impl) ───────
+            let handlerRegistry =
+                let existing =
+                    services
+                    |> Seq.tryFind (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
+
+                match existing with
+                | Some sd ->
+                    match sd.ImplementationInstance with
+                    | :? UniversalGrainHandlerRegistry as r -> r
+                    | _ -> invalidOp "UniversalGrainHandlerRegistry service was registered but ImplementationInstance is unexpected type"
+                | None ->
+                    let r = UniversalGrainHandlerRegistry()
+                    // Register as both its own type (for mutation access during startup)
+                    // and as IUniversalGrainHandler (for injection into FSharpGrainImpl).
+                    services.AddSingleton<UniversalGrainHandlerRegistry>(r) |> ignore
+                    services.AddSingleton<IUniversalGrainHandler>(r) |> ignore
+                    r
+
+            handlerRegistry.Register<'State, 'Message>(definition)
+
             services.AddSingleton<GrainDefinition<'State, 'Message>>(definition)
