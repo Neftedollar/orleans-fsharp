@@ -125,6 +125,8 @@ let ``grain CE handleWithContextCancellable handler receives context and token``
                 GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
                 ServiceProvider = Unchecked.defaultof<IServiceProvider>
                 States = Map.empty
+                DeactivateOnIdle = None
+                DelayDeactivation = None
             }
 
         let! _ = handler ctx 0 5 cts.Token
@@ -193,6 +195,8 @@ let ``getContextHandler falls back to CancellableContextHandler with None token`
                 GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
                 ServiceProvider = Unchecked.defaultof<IServiceProvider>
                 States = Map.empty
+                DeactivateOnIdle = None
+                DelayDeactivation = None
             }
 
         let! (newState, _) = handler ctx 10 5
@@ -217,6 +221,8 @@ let ``getCancellableContextHandler falls back through all handler variants`` () 
                 GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
                 ServiceProvider = Unchecked.defaultof<IServiceProvider>
                 States = Map.empty
+                DeactivateOnIdle = None
+                DelayDeactivation = None
             }
 
         let! (newState, _) = handler1 ctx 10 5 CancellationToken.None
@@ -247,6 +253,8 @@ let ``getCancellableContextHandler passes token to cancellable handler`` () =
                 GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
                 ServiceProvider = Unchecked.defaultof<IServiceProvider>
                 States = Map.empty
+                DeactivateOnIdle = None
+                DelayDeactivation = None
             }
 
         let! _ = handler ctx 0 1 cts.Token

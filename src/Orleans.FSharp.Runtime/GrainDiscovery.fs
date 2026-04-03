@@ -97,6 +97,10 @@ type FSharpGrain<'State, 'Message>
     let mutable currentState = definition.DefaultState
     let mutable additionalStates: Map<string, obj> = Map.empty
 
+    /// <summary>Internal bridge for the protected DelayDeactivation method, callable from lambdas.</summary>
+    member internal this.InternalDelayDeactivation(delay: System.TimeSpan) =
+        this.DelayDeactivation(delay)
+
     /// <summary>
     /// Called when the grain is activated. Restores persisted state and runs the onActivate hook.
     /// Initializes any additional named persistent states declared in the grain definition.
@@ -184,6 +188,22 @@ type FSharpGrain<'State, 'Message>
         }
 
     /// <summary>
+    /// Participates in the grain lifecycle by subscribing hooks declared in the GrainDefinition.
+    /// Each hook is registered at its specified lifecycle stage and executed during grain activation.
+    /// </summary>
+    member _.Participate(lifecycle: IGrainLifecycle) =
+        for KeyValue(stage, hooks) in definition.LifecycleHooks do
+            for hook in hooks do
+                lifecycle.Subscribe(
+                    typeof<FSharpGrain<'State, 'Message>>.FullName,
+                    stage,
+                    (fun ct -> hook ct :> Task))
+                |> ignore
+
+    interface ILifecycleParticipant<IGrainLifecycle> with
+        member this.Participate(lifecycle) = this.Participate(lifecycle)
+
+    /// <summary>
     /// Handles an incoming message by delegating to the GrainDefinition handler.
     /// Updates state and persists it if a storage provider is configured.
     /// Passes a GrainContext to context-aware handlers for grain-to-grain communication.
@@ -202,6 +222,8 @@ type FSharpGrain<'State, 'Message>
                 GrainFactory = gf
                 ServiceProvider = sp
                 States = additionalStates
+                DeactivateOnIdle = Some(fun () -> (this :> IGrainBase).DeactivateOnIdle())
+                DelayDeactivation = Some(fun delay -> this.InternalDelayDeactivation(delay))
             }
         let handler = GrainDefinition.getCancellableContextHandler definition
 

@@ -96,6 +96,8 @@ let ``GrainContext has States field`` () =
             GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
             ServiceProvider = Unchecked.defaultof<IServiceProvider>
             States = Map.empty
+            DeactivateOnIdle = None
+            DelayDeactivation = None
         }
 
     test <@ ctx.States |> Map.isEmpty @>
@@ -107,6 +109,8 @@ let ``GrainContext.getState throws KeyNotFoundException for missing state`` () =
             GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
             ServiceProvider = Unchecked.defaultof<IServiceProvider>
             States = Map.empty
+            DeactivateOnIdle = None
+            DelayDeactivation = None
         }
 
     Assert.Throws<System.Collections.Generic.KeyNotFoundException>(fun () ->
@@ -120,6 +124,8 @@ let ``GrainContext.getState error message contains state name`` () =
             GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
             ServiceProvider = Unchecked.defaultof<IServiceProvider>
             States = Map.empty
+            DeactivateOnIdle = None
+            DelayDeactivation = None
         }
 
     let ex =

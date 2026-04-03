@@ -10,6 +10,8 @@ open Orleans.Hosting
 open Orleans.FSharp.Versioning
 open Orleans.Streams
 open Serilog
+open System.Threading
+open Microsoft.Extensions.Diagnostics.HealthChecks
 
 /// <summary>
 /// Specifies how the silo discovers and communicates with other silos in the cluster.
@@ -95,6 +97,10 @@ type SiloConfig =
         OutgoingFilters: IOutgoingGrainCallFilter list
         /// <summary>GrainService types to register with the silo. GrainServices run on every silo.</summary>
         GrainServiceTypes: Type list
+        /// <summary>Startup tasks to run when the silo starts. Each task receives IServiceProvider and CancellationToken.</summary>
+        StartupTasks: (IServiceProvider -> CancellationToken -> Tasks.Task) list
+        /// <summary>Whether to register Orleans health checks with the DI container.</summary>
+        EnableHealthChecks: bool
     }
 
 /// <summary>
@@ -119,6 +125,8 @@ module SiloConfig =
             IncomingFilters = []
             OutgoingFilters = []
             GrainServiceTypes = []
+            StartupTasks = []
+            EnableHealthChecks = false
         }
 
     /// <summary>
@@ -250,6 +258,11 @@ module SiloConfig =
         |> List.iter (fun serviceType ->
             GrainServicesSiloBuilderExtensions.AddGrainService(siloBuilder.Services, serviceType) |> ignore)
 
+        // Apply startup tasks
+        config.StartupTasks
+        |> List.iter (fun startupTask ->
+            siloBuilder.AddStartupTask(fun sp ct -> startupTask sp ct) |> ignore)
+
     /// <summary>
     /// Applies the silo configuration to a HostApplicationBuilder.
     /// Calls UseOrleans on the builder and applies all configured providers.
@@ -266,6 +279,10 @@ module SiloConfig =
             builder.Services.AddLogging(fun loggingBuilder ->
                 loggingBuilder.AddSerilog() |> ignore)
             |> ignore
+
+        // Apply health checks
+        if config.EnableHealthChecks then
+            builder.Services.AddHealthChecks() |> ignore
 
         // Apply custom services
         config.CustomServices
@@ -580,6 +597,30 @@ type SiloConfigBuilder() =
         { config with
             StreamProviders = config.StreamProviders |> Map.add name (PersistentStream(adapterFactory, configurator))
         }
+
+    /// <summary>
+    /// Adds a startup task that runs when the silo starts.
+    /// The task receives an IServiceProvider and a CancellationToken.
+    /// Multiple addStartupTask calls accumulate (they do not replace each other).
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="task">The startup task function.</param>
+    /// <returns>The updated silo configuration with the startup task added.</returns>
+    [<CustomOperation("addStartupTask")>]
+    member _.AddStartupTask(config: SiloConfig, task: IServiceProvider -> CancellationToken -> Tasks.Task) =
+        { config with
+            StartupTasks = config.StartupTasks @ [ task ]
+        }
+
+    /// <summary>
+    /// Enables health checks for the silo by registering IHealthChecksBuilder with the DI container.
+    /// Map the health check endpoints in your ASP.NET Core pipeline to expose them.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <returns>The updated silo configuration with health checks enabled.</returns>
+    [<CustomOperation("enableHealthChecks")>]
+    member _.EnableHealthChecks(config: SiloConfig) =
+        { config with EnableHealthChecks = true }
 
     /// <summary>Returns the completed silo configuration.</summary>
     member _.Run(config: SiloConfig) = config

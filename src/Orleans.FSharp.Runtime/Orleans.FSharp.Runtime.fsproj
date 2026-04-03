@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <Compile Include="SiloConfigBuilder.fs" />
+    <Compile Include="ClientConfigBuilder.fs" />
     <Compile Include="SerilogIntegration.fs" />
     <Compile Include="GrainDiscovery.fs" />
     <Compile Include="Library.fs" />
@@ -13,6 +14,7 @@
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.*" />
   </ItemGroup>
 
   <ItemGroup>

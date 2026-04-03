@@ -43,6 +43,12 @@ type GrainContext =
         /// <summary>Named persistent states for grains with multiple state stores.
         /// Each entry maps a state name to a boxed IPersistentState instance.</summary>
         States: Map<string, obj>
+        /// <summary>Requests the runtime to deactivate this grain when idle.
+        /// Set by the runtime grain host; None when running outside the runtime (e.g., unit tests).</summary>
+        DeactivateOnIdle: (unit -> unit) option
+        /// <summary>Instructs the runtime to delay deactivation of this grain for at least the specified duration.
+        /// Set by the runtime grain host; None when running outside the runtime (e.g., unit tests).</summary>
+        DelayDeactivation: (TimeSpan -> unit) option
     }
 
 /// <summary>
@@ -78,6 +84,32 @@ module GrainContext =
         | Some boxedState -> boxedState :?> IPersistentState<'T>
         | None ->
             raise (System.Collections.Generic.KeyNotFoundException($"Named state '{name}' not found in grain context. Ensure it was declared using 'additionalState' in the grain CE."))
+
+    /// <summary>
+    /// Requests the runtime to deactivate this grain activation when it becomes idle.
+    /// Must be called from within a grain handler running in the Orleans runtime.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to grain lifecycle control.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when called outside the Orleans runtime.</exception>
+    let deactivateOnIdle (ctx: GrainContext) : unit =
+        match ctx.DeactivateOnIdle with
+        | Some f -> f ()
+        | None ->
+            invalidOp "DeactivateOnIdle is not available outside the Orleans runtime. Ensure the grain is running inside a silo."
+
+    /// <summary>
+    /// Instructs the runtime to delay deactivation of this grain activation for at least the specified duration.
+    /// Useful for keeping a grain alive after handling a message to avoid repeated activation overhead.
+    /// Must be called from within a grain handler running in the Orleans runtime.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to grain lifecycle control.</param>
+    /// <param name="delay">The minimum duration to delay deactivation.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when called outside the Orleans runtime.</exception>
+    let delayDeactivation (ctx: GrainContext) (delay: TimeSpan) : unit =
+        match ctx.DelayDeactivation with
+        | Some f -> f delay
+        | None ->
+            invalidOp "DelayDeactivation is not available outside the Orleans runtime. Ensure the grain is running inside a silo."
 
     /// <summary>
     /// Gets a type-safe reference to a grain by string key from within a grain handler.
@@ -216,6 +248,10 @@ type GrainDefinition<'State, 'Message> =
         /// In C# CodeGen, maps to [MayInterleave("PredicateMethodName")] on the grain class.
         /// The predicate receives the incoming InvokeMethodRequest and returns bool.</summary>
         MayInterleavePredicate: string option
+        /// <summary>Lifecycle hooks keyed by GrainLifecycleStage (int).
+        /// Each hook is invoked during the corresponding lifecycle stage with a CancellationToken.
+        /// Standard stages: First=2000, SetupState=4000, Activate=6000, Last=int.MaxValue.</summary>
+        LifecycleHooks: Map<int, (CancellationToken -> Task<unit>) list>
     }
 
 /// <summary>
@@ -396,6 +432,7 @@ type GrainBuilder() =
             OneWayMethods = Set.empty
             ReadOnlyMethods = Set.empty
             MayInterleavePredicate = None
+            LifecycleHooks = Map.empty
         }
 
     /// <summary>
@@ -815,6 +852,32 @@ type GrainBuilder() =
             PlacementStrategy = PlacementStrategy.Custom strategyType
         }
 
+    /// <summary>
+    /// Registers a lifecycle hook at the specified grain lifecycle stage.
+    /// The hook is invoked with a CancellationToken during grain activation.
+    /// Standard stages: GrainLifecycleStage.First (2000), SetupState (4000), Activate (6000), Last (int.MaxValue).
+    /// Multiple hooks at the same stage are executed in registration order.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="stage">The lifecycle stage (int) at which the hook runs.</param>
+    /// <param name="hook">The async hook function receiving a CancellationToken.</param>
+    /// <returns>The updated grain definition with the lifecycle hook registered.</returns>
+    [<CustomOperation("onLifecycleStage")>]
+    member _.OnLifecycleStage
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            stage: int,
+            hook: CancellationToken -> Task<unit>
+        ) =
+        let existing =
+            definition.LifecycleHooks
+            |> Map.tryFind stage
+            |> Option.defaultValue []
+
+        { definition with
+            LifecycleHooks = definition.LifecycleHooks |> Map.add stage (existing @ [ hook ])
+        }
+
     /// <summary>Returns the completed grain definition. Validates constraints:
     /// defaultState must be explicitly set, at least one handler must be registered,
     /// and stateless workers cannot use persistent state.</summary>
@@ -848,6 +911,6 @@ module GrainBuilderInstance =
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
     /// preferLocalPlacement, randomPlacement, hashBasedPlacement, activationCountPlacement,
     /// resourceOptimizedPlacement, siloRolePlacement, customPlacement,
-    /// reentrant, interleave, readOnly, mayInterleave, oneWay.
+    /// reentrant, interleave, readOnly, mayInterleave, oneWay, onLifecycleStage.
     /// </summary>
     let grain = GrainBuilder()

@@ -54,6 +54,11 @@
     <Compile Include="SerializationTests.fs" />
     <Compile Include="StateMigrationTests.fs" />
     <Compile Include="ShutdownTests.fs" />
+    <Compile Include="ClientConfigTests.fs" />
+    <Compile Include="DeactivationControlTests.fs" />
+    <Compile Include="GrainLifecycleTests.fs" />
+    <Compile Include="StartupTaskTests.fs" />
+    <Compile Include="HealthCheckTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 
