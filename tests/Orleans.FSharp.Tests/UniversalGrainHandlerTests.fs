@@ -82,6 +82,54 @@ let ``FSharpGrainImpl has exactly one constructor taking IUniversalGrainHandler`
     test <@ ps.Length = 1 @>
     test <@ ps.[0].ParameterType = typeof<IUniversalGrainHandler> @>
 
+// ── FSharpGrainGuidImpl metadata ─────────────────────────────────────────────
+
+[<Fact>]
+let ``FSharpGrainGuidImpl is a sealed non-abstract class`` () =
+    let t = typeof<FSharpGrainGuidImpl>
+    test <@ not t.IsAbstract @>
+    test <@ t.IsSealed @>
+
+[<Fact>]
+let ``FSharpGrainGuidImpl implements IFSharpGrainWithGuidKey`` () =
+    test <@ typeof<IFSharpGrainWithGuidKey>.IsAssignableFrom(typeof<FSharpGrainGuidImpl>) @>
+
+[<Fact>]
+let ``FSharpGrainGuidImpl extends Orleans.Grain`` () =
+    test <@ typeof<Orleans.Grain>.IsAssignableFrom(typeof<FSharpGrainGuidImpl>) @>
+
+[<Fact>]
+let ``FSharpGrainGuidImpl has exactly one constructor taking IUniversalGrainHandler`` () =
+    let ctors = typeof<FSharpGrainGuidImpl>.GetConstructors()
+    test <@ ctors.Length = 1 @>
+    let ps = ctors.[0].GetParameters()
+    test <@ ps.Length = 1 @>
+    test <@ ps.[0].ParameterType = typeof<IUniversalGrainHandler> @>
+
+// ── FSharpGrainIntImpl metadata ──────────────────────────────────────────────
+
+[<Fact>]
+let ``FSharpGrainIntImpl is a sealed non-abstract class`` () =
+    let t = typeof<FSharpGrainIntImpl>
+    test <@ not t.IsAbstract @>
+    test <@ t.IsSealed @>
+
+[<Fact>]
+let ``FSharpGrainIntImpl implements IFSharpGrainWithIntKey`` () =
+    test <@ typeof<IFSharpGrainWithIntKey>.IsAssignableFrom(typeof<FSharpGrainIntImpl>) @>
+
+[<Fact>]
+let ``FSharpGrainIntImpl extends Orleans.Grain`` () =
+    test <@ typeof<Orleans.Grain>.IsAssignableFrom(typeof<FSharpGrainIntImpl>) @>
+
+[<Fact>]
+let ``FSharpGrainIntImpl has exactly one constructor taking IUniversalGrainHandler`` () =
+    let ctors = typeof<FSharpGrainIntImpl>.GetConstructors()
+    test <@ ctors.Length = 1 @>
+    let ps = ctors.[0].GetParameters()
+    test <@ ps.Length = 1 @>
+    test <@ ps.[0].ParameterType = typeof<IUniversalGrainHandler> @>
+
 // ── IUniversalGrainHandler interface ────────────────────────────────────────
 
 [<Fact>]

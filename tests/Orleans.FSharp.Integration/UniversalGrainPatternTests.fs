@@ -1,10 +1,13 @@
 /// <summary>
 /// Integration tests for the universal IFSharpGrain pattern — using FSharpGrain.ref/send/post
-/// instead of per-grain interfaces. Verifies that grains registered via AddFSharpGrain can be
-/// called from a client with no per-grain C# stubs and no CodeGen project reference.
+/// (string key), FSharpGrain.refGuid/sendGuid/postGuid (GUID key), and
+/// FSharpGrain.refInt/sendInt/postInt (integer key) instead of per-grain interfaces.
+/// Verifies that grains registered via AddFSharpGrain can be called from a client
+/// with no per-grain C# stubs and no CodeGen project reference.
 /// </summary>
 module Orleans.FSharp.Integration.UniversalGrainPatternTests
 
+open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
@@ -152,4 +155,107 @@ type UniversalPatternTests(fixture: ClusterFixture) =
 
             test <@ ps.Count = 1 @>
             test <@ ts.Text = "world" @>
+        }
+
+    // ── GUID key variant (FSharpGrain.refGuid / sendGuid / postGuid) ──────────
+
+    [<Fact>]
+    member _.``FSharpGrain.refGuid creates a working grain handle`` () =
+        task {
+            let key = Guid.NewGuid()
+            let handle = FSharpGrain.refGuid<PingState, PingCommand> fixture.GrainFactory key
+            let! state = handle |> FSharpGrain.sendGuid Ping
+            test <@ state.Count = 1 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.sendGuid returns updated state`` () =
+        task {
+            let key = Guid.NewGuid()
+            let handle = FSharpGrain.refGuid<PingState, PingCommand> fixture.GrainFactory key
+            let! _ = handle |> FSharpGrain.sendGuid Ping
+            let! _ = handle |> FSharpGrain.sendGuid Ping
+            let! state = handle |> FSharpGrain.sendGuid GetCount
+            test <@ state.Count = 2 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.postGuid fires without waiting for result`` () =
+        task {
+            let key = Guid.NewGuid()
+            let handle = FSharpGrain.refGuid<PingState, PingCommand> fixture.GrainFactory key
+            do! handle |> FSharpGrain.postGuid Ping
+            let! state = handle |> FSharpGrain.sendGuid GetCount
+            test <@ state.Count >= 1 @>
+        }
+
+    [<Fact>]
+    member _.``Same GUID key returns same virtual actor`` () =
+        task {
+            let key = Guid.NewGuid()
+            let h1 = FSharpGrain.refGuid<PingState, PingCommand> fixture.GrainFactory key
+            let h2 = FSharpGrain.refGuid<PingState, PingCommand> fixture.GrainFactory key
+            let! _ = h1 |> FSharpGrain.sendGuid Ping
+            let! state = h2 |> FSharpGrain.sendGuid GetCount
+            test <@ state.Count = 1 @>
+        }
+
+    // ── Integer key variant (FSharpGrain.refInt / sendInt / postInt) ──────────
+
+    [<Fact>]
+    member _.``FSharpGrain.refInt creates a working grain handle`` () =
+        task {
+            let handle = FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory 1001L
+            let! state = handle |> FSharpGrain.sendInt Ping
+            test <@ state.Count = 1 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.sendInt returns updated state`` () =
+        task {
+            let handle = FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory 2001L
+            let! _ = handle |> FSharpGrain.sendInt Ping
+            let! _ = handle |> FSharpGrain.sendInt Ping
+            let! state = handle |> FSharpGrain.sendInt GetCount
+            test <@ state.Count = 2 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.postInt fires without waiting for result`` () =
+        task {
+            let handle = FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory 3001L
+            do! handle |> FSharpGrain.postInt Ping
+            let! state = handle |> FSharpGrain.sendInt GetCount
+            test <@ state.Count >= 1 @>
+        }
+
+    [<Fact>]
+    member _.``Same integer key returns same virtual actor`` () =
+        task {
+            let h1 = FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory 4001L
+            let h2 = FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory 4001L
+            let! _ = h1 |> FSharpGrain.sendInt Ping
+            let! state = h2 |> FSharpGrain.sendInt GetCount
+            test <@ state.Count = 1 @>
+        }
+
+    [<Fact>]
+    member _.``String, GUID, and int key grain instances are independent`` () =
+        task {
+            let key = Guid.NewGuid()
+            let gs = FSharpGrain.ref<PingState, PingCommand> fixture.GrainFactory "key-type-iso"
+            let gg = FSharpGrain.refGuid<PingState, PingCommand> fixture.GrainFactory key
+            let gi = FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory 9999L
+
+            let! _ = gs |> FSharpGrain.send Ping
+            let! _ = gs |> FSharpGrain.send Ping
+            let! _ = gg |> FSharpGrain.sendGuid Ping
+
+            let! ss = gs |> FSharpGrain.send GetCount
+            let! sg = gg |> FSharpGrain.sendGuid GetCount
+            let! si = gi |> FSharpGrain.sendInt GetCount
+
+            test <@ ss.Count = 2 @>
+            test <@ sg.Count = 1 @>
+            test <@ si.Count = 0 @>
         }

@@ -109,7 +109,8 @@ public interface IUniversalGrainHandler
 }
 
 /// <summary>
-/// Universal concrete grain class for all F# grains using the <c>FSharpGrain.ref</c> pattern.
+/// Universal concrete grain class for all F# grains using the <c>FSharpGrain.ref</c> pattern
+/// (string key variant).
 /// Orleans source generators produce the <c>Proxy_IFSharpGrain</c> proxy from this assembly
 /// because this concrete class implements <see cref="IFSharpGrain"/>.
 /// </summary>
@@ -127,9 +128,7 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
     /// <summary>
     /// Initialises the grain with the universal message dispatcher resolved from silo DI.
     /// </summary>
-    /// <param name="handler">
-    /// The universal dispatcher registered via <c>AddFSharpGrain</c>.
-    /// </param>
+    /// <param name="handler">The universal dispatcher registered via <c>AddFSharpGrain</c>.</param>
     public FSharpGrainImpl(IUniversalGrainHandler handler)
     {
         _handler = handler;
@@ -138,20 +137,79 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
     /// <inheritdoc/>
     public async Task<object> HandleMessage(object message)
     {
-        // Lazy state initialisation: use default state on the first message.
         _currentState ??= _handler.GetDefaultState(message.GetType());
-
         var dispatch = await _handler.Handle(_currentState, message);
         _currentState = dispatch.NewState;
-
-        // Orleans requires a non-null return value from Task<object>.
         return dispatch.Result ?? (object)Unit.Default;
     }
 
-    // Marker struct returned when the handler produces a null result,
-    // to keep Orleans happy with the non-null Task<object> contract.
-    private readonly struct Unit
+    private readonly struct Unit { public static readonly Unit Default = default; }
+}
+
+/// <summary>
+/// Universal concrete grain class for all F# grains using the <c>FSharpGrain.refGuid</c> pattern
+/// (GUID key variant).
+/// </summary>
+/// <remarks>
+/// State is kept purely in memory. For durable persistence use the typed
+/// <c>FSharpGrain&lt;State, Message&gt;</c> pattern in Orleans.FSharp.Runtime.
+/// </remarks>
+public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
+{
+    private readonly IUniversalGrainHandler _handler;
+    private object? _currentState;
+
+    /// <summary>
+    /// Initialises the grain with the universal message dispatcher resolved from silo DI.
+    /// </summary>
+    /// <param name="handler">The universal dispatcher registered via <c>AddFSharpGrain</c>.</param>
+    public FSharpGrainGuidImpl(IUniversalGrainHandler handler)
     {
-        public static readonly Unit Default = default;
+        _handler = handler;
     }
+
+    /// <inheritdoc/>
+    public async Task<object> HandleMessage(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message);
+        _currentState = dispatch.NewState;
+        return dispatch.Result ?? (object)Unit.Default;
+    }
+
+    private readonly struct Unit { public static readonly Unit Default = default; }
+}
+
+/// <summary>
+/// Universal concrete grain class for all F# grains using the <c>FSharpGrain.refInt</c> pattern
+/// (integer key variant).
+/// </summary>
+/// <remarks>
+/// State is kept purely in memory. For durable persistence use the typed
+/// <c>FSharpGrain&lt;State, Message&gt;</c> pattern in Orleans.FSharp.Runtime.
+/// </remarks>
+public sealed class FSharpGrainIntImpl : Grain, IFSharpGrainWithIntKey
+{
+    private readonly IUniversalGrainHandler _handler;
+    private object? _currentState;
+
+    /// <summary>
+    /// Initialises the grain with the universal message dispatcher resolved from silo DI.
+    /// </summary>
+    /// <param name="handler">The universal dispatcher registered via <c>AddFSharpGrain</c>.</param>
+    public FSharpGrainIntImpl(IUniversalGrainHandler handler)
+    {
+        _handler = handler;
+    }
+
+    /// <inheritdoc/>
+    public async Task<object> HandleMessage(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message);
+        _currentState = dispatch.NewState;
+        return dispatch.Result ?? (object)Unit.Default;
+    }
+
+    private readonly struct Unit { public static readonly Unit Default = default; }
 }
