@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageType>Template</PackageType>
+    <PackageId>Orleans.FSharp.Templates</PackageId>
+    <PackageVersion>2.0.0</PackageVersion>
+    <Title>Orleans F# Project Templates</Title>
+    <Authors>Orleans.FSharp</Authors>
+    <Description>Project templates for building Orleans applications with idiomatic F#. Includes grain definitions, silo configuration, C# code generation bridge, and property-based tests.</Description>
+    <PackageTags>dotnet-new;templates;fsharp;orleans;actor-model</PackageTags>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- Template packages should not build or produce output -->
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <ContentTargetFolders>content</ContentTargetFolders>
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+
+    <!-- Suppress warnings that don't apply to template packages -->
+    <NoWarn>NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="orleans-fsharp\**\*" Exclude="orleans-fsharp\**\bin\**;orleans-fsharp\**\obj\**" />
+    <Compile Remove="**\*" />
+  </ItemGroup>
+
+</Project>

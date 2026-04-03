@@ -17,6 +17,9 @@
     <Compile Include="ReentrancyIntegrationTests.fs" />
     <Compile Include="StatelessWorkerIntegrationTests.fs" />
     <Compile Include="EventSourcingIntegrationTests.fs" />
+    <Compile Include="DeclarativeTimerIntegrationTests.fs" />
+    <Compile Include="FilterIntegrationTests.fs" />
+    <Compile Include="RequestCtxIntegrationTests.fs" />
     <Compile Include="ScriptingTests.fs" />
     <Compile Include="TemplateTests.fs" />
   </ItemGroup>

@@ -29,12 +29,6 @@ module OrleansTypes =
     /// <summary>Alias for Orleans IGrainWithIntegerKey interface.</summary>
     type IGrainWithIntegerKey = Orleans.IGrainWithIntegerKey
 
-    /// <summary>Alias for Orleans IGrainWithGuidCompoundKey interface.</summary>
-    type IGrainWithGuidCompoundKey = Orleans.IGrainWithGuidCompoundKey
-
-    /// <summary>Alias for Orleans IGrainWithIntegerCompoundKey interface.</summary>
-    type IGrainWithIntegerCompoundKey = Orleans.IGrainWithIntegerCompoundKey
-
     /// <summary>Alias for Orleans IGrainFactory interface.</summary>
     type IGrainFactory = Orleans.IGrainFactory
 

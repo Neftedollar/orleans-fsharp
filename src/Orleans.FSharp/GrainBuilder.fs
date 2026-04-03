@@ -110,6 +110,36 @@ module GrainContext =
         : GrainRef<'TInterface, int64> =
         GrainRef.ofInt64<'TInterface> ctx.GrainFactory key
 
+    /// <summary>
+    /// Gets a type-safe reference to a grain by compound GUID+string key from within a grain handler.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to the grain factory.</param>
+    /// <param name="guid">The GUID part of the compound key.</param>
+    /// <param name="ext">The string extension part of the compound key.</param>
+    /// <typeparam name="'TInterface">The grain interface type, constrained to IGrainWithGuidCompoundKey.</typeparam>
+    /// <returns>A type-safe grain reference with a CompoundGuidKey.</returns>
+    let getGrainByGuidCompound<'TInterface when 'TInterface :> IGrainWithGuidCompoundKey>
+        (ctx: GrainContext)
+        (guid: Guid)
+        (ext: string)
+        : GrainRef<'TInterface, CompoundGuidKey> =
+        GrainRef.ofGuidCompound<'TInterface> ctx.GrainFactory guid ext
+
+    /// <summary>
+    /// Gets a type-safe reference to a grain by compound int64+string key from within a grain handler.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to the grain factory.</param>
+    /// <param name="key">The int64 part of the compound key.</param>
+    /// <param name="ext">The string extension part of the compound key.</param>
+    /// <typeparam name="'TInterface">The grain interface type, constrained to IGrainWithIntegerCompoundKey.</typeparam>
+    /// <returns>A type-safe grain reference with a CompoundIntKey.</returns>
+    let getGrainByIntCompound<'TInterface when 'TInterface :> IGrainWithIntegerCompoundKey>
+        (ctx: GrainContext)
+        (key: int64)
+        (ext: string)
+        : GrainRef<'TInterface, CompoundIntKey> =
+        GrainRef.ofIntCompound<'TInterface> ctx.GrainFactory key ext
+
 /// <summary>
 /// Defines the complete specification for an F# grain, including its initial state,
 /// message handler, persistence configuration, and lifecycle hooks.
@@ -168,6 +198,9 @@ type GrainDefinition<'State, 'Message> =
         PlacementStrategy: PlacementStrategy
         /// <summary>Named additional persistent states. Each entry maps a state name to its storage provider name, default value, and type.</summary>
         AdditionalStates: Map<string, AdditionalStateSpec>
+        /// <summary>Set of method names that should be marked with the [OneWay] attribute in C# CodeGen.
+        /// One-way methods are fire-and-forget: the caller does not wait for the grain to finish processing.</summary>
+        OneWayMethods: Set<string>
     }
 
 /// <summary>
@@ -345,6 +378,7 @@ type GrainBuilder() =
             MaxLocalWorkers = None
             PlacementStrategy = PlacementStrategy.Default
             AdditionalStates = Map.empty
+            OneWayMethods = Set.empty
         }
 
     /// <summary>
@@ -666,6 +700,20 @@ type GrainBuilder() =
             PlacementStrategy = PlacementStrategy.HashBased
         }
 
+    /// <summary>
+    /// Marks a specific method as one-way (fire-and-forget).
+    /// In C# CodeGen, this corresponds to the [OneWay] attribute on the interface method.
+    /// One-way methods return immediately to the caller without waiting for the grain to finish processing.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="methodName">The name of the method to mark as one-way.</param>
+    /// <returns>The updated grain definition with the method added to the one-way set.</returns>
+    [<CustomOperation("oneWay")>]
+    member _.OneWay(definition: GrainDefinition<'State, 'Message>, methodName: string) =
+        { definition with
+            OneWayMethods = definition.OneWayMethods |> Set.add methodName
+        }
+
     /// <summary>Returns the completed grain definition. Validates constraints:
     /// defaultState must be explicitly set, at least one handler must be registered,
     /// and stateless workers cannot use persistent state.</summary>
@@ -697,6 +745,6 @@ module GrainBuilderInstance =
     /// Supports custom operations: defaultState, handle, handleCancellable, handleWithContext,
     /// handleWithContextCancellable, handleWithServices, handleWithServicesCancellable, persist,
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
-    /// preferLocalPlacement, randomPlacement, hashBasedPlacement.
+    /// preferLocalPlacement, randomPlacement, hashBasedPlacement, oneWay.
     /// </summary>
     let grain = GrainBuilder()

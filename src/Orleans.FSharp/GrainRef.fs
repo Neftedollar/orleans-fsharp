@@ -5,6 +5,30 @@ open System.Threading.Tasks
 open Orleans
 
 /// <summary>
+/// Represents a compound key consisting of a GUID and a string extension.
+/// Used with grains implementing IGrainWithGuidCompoundKey.
+/// </summary>
+type CompoundGuidKey =
+    {
+        /// <summary>The GUID part of the compound key.</summary>
+        Guid: Guid
+        /// <summary>The string extension part of the compound key.</summary>
+        Extension: string
+    }
+
+/// <summary>
+/// Represents a compound key consisting of an int64 and a string extension.
+/// Used with grains implementing IGrainWithIntegerCompoundKey.
+/// </summary>
+type CompoundIntKey =
+    {
+        /// <summary>The int64 part of the compound key.</summary>
+        Int: int64
+        /// <summary>The string extension part of the compound key.</summary>
+        Extension: string
+    }
+
+/// <summary>
 /// A type-safe reference to an Orleans grain, parameterized by the grain interface and key type.
 /// Wraps an IGrainFactory, the grain key, and the resolved grain proxy.
 /// </summary>
@@ -91,6 +115,50 @@ module GrainRef =
         }
 
     /// <summary>
+    /// Gets a reference to a grain by compound GUID+string key.
+    /// The grain interface must inherit from IGrainWithGuidCompoundKey.
+    /// </summary>
+    /// <param name="factory">The Orleans grain factory.</param>
+    /// <param name="guid">The GUID part of the compound key.</param>
+    /// <param name="ext">The string extension part of the compound key.</param>
+    /// <typeparam name="'TInterface">The grain interface type, constrained to IGrainWithGuidCompoundKey.</typeparam>
+    /// <returns>A type-safe grain reference with a CompoundGuidKey.</returns>
+    let ofGuidCompound<'TInterface when 'TInterface :> IGrainWithGuidCompoundKey>
+        (factory: IGrainFactory)
+        (guid: Guid)
+        (ext: string)
+        : GrainRef<'TInterface, CompoundGuidKey> =
+        let grain = factory.GetGrain<'TInterface>(guid, ext)
+
+        {
+            Factory = factory
+            Key = { Guid = guid; Extension = ext }
+            Grain = grain
+        }
+
+    /// <summary>
+    /// Gets a reference to a grain by compound int64+string key.
+    /// The grain interface must inherit from IGrainWithIntegerCompoundKey.
+    /// </summary>
+    /// <param name="factory">The Orleans grain factory.</param>
+    /// <param name="key">The int64 part of the compound key.</param>
+    /// <param name="ext">The string extension part of the compound key.</param>
+    /// <typeparam name="'TInterface">The grain interface type, constrained to IGrainWithIntegerCompoundKey.</typeparam>
+    /// <returns>A type-safe grain reference with a CompoundIntKey.</returns>
+    let ofIntCompound<'TInterface when 'TInterface :> IGrainWithIntegerCompoundKey>
+        (factory: IGrainFactory)
+        (key: int64)
+        (ext: string)
+        : GrainRef<'TInterface, CompoundIntKey> =
+        let grain = factory.GetGrain<'TInterface>(key, ext)
+
+        {
+            Factory = factory
+            Key = { Int = key; Extension = ext }
+            Grain = grain
+        }
+
+    /// <summary>
     /// Invokes a method on the referenced grain.
     /// The call function receives the grain proxy and should return a Task of the result.
     /// </summary>
@@ -124,3 +192,20 @@ module GrainRef =
     /// <typeparam name="'TKey">The grain key type.</typeparam>
     /// <returns>The primary key value.</returns>
     let key<'TInterface, 'TKey> (ref: GrainRef<'TInterface, 'TKey>) : 'TKey = ref.Key
+
+    /// <summary>
+    /// Invokes a one-way (fire-and-forget) call on a grain.
+    /// The caller does not wait for the call to complete on the grain.
+    /// For Orleans to treat the call as one-way, the interface method must be decorated
+    /// with the [OneWay] attribute in the C# CodeGen interface.
+    /// </summary>
+    /// <param name="ref">The grain reference to invoke the method on.</param>
+    /// <param name="call">A function that takes the grain proxy and returns a Task.</param>
+    /// <typeparam name="'TInterface">The grain interface type.</typeparam>
+    /// <typeparam name="'TKey">The grain key type.</typeparam>
+    /// <returns>A Task that completes when the message is enqueued (not when the grain finishes processing).</returns>
+    let invokeOneWay<'TInterface, 'TKey>
+        (ref: GrainRef<'TInterface, 'TKey>)
+        (call: 'TInterface -> Task)
+        : Task =
+        call ref.Grain

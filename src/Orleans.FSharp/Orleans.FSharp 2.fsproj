@@ -10,8 +10,6 @@
     <Compile Include="Streaming.fs" />
     <Compile Include="Logging.fs" />
     <Compile Include="Observers.fs" />
-    <Compile Include="Filters.fs" />
-    <Compile Include="RequestCtx.fs" />
     <Compile Include="Scripting.fs" />
     <Compile Include="AssemblyInfo.fs" />
   </ItemGroup>

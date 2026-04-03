@@ -1,11 +1,8 @@
 module Orleans.FSharp.Tests.SiloConfigTests
 
-open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
 open Microsoft.Extensions.DependencyInjection
-open Orleans
-open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
 /// <summary>Helper to check if a ClusteringMode is Localhost.</summary>
@@ -121,7 +118,7 @@ let ``siloConfig CE later storage overrides earlier with same name`` () =
 
     match config.StorageProviders.["Default"] with
     | CustomStorage _ -> ()
-    | other -> failwith $"Expected CustomStorage, got {other}"
+    | Memory -> failwith "Expected CustomStorage, got Memory"
 
 [<Fact>]
 let ``siloConfig CE multiple configureServices accumulate`` () =
@@ -189,62 +186,3 @@ let ``siloConfig CE validate passes with clustering set`` () =
 
     let errors = SiloConfig.validate config
     test <@ errors = [] @>
-
-[<Fact>]
-let ``siloConfig CE default has no filters`` () =
-    let config = siloConfig { () }
-    test <@ config.IncomingFilters.Length = 0 @>
-    test <@ config.OutgoingFilters.Length = 0 @>
-
-[<Fact>]
-let ``siloConfig CE adds incoming filter`` () =
-    let filter =
-        Filter.incoming (fun _ctx -> Task.FromResult())
-
-    let config = siloConfig { addIncomingFilter filter }
-    test <@ config.IncomingFilters.Length = 1 @>
-
-[<Fact>]
-let ``siloConfig CE adds outgoing filter`` () =
-    let filter =
-        Filter.outgoing (fun _ctx -> Task.FromResult())
-
-    let config = siloConfig { addOutgoingFilter filter }
-    test <@ config.OutgoingFilters.Length = 1 @>
-
-[<Fact>]
-let ``siloConfig CE multiple filters accumulate`` () =
-    let inFilter1 =
-        Filter.incoming (fun _ctx -> Task.FromResult())
-
-    let inFilter2 =
-        Filter.incoming (fun _ctx -> Task.FromResult())
-
-    let outFilter =
-        Filter.outgoing (fun _ctx -> Task.FromResult())
-
-    let config =
-        siloConfig {
-            addIncomingFilter inFilter1
-            addIncomingFilter inFilter2
-            addOutgoingFilter outFilter
-        }
-
-    test <@ config.IncomingFilters.Length = 2 @>
-    test <@ config.OutgoingFilters.Length = 1 @>
-
-[<Fact>]
-let ``siloConfig CE composes filters with other options`` () =
-    let filter =
-        Filter.incoming (fun _ctx -> Task.FromResult())
-
-    let config =
-        siloConfig {
-            useLocalhostClustering
-            addMemoryStorage "Default"
-            addIncomingFilter filter
-        }
-
-    test <@ config.ClusteringMode.IsSome @>
-    test <@ config.StorageProviders |> Map.containsKey "Default" @>
-    test <@ config.IncomingFilters.Length = 1 @>

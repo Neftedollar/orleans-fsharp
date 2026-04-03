@@ -39,6 +39,8 @@
     <Compile Include="RequestCtxTests.fs" />
     <Compile Include="CancellationTokenTests.fs" />
     <Compile Include="AdditionalStateTests.fs" />
+    <Compile Include="CompoundKeyTests.fs" />
+    <Compile Include="OneWayTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 

@@ -1,10 +1,8 @@
 namespace Orleans.FSharp.Runtime
 
-open System
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
-open Orleans
 open Orleans.Hosting
 open Serilog
 
@@ -15,12 +13,6 @@ open Serilog
 type ClusteringMode =
     /// <summary>Localhost clustering for local development (single silo).</summary>
     | Localhost
-    /// <summary>Redis-based clustering using the given connection string.</summary>
-    | RedisClustering of connectionString: string
-    /// <summary>Azure Table-based clustering using the given connection string.</summary>
-    | AzureTableClustering of connectionString: string
-    /// <summary>ADO.NET-based clustering using the given connection string and provider invariant (e.g., "Npgsql", "System.Data.SqlClient").</summary>
-    | AdoNetClustering of connectionString: string * invariant: string
     /// <summary>Custom clustering configuration via an ISiloBuilder transformation.</summary>
     | CustomClustering of (ISiloBuilder -> ISiloBuilder)
 
@@ -31,14 +23,6 @@ type ClusteringMode =
 type StorageProvider =
     /// <summary>In-memory grain storage (data lost on silo restart).</summary>
     | Memory
-    /// <summary>Redis-based grain storage using the given connection string.</summary>
-    | RedisStorage of connectionString: string
-    /// <summary>Azure Blob-based grain storage using the given connection string.</summary>
-    | AzureBlobStorage of connectionString: string
-    /// <summary>Azure Table-based grain storage using the given connection string.</summary>
-    | AzureTableStorage of connectionString: string
-    /// <summary>ADO.NET-based grain storage using the given connection string and provider invariant (e.g., "Npgsql", "System.Data.SqlClient").</summary>
-    | AdoNetStorage of connectionString: string * invariant: string
     /// <summary>Custom storage provider configuration via an ISiloBuilder transformation.</summary>
     | CustomStorage of (ISiloBuilder -> ISiloBuilder)
 
@@ -80,10 +64,6 @@ type SiloConfig =
         UseSerilog: bool
         /// <summary>Custom service registrations to apply to the host's DI container.</summary>
         CustomServices: (IServiceCollection -> unit) list
-        /// <summary>Incoming grain call filters to register with the silo.</summary>
-        IncomingFilters: IIncomingGrainCallFilter list
-        /// <summary>Outgoing grain call filters to register with the silo.</summary>
-        OutgoingFilters: IOutgoingGrainCallFilter list
     }
 
 /// <summary>
@@ -103,8 +83,6 @@ module SiloConfig =
             ReminderProvider = None
             UseSerilog = false
             CustomServices = []
-            IncomingFilters = []
-            OutgoingFilters = []
         }
 
     /// <summary>
@@ -125,45 +103,10 @@ module SiloConfig =
     /// </summary>
     /// <param name="config">The silo configuration to apply.</param>
     /// <param name="siloBuilder">The ISiloBuilder to configure.</param>
-    /// <summary>
-    /// Invokes an extension method on ISiloBuilder by name, searching loaded assemblies.
-    /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
-    /// </summary>
-    let private invokeExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (siloBuilder: ISiloBuilder) =
-        let siloBuilderType = typeof<ISiloBuilder>
-
-        let extensionMethod =
-            AppDomain.CurrentDomain.GetAssemblies()
-            |> Array.collect (fun asm ->
-                try asm.GetTypes() with _ -> Array.empty)
-            |> Array.collect (fun t ->
-                if t.IsAbstract && t.IsSealed then // static classes
-                    t.GetMethods(Reflection.BindingFlags.Static ||| Reflection.BindingFlags.Public)
-                    |> Array.filter (fun m ->
-                        m.Name = methodName
-                        && m.GetParameters().Length = args.Length + 1
-                        && siloBuilderType.IsAssignableFrom(m.GetParameters().[0].ParameterType))
-                else
-                    Array.empty)
-            |> Array.tryHead
-
-        match extensionMethod with
-        | Some m ->
-            m.Invoke(null, Array.append [| box siloBuilder |] args) |> ignore
-        | None ->
-            invalidOp
-                $"Extension method '{methodName}' not found. Install the NuGet package '{packageHint}' and ensure it is referenced in your project."
-
     let applyToSiloBuilder (config: SiloConfig) (siloBuilder: ISiloBuilder) : unit =
         // Apply clustering
         match config.ClusteringMode with
         | Some Localhost -> siloBuilder.UseLocalhostClustering() |> ignore
-        | Some(RedisClustering connStr) ->
-            invokeExtensionMethod "UseRedisClustering" [| box connStr |] "Microsoft.Orleans.Clustering.Redis" siloBuilder
-        | Some(AzureTableClustering connStr) ->
-            invokeExtensionMethod "UseAzureStorageClustering" [| box connStr |] "Microsoft.Orleans.Clustering.AzureStorage" siloBuilder
-        | Some(AdoNetClustering(connStr, invariant)) ->
-            invokeExtensionMethod "UseAdoNetClustering" [| box connStr; box invariant |] "Microsoft.Orleans.Clustering.AdoNet" siloBuilder
         | Some(CustomClustering f) -> f siloBuilder |> ignore
         | None -> ()
 
@@ -172,14 +115,6 @@ module SiloConfig =
         |> Map.iter (fun name provider ->
             match provider with
             | Memory -> siloBuilder.AddMemoryGrainStorage(name) |> ignore
-            | RedisStorage connStr ->
-                invokeExtensionMethod "AddRedisGrainStorage" [| box name; box connStr |] "Microsoft.Orleans.Persistence.Redis" siloBuilder
-            | AzureBlobStorage connStr ->
-                invokeExtensionMethod "AddAzureBlobGrainStorage" [| box name; box connStr |] "Microsoft.Orleans.Persistence.AzureStorage" siloBuilder
-            | AzureTableStorage connStr ->
-                invokeExtensionMethod "AddAzureTableGrainStorage" [| box name; box connStr |] "Microsoft.Orleans.Persistence.AzureStorage" siloBuilder
-            | AdoNetStorage(connStr, invariant) ->
-                invokeExtensionMethod "AddAdoNetGrainStorage" [| box name; box connStr; box invariant |] "Microsoft.Orleans.Persistence.AdoNet" siloBuilder
             | CustomStorage f -> f siloBuilder |> ignore)
 
         // Apply reminder provider
@@ -203,16 +138,6 @@ module SiloConfig =
         // Add one automatically if not already configured.
         if needsPubSubStore && not (config.StorageProviders |> Map.containsKey "PubSubStore") then
             siloBuilder.AddMemoryGrainStorage("PubSubStore") |> ignore
-
-        // Apply incoming grain call filters
-        config.IncomingFilters
-        |> List.iter (fun filter ->
-            siloBuilder.AddIncomingGrainCallFilter(filter) |> ignore)
-
-        // Apply outgoing grain call filters
-        config.OutgoingFilters
-        |> List.iter (fun filter ->
-            siloBuilder.AddOutgoingGrainCallFilter(filter) |> ignore)
 
     /// <summary>
     /// Applies the silo configuration to a HostApplicationBuilder.
@@ -296,107 +221,6 @@ type SiloConfigBuilder() =
         }
 
     /// <summary>
-    /// Adds a Redis grain storage provider with the given name and connection string.
-    /// Requires the Microsoft.Orleans.Persistence.Redis NuGet package at runtime.
-    /// If a provider with the same name already exists, it is replaced.
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="name">The name of the storage provider.</param>
-    /// <param name="connectionString">The Redis connection string (e.g., "localhost:6379").</param>
-    /// <returns>The updated silo configuration with the Redis storage provider added.</returns>
-    [<CustomOperation("addRedisStorage")>]
-    member _.AddRedisStorage(config: SiloConfig, name: string, connectionString: string) =
-        { config with
-            StorageProviders = config.StorageProviders |> Map.add name (RedisStorage connectionString)
-        }
-
-    /// <summary>
-    /// Configures the silo to use Redis-based clustering.
-    /// Requires the Microsoft.Orleans.Clustering.Redis NuGet package at runtime.
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="connectionString">The Redis connection string (e.g., "localhost:6379").</param>
-    /// <returns>The updated silo configuration with Redis clustering enabled.</returns>
-    [<CustomOperation("addRedisClustering")>]
-    member _.AddRedisClustering(config: SiloConfig, connectionString: string) =
-        { config with
-            ClusteringMode = Some(RedisClustering connectionString)
-        }
-
-    /// <summary>
-    /// Adds an Azure Blob grain storage provider with the given name and connection string.
-    /// Requires the Microsoft.Orleans.Persistence.AzureStorage NuGet package at runtime.
-    /// If a provider with the same name already exists, it is replaced.
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="name">The name of the storage provider.</param>
-    /// <param name="connectionString">The Azure Storage connection string.</param>
-    /// <returns>The updated silo configuration with the Azure Blob storage provider added.</returns>
-    [<CustomOperation("addAzureBlobStorage")>]
-    member _.AddAzureBlobStorage(config: SiloConfig, name: string, connectionString: string) =
-        { config with
-            StorageProviders = config.StorageProviders |> Map.add name (AzureBlobStorage connectionString)
-        }
-
-    /// <summary>
-    /// Adds an Azure Table grain storage provider with the given name and connection string.
-    /// Requires the Microsoft.Orleans.Persistence.AzureStorage NuGet package at runtime.
-    /// If a provider with the same name already exists, it is replaced.
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="name">The name of the storage provider.</param>
-    /// <param name="connectionString">The Azure Storage connection string.</param>
-    /// <returns>The updated silo configuration with the Azure Table storage provider added.</returns>
-    [<CustomOperation("addAzureTableStorage")>]
-    member _.AddAzureTableStorage(config: SiloConfig, name: string, connectionString: string) =
-        { config with
-            StorageProviders = config.StorageProviders |> Map.add name (AzureTableStorage connectionString)
-        }
-
-    /// <summary>
-    /// Configures the silo to use Azure Table-based clustering.
-    /// Requires the Microsoft.Orleans.Clustering.AzureStorage NuGet package at runtime.
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="connectionString">The Azure Storage connection string.</param>
-    /// <returns>The updated silo configuration with Azure Table clustering enabled.</returns>
-    [<CustomOperation("addAzureTableClustering")>]
-    member _.AddAzureTableClustering(config: SiloConfig, connectionString: string) =
-        { config with
-            ClusteringMode = Some(AzureTableClustering connectionString)
-        }
-
-    /// <summary>
-    /// Adds an ADO.NET grain storage provider with the given name, connection string, and provider invariant.
-    /// Requires the Microsoft.Orleans.Persistence.AdoNet NuGet package at runtime.
-    /// If a provider with the same name already exists, it is replaced.
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="name">The name of the storage provider.</param>
-    /// <param name="connectionString">The ADO.NET connection string.</param>
-    /// <param name="invariant">The ADO.NET provider invariant (e.g., "Npgsql", "System.Data.SqlClient").</param>
-    /// <returns>The updated silo configuration with the ADO.NET storage provider added.</returns>
-    [<CustomOperation("addAdoNetStorage")>]
-    member _.AddAdoNetStorage(config: SiloConfig, name: string, connectionString: string, invariant: string) =
-        { config with
-            StorageProviders = config.StorageProviders |> Map.add name (AdoNetStorage(connectionString, invariant))
-        }
-
-    /// <summary>
-    /// Configures the silo to use ADO.NET-based clustering.
-    /// Requires the Microsoft.Orleans.Clustering.AdoNet NuGet package at runtime.
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="connectionString">The ADO.NET connection string.</param>
-    /// <param name="invariant">The ADO.NET provider invariant (e.g., "Npgsql", "System.Data.SqlClient").</param>
-    /// <returns>The updated silo configuration with ADO.NET clustering enabled.</returns>
-    [<CustomOperation("addAdoNetClustering")>]
-    member _.AddAdoNetClustering(config: SiloConfig, connectionString: string, invariant: string) =
-        { config with
-            ClusteringMode = Some(AdoNetClustering(connectionString, invariant))
-        }
-
-    /// <summary>
     /// Adds an in-memory stream provider with the given name.
     /// If a provider with the same name already exists, it is replaced.
     /// </summary>
@@ -454,34 +278,6 @@ type SiloConfigBuilder() =
             CustomServices = config.CustomServices @ [ f ]
         }
 
-    /// <summary>
-    /// Adds an incoming grain call filter to the silo configuration.
-    /// Incoming filters intercept calls arriving at a grain.
-    /// Multiple addIncomingFilter calls accumulate (they do not replace each other).
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="filter">The incoming grain call filter to register.</param>
-    /// <returns>The updated silo configuration with the incoming filter added.</returns>
-    [<CustomOperation("addIncomingFilter")>]
-    member _.AddIncomingFilter(config: SiloConfig, filter: IIncomingGrainCallFilter) =
-        { config with
-            IncomingFilters = config.IncomingFilters @ [ filter ]
-        }
-
-    /// <summary>
-    /// Adds an outgoing grain call filter to the silo configuration.
-    /// Outgoing filters intercept calls made from a grain to another grain.
-    /// Multiple addOutgoingFilter calls accumulate (they do not replace each other).
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <param name="filter">The outgoing grain call filter to register.</param>
-    /// <returns>The updated silo configuration with the outgoing filter added.</returns>
-    [<CustomOperation("addOutgoingFilter")>]
-    member _.AddOutgoingFilter(config: SiloConfig, filter: IOutgoingGrainCallFilter) =
-        { config with
-            OutgoingFilters = config.OutgoingFilters @ [ filter ]
-        }
-
     /// <summary>Returns the completed silo configuration.</summary>
     member _.Run(config: SiloConfig) = config
 
@@ -493,9 +289,6 @@ module SiloConfigBuilderInstance =
     /// <summary>
     /// Computation expression for declaratively configuring an Orleans silo.
     /// Supports custom operations: useLocalhostClustering, addMemoryStorage, addCustomStorage,
-    /// addRedisStorage, addRedisClustering, addAzureBlobStorage, addAzureTableStorage,
-    /// addAzureTableClustering, addAdoNetStorage, addAdoNetClustering,
-    /// addMemoryStreams, addMemoryReminderService, useSerilog, configureServices,
-    /// addIncomingFilter, addOutgoingFilter.
+    /// addMemoryStreams, useSerilog, configureServices.
     /// </summary>
     let siloConfig = SiloConfigBuilder()

@@ -10,7 +10,6 @@
     <Compile Include="OrderGrain.fs" />
     <Compile Include="ChatGrain.fs" />
     <Compile Include="ReminderGrain.fs" />
-    <Compile Include="TimerGrain.fs" />
     <Compile Include="AggregatorGrain.fs" />
     <Compile Include="SequentialGrain.fs" />
     <Compile Include="ProcessorGrain.fs" />
