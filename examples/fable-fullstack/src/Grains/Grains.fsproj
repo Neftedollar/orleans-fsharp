@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="TodoGrain.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\Shared\Shared.fsproj" />
+  </ItemGroup>
+
+</Project>

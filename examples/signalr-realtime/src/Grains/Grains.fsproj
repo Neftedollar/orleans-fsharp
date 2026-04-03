@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <Compile Include="DashboardGrain.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\Shared\Shared.fsproj" />
+  </ItemGroup>
+
+</Project>

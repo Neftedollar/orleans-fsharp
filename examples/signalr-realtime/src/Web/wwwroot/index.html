@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orleans Dashboard - Live Metrics</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; padding: 2rem; }
+        h1 { margin-bottom: 1.5rem; color: #e94560; }
+        .status { margin-bottom: 1rem; padding: 0.5rem 1rem; border-radius: 4px; font-size: 0.9rem; }
+        .status.connected { background: #16213e; border-left: 4px solid #0f3460; }
+        .status.disconnected { background: #2a1a1a; border-left: 4px solid #e94560; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+        .metric-card { background: #16213e; border-radius: 8px; padding: 1.5rem; border: 1px solid #0f3460; }
+        .metric-card .name { font-size: 0.85rem; text-transform: uppercase; color: #888; letter-spacing: 1px; }
+        .metric-card .value { font-size: 2.5rem; font-weight: bold; color: #e94560; margin: 0.5rem 0; }
+        .metric-card .timestamp { font-size: 0.75rem; color: #666; }
+        .sequence { margin-top: 1rem; font-size: 0.8rem; color: #555; }
+    </style>
+</head>
+<body>
+    <h1>Orleans Dashboard - Live Metrics</h1>
+    <div id="status" class="status disconnected">Connecting...</div>
+    <div id="metrics" class="metrics"></div>
+    <div id="sequence" class="sequence"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
+    <script>
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/dashboard")
+            .withAutomaticReconnect()
+            .build();
+
+        const statusEl = document.getElementById("status");
+        const metricsEl = document.getElementById("metrics");
+        const sequenceEl = document.getElementById("sequence");
+
+        const units = {
+            "cpu": "%",
+            "memory": "%",
+            "requests_per_sec": " req/s",
+            "latency_ms": " ms"
+        };
+
+        connection.on("ReceiveMetrics", function (update) {
+            metricsEl.innerHTML = "";
+            if (update.Metrics) {
+                update.Metrics.forEach(function (m) {
+                    const card = document.createElement("div");
+                    card.className = "metric-card";
+                    const unit = units[m.Name] || "";
+                    card.innerHTML =
+                        '<div class="name">' + m.Name.replace(/_/g, " ") + '</div>' +
+                        '<div class="value">' + m.Value + unit + '</div>' +
+                        '<div class="timestamp">' + new Date(m.Timestamp).toLocaleTimeString() + '</div>';
+                    metricsEl.appendChild(card);
+                });
+            }
+            sequenceEl.textContent = "Update #" + update.SequenceNumber;
+        });
+
+        connection.onclose(function () {
+            statusEl.className = "status disconnected";
+            statusEl.textContent = "Disconnected. Reconnecting...";
+        });
+
+        connection.onreconnected(function () {
+            statusEl.className = "status connected";
+            statusEl.textContent = "Connected (reconnected)";
+        });
+
+        connection.start()
+            .then(function () {
+                statusEl.className = "status connected";
+                statusEl.textContent = "Connected - receiving live metrics";
+            })
+            .catch(function (err) {
+                statusEl.textContent = "Connection error: " + err.toString();
+            });
+    </script>
+</body>
+</html>

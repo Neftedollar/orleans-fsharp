@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+    <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
+    <ProjectReference Include="..\Shared\Shared.fsproj" />
+    <ProjectReference Include="..\Grains\Grains.fsproj" />
+    <ProjectReference Include="..\CodeGen\CodeGen.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Remoting.Server" Version="5.*" />
+    <PackageReference Include="Fable.Remoting.AspNetCore" Version="2.*" />
+  </ItemGroup>
+
+</Project>
