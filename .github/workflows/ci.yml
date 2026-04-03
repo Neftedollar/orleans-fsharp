@@ -35,6 +35,7 @@ jobs:
     environment: nuget
     permissions:
       id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -42,30 +43,41 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet build --configuration Release --verbosity quiet
       - run: dotnet pack --configuration Release --output ./nupkgs --verbosity quiet
-      - name: Publish to NuGet.org (trusted publisher)
-        env:
-          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-        run: |
-          # Get OIDC token
-          OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" | jq -r '.value')
 
-          # Exchange for NuGet API key via trusted publishers endpoint
-          NUGET_TOKEN=$(curl -sS -X POST \
-            "https://api.nuget.org/v3-index/repository-signatures/token" \
+      - name: Get OIDC token
+        id: oidc
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('api://AzureADTokenExchange');
+            core.setOutput('token', token);
+            core.setSecret(token);
+
+      - name: Exchange OIDC for NuGet token
+        id: nuget-token
+        run: |
+          RESPONSE=$(curl -sS -X POST \
+            "https://api.nuget.org/v3/trusted-publishers/tokens" \
             -H "Content-Type: application/json" \
-            -d "{\"oidcToken\":\"${OIDC_TOKEN}\"}" | jq -r '.token // .apiKey // empty')
+            -d "{\"token\":\"${{ steps.oidc.outputs.token }}\"}")
+
+          NUGET_TOKEN=$(echo "$RESPONSE" | jq -r '.token // empty')
 
           if [ -z "$NUGET_TOKEN" ]; then
-            echo "::warning::Could not obtain NuGet token via trusted publisher. Skipping publish."
-            exit 0
+            echo "Response: $RESPONSE"
+            echo "::error::Failed to obtain NuGet token from trusted publisher endpoint"
+            exit 1
           fi
 
+          echo "::add-mask::$NUGET_TOKEN"
+          echo "token=$NUGET_TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Push to NuGet.org
+        run: |
           for pkg in nupkgs/*.nupkg; do
             echo "Publishing $pkg..."
             dotnet nuget push "$pkg" \
               --source https://api.nuget.org/v3/index.json \
-              --api-key "$NUGET_TOKEN" \
+              --api-key "${{ steps.nuget-token.outputs.token }}" \
               --skip-duplicate
           done
