@@ -9,9 +9,7 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Testbed.Shared
 
-// Force-load the CodeGen assembly so Orleans discovers the grain implementations.
-let private _codeGenLoaded =
-    typeof<Testbed.CodeGen.CounterGrainImpl>.Assembly.GetTypes() |> ignore
+// No CodeGen needed — FSharpGrain dispatcher + JSON fallback handles everything
 
 let envRedisConn =
     Environment.GetEnvironmentVariable("REDIS_CONNECTION")

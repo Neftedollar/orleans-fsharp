@@ -12,10 +12,7 @@ open Orleans.Runtime
 open System.Collections.Concurrent
 open Testbed.Shared
 
-let _ =
-    let asm = typeof<Testbed.CodeGen.CounterGrainImpl>.Assembly
-    asm.GetTypes() |> ignore
-    true
+// No CodeGen needed — FSharpGrain dispatcher + JSON fallback handles everything
 
 let redisConn =
     Environment.GetEnvironmentVariable("REDIS_CONNECTION")
