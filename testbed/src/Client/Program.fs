@@ -1,4 +1,5 @@
 open System
+open System.Diagnostics
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
@@ -8,10 +9,7 @@ open Orleans.Hosting
 open Orleans.FSharp
 open Testbed.Shared
 
-// Force-load the CodeGen assembly so Orleans discovers the generated grain metadata.
-// Referencing a type from the CodeGen assembly ensures it (and its Orleans-generated
-// serialization/metadata code) is loaded into the AppDomain.
-let private _codeGenLoaded =
+let _ =
     let asm = typeof<Testbed.CodeGen.CounterGrainImpl>.Assembly
     asm.GetTypes() |> ignore
     true
@@ -21,26 +19,24 @@ let redisConn =
     |> Option.ofObj
     |> Option.defaultValue "localhost:6379"
 
-let runTests () =
+let runStressTest () =
     task {
-        printfn "Orleans.FSharp Testbed - 2 Silos + Redis"
-        printfn "========================================="
+        printfn "========================================"
+        printfn " Orleans.FSharp Stress Test"
+        printfn " 2 Silos + Redis + 1000s of actors"
+        printfn "========================================"
         printfn ""
 
-        // Build client with Redis clustering
         let builder = Host.CreateApplicationBuilder()
 
         builder.UseOrleansClient(fun (clientBuilder: IClientBuilder) ->
-            // Cluster identity
             clientBuilder.Services.Configure<ClusterOptions>(Action<ClusterOptions>(fun opts ->
                 opts.ClusterId <- "testbed-cluster"
                 opts.ServiceId <- "testbed-service"))
             |> ignore
 
-            // Redis clustering for gateway discovery
             clientBuilder.UseRedisClustering(redisConn) |> ignore
 
-            // F# JSON fallback serialization (must match silo configuration)
             Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
                 clientBuilder.Services,
                 Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
@@ -54,64 +50,164 @@ let runTests () =
 
         let host = builder.Build()
         do! host.StartAsync()
-
         let factory = host.Services.GetRequiredService<IGrainFactory>()
-
-        // Wait for cluster to stabilize
-        printfn "Connecting to cluster via Redis at %s..." redisConn
         do! Task.Delay(5000)
+        printfn "Connected to cluster via Redis at %s" redisConn
+        printfn ""
 
-        // 1. Counter test: call same grain 10 times, show it increments
-        printfn "Counter grain test:"
+        // ============================================================
+        // TEST 1: 1000 counter grains — parallel activation
+        // ============================================================
+        let grainCount = 1000
+        printfn "TEST 1: Activate %d counter grains in parallel..." grainCount
+        let sw = Stopwatch.StartNew()
 
-        for i in 1..10 do
-            let grain = factory.GetGrain<ICounterGrain>("counter-1")
-            let! result = grain.HandleMessage(Increment)
+        let! _ =
+            [| for i in 1..grainCount -> task {
+                let grain = factory.GetGrain<ICounterGrain>($"stress-counter-{i}")
+                let! _ = grain.HandleMessage(Increment)
+                return ()
+            } |]
+            |> Task.WhenAll
+
+        sw.Stop()
+        printfn "  DONE: %d grains in %dms (%.0f grains/sec)" grainCount sw.ElapsedMilliseconds (float grainCount / sw.Elapsed.TotalSeconds)
+        printfn ""
+
+        // ============================================================
+        // TEST 2: 10000 calls across 100 grains — throughput
+        // ============================================================
+        let callCount = 10_000
+        let grainPool = 100
+        printfn "TEST 2: %d calls across %d grains (throughput)..." callCount grainPool
+        let sw2 = Stopwatch.StartNew()
+
+        let! _ =
+            [| for i in 1..callCount -> task {
+                let grainId = i % grainPool
+                let grain = factory.GetGrain<ICounterGrain>($"throughput-{grainId}")
+                let! _ = grain.HandleMessage(Increment)
+                return ()
+            } |]
+            |> Task.WhenAll
+
+        sw2.Stop()
+        printfn "  DONE: %d calls in %dms (%.0f calls/sec)" callCount sw2.ElapsedMilliseconds (float callCount / sw2.Elapsed.TotalSeconds)
+        printfn ""
+
+        // ============================================================
+        // TEST 3: State consistency — verify counts
+        // ============================================================
+        printfn "TEST 3: Verify state consistency across %d grains..." grainPool
+        let mutable correct = 0
+        let mutable wrong = 0
+        let expectedPerGrain = callCount / grainPool
+
+        for i in 0..grainPool - 1 do
+            let grain = factory.GetGrain<ICounterGrain>($"throughput-{i}")
+            let! result = grain.HandleMessage(GetValue)
             let count = result :?> int
-            printfn "  Increment #%d -> count = %d" i count
+            if count = expectedPerGrain then correct <- correct + 1
+            else
+                wrong <- wrong + 1
+                printfn "  MISMATCH: grain %d has %d (expected %d)" i count expectedPerGrain
 
+        printfn "  RESULT: %d/%d correct" correct grainPool
+        if wrong > 0 then printfn "  WARNING: %d grains have wrong count" wrong
         printfn ""
 
-        // 2. Multi-grain test: call 5 different counter grains, show distribution
-        printfn "Multi-grain distribution:"
+        // ============================================================
+        // TEST 4: Silo distribution
+        // ============================================================
+        let distCount = 50
+        printfn "TEST 4: Silo distribution across %d grains..." distCount
+        let mutable silo1 = 0
+        let mutable silo2 = 0
 
-        for i in 1..5 do
-            let grain = factory.GetGrain<ICounterGrain>($"grain-{i}")
-            let! _ = grain.HandleMessage(Increment)
+        for i in 1..distCount do
+            let grain = factory.GetGrain<ICounterGrain>($"dist-{i}")
             let! result = grain.HandleMessage(GetSiloInfo)
-            let siloInfo = result :?> string
-            printfn "  Grain %d handled by: %s" i siloInfo
+            let info = result :?> string
+            if info.Contains("silo1") then silo1 <- silo1 + 1
+            else silo2 <- silo2 + 1
+
+        printfn "  Silo1: %d grains (%d%%)" silo1 (silo1 * 100 / distCount)
+        printfn "  Silo2: %d grains (%d%%)" silo2 (silo2 * 100 / distCount)
+        printfn ""
+
+        // ============================================================
+        // TEST 5: 500 chat rooms, 10 messages each
+        // ============================================================
+        let roomCount = 500
+        let msgsPerRoom = 10
+        let totalMsgs = roomCount * msgsPerRoom
+        printfn "TEST 5: %d chat rooms x %d messages = %d total..." roomCount msgsPerRoom totalMsgs
+        let sw5 = Stopwatch.StartNew()
+
+        let! _ =
+            [| for room in 1..roomCount -> task {
+                let grain = factory.GetGrain<IChatGrain>($"stress-room-{room}")
+                for msg in 1..msgsPerRoom do
+                    let chatMsg =
+                        { Sender = $"user-{msg}"
+                          Text = $"Message {msg} in room {room}"
+                          Timestamp = DateTime.UtcNow }
+                    let! _ = grain.HandleMessage(Send chatMsg)
+                    ()
+            } |]
+            |> Task.WhenAll
+
+        sw5.Stop()
+        printfn "  DONE: %d messages in %dms (%.0f msg/sec)" totalMsgs sw5.ElapsedMilliseconds (float totalMsgs / sw5.Elapsed.TotalSeconds)
+
+        // Verify random rooms
+        for roomId in [ 1; 42; 250; 500 ] do
+            let grain = factory.GetGrain<IChatGrain>($"stress-room-{roomId}")
+            let! result = grain.HandleMessage(GetMessageCount)
+            let count = result :?> int
+            printfn "  Room %d: %d messages %s" roomId count (if count = msgsPerRoom then "OK" else "FAIL")
 
         printfn ""
 
-        // 3. Chat test: send messages, read history
-        printfn "Chat grain test:"
-        let chatGrain = factory.GetGrain<IChatGrain>("chat-room-1")
+        // ============================================================
+        // TEST 6: Burst — 5000 concurrent calls on single grain
+        // ============================================================
+        printfn "TEST 6: Burst — 5000 concurrent calls to single grain..."
+        let burstCount = 5000
+        let sw6 = Stopwatch.StartNew()
+        let burstGrain = factory.GetGrain<ICounterGrain>("burst-target")
 
-        for i in 1..3 do
-            let msg =
-                { Sender = $"user-{i}"
-                  Text = $"Hello from user {i}!"
-                  Timestamp = DateTime.UtcNow }
+        let! _ =
+            [| for _ in 1..burstCount -> task {
+                let! _ = burstGrain.HandleMessage(Increment)
+                return ()
+            } |]
+            |> Task.WhenAll
 
-            let! _ = chatGrain.HandleMessage(Send msg)
-            printfn "  Sent message from user-%d" i
-
-        let! historyResult = chatGrain.HandleMessage(GetHistory)
-        let history = historyResult :?> ChatMessage list
-        printfn "  Chat history: %d messages" history.Length
-
-        for msg in history |> List.rev do
-            printfn "    [%s] %s: %s" (msg.Timestamp.ToString("HH:mm:ss")) msg.Sender msg.Text
-
-        let! countResult = chatGrain.HandleMessage(GetMessageCount)
-        let msgCount = countResult :?> int
-        printfn "  Message count: %d" msgCount
-
+        sw6.Stop()
+        let! burstResult = burstGrain.HandleMessage(GetValue)
+        let burstCount' = burstResult :?> int
+        printfn "  DONE: %d calls in %dms, final count = %d (expected %d) %s"
+            burstCount sw6.ElapsedMilliseconds burstCount' burstCount
+            (if burstCount' = burstCount then "OK" else "FAIL")
         printfn ""
-        printfn "All tests passed! Cluster is healthy."
+
+        // ============================================================
+        // SUMMARY
+        // ============================================================
+        let totalGrains = grainCount + grainPool + distCount + roomCount + 1
+        let totalCalls = grainCount + callCount + distCount + totalMsgs + roomCount * 1 + burstCount
+        printfn "========================================"
+        printfn " STRESS TEST COMPLETE"
+        printfn "  Total grains: %d" totalGrains
+        printfn "  Total calls:  %d" totalCalls
+        printfn "  Chat rooms:   %d" roomCount
+        printfn "  Messages:     %d" totalMsgs
+        printfn "  Burst single: %d" burstCount
+        printfn "  2 silos + Redis"
+        printfn "========================================"
 
         do! host.StopAsync()
     }
 
-runTests().GetAwaiter().GetResult()
+runStressTest().GetAwaiter().GetResult()
