@@ -535,6 +535,54 @@ type GrainBuilder() =
         { definition with Handler = Some handler }
 
     /// <summary>
+    /// Registers a message handler whose result IS the new state.
+    /// The handler takes the current state and a message, and returns a Task of the new state.
+    /// The result returned to callers is the new state (boxed internally).
+    /// This is the simplest handler form for grains where the caller only needs the state.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The state-returning message handler function.</param>
+    /// <returns>The updated grain definition with the handler registered.</returns>
+    [<CustomOperation("handleState")>]
+    member _.HandleState
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: 'State -> 'Message -> Task<'State>
+        ) =
+        { definition with
+            Handler =
+                Some(fun state msg ->
+                    task {
+                        let! newState = handler state msg
+                        return newState, box newState
+                    })
+        }
+
+    /// <summary>
+    /// Registers a typed-result message handler that eliminates the need for manual boxing.
+    /// The handler takes the current state and a message, and returns a Task of the new state
+    /// paired with a strongly-typed result. The result is boxed internally by the framework.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The typed-result message handler function.</param>
+    /// <typeparam name="'Result">The type of the result value returned alongside the new state.</typeparam>
+    /// <returns>The updated grain definition with the handler registered.</returns>
+    [<CustomOperation("handleTyped")>]
+    member _.HandleTyped
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: 'State -> 'Message -> Task<'State * 'Result>
+        ) =
+        { definition with
+            Handler =
+                Some(fun state msg ->
+                    task {
+                        let! (newState, result) = handler state msg
+                        return newState, box result
+                    })
+        }
+
+    /// <summary>
     /// Registers a context-aware message handler function for the grain.
     /// The handler receives a GrainContext (providing access to IGrainFactory for grain-to-grain calls),
     /// the current state, and a message, and returns a Task of the new state and a boxed result.
@@ -550,6 +598,53 @@ type GrainBuilder() =
         ) =
         { definition with
             ContextHandler = Some handler
+        }
+
+    /// <summary>
+    /// Registers a context-aware message handler whose result IS the new state.
+    /// The handler receives a GrainContext, the current state, and a message,
+    /// and returns a Task of the new state. The result is the state itself (boxed internally).
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The context-aware state-returning handler function.</param>
+    /// <returns>The updated grain definition with the context handler registered.</returns>
+    [<CustomOperation("handleStateWithContext")>]
+    member _.HandleStateWithContext
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> Task<'State>
+        ) =
+        { definition with
+            ContextHandler =
+                Some(fun ctx state msg ->
+                    task {
+                        let! newState = handler ctx state msg
+                        return newState, box newState
+                    })
+        }
+
+    /// <summary>
+    /// Registers a context-aware typed-result message handler that eliminates the need for manual boxing.
+    /// The handler receives a GrainContext, the current state, and a message,
+    /// and returns a Task of the new state paired with a strongly-typed result.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The context-aware typed-result handler function.</param>
+    /// <typeparam name="'Result">The type of the result value returned alongside the new state.</typeparam>
+    /// <returns>The updated grain definition with the context handler registered.</returns>
+    [<CustomOperation("handleTypedWithContext")>]
+    member _.HandleTypedWithContext
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> Task<'State * 'Result>
+        ) =
+        { definition with
+            ContextHandler =
+                Some(fun ctx state msg ->
+                    task {
+                        let! (newState, result) = handler ctx state msg
+                        return newState, box result
+                    })
         }
 
     /// <summary>
@@ -714,6 +809,53 @@ type GrainBuilder() =
         }
 
     /// <summary>
+    /// Registers a service-aware message handler whose result IS the new state.
+    /// This is a convenience alias for handleStateWithContext that emphasizes
+    /// access to the IServiceProvider for dependency injection.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The service-aware state-returning handler function.</param>
+    /// <returns>The updated grain definition with the context handler registered.</returns>
+    [<CustomOperation("handleStateWithServices")>]
+    member _.HandleStateWithServices
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> Task<'State>
+        ) =
+        { definition with
+            ContextHandler =
+                Some(fun ctx state msg ->
+                    task {
+                        let! newState = handler ctx state msg
+                        return newState, box newState
+                    })
+        }
+
+    /// <summary>
+    /// Registers a service-aware typed-result message handler that eliminates the need for manual boxing.
+    /// This is a convenience alias for handleTypedWithContext that emphasizes
+    /// access to the IServiceProvider for dependency injection.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The service-aware typed-result handler function.</param>
+    /// <typeparam name="'Result">The type of the result value returned alongside the new state.</typeparam>
+    /// <returns>The updated grain definition with the context handler registered.</returns>
+    [<CustomOperation("handleTypedWithServices")>]
+    member _.HandleTypedWithServices
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> Task<'State * 'Result>
+        ) =
+        { definition with
+            ContextHandler =
+                Some(fun ctx state msg ->
+                    task {
+                        let! (newState, result) = handler ctx state msg
+                        return newState, box result
+                    })
+        }
+
+    /// <summary>
     /// Registers a cancellable message handler function for the grain.
     /// The handler takes the current state, a message, and a CancellationToken,
     /// and returns a Task of the new state and a boxed result.
@@ -731,6 +873,53 @@ type GrainBuilder() =
         ) =
         { definition with
             CancellableHandler = Some handler
+        }
+
+    /// <summary>
+    /// Registers a cancellable message handler whose result IS the new state.
+    /// The handler takes the current state, a message, and a CancellationToken,
+    /// and returns a Task of the new state. The result is the state itself (boxed internally).
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable state-returning handler function.</param>
+    /// <returns>The updated grain definition with the cancellable handler registered.</returns>
+    [<CustomOperation("handleStateCancellable")>]
+    member _.HandleStateCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: 'State -> 'Message -> CancellationToken -> Task<'State>
+        ) =
+        { definition with
+            CancellableHandler =
+                Some(fun state msg ct ->
+                    task {
+                        let! newState = handler state msg ct
+                        return newState, box newState
+                    })
+        }
+
+    /// <summary>
+    /// Registers a cancellable typed-result message handler that eliminates the need for manual boxing.
+    /// The handler takes the current state, a message, and a CancellationToken,
+    /// and returns a Task of the new state paired with a strongly-typed result.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable typed-result handler function.</param>
+    /// <typeparam name="'Result">The type of the result value returned alongside the new state.</typeparam>
+    /// <returns>The updated grain definition with the cancellable handler registered.</returns>
+    [<CustomOperation("handleTypedCancellable")>]
+    member _.HandleTypedCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: 'State -> 'Message -> CancellationToken -> Task<'State * 'Result>
+        ) =
+        { definition with
+            CancellableHandler =
+                Some(fun state msg ct ->
+                    task {
+                        let! (newState, result) = handler state msg ct
+                        return newState, box result
+                    })
         }
 
     /// <summary>
@@ -1020,7 +1209,7 @@ type GrainBuilder() =
 
         if not (GrainDefinition.hasAnyHandler definition) then
             invalidOp
-                $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle', 'handleCancellable', 'handleWithContext', or 'handleWithContextCancellable' in the grain {{ }} CE."
+                $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle', 'handleState', 'handleTyped', 'handleCancellable', 'handleWithContext', or 'handleWithContextCancellable' in the grain {{ }} CE."
 
         if definition.IsStatelessWorker && definition.PersistenceName.IsSome then
             invalidOp
@@ -1036,8 +1225,11 @@ type GrainBuilder() =
 module GrainBuilderInstance =
     /// <summary>
     /// Computation expression for defining grain behavior.
-    /// Supports custom operations: defaultState, handle, handleCancellable, handleWithContext,
-    /// handleWithContextCancellable, handleWithServices, handleWithServicesCancellable, persist,
+    /// Supports custom operations: defaultState, handle, handleState, handleTyped,
+    /// handleCancellable, handleStateCancellable, handleTypedCancellable,
+    /// handleWithContext, handleStateWithContext, handleTypedWithContext,
+    /// handleWithContextCancellable, handleWithServices, handleStateWithServices,
+    /// handleTypedWithServices, handleWithServicesCancellable, persist,
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
     /// preferLocalPlacement, randomPlacement, hashBasedPlacement, activationCountPlacement,
     /// resourceOptimizedPlacement, siloRolePlacement, customPlacement,

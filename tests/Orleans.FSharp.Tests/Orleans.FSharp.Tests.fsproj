@@ -76,6 +76,9 @@
     <Compile Include="ApiParityTests.fs" />
     <Compile Include="InputValidationTests.fs" />
     <Compile Include="FSharpBinaryCodecTests.fs" />
+    <Compile Include="EventSourcedGrainDiscoveryTests.fs" />
+    <Compile Include="TypedResultTests.fs" />
+    <Compile Include="TransactionalGrainDiscoveryTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
