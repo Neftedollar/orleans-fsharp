@@ -496,4 +496,21 @@ Use distinct command/message types for each grain."
 
             handlerRegistry.Register<'State, 'Message>(definition)
 
+            // ── FSharpBinaryCodec (idempotent — only once per container) ──────────
+            // Required so F# DUs / records / options are serialised correctly when
+            // passed as `obj` through the universal grain dispatch layer.  We guard
+            // with a presence-check so multiple AddFSharpGrain<_,_> calls don't
+            // add redundant registrations.
+            let alreadyRegistered =
+                services
+                |> Seq.exists (fun sd -> sd.ServiceType = typeof<Orleans.FSharp.FSharpBinaryCodec>)
+
+            if not alreadyRegistered then
+                Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                    services,
+                    System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
+                        Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder
+                        |> ignore))
+                |> ignore
+
             services.AddSingleton<GrainDefinition<'State, 'Message>>(definition)
