@@ -7,7 +7,7 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Orleans 10](https://img.shields.io/badge/Orleans-10.0.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
-[![Tests](https://img.shields.io/badge/tests-928-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1195-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 
 ---
@@ -134,6 +134,29 @@ let config = siloConfig {
 | `clusterId` / `serviceId` | Cluster identity |
 | `gatewayListRefreshPeriod` | Gateway refresh interval |
 | `preferredGatewayIndex` | Preferred gateway |
+
+### Universal Grain Pattern — zero C# stubs
+
+Call any registered F# grain without defining a per-grain C# interface:
+
+```fsharp
+// Silo startup — register your grain definition
+siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
+
+// Client / handler — string, GUID, or int key
+let handle = FSharpGrain.ref<PingState, PingCommand> factory "ping-1"
+let! state = handle |> FSharpGrain.send Ping          // send + get state
+do! handle |> FSharpGrain.post Ping                    // fire-and-forget
+
+// GUID and integer keys
+let h = FSharpGrain.refGuid<S, M> factory (Guid.NewGuid())
+let! s = h |> FSharpGrain.sendGuid MyCommand
+
+let h = FSharpGrain.refInt<S, M> factory 42L
+do! h |> FSharpGrain.postInt MyCommand
+```
+
+The universal pattern works with any F# discriminated union as the command type — including cases with fields (`Append of string`) and nullary cases in mixed DUs. No CodeGen project is required; Orleans discovers the grains through `Orleans.FSharp.Abstractions`.
 
 ### `eventSourcedGrain { }` -- Event Sourcing
 
