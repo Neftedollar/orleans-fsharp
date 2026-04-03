@@ -133,13 +133,14 @@ let ``GetGrain by int64 returns registered grain`` () =
 // --- Missing grain tests ---
 
 [<Fact>]
-let ``GetGrain returns default when grain not registered`` () =
+let ``GetGrain throws when grain not registered`` () =
     let factory = GrainMock.create () :> IGrainFactory
-    let grain = factory.GetGrain<ITestStringGrain>("nonexistent", null)
-    test <@ isNull (box grain) @>
+    Assert.Throws<System.Collections.Generic.KeyNotFoundException>(fun () ->
+        factory.GetGrain<ITestStringGrain>("nonexistent", null) |> ignore)
+    |> ignore
 
 [<Fact>]
-let ``GetGrain with wrong key returns default`` () =
+let ``GetGrain throws with wrong key`` () =
     let fakeGrain = FakeStringGrain("hello") :> ITestStringGrain
 
     let factory =
@@ -147,8 +148,9 @@ let ``GetGrain with wrong key returns default`` () =
         |> GrainMock.withGrain<ITestStringGrain> "key1" fakeGrain
         :> IGrainFactory
 
-    let grain = factory.GetGrain<ITestStringGrain>("wrong-key", null)
-    test <@ isNull (box grain) @>
+    Assert.Throws<System.Collections.Generic.KeyNotFoundException>(fun () ->
+        factory.GetGrain<ITestStringGrain>("wrong-key", null) |> ignore)
+    |> ignore
 
 // --- Multiple grain registration tests ---
 

@@ -26,7 +26,7 @@ type MockGrainFactory() =
     member internal _.TryGet<'T>(key: string) : 'T =
         match grains.TryGetValue((typeof<'T>, key)) with
         | true, v -> v :?> 'T
-        | false, _ -> Unchecked.defaultof<'T>
+        | false, _ -> raise (KeyNotFoundException $"No mock grain registered for type '{typeof<'T>.Name}' with key '{key}'. Use GrainMock.withGrain to register.")
 
     interface IGrainFactory with
         member this.GetGrain<'TGrainInterface when 'TGrainInterface :> IGrainWithGuidKey>
@@ -65,36 +65,36 @@ type MockGrainFactory() =
             raise (NotSupportedException "MockGrainFactory does not support DeleteObjectReference")
 
         member _this.GetGrain(_grainInterfaceType: Type, _grainPrimaryKey: Guid) : IGrain =
-            Unchecked.defaultof<IGrain>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by Type is not supported. Use the generic GetGrain<T> overload.")
 
         member _this.GetGrain(_grainInterfaceType: Type, _grainPrimaryKey: int64) : IGrain =
-            Unchecked.defaultof<IGrain>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by Type is not supported. Use the generic GetGrain<T> overload.")
 
         member _this.GetGrain(_grainInterfaceType: Type, _grainPrimaryKey: string) : IGrain =
-            Unchecked.defaultof<IGrain>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by Type is not supported. Use the generic GetGrain<T> overload.")
 
         member _this.GetGrain(_grainInterfaceType: Type, _grainPrimaryKey: Guid, _keyExtension: string) : IGrain =
-            Unchecked.defaultof<IGrain>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by Type is not supported. Use the generic GetGrain<T> overload.")
 
         member _this.GetGrain(_grainInterfaceType: Type, _grainPrimaryKey: int64, _keyExtension: string) : IGrain =
-            Unchecked.defaultof<IGrain>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by Type is not supported. Use the generic GetGrain<T> overload.")
 
-        member this.GetGrain<'TGrainInterface when 'TGrainInterface :> IAddressable>
+        member _this.GetGrain<'TGrainInterface when 'TGrainInterface :> IAddressable>
             (_grainId: GrainId)
             : 'TGrainInterface =
-            Unchecked.defaultof<'TGrainInterface>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by GrainId is not supported. Use the typed GetGrain<T>(key) overload.")
 
         member _this.GetGrain(_grainId: GrainId) : IAddressable =
-            Unchecked.defaultof<IAddressable>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by GrainId is not supported.")
 
         member _this.GetGrain(_grainId: GrainId, _interfaceType: GrainInterfaceType) : IAddressable =
-            Unchecked.defaultof<IAddressable>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by GrainId is not supported.")
 
         member _this.GetGrain(_interfaceType: Type, _grainKey: IdSpan, _grainClassNamePrefix: string) : IAddressable =
-            Unchecked.defaultof<IAddressable>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by IdSpan is not supported.")
 
         member _this.GetGrain(_interfaceType: Type, _grainKey: IdSpan) : IAddressable =
-            Unchecked.defaultof<IAddressable>
+            raise (NotSupportedException "MockGrainFactory.GetGrain by IdSpan is not supported.")
 
 /// <summary>
 /// Functions for creating and configuring mock grain factories for unit testing.
