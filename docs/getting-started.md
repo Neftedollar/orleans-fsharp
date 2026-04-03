@@ -4,16 +4,15 @@
 
 ## What you'll learn
 
-- How to create a new Orleans.FSharp project
-- How to define a grain with discriminated union state
+- How to define a grain with plain F# types — no attributes, no C# stubs
 - How to configure and start a silo
-- How to call your grain
+- How to call your grain with the universal `FSharpGrain.ref` pattern
 - How to write a property test with FsCheck
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) or later
-- A code editor (VS Code with Ionide, Rider, or Visual Studio)
+- A code editor (VS Code + [Ionide](https://ionide.io), Rider, or Visual Studio)
 
 ## Step 1: Create the project
 
@@ -25,7 +24,7 @@ dotnet new orleans-fsharp -n MyCounter
 cd MyCounter
 ```
 
-Or create a project from scratch:
+Or from scratch:
 
 ```bash
 mkdir MyCounter && cd MyCounter
@@ -37,73 +36,48 @@ dotnet add package Orleans.FSharp.Abstractions   # C# shim — enables Orleans p
 dotnet add package Microsoft.Orleans.Server
 ```
 
-## Step 2: Define the grain state
+## Step 2: Define state and commands
 
-Open `Program.fs` (or the main file in your project) and define your state as a discriminated union. Orleans.FSharp uses DUs as first-class grain state -- no mutable POCO classes needed.
+Define your state and commands as plain F# types. **No `[<GenerateSerializer>]` or `[<Id>]` attributes needed** — the built-in `FSharpBinaryCodec` handles serialization automatically.
 
 ```fsharp
-open System
-open System.Threading.Tasks
-open Orleans
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
-[<GenerateSerializer>]
-type CounterState =
-    | [<Id(0u)>] Zero
-    | [<Id(1u)>] Count of int
-```
+// Plain record — no attributes
+type CounterState = { Count: int }
 
-The `[<GenerateSerializer>]` and `[<Id(n)>]` attributes tell the Orleans serializer how to handle the DU cases.
-
-## Step 3: Define the command type
-
-Commands represent the messages your grain handles:
-
-```fsharp
-[<GenerateSerializer>]
+// Plain DU — no attributes
 type CounterCommand =
-    | [<Id(0u)>] Increment
-    | [<Id(1u)>] Decrement
-    | [<Id(2u)>] GetValue
+    | Increment
+    | Decrement
+    | GetValue
 ```
 
-## Step 4: Define the grain
+## Step 3: Define the grain
 
-Use the `grain { }` computation expression to declaratively define grain behavior:
+Use the `grain { }` computation expression:
 
 ```fsharp
 let counter =
     grain {
-        defaultState Zero
+        defaultState { Count = 0 }
 
         handle (fun state cmd ->
             task {
-                match state, cmd with
-                | Zero, Increment ->
-                    return Count 1, box 1
-                | Zero, Decrement ->
-                    return Zero, box 0
-                | Count n, Increment ->
-                    return Count(n + 1), box(n + 1)
-                | Count n, Decrement when n > 1 ->
-                    return Count(n - 1), box(n - 1)
-                | Count _, Decrement ->
-                    return Zero, box 0
-                | _, GetValue ->
-                    let v = match state with Zero -> 0 | Count n -> n
-                    return state, box v
+                match cmd with
+                | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
+                | Decrement -> return { Count = state.Count - 1 }, box (state.Count - 1)
+                | GetValue  -> return state, box state.Count
             })
 
-        persist "Default"
+        persist "Default"  // name of the storage provider
     }
 ```
 
-The handler function takes the current state and a command, and returns a tuple of the new state and a boxed result. The `persist` keyword names the storage provider for state persistence.
+The handler receives the current state and a command, and returns `(newState, boxedResult)`. The `persist` keyword names the storage provider used for durable state.
 
-## Step 5: Configure the silo
-
-Use the `siloConfig { }` computation expression to configure the Orleans silo:
+## Step 4: Configure the silo
 
 ```fsharp
 let config = siloConfig {
@@ -112,11 +86,9 @@ let config = siloConfig {
 }
 ```
 
-For local development, `useLocalhostClustering` runs a single-silo cluster. `addMemoryStorage "Default"` provides in-memory grain storage (data is lost on restart -- swap to Redis or Azure for production).
+`useLocalhostClustering` runs a single-silo cluster — perfect for local development. `addMemoryStorage "Default"` wires in-memory state storage (data is cleared on restart; swap for Redis or Azure in production).
 
-## Step 6: Start the silo and call the grain
-
-Wire the silo into a .NET host and make a grain call:
+## Step 5: Register the grain and start the host
 
 ```fsharp
 open Microsoft.Extensions.Hosting
@@ -125,42 +97,76 @@ open Microsoft.Extensions.DependencyInjection
 [<EntryPoint>]
 let main _ =
     let builder = HostApplicationBuilder()
+
+    // Register the grain definition with the universal dispatcher.
+    // FSharpBinaryCodec is registered automatically — nothing else needed.
+    builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
+
     SiloConfig.applyToHost config builder
 
     let host = builder.Build()
     host.Start()
 
-    let client = host.Services.GetRequiredService<IClusterClient>()
-    let grainRef = GrainRef.ofString<ICounterGrain> client counter "my-counter"
+    let factory = host.Services.GetRequiredService<IGrainFactory>()
 
-    // Make grain calls here via the generated interface
+    // Get a typed handle — no generated interface required
+    let handle = FSharpGrain.ref<CounterState, CounterCommand> factory "my-counter"
+
+    // Send commands
+    let count = handle |> FSharpGrain.send GetValue |> Async.AwaitTask |> Async.RunSynchronously
+    printfn "Count = %A" count
+
     printfn "Silo running. Press Enter to stop."
-    Console.ReadLine() |> ignore
-
+    System.Console.ReadLine() |> ignore
     host.StopAsync().GetAwaiter().GetResult()
     0
 ```
 
-The `Orleans.FSharp.CodeGen` package generates the C# grain class and interface from your grain definition at build time. The generated interface follows the naming convention `I{GrainName}Grain`.
+`FSharpGrain.ref` returns a zero-allocation struct handle (`FSharpGrainHandle<CounterState, CounterCommand>`). Piping commands through `FSharpGrain.send` (returns state) or `FSharpGrain.post` (fire-and-forget) keeps call sites clean.
 
-## Step 7: Add a DU state machine
+## Step 6: Key types at a glance
 
-A common pattern is to model grain state as a state machine with DU cases representing each state:
+| Name | Purpose |
+|---|---|
+| `grain { }` | Computation expression to define grain behavior |
+| `siloConfig { }` | Computation expression to configure the silo |
+| `FSharpGrain.ref` | Create a string-keyed typed grain handle |
+| `FSharpGrain.refGuid` | Create a GUID-keyed typed grain handle |
+| `FSharpGrain.refInt` | Create an integer-keyed typed grain handle |
+| `FSharpGrain.send` | Send command, return typed state |
+| `FSharpGrain.post` | Fire-and-forget command |
+| `AddFSharpGrain<S,M>` | Register a grain definition in DI |
+
+## Step 7: GUID and integer keys
 
 ```fsharp
-[<GenerateSerializer>]
-type OrderState =
-    | [<Id(0u)>] Created
-    | [<Id(1u)>] Confirmed of confirmedAt: DateTime
-    | [<Id(2u)>] Shipped of trackingNumber: string
-    | [<Id(3u)>] Delivered
+open System
 
-[<GenerateSerializer>]
+// GUID-keyed grain
+let guidHandle = FSharpGrain.refGuid<CounterState, CounterCommand> factory (Guid.NewGuid())
+let! state = guidHandle |> FSharpGrain.sendGuid Increment
+
+// Integer-keyed grain
+let intHandle = FSharpGrain.refInt<CounterState, CounterCommand> factory 42L
+do! intHandle |> FSharpGrain.postInt Increment
+```
+
+## Step 8: Model a state machine
+
+A classic F# pattern is a DU state machine where the compiler enforces valid transitions:
+
+```fsharp
+type OrderState =
+    | Created
+    | Confirmed of confirmedAt: System.DateTime
+    | Shipped   of trackingNumber: string
+    | Delivered
+
 type OrderCommand =
-    | [<Id(0u)>] Confirm
-    | [<Id(1u)>] Ship of trackingNumber: string
-    | [<Id(2u)>] MarkDelivered
-    | [<Id(3u)>] GetStatus
+    | Confirm
+    | Ship of trackingNumber: string
+    | MarkDelivered
+    | GetStatus
 
 let order =
     grain {
@@ -169,92 +175,83 @@ let order =
         handle (fun state cmd ->
             task {
                 match state, cmd with
-                | Created, Confirm ->
-                    let newState = Confirmed(DateTime.UtcNow)
-                    return newState, box "confirmed"
-                | Confirmed _, Ship tracking ->
-                    let newState = Shipped tracking
-                    return newState, box tracking
-                | Shipped _, MarkDelivered ->
-                    return Delivered, box "delivered"
+                | Created,    Confirm            -> return Confirmed System.DateTime.UtcNow, box "confirmed"
+                | Confirmed _, Ship tracking     -> return Shipped tracking, box tracking
+                | Shipped _,  MarkDelivered      -> return Delivered, box "delivered"
                 | _, GetStatus ->
                     let status =
                         match state with
-                        | Created -> "created"
-                        | Confirmed _ -> "confirmed"
-                        | Shipped t -> $"shipped ({t})"
-                        | Delivered -> "delivered"
+                        | Created       -> "created"
+                        | Confirmed _   -> "confirmed"
+                        | Shipped t     -> $"shipped ({t})"
+                        | Delivered     -> "delivered"
                     return state, box status
-                | _ ->
-                    return state, box "invalid transition"
+                | _ -> return state, box "invalid transition"
             })
-
-        persist "Default"
     }
 ```
 
-The F# compiler ensures you handle all state/command combinations, catching illegal transitions at compile time.
+The F# compiler enforces exhaustive matching — illegal state/command pairs are compile errors.
 
-## Step 8: Write a property test with FsCheck
-
-Add test packages:
+## Step 9: Write a property test with FsCheck
 
 ```bash
 dotnet add package Orleans.FSharp.Testing
-dotnet add package FsCheck
 dotnet add package FsCheck.Xunit
 dotnet add package xunit
 ```
-
-Write a property test that verifies your state machine invariants hold for any sequence of commands:
 
 ```fsharp
 open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp.Testing
 
-// The counter is never negative
-let counterInvariant state =
-    match state with
-    | Zero -> true
-    | Count n -> n > 0
-
-// Pure state transition (no Task needed for testing)
-let applyCommand state cmd =
-    match state, cmd with
-    | Zero, Increment -> Count 1
-    | Zero, Decrement -> Zero
-    | Count n, Increment -> Count(n + 1)
-    | Count n, Decrement when n > 1 -> Count(n - 1)
-    | Count _, Decrement -> Zero
-    | s, GetValue -> s
+// Pure transition function for testing (no Task overhead)
+let applyCommand (state: CounterState) cmd =
+    match cmd with
+    | Increment -> { Count = state.Count + 1 }
+    | Decrement -> { Count = state.Count - 1 }
+    | GetValue  -> state
 
 [<Property>]
-let ``counter is never negative for any command sequence`` () =
-    let arb = GrainArbitrary.forCommands<CounterCommand>()
-    Prop.forAll arb (fun commands ->
-        FsCheckHelpers.stateMachineProperty Zero applyCommand counterInvariant commands)
+let ``Count equals number of Increments minus Decrements`` (commands: CounterCommand list) =
+    let final = List.fold applyCommand { Count = 0 } commands
+    let net =
+        commands |> List.sumBy (function
+            | Increment ->  1
+            | Decrement -> -1
+            | GetValue  ->  0)
+    final.Count = net
 ```
 
-`GrainArbitrary.forCommands` auto-generates random command sequences by inspecting the DU structure at runtime -- no manual Arbitrary instances needed.
+`GrainArbitrary.forCommands<'T>()` auto-generates random command sequences if you want them constrained:
 
-## Step 9: Run it
+```fsharp
+[<Property>]
+let ``Non-negative count is preserved after Increment`` (n: PositiveInt) =
+    let arb = GrainArbitrary.forCommands<CounterCommand>()
+    Prop.forAll arb (fun commands ->
+        let final = List.fold applyCommand { Count = 0 } commands
+        true // replace with your invariant
+    )
+```
+
+## Step 10: Run it
 
 ```bash
 dotnet build
 dotnet run --project MyCounter.Silo
-```
-
-For tests:
-
-```bash
 dotnet test
 ```
 
-## Next steps
+## What's next
 
-- [Grain Definition](grain-definition.md) -- complete `grain { }` CE reference with all 30+ keywords
-- [Silo Configuration](silo-configuration.md) -- every clustering, storage, and streaming option
-- [Streaming](streaming.md) -- publish, subscribe, and consume streams
-- [Event Sourcing](event-sourcing.md) -- CQRS with `eventSourcedGrain { }`
-- [Testing](testing.md) -- TestHarness, GrainMock, property tests
+| Guide | Description |
+|---|---|
+| [Grain Definition](grain-definition.md) | Complete `grain { }` CE reference — all 31 keywords |
+| [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
+| [Serialization](serialization.md) | FSharpBinaryCodec, JSON fallback, Orleans native |
+| [Streaming](streaming.md) | Publish, subscribe, TaskSeq, broadcast |
+| [Event Sourcing](event-sourcing.md) | CQRS with `eventSourcedGrain { }` |
+| [Testing](testing.md) | TestHarness, GrainMock, property tests |
+| [API Reference](api-reference.md) | All public modules and functions |

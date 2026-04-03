@@ -189,6 +189,35 @@
 | `taskMap` | `('T -> 'U) -> Task<Result<'T, 'E>> -> Task<Result<'U, 'E>>` | Map Ok value |
 | `taskBind` | `('T -> Task<Result<'U, 'E>>) -> Task<Result<'T, 'E>> -> Task<Result<'U, 'E>>` | Bind Ok value |
 
+#### `FSharpGrain` — Universal Grain Pattern
+
+Zero C# stubs. Register once with `AddFSharpGrain`, call from anywhere with `FSharpGrain.ref`.
+
+| Type | Description |
+|---|---|
+| `FSharpGrainHandle<'S,'M>` | Zero-alloc struct handle for a string-keyed grain |
+| `FSharpGrainGuidHandle<'S,'M>` | Zero-alloc struct handle for a GUID-keyed grain |
+| `FSharpGrainIntHandle<'S,'M>` | Zero-alloc struct handle for an int64-keyed grain |
+
+| Function | Signature | Description |
+|---|---|---|
+| `FSharpGrain.ref<'S,'M>` | `IGrainFactory -> string -> FSharpGrainHandle<'S,'M>` | Handle for string-keyed grain |
+| `FSharpGrain.refGuid<'S,'M>` | `IGrainFactory -> Guid -> FSharpGrainGuidHandle<'S,'M>` | Handle for GUID-keyed grain |
+| `FSharpGrain.refInt<'S,'M>` | `IGrainFactory -> int64 -> FSharpGrainIntHandle<'S,'M>` | Handle for int64-keyed grain |
+| `FSharpGrain.send<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task<'S>` | Send command, return typed state |
+| `FSharpGrain.post<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task` | Fire-and-forget command |
+| `FSharpGrain.sendGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task<'S>` | Send to GUID-keyed grain |
+| `FSharpGrain.postGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task` | Post to GUID-keyed grain |
+| `FSharpGrain.sendInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task<'S>` | Send to int64-keyed grain |
+| `FSharpGrain.postInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task` | Post to int64-keyed grain |
+
+DI registration (call once per grain definition at silo startup):
+
+```fsharp
+// Automatically registers FSharpBinaryCodec (idempotent)
+services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
+```
+
 #### Other modules
 
 | Module | Key Function | Description |
@@ -196,6 +225,7 @@
 | `GrainExtension.getExtension<'T>` | `IAddressable -> 'T` | Get grain extension reference |
 | `GrainServices.addGrainService<'T>` | `ISiloBuilder -> ISiloBuilder` | Register grain service |
 | `FSharpSerialization.addFSharpSerialization` | `ISiloBuilder -> ISiloBuilder` | Orleans native F# serializer |
+| `FSharpBinaryCodecRegistration.addToSerializerBuilder` | `ISerializerBuilder -> ISerializerBuilder` | Register FSharpBinaryCodec manually |
 | `immutable` | `'T -> Immutable<'T>` | Wrap as immutable |
 | `unwrapImmutable` | `Immutable<'T> -> 'T` | Unwrap immutable |
 

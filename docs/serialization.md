@@ -10,6 +10,21 @@ Orleans.FSharp offers three serialization modes. Choose based on your needs — 
 | **JSON** | `useJsonFallbackSerialization` | Good | No | None | Prototyping, schema flexibility |
 | **Orleans Native** | *(default)* | Fastest | Yes (CodeGen) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
 
+## Universal Grain Pattern — auto-registration
+
+When you use the universal grain pattern (`AddFSharpGrain<State, Command>`), **F# Binary serialization is registered automatically** — you do not need to add `useFSharpBinarySerialization` to your silo config.
+
+```fsharp
+// This is all you need — FSharpBinaryCodec is registered for you
+builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
+```
+
+The registration is idempotent: calling `AddFSharpGrain` multiple times for different `(State, Command)` pairs only registers the codec once.
+
+If you are NOT using the universal pattern (i.e., you are using per-grain C# stubs via `Orleans.FSharp.CodeGen`), you still need to opt in manually via `useFSharpBinarySerialization` or `useJsonFallbackSerialization`.
+
+---
+
 ## Mode 1: F# Binary (Recommended)
 
 Binary serialization using FSharp.Reflection — fast, compact, zero boilerplate.
