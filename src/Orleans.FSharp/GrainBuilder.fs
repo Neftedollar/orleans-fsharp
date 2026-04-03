@@ -1,25 +1,75 @@
 namespace Orleans.FSharp
 
 open System
+open System.Threading
 open System.Threading.Tasks
+open Microsoft.Extensions.DependencyInjection
 open Orleans
 open Orleans.Runtime
 
 /// <summary>
+/// Specifies the grain placement strategy that determines which silo activates a grain.
+/// In C# CodeGen, these map to Orleans placement attributes on the grain class.
+/// </summary>
+type PlacementStrategy =
+    /// <summary>Uses the Orleans default placement strategy (typically random).</summary>
+    | Default
+    /// <summary>Prefers to place the grain on the silo where the request originated.</summary>
+    | PreferLocal
+    /// <summary>Places the grain on a randomly selected silo.</summary>
+    | Random
+    /// <summary>Places the grain based on a hash of the grain ID for consistent placement.</summary>
+    | HashBased
+
+/// <summary>
 /// Provides access to grain infrastructure from within a grain handler.
-/// Enables grain-to-grain communication via type-safe GrainRef creation.
+/// Enables grain-to-grain communication via type-safe GrainRef creation
+/// and service resolution via the IServiceProvider.
 /// </summary>
 type GrainContext =
     {
         /// <summary>The Orleans grain factory for creating grain references.</summary>
         GrainFactory: IGrainFactory
+        /// <summary>The dependency injection service provider for resolving registered services.</summary>
+        ServiceProvider: IServiceProvider
+        /// <summary>Named persistent states for grains with multiple state stores.
+        /// Each entry maps a state name to a boxed IPersistentState instance.</summary>
+        States: Map<string, obj>
     }
 
 /// <summary>
-/// Functions for creating type-safe grain references from within a grain context.
+/// Functions for creating type-safe grain references and resolving services from within a grain context.
 /// </summary>
 [<RequireQualifiedAccess>]
 module GrainContext =
+
+    /// <summary>
+    /// Resolves a service of type 'T from the grain's dependency injection container.
+    /// Throws InvalidOperationException if the service is not registered.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to the service provider.</param>
+    /// <typeparam name="'T">The service type to resolve.</typeparam>
+    /// <returns>The resolved service instance.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when the service is not registered.</exception>
+    let getService<'T when 'T: not struct> (ctx: GrainContext) : 'T =
+        ctx.ServiceProvider.GetRequiredService<'T>()
+
+    /// <summary>
+    /// Gets a named persistent state from the grain context.
+    /// The state must have been declared using 'additionalState' in the grain CE
+    /// and is available in handlers registered with 'handleWithContext' or 'handleWithServices'.
+    /// </summary>
+    /// <param name="ctx">The grain context containing the named states.</param>
+    /// <param name="name">The name of the persistent state as declared in the grain definition.</param>
+    /// <typeparam name="'T">The type of the persistent state value.</typeparam>
+    /// <returns>The IPersistentState wrapper for the named state.</returns>
+    /// <exception cref="System.Collections.Generic.KeyNotFoundException">Thrown when the named state is not found.</exception>
+    /// <exception cref="System.InvalidCastException">Thrown when the state type does not match.</exception>
+    let getState<'T> (ctx: GrainContext) (name: string) : IPersistentState<'T> =
+        match ctx.States |> Map.tryFind name with
+        | Some boxedState -> boxedState :?> IPersistentState<'T>
+        | None ->
+            raise (System.Collections.Generic.KeyNotFoundException($"Named state '{name}' not found in grain context. Ensure it was declared using 'additionalState' in the grain CE."))
 
     /// <summary>
     /// Gets a type-safe reference to a grain by string key from within a grain handler.
@@ -66,6 +116,23 @@ module GrainContext =
 /// </summary>
 /// <typeparam name="'State">The type of the grain's state.</typeparam>
 /// <typeparam name="'Message">The type of messages the grain handles.</typeparam>
+/// <summary>
+/// Declares a named additional persistent state for use in grain handlers.
+/// Each entry specifies the state name, the storage provider name, and the default value.
+/// </summary>
+/// <typeparam name="'T">The type of the state value.</typeparam>
+type AdditionalStateSpec =
+    {
+        /// <summary>The name for this persistent state (used as the state key in storage).</summary>
+        Name: string
+        /// <summary>The Orleans storage provider name to use for this state.</summary>
+        StorageName: string
+        /// <summary>The default value for this state, boxed for storage in the definition.</summary>
+        DefaultValue: obj
+        /// <summary>The CLR type of the state value.</summary>
+        StateType: Type
+    }
+
 type GrainDefinition<'State, 'Message> =
     {
         /// <summary>The initial state value for the grain when first activated.</summary>
@@ -74,6 +141,10 @@ type GrainDefinition<'State, 'Message> =
         Handler: ('State -> 'Message -> Task<'State * obj>) option
         /// <summary>The context-aware message handler function. Takes a GrainContext, current state and a message, returns new state and a boxed result.</summary>
         ContextHandler: (GrainContext -> 'State -> 'Message -> Task<'State * obj>) option
+        /// <summary>The cancellable message handler function. Takes current state, a message, and a CancellationToken, returns new state and a boxed result.</summary>
+        CancellableHandler: ('State -> 'Message -> CancellationToken -> Task<'State * obj>) option
+        /// <summary>The cancellable context-aware message handler function. Takes a GrainContext, current state, a message, and a CancellationToken, returns new state and a boxed result.</summary>
+        CancellableContextHandler: (GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State * obj>) option
         /// <summary>The name of the Orleans storage provider, or None for in-memory only.</summary>
         PersistenceName: string option
         /// <summary>Optional activation hook. Called when the grain is activated with the current state.</summary>
@@ -82,6 +153,9 @@ type GrainDefinition<'State, 'Message> =
         OnDeactivate: ('State -> Task<unit>) option
         /// <summary>Named reminder handlers. Each handler takes state, reminder name, and TickStatus, and returns new state.</summary>
         ReminderHandlers: Map<string, 'State -> string -> TickStatus -> Task<'State>>
+        /// <summary>Named declarative timer handlers. Each entry maps a timer name to its dueTime, period, and state-transforming callback.
+        /// Timers are automatically registered on grain activation and disposed on deactivation by Orleans.</summary>
+        TimerHandlers: Map<string, TimeSpan * TimeSpan * ('State -> Task<'State>)>
         /// <summary>Whether this grain allows reentrant (concurrent) message processing.</summary>
         IsReentrant: bool
         /// <summary>Set of method names that are always interleaved (processed concurrently) even on non-reentrant grains.</summary>
@@ -90,6 +164,10 @@ type GrainDefinition<'State, 'Message> =
         IsStatelessWorker: bool
         /// <summary>Maximum number of local worker activations per silo, or None for CPU count.</summary>
         MaxLocalWorkers: int option
+        /// <summary>The placement strategy for the grain. In C# CodeGen, maps to Orleans placement attributes.</summary>
+        PlacementStrategy: PlacementStrategy
+        /// <summary>Named additional persistent states. Each entry maps a state name to its storage provider name, default value, and type.</summary>
+        AdditionalStates: Map<string, AdditionalStateSpec>
     }
 
 /// <summary>
@@ -97,6 +175,15 @@ type GrainDefinition<'State, 'Message> =
 /// </summary>
 [<RequireQualifiedAccess>]
 module GrainDefinition =
+
+    /// <summary>
+    /// Returns true if any handler (plain, context, cancellable, or cancellable-context) is registered.
+    /// </summary>
+    let hasAnyHandler (definition: GrainDefinition<'State, 'Message>) =
+        definition.Handler.IsSome
+        || definition.ContextHandler.IsSome
+        || definition.CancellableHandler.IsSome
+        || definition.CancellableContextHandler.IsSome
 
     /// <summary>
     /// Gets the handler from a GrainDefinition, raising InvalidOperationException if no handler is registered.
@@ -110,15 +197,17 @@ module GrainDefinition =
         match definition.Handler with
         | Some h -> h
         | None ->
-            match definition.ContextHandler with
-            | Some _ ->
-                fun _state _msg ->
-                    invalidOp
-                        $"This grain definition uses 'handleWithContext' which requires a GrainContext (IGrainFactory). Use GrainDefinition.getContextHandler instead, or invoke via the FSharpGrain runtime. State type: '{typeof<'State>.Name}', message type: '{typeof<'Message>.Name}'."
-                    |> Task.FromException<'State * obj>
+            match definition.CancellableHandler with
+            | Some ch -> fun state msg -> ch state msg CancellationToken.None
             | None ->
-                invalidOp
-                    $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use the 'handle' or 'handleWithContext' custom operation in the grain {{ }} CE to register a handler."
+                if hasAnyHandler definition then
+                    fun _state _msg ->
+                        invalidOp
+                            $"This grain definition uses a context-aware or cancellable handler which requires a GrainContext or CancellationToken. Use GrainDefinition.getContextHandler or getCancellableContextHandler instead, or invoke via the FSharpGrain runtime. State type: '{typeof<'State>.Name}', message type: '{typeof<'Message>.Name}'."
+                        |> Task.FromException<'State * obj>
+                else
+                    invalidOp
+                        $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use the 'handle' or 'handleWithContext' custom operation in the grain {{ }} CE to register a handler."
 
     /// <summary>
     /// Gets the context-aware handler from a GrainDefinition.
@@ -137,8 +226,40 @@ module GrainDefinition =
             match definition.Handler with
             | Some h -> fun _ctx state msg -> h state msg
             | None ->
-                invalidOp
-                    $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use the 'handle' or 'handleWithContext' custom operation in the grain {{ }} CE to register a handler."
+                match definition.CancellableContextHandler with
+                | Some cch -> fun ctx state msg -> cch ctx state msg CancellationToken.None
+                | None ->
+                    match definition.CancellableHandler with
+                    | Some ch -> fun _ctx state msg -> ch state msg CancellationToken.None
+                    | None ->
+                        invalidOp
+                            $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle' or 'handleWithContext' in the grain {{ }} CE."
+
+    /// <summary>
+    /// Gets the cancellable context-aware handler from a GrainDefinition.
+    /// Falls back through all handler variants, adapting them as needed:
+    /// CancellableContextHandler > CancellableHandler > ContextHandler > Handler.
+    /// </summary>
+    /// <param name="definition">The grain definition to extract the handler from.</param>
+    /// <returns>The cancellable context-aware message handler function.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when no handler has been registered.</exception>
+    let getCancellableContextHandler
+        (definition: GrainDefinition<'State, 'Message>)
+        : GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State * obj> =
+        match definition.CancellableContextHandler with
+        | Some cch -> cch
+        | None ->
+            match definition.CancellableHandler with
+            | Some ch -> fun _ctx state msg ct -> ch state msg ct
+            | None ->
+                match definition.ContextHandler with
+                | Some h -> fun ctx state msg _ct -> h ctx state msg
+                | None ->
+                    match definition.Handler with
+                    | Some h -> fun _ctx state msg _ct -> h state msg
+                    | None ->
+                        invalidOp
+                            $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle', 'handleCancellable', or 'handleWithContext' in the grain {{ }} CE."
 
     /// <summary>
     /// Invokes the handler from a GrainDefinition with the given state and message.
@@ -170,6 +291,26 @@ module GrainDefinition =
         let handler = getContextHandler definition
         handler ctx state message
 
+    /// <summary>
+    /// Invokes the cancellable context-aware handler from a GrainDefinition.
+    /// This method is designed for C# interop, avoiding F# curried function types.
+    /// </summary>
+    /// <param name="definition">The grain definition containing the handler.</param>
+    /// <param name="ctx">The grain context providing access to grain infrastructure.</param>
+    /// <param name="state">The current state.</param>
+    /// <param name="message">The message to handle.</param>
+    /// <param name="ct">The cancellation token to pass to the handler.</param>
+    /// <returns>A Task containing a tuple of the new state and a boxed result.</returns>
+    let invokeCancellableContextHandler
+        (definition: GrainDefinition<'State, 'Message>)
+        (ctx: GrainContext)
+        (state: 'State)
+        (message: 'Message)
+        (ct: CancellationToken)
+        : Task<'State * obj> =
+        let handler = getCancellableContextHandler definition
+        handler ctx state message ct
+
 /// <summary>
 /// Computation expression builder for declaratively defining grain behavior.
 /// Use the <c>grain {{ }}</c> syntax with custom operations to build a GrainDefinition.
@@ -191,14 +332,19 @@ type GrainBuilder() =
             DefaultState = Unchecked.defaultof<'State>
             Handler = None
             ContextHandler = None
+            CancellableHandler = None
+            CancellableContextHandler = None
             PersistenceName = None
             OnActivate = None
             OnDeactivate = None
             ReminderHandlers = Map.empty
+            TimerHandlers = Map.empty
             IsReentrant = false
             InterleavedMethods = Set.empty
             IsStatelessWorker = false
             MaxLocalWorkers = None
+            PlacementStrategy = PlacementStrategy.Default
+            AdditionalStates = Map.empty
         }
 
     /// <summary>
@@ -304,6 +450,31 @@ type GrainBuilder() =
         }
 
     /// <summary>
+    /// Registers a declarative timer handler for the grain.
+    /// The timer is automatically registered on grain activation and disposed on deactivation by Orleans.
+    /// The handler receives the current state and returns the new state.
+    /// Multiple timers can be registered by calling onTimer multiple times with different names.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="name">The unique name of the timer.</param>
+    /// <param name="dueTime">The time delay before the first firing.</param>
+    /// <param name="period">The interval between subsequent firings.</param>
+    /// <param name="handler">The timer handler function that transforms state.</param>
+    /// <returns>The updated grain definition with the timer handler registered.</returns>
+    [<CustomOperation("onTimer")>]
+    member _.OnTimer
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            name: string,
+            dueTime: TimeSpan,
+            period: TimeSpan,
+            handler: 'State -> Task<'State>
+        ) =
+        { definition with
+            TimerHandlers = definition.TimerHandlers |> Map.add name (dueTime, period, handler)
+        }
+
+    /// <summary>
     /// Marks the grain as reentrant, allowing concurrent message processing.
     /// A reentrant grain can process multiple messages simultaneously without waiting for each to complete.
     /// In C# CodeGen, this corresponds to the [Reentrant] attribute on the grain class.
@@ -354,6 +525,147 @@ type GrainBuilder() =
             MaxLocalWorkers = Some count
         }
 
+    /// <summary>
+    /// Registers a service-aware message handler function for the grain.
+    /// This is a convenience alias for handleWithContext that emphasizes
+    /// access to the IServiceProvider for dependency injection.
+    /// The handler receives a GrainContext (providing access to IGrainFactory and IServiceProvider),
+    /// the current state, and a message, and returns a Task of the new state and a boxed result.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The service-aware message handler function.</param>
+    /// <returns>The updated grain definition with the context handler registered.</returns>
+    [<CustomOperation("handleWithServices")>]
+    member _.HandleWithServices
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> Task<'State * obj>
+        ) =
+        { definition with
+            ContextHandler = Some handler
+        }
+
+    /// <summary>
+    /// Registers a cancellable message handler function for the grain.
+    /// The handler takes the current state, a message, and a CancellationToken,
+    /// and returns a Task of the new state and a boxed result.
+    /// The CancellationToken is propagated from the Orleans runtime and can be used
+    /// to abort long-running operations cooperatively.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable message handler function.</param>
+    /// <returns>The updated grain definition with the cancellable handler registered.</returns>
+    [<CustomOperation("handleCancellable")>]
+    member _.HandleCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: 'State -> 'Message -> CancellationToken -> Task<'State * obj>
+        ) =
+        { definition with
+            CancellableHandler = Some handler
+        }
+
+    /// <summary>
+    /// Registers a cancellable context-aware message handler function for the grain.
+    /// The handler receives a GrainContext, the current state, a message, and a CancellationToken,
+    /// and returns a Task of the new state and a boxed result.
+    /// Combines access to grain infrastructure with cooperative cancellation support.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable context-aware message handler function.</param>
+    /// <returns>The updated grain definition with the cancellable context handler registered.</returns>
+    [<CustomOperation("handleWithContextCancellable")>]
+    member _.HandleWithContextCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State * obj>
+        ) =
+        { definition with
+            CancellableContextHandler = Some handler
+        }
+
+    /// <summary>
+    /// Registers a cancellable service-aware message handler function for the grain.
+    /// This is a convenience alias for handleWithContextCancellable that emphasizes
+    /// access to the IServiceProvider for dependency injection.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable service-aware message handler function.</param>
+    /// <returns>The updated grain definition with the cancellable context handler registered.</returns>
+    [<CustomOperation("handleWithServicesCancellable")>]
+    member _.HandleWithServicesCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State * obj>
+        ) =
+        { definition with
+            CancellableContextHandler = Some handler
+        }
+
+    /// <summary>
+    /// Declares a named additional persistent state for the grain.
+    /// The state can be accessed in context-aware handlers via GrainContext.getState.
+    /// Multiple additional states can be declared by calling additionalState multiple times.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="name">The unique name for this persistent state.</param>
+    /// <param name="storageName">The Orleans storage provider name to use.</param>
+    /// <param name="defaultValue">The default value for this state.</param>
+    /// <returns>The updated grain definition with the additional state declared.</returns>
+    [<CustomOperation("additionalState")>]
+    member _.AdditionalState(definition: GrainDefinition<'State, 'Message>, name: string, storageName: string, defaultValue: 'T) =
+        { definition with
+            AdditionalStates =
+                definition.AdditionalStates
+                |> Map.add
+                    name
+                    {
+                        Name = name
+                        StorageName = storageName
+                        DefaultValue = box defaultValue
+                        StateType = typeof<'T>
+                    }
+        }
+
+    /// <summary>
+    /// Sets the grain placement strategy to PreferLocal.
+    /// Prefers to place the grain on the silo where the request originated.
+    /// In C# CodeGen, this corresponds to the [PreferLocalPlacement] attribute on the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <returns>The updated grain definition with PreferLocal placement.</returns>
+    [<CustomOperation("preferLocalPlacement")>]
+    member _.PreferLocalPlacement(definition: GrainDefinition<'State, 'Message>) =
+        { definition with
+            PlacementStrategy = PlacementStrategy.PreferLocal
+        }
+
+    /// <summary>
+    /// Sets the grain placement strategy to Random.
+    /// Places the grain on a randomly selected compatible silo.
+    /// In C# CodeGen, this corresponds to the [RandomPlacement] attribute on the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <returns>The updated grain definition with Random placement.</returns>
+    [<CustomOperation("randomPlacement")>]
+    member _.RandomPlacement(definition: GrainDefinition<'State, 'Message>) =
+        { definition with
+            PlacementStrategy = PlacementStrategy.Random
+        }
+
+    /// <summary>
+    /// Sets the grain placement strategy to HashBased.
+    /// Places the grain based on a consistent hash of the grain ID.
+    /// In C# CodeGen, this corresponds to the [HashBasedPlacement] attribute on the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <returns>The updated grain definition with HashBased placement.</returns>
+    [<CustomOperation("hashBasedPlacement")>]
+    member _.HashBasedPlacement(definition: GrainDefinition<'State, 'Message>) =
+        { definition with
+            PlacementStrategy = PlacementStrategy.HashBased
+        }
+
     /// <summary>Returns the completed grain definition. Validates constraints:
     /// defaultState must be explicitly set, at least one handler must be registered,
     /// and stateless workers cannot use persistent state.</summary>
@@ -364,9 +676,9 @@ type GrainBuilder() =
             invalidOp
                 $"No default state set for grain definition with state type '{typeof<'State>.Name}'. Use 'defaultState' in the grain {{ }} CE. Every grain must have an explicit initial state."
 
-        if definition.Handler.IsNone && definition.ContextHandler.IsNone then
+        if not (GrainDefinition.hasAnyHandler definition) then
             invalidOp
-                $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle' or 'handleWithContext' in the grain {{ }} CE."
+                $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle', 'handleCancellable', 'handleWithContext', or 'handleWithContextCancellable' in the grain {{ }} CE."
 
         if definition.IsStatelessWorker && definition.PersistenceName.IsSome then
             invalidOp
@@ -382,6 +694,9 @@ type GrainBuilder() =
 module GrainBuilderInstance =
     /// <summary>
     /// Computation expression for defining grain behavior.
-    /// Supports custom operations: defaultState, handle, handleWithContext, persist, onActivate, onDeactivate.
+    /// Supports custom operations: defaultState, handle, handleCancellable, handleWithContext,
+    /// handleWithContextCancellable, handleWithServices, handleWithServicesCancellable, persist,
+    /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
+    /// preferLocalPlacement, randomPlacement, hashBasedPlacement.
     /// </summary>
     let grain = GrainBuilder()

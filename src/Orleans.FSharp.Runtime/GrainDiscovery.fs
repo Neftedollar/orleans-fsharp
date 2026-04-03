@@ -7,8 +7,78 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime
+open Orleans.Storage
 open Orleans.Timers
 open Orleans.FSharp
+
+/// <summary>
+/// A simple implementation of IGrainState used internally to bridge IGrainStorage
+/// calls for named persistent states.
+/// </summary>
+type internal SimpleGrainState<'T>(initialValue: 'T) =
+    let mutable state: 'T = initialValue
+    let mutable etag: string = null
+    let mutable recordExists = false
+
+    interface Orleans.IGrainState<'T> with
+        member _.State
+            with get () = state
+            and set v = state <- v
+
+        member _.ETag
+            with get () = etag
+            and set v = etag <- v
+
+        member _.RecordExists
+            with get () = recordExists
+            and set v = recordExists <- v
+
+/// <summary>
+/// A wrapper that provides IPersistentState-like access to a named state stored via IGrainStorage.
+/// Used internally by FSharpGrain to support multiple named persistent states declared
+/// via the 'additionalState' CE keyword.
+/// </summary>
+type NamedPersistentState<'T>(storage: IGrainStorage, grainId: GrainId, stateName: string, defaultValue: 'T) =
+    let grainState = SimpleGrainState<'T>(defaultValue)
+    let iGrainState = grainState :> Orleans.IGrainState<'T>
+
+    /// <summary>Gets or sets the current in-memory state value.</summary>
+    member _.State
+        with get () = iGrainState.State
+        and set v = iGrainState.State <- v
+
+    /// <summary>Returns true if a record was found in storage during the last read.</summary>
+    member _.RecordExists = iGrainState.RecordExists
+
+    /// <summary>Gets the ETag for concurrency control.</summary>
+    member _.Etag = iGrainState.ETag
+
+    /// <summary>Reads the state from storage.</summary>
+    member _.ReadStateAsync() : Task =
+        storage.ReadStateAsync(stateName, grainId, iGrainState)
+
+    /// <summary>Writes the current state value to storage.</summary>
+    member _.WriteStateAsync() : Task =
+        storage.WriteStateAsync(stateName, grainId, iGrainState)
+
+    /// <summary>Clears the state from storage.</summary>
+    member _.ClearStateAsync() : Task =
+        storage.ClearStateAsync(stateName, grainId, iGrainState)
+
+    interface IPersistentState<'T> with
+        member this.State
+            with get () = this.State
+            and set v = this.State <- v
+
+    interface Orleans.Core.IStorage with
+        member this.Etag = this.Etag
+        member this.RecordExists = this.RecordExists
+        member this.ReadStateAsync() = this.ReadStateAsync()
+        member this.WriteStateAsync() = this.WriteStateAsync()
+        member this.ClearStateAsync() = this.ClearStateAsync()
+        member this.ReadStateAsync(_ct) = this.ReadStateAsync()
+        member this.WriteStateAsync(_ct) = this.WriteStateAsync()
+        member this.ClearStateAsync(_ct) = this.ClearStateAsync()
 
 /// <summary>
 /// A generic grain implementation that bridges F# GrainDefinition handlers to the Orleans runtime.
@@ -25,17 +95,42 @@ type FSharpGrain<'State, 'Message>
     inherit Grain()
 
     let mutable currentState = definition.DefaultState
+    let mutable additionalStates: Map<string, obj> = Map.empty
 
     /// <summary>
     /// Called when the grain is activated. Restores persisted state and runs the onActivate hook.
+    /// Initializes any additional named persistent states declared in the grain definition.
     /// Emits a structured log entry with grain context.
     /// </summary>
     override this.OnActivateAsync(ct: CancellationToken) =
+        // Capture protected members before entering task CE (closure can't access protected members)
+        let sp = this.ServiceProvider
+        let grainId = this.GetGrainId()
+
         task {
             ct.ThrowIfCancellationRequested()
 
             if persistentState.RecordExists then
                 currentState <- persistentState.State
+
+            // Initialize additional named persistent states
+            if not definition.AdditionalStates.IsEmpty then
+                for KeyValue(name, spec) in definition.AdditionalStates do
+                    let storage =
+                        sp.GetKeyedService<Orleans.Storage.IGrainStorage>(spec.StorageName)
+
+                    if isNull (box storage) then
+                        invalidOp $"Storage provider '{spec.StorageName}' not found for additional state '{name}'. Ensure it is registered in the silo configuration."
+
+                    // Create a typed wrapper via reflection to preserve the generic type
+                    let wrapperType = typedefof<NamedPersistentState<_>>.MakeGenericType(spec.StateType)
+                    let wrapper = Activator.CreateInstance(wrapperType, storage, grainId, name, spec.DefaultValue)
+
+                    // Read existing state
+                    let readMethod = wrapperType.GetMethod("ReadStateAsync")
+                    do! (readMethod.Invoke(wrapper, [||]) :?> Task)
+
+                    additionalStates <- additionalStates |> Map.add name wrapper
 
             match definition.OnActivate with
             | Some f ->
@@ -43,6 +138,26 @@ type FSharpGrain<'State, 'Message>
                 let! newState = f currentState
                 currentState <- newState
             | None -> ()
+
+            // Register declarative timers
+            for KeyValue(name, (dueTime, period, handler)) in definition.TimerHandlers do
+                this.RegisterGrainTimer(
+                    (fun (_state: obj) (_ct: CancellationToken) ->
+                        task {
+                            let! newState = handler currentState
+                            currentState <- newState
+
+                            match definition.PersistenceName with
+                            | Some _ ->
+                                persistentState.State <- currentState
+                                do! persistentState.WriteStateAsync()
+                            | None -> ()
+                        }
+                        :> Task),
+                    (null: obj),
+                    Orleans.Runtime.GrainTimerCreationOptions(DueTime = dueTime, Period = period)
+                )
+                |> ignore
 
             Log.logInfo
                 logger
@@ -73,12 +188,22 @@ type FSharpGrain<'State, 'Message>
     /// Updates state and persists it if a storage provider is configured.
     /// Passes a GrainContext to context-aware handlers for grain-to-grain communication.
     /// Propagates the current correlation ID across the grain call.
+    /// Accepts an optional CancellationToken that is forwarded to cancellable handlers.
     /// </summary>
     /// <param name="message">The message to handle.</param>
+    /// <param name="ct">Optional cancellation token for cooperative cancellation.</param>
     /// <returns>A boxed result value from the handler.</returns>
-    member this.HandleMessage(message: 'Message) : Task<obj> =
-        let ctx: GrainContext = { GrainFactory = this.GrainFactory }
-        let handler = GrainDefinition.getContextHandler definition
+    member this.HandleMessage(message: 'Message, [<System.Runtime.InteropServices.Optional; System.Runtime.InteropServices.DefaultParameterValue(CancellationToken())>] ct: CancellationToken) : Task<obj> =
+        // Capture protected members before entering task CE
+        let sp = this.ServiceProvider
+        let gf = this.GrainFactory
+        let ctx: GrainContext =
+            {
+                GrainFactory = gf
+                ServiceProvider = sp
+                States = additionalStates
+            }
+        let handler = GrainDefinition.getCancellableContextHandler definition
 
         task {
             Log.logDebug
@@ -86,7 +211,7 @@ type FSharpGrain<'State, 'Message>
                 "Grain {GrainType} handling message {MessageType} {GrainId}"
                 [| box (this.GetGrainId().Type.ToString()); box (typeof<'Message>.Name); box (this.GetGrainId().ToString()) |]
 
-            let! (newState, result) = handler ctx currentState message
+            let! (newState, result) = handler ctx currentState message ct
             currentState <- newState
 
             match definition.PersistenceName with
