@@ -395,3 +395,97 @@ let ``GetDefaultState returns the value set via defaultState CE keyword`` (seed:
     let handler = registry :> IUniversalGrainHandler
     let d = handler.GetDefaultState(typeof<CountMsg>)
     (d :?> CountState).N = seed
+
+// ── Error propagation ────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``Registry propagates exceptions thrown by the handler`` () =
+    task {
+        let registry = UniversalGrainHandlerRegistry()
+        let def =
+            grain {
+                defaultState { N = 0 }
+                handle (fun _state (msg: CountMsg) ->
+                    task {
+                        match msg with
+                        | Inc -> return failwith "intentional handler error"
+                        | _ -> return _state, box _state
+                    })
+            }
+        registry.Register<CountState, CountMsg>(def)
+        let handler = registry :> IUniversalGrainHandler
+
+        let! ex = Assert.ThrowsAnyAsync<exn>(fun () ->
+            handler.Handle(null, box Inc) :> System.Threading.Tasks.Task)
+        test <@ ex.Message.Contains("intentional handler error") @>
+    }
+
+[<Fact>]
+let ``Registry propagates exceptions without swallowing cause`` () =
+    task {
+        let registry = UniversalGrainHandlerRegistry()
+        let def =
+            grain {
+                defaultState { N = 0 }
+                handle (fun _state (_msg: CountMsg) ->
+                    task {
+                        raise (System.ArgumentOutOfRangeException("N", "out of range"))
+                        return _state, box _state
+                    })
+            }
+        registry.Register<CountState, CountMsg>(def)
+        let handler = registry :> IUniversalGrainHandler
+
+        let! ex = Assert.ThrowsAsync<System.ArgumentOutOfRangeException>(fun () ->
+            handler.Handle(null, box Inc) :> System.Threading.Tasks.Task)
+        test <@ ex.ParamName = "N" @>
+    }
+
+// ── GrainDispatchResult edge cases ───────────────────────────────────────────
+
+[<Fact>]
+let ``GrainDispatchResult preserves reference equality for boxed state`` () =
+    let state = box { N = 42 }
+    let result = GrainDispatchResult(state, null)
+    test <@ obj.ReferenceEquals(result.NewState, state) @>
+
+[<Fact>]
+let ``GrainDispatchResult preserves reference equality for boxed result`` () =
+    let r = box "hello"
+    let result = GrainDispatchResult(null, r)
+    test <@ obj.ReferenceEquals(result.Result, r) @>
+
+// ── FsCheck: Inc/Dec sequence maintains correct count ───────────────────────
+
+[<Property>]
+let ``Inc/Dec sequences maintain correct net count`` (ops: PositiveInt * PositiveInt) =
+    let incCount = (fst ops).Get
+    let decCount = (snd ops).Get
+
+    let registry = UniversalGrainHandlerRegistry()
+    let def =
+        grain {
+            defaultState { N = 0 }
+            handle (fun state (msg: CountMsg) ->
+                task {
+                    match msg with
+                    | Inc -> let ns = { N = state.N + 1 } in return ns, box ns
+                    | Dec -> let ns = { N = state.N - 1 } in return ns, box ns
+                    | GetN -> return state, box state
+                })
+        }
+    registry.Register<CountState, CountMsg>(def)
+    let handler = registry :> IUniversalGrainHandler
+
+    let mutable st: obj = null
+
+    for _ in 1..incCount do
+        let r = handler.Handle(st, box Inc).GetAwaiter().GetResult()
+        st <- r.NewState
+
+    for _ in 1..decCount do
+        let r = handler.Handle(st, box Dec).GetAwaiter().GetResult()
+        st <- r.NewState
+
+    let final = (st :?> CountState).N
+    final = (incCount - decCount)
