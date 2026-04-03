@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <Compile Include="OrderState.fs" />
+    <Compile Include="OrderCommands.fs" />
+    <Compile Include="OrderGrain.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+  </ItemGroup>
+
+</Project>
