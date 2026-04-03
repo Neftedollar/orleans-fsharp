@@ -13,49 +13,26 @@ type AssemblyMarker =
     class
     end
 
-/// <summary>
-/// Universal grain interface for all F# grains using string keys.
-/// Orleans generates a proxy for this interface once during the CodeGen build.
-/// All F# grains use this single interface via the FSharpGrain dispatcher,
-/// eliminating the need for per-grain C# interfaces.
-/// </summary>
+// IFSharpGrain interfaces: defined here in F# for compile-time use.
+// Also defined in Orleans.FSharp.CodeGen (C#) for Orleans proxy generation.
+// TODO: refactor into Orleans.FSharp.Abstractions to eliminate duplication.
+
+/// <summary>Universal grain interface for all F# grains (string key).</summary>
 type IFSharpGrain =
     inherit IGrainWithStringKey
     inherit IRemindable
-
-    /// <summary>
-    /// Dispatches a boxed message to the grain handler and returns a boxed result.
-    /// </summary>
-    /// <param name="message">The message to handle, boxed as object.</param>
-    /// <returns>A Task containing the boxed result.</returns>
     abstract HandleMessage: message: obj -> Task<obj>
 
-/// <summary>
-/// GUID-keyed variant of the universal F# grain interface.
-/// </summary>
+/// <summary>GUID-keyed variant.</summary>
 type IFSharpGrainWithGuidKey =
     inherit IGrainWithGuidKey
     inherit IRemindable
-
-    /// <summary>
-    /// Dispatches a boxed message to the grain handler and returns a boxed result.
-    /// </summary>
-    /// <param name="message">The message to handle, boxed as object.</param>
-    /// <returns>A Task containing the boxed result.</returns>
     abstract HandleMessage: message: obj -> Task<obj>
 
-/// <summary>
-/// Integer-keyed variant of the universal F# grain interface.
-/// </summary>
+/// <summary>Integer-keyed variant.</summary>
 type IFSharpGrainWithIntKey =
     inherit IGrainWithIntegerKey
     inherit IRemindable
-
-    /// <summary>
-    /// Dispatches a boxed message to the grain handler and returns a boxed result.
-    /// </summary>
-    /// <param name="message">The message to handle, boxed as object.</param>
-    /// <returns>A Task containing the boxed result.</returns>
     abstract HandleMessage: message: obj -> Task<obj>
 
 /// <summary>
