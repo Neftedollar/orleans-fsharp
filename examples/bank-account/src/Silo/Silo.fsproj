@@ -13,7 +13,6 @@
     <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
     <ProjectReference Include="../../../../src/Orleans.FSharp.EventSourcing/Orleans.FSharp.EventSourcing.fsproj" />
     <ProjectReference Include="..\Domain\Domain.fsproj" />
-    <ProjectReference Include="..\CodeGen\CodeGen.csproj" />
   </ItemGroup>
 
   <ItemGroup>

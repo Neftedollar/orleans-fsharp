@@ -23,6 +23,9 @@ builder.UseOrleans(fun siloBuilder ->
     siloBuilder.UseTransactions() |> ignore)
 |> ignore
 
+builder.Services.AddFSharpTransactionalGrain<AccountBalance>(AccountGrainDef.transactionalAccount) |> ignore
+builder.Services.AddFSharpAtmGrain<ITransactionalAccountGrain>(AccountGrainDef.atm) |> ignore
+
 let host = builder.Build()
 
 let run () : Task =

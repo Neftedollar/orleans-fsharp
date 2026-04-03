@@ -156,7 +156,6 @@ Optional packages:
 ```bash
 dotnet add package Orleans.FSharp.EventSourcing  # Event sourcing
 dotnet add package Orleans.FSharp.Testing         # Test harness + FsCheck
-dotnet add package Orleans.FSharp.Analyzers       # Compile-time checks
 ```
 
 ## Project Template
@@ -193,7 +192,6 @@ dotnet new orleans-fsharp -n MyApp
 | `Orleans.FSharp.EventSourcing` | Event-sourced grain CE |
 | `Orleans.FSharp.CodeGen` | C# code generation for F# grain types |
 | `Orleans.FSharp.Testing` | Test harness, GrainArbitrary, GrainMock, log capture |
-| `Orleans.FSharp.Analyzers` | Roslyn analyzer for compile-time checks |
 | `Orleans.FSharp.Templates` | `dotnet new` project template |
 
 ## Security

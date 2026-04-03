@@ -23,7 +23,7 @@ type DashboardCommand =
 
 /// <summary>
 /// Grain interface for the dashboard grain.
-/// The grain generates metric events on a timer and exposes them via GetLatestUpdate.
+/// The grain generates metric events on a timer and exposes them via HandleMessage.
 /// The Web project's SignalR hub polls this grain to push updates to browsers.
 /// </summary>
 type IDashboardGrain =
@@ -32,16 +32,9 @@ type IDashboardGrain =
     /// <summary>Sends a command to the dashboard grain and returns the result.</summary>
     abstract HandleMessage: DashboardCommand -> Task<obj>
 
-    /// <summary>Start the metric generation timer.</summary>
-    abstract StartTimer: unit -> Task
-
-    /// <summary>Get the latest dashboard update.</summary>
-    abstract GetLatestUpdate: unit -> Task<DashboardUpdate>
-
 /// <summary>
 /// Module containing the dashboard grain definition.
-/// The timer-based metric generation is handled in the C# CodeGen grain class
-/// since it requires direct grain access for timer registration.
+/// Uses the grain CE with a declarative timer for periodic metric generation.
 /// </summary>
 module DashboardGrainDef =
 
@@ -66,6 +59,7 @@ module DashboardGrainDef =
 
     /// <summary>
     /// The dashboard grain definition using the grain computation expression.
+    /// Includes a declarative timer that generates metrics every 2 seconds.
     /// </summary>
     let dashboard =
         grain {
@@ -81,4 +75,14 @@ module DashboardGrainDef =
                     | GetSequenceNumber ->
                         return state, box state.SequenceNumber
                 })
+
+            onTimer
+                "MetricTick"
+                (TimeSpan.FromSeconds(2.0))
+                (TimeSpan.FromSeconds(2.0))
+                (fun state ->
+                    task {
+                        let next = { SequenceNumber = state.SequenceNumber + 1L }
+                        return next
+                    })
         }

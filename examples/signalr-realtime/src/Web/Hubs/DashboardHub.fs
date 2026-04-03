@@ -1,12 +1,27 @@
 namespace SignalRRealtime.Web.Hubs
 
+open System.Threading.Tasks
+open Microsoft.AspNetCore.SignalR
+open Orleans
+open SignalRRealtime.Grains
+
 /// <summary>
-/// This module re-exports the DashboardHub from CodeGen so ASP.NET Core can map it.
-/// The actual hub implementation lives in the C# CodeGen project alongside the grain.
+/// SignalR hub for the dashboard. The grain pushes data to clients via a timer;
+/// this hub sends an initial update when a client connects.
 /// </summary>
-module DashboardHubRef =
+type DashboardHub(grainFactory: IGrainFactory) =
+    inherit Hub()
 
     /// <summary>
-    /// Type alias for referencing the hub from F# code.
+    /// Called when a client connects. Sends an initial dashboard update to the caller.
     /// </summary>
-    type Hub = SignalRRealtime.CodeGen.DashboardHub
+    override this.OnConnectedAsync() : Task =
+        // Capture protected members before entering task CE
+        let clients = this.Clients
+
+        task {
+            let dashboard = grainFactory.GetGrain<IDashboardGrain>("default")
+            let! result = dashboard.HandleMessage(GetLatestUpdate)
+            let update = result :?> SignalRRealtime.Shared.DashboardUpdate
+            do! clients.Caller.SendAsync("ReceiveMetrics", update)
+        }

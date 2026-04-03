@@ -17,10 +17,13 @@ let config =
 let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 
-// Add log-consistency storage for event sourcing
+// Add log-consistency storage for event sourcing and register the grain definition
 builder.UseOrleans(fun siloBuilder ->
     MartenConfig.addLogStorage "LogStorage" siloBuilder |> ignore
     MartenConfig.addLogStorageDefault siloBuilder |> ignore)
+|> ignore
+
+builder.Services.AddFSharpEventSourcedGrain<AccountState, AccountEvent, AccountCommand>(AccountGrainDef.account)
 |> ignore
 
 let host = builder.Build()

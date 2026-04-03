@@ -2,12 +2,12 @@ namespace BankTransactions.Domain
 
 open System.Threading.Tasks
 open Orleans.FSharp
+open Orleans.FSharp.Runtime
 
 /// <summary>
 /// Module containing the transactional bank account grain definition.
-/// The actual transactional state management is handled in the C# CodeGen grain class
-/// since it requires [TransactionalState] attribute injection via constructor.
-/// This module provides the pure business logic.
+/// Provides the pure business logic for deposits, withdrawals, and balance queries.
+/// The actual transactional state management is handled by FSharpTransactionalGrain.
 /// </summary>
 module AccountGrainDef =
 
@@ -39,3 +39,26 @@ module AccountGrainDef =
         let newBalance = AccountBalance()
         newBalance.Balance <- balance.Balance - amount
         newBalance
+
+    /// <summary>
+    /// The transactional account grain definition for use with FSharpTransactionalGrain.
+    /// </summary>
+    let transactionalAccount : TransactionalGrainDefinition<AccountBalance> =
+        {
+            Deposit = deposit
+            Withdraw = withdraw
+            GetBalance = fun state -> state.Balance
+            CopyState = fun source target -> target.Balance <- source.Balance
+        }
+
+    /// <summary>
+    /// The ATM grain definition for orchestrating cross-grain transfers.
+    /// </summary>
+    let atm : AtmGrainDefinition<ITransactionalAccountGrain> =
+        {
+            Transfer = fun from to' amount ->
+                task {
+                    do! from.Withdraw(amount)
+                    do! to'.Deposit(amount)
+                }
+        }

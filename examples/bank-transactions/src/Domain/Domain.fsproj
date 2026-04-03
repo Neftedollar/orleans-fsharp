@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+    <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

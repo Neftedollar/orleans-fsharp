@@ -139,7 +139,6 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 | `Orleans.FSharp.CodeGen` | C# bridge for Orleans source generators |
 | `Orleans.FSharp.Testing` | TestHarness, GrainMock, GrainArbitrary |
 | `Orleans.FSharp.EventSourcing` | Event sourcing CE |
-| `Orleans.FSharp.Analyzers` | F# async usage analyzer |
 
 ## Where can I find the source code?
 

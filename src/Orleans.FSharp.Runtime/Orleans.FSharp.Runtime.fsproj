@@ -14,11 +14,13 @@
     <Compile Include="ClientConfigBuilder.fs" />
     <Compile Include="SerilogIntegration.fs" />
     <Compile Include="GrainDiscovery.fs" />
+    <Compile Include="TransactionalGrainDiscovery.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Transactions" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Server" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />

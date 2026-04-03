@@ -74,7 +74,6 @@
     <Compile Include="SerializationEdgeCaseTests.fs" />
     <Compile Include="SchemaEvolutionTests.fs" />
     <Compile Include="ApiParityTests.fs" />
-    <Compile Include="AnalyzerTests.fs" />
     <Compile Include="InputValidationTests.fs" />
     <Compile Include="FSharpBinaryCodecTests.fs" />
   </ItemGroup>

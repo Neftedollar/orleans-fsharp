@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Orleans.FSharp.Analyzers/Orleans.FSharp.Analyzers.fsproj" />
     <Project Path="src/Orleans.FSharp.CodeGen/Orleans.FSharp.CodeGen.csproj" />
     <Project Path="src/Orleans.FSharp.EventSourcing/Orleans.FSharp.EventSourcing.fsproj" />
     <Project Path="src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />

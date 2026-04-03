@@ -5,7 +5,7 @@ open Orleans
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open SignalRRealtime.Grains
-open SignalRRealtime.CodeGen
+open SignalRRealtime.Web.Hubs
 
 let config =
     siloConfig {
@@ -29,13 +29,15 @@ app.UseDefaultFiles() |> ignore
 app.UseStaticFiles() |> ignore
 app.MapHub<DashboardHub>("/dashboard") |> ignore
 
-// Start the dashboard grain timer on startup
+// The dashboard grain's timer starts automatically on activation via the declarative onTimer.
+// Just activate the grain so the timer begins firing.
 let startDashboard () =
     task {
         let factory = app.Services.GetRequiredService<IGrainFactory>()
         let dashboard = factory.GetGrain<IDashboardGrain>("default")
-        do! dashboard.StartTimer()
-        printfn "--- SignalR Realtime: Dashboard grain timer started ---"
+        // Activate the grain by sending a command. The declarative timer will start automatically.
+        let! _ = dashboard.HandleMessage(GetSequenceNumber)
+        printfn "--- SignalR Realtime: Dashboard grain activated with timer ---"
         printfn "Open http://localhost:5000 in your browser to see live metrics."
         printfn "Press Ctrl+C to stop."
     }

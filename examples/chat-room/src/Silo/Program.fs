@@ -25,6 +25,7 @@ let config =
 
 let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
+builder.Services.AddFSharpGrain<ChatState, ChatMessage>(ChatGrainDef.chat) |> ignore
 
 let host = builder.Build()
 
@@ -34,7 +35,6 @@ let run () : Task =
 
         let factory = host.Services.GetRequiredService<IGrainFactory>()
         let chatRef = GrainRef.ofString<IChatGrain> factory "general"
-        let chat = GrainRef.unwrap chatRef
 
         // Create two simulated clients
         let alice = ConsoleObserver("Alice")
@@ -43,10 +43,11 @@ let run () : Task =
         let aliceRef = Observer.createRef<IChatObserver> factory alice
         let bobRef = Observer.createRef<IChatObserver> factory bob
 
-        do! chat.Subscribe(aliceRef)
-        do! chat.Subscribe(bobRef)
+        let! _ = GrainRef.invoke chatRef (fun g -> g.HandleMessage(Subscribe aliceRef))
+        let! _ = GrainRef.invoke chatRef (fun g -> g.HandleMessage(Subscribe bobRef))
 
-        let! count = chat.GetSubscriberCount()
+        let! countResult = GrainRef.invoke chatRef (fun g -> g.HandleMessage(GetSubscriberCount))
+        let count = unbox<int> countResult
         printfn "--- Chat Room: %d subscribers connected ---" count
         printfn ""
 
@@ -59,22 +60,22 @@ let run () : Task =
 
         for (sender, msg) in messages do
             printfn "%s: %s" sender msg
-            do! chat.SendMessage(sender, msg)
+            let! _ = GrainRef.invoke chatRef (fun g -> g.HandleMessage(SendMessage(sender, msg)))
             do! Task.Delay(300)
 
         printfn ""
 
         // Unsubscribe Bob
-        do! chat.Unsubscribe(bobRef)
+        let! _ = GrainRef.invoke chatRef (fun g -> g.HandleMessage(Unsubscribe bobRef))
         Observer.deleteRef<IChatObserver> factory bobRef
 
         printfn "Bob left the chat."
         printfn "Alice: Anyone still here?"
-        do! chat.SendMessage("Alice", "Anyone still here?")
+        let! _ = GrainRef.invoke chatRef (fun g -> g.HandleMessage(SendMessage("Alice", "Anyone still here?")))
         do! Task.Delay(300)
 
         // Cleanup
-        do! chat.Unsubscribe(aliceRef)
+        let! _ = GrainRef.invoke chatRef (fun g -> g.HandleMessage(Unsubscribe aliceRef))
         Observer.deleteRef<IChatObserver> factory aliceRef
 
         printfn ""
