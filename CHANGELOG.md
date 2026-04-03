@@ -41,8 +41,15 @@ Full end-to-end integration test suite for `FSharpObserverManager<'T>` running i
 
 ### Improvements
 - `GrainDefinition.invokeReminderHandler` — new C#-callable function for delegating to F# reminder handlers by name; used internally by backward-compat grain stubs
+- **`AddFSharpGrain` auto-registers `FSharpBinaryCodec`** — no manual `FSharpBinaryCodecRegistration.addToSerializerBuilder` call needed on the silo side when using the universal pattern. Registration is idempotent across multiple `AddFSharpGrain<_,_>` calls.
 - 30 new integration tests (universal pattern string/GUID/int keys + observers)
-- 39 new unit tests (GrainDispatchResult, impl class metadata, registry dispatch, FsCheck properties)
+- 54 new unit tests: GrainDispatchResult, impl class metadata, registry dispatch, FsCheck properties, `AddFSharpGrain` DI wiring (14 new)
+
+### Documentation
+- Rewrote `docs/getting-started.md` to lead with the universal grain pattern (no attributes, no C# stubs)
+- Added auto-registration callout to `docs/serialization.md`
+- Added `FSharpGrain` module section to `docs/api-reference.md`
+- Expanded `docs/testing.md` with direct handler testing and universal pattern test examples
 
 ### Breaking changes
 - `IFSharpGrain` no longer inherits `IRemindable`. `IRemindable` is implemented directly by `FSharpGrain<'S,'M>` in `Orleans.FSharp.Runtime`. This avoids pulling the `Microsoft.Orleans.Reminders` source generator into the Abstractions project.
