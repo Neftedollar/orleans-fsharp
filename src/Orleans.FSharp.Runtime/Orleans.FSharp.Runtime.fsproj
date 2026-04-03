@@ -11,6 +11,7 @@
     <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Server" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="10.*" />
   </ItemGroup>
 

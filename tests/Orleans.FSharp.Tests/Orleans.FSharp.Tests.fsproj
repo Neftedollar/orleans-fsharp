@@ -41,6 +41,8 @@
     <Compile Include="AdditionalStateTests.fs" />
     <Compile Include="CompoundKeyTests.fs" />
     <Compile Include="OneWayTests.fs" />
+    <Compile Include="BroadcastChannelTests.fs" />
+    <Compile Include="VersioningTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 
@@ -53,6 +55,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
     <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
     <PackageReference Include="FSharp.Analyzers.SDK" Version="0.*" />
   </ItemGroup>
 

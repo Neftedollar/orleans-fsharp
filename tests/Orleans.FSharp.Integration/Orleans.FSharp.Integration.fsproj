@@ -21,6 +21,8 @@
     <Compile Include="FilterIntegrationTests.fs" />
     <Compile Include="RequestCtxIntegrationTests.fs" />
     <Compile Include="ScriptingTests.fs" />
+    <Compile Include="BroadcastChannelIntegrationTests.fs" />
+    <Compile Include="VersioningIntegrationTests.fs" />
     <Compile Include="TemplateTests.fs" />
   </ItemGroup>
 
@@ -33,6 +35,7 @@
     <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.TestingHost" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
   </ItemGroup>
 

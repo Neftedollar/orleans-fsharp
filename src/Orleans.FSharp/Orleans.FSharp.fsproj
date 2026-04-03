@@ -8,6 +8,8 @@
     <Compile Include="Reminders.fs" />
     <Compile Include="Timers.fs" />
     <Compile Include="Streaming.fs" />
+    <Compile Include="BroadcastChannel.fs" />
+    <Compile Include="Versioning.fs" />
     <Compile Include="Logging.fs" />
     <Compile Include="Observers.fs" />
     <Compile Include="Filters.fs" />
@@ -23,6 +25,7 @@
     <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Server" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
     <PackageReference Include="IcedTasks" Version="0.*" />
     <PackageReference Include="FSharp.SystemTextJson" Version="1.*" />
     <PackageReference Include="FSharp.Control.TaskSeq" Version="0.*" />

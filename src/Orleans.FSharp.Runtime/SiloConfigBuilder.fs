@@ -5,7 +5,9 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Orleans
+open Orleans.Configuration
 open Orleans.Hosting
+open Orleans.FSharp.Versioning
 open Serilog
 
 /// <summary>
@@ -80,6 +82,10 @@ type SiloConfig =
         UseSerilog: bool
         /// <summary>Custom service registrations to apply to the host's DI container.</summary>
         CustomServices: (IServiceCollection -> unit) list
+        /// <summary>Named broadcast channel providers to register with the silo.</summary>
+        BroadcastChannels: string list
+        /// <summary>Grain versioning configuration (compatibility + selector strategy), or None if not configured.</summary>
+        VersioningConfig: (CompatibilityStrategy * VersionSelectorStrategy) option
         /// <summary>Incoming grain call filters to register with the silo.</summary>
         IncomingFilters: IIncomingGrainCallFilter list
         /// <summary>Outgoing grain call filters to register with the silo.</summary>
@@ -103,6 +109,8 @@ module SiloConfig =
             ReminderProvider = None
             UseSerilog = false
             CustomServices = []
+            BroadcastChannels = []
+            VersioningConfig = None
             IncomingFilters = []
             OutgoingFilters = []
         }
@@ -203,6 +211,20 @@ module SiloConfig =
         // Add one automatically if not already configured.
         if needsPubSubStore && not (config.StorageProviders |> Map.containsKey "PubSubStore") then
             siloBuilder.AddMemoryGrainStorage("PubSubStore") |> ignore
+
+        // Apply broadcast channels
+        config.BroadcastChannels
+        |> List.iter (fun name ->
+            siloBuilder.AddBroadcastChannel(name) |> ignore)
+
+        // Apply grain versioning
+        match config.VersioningConfig with
+        | Some(compat, selector) ->
+            siloBuilder.Services.Configure<GrainVersioningOptions>(fun (options: GrainVersioningOptions) ->
+                options.DefaultCompatibilityStrategy <- Versioning.compatibilityStrategyName compat
+                options.DefaultVersionSelectorStrategy <- Versioning.versionSelectorStrategyName selector)
+            |> ignore
+        | None -> ()
 
         // Apply incoming grain call filters
         config.IncomingFilters
@@ -482,6 +504,34 @@ type SiloConfigBuilder() =
             OutgoingFilters = config.OutgoingFilters @ [ filter ]
         }
 
+    /// <summary>
+    /// Adds a broadcast channel provider with the given name.
+    /// Broadcast channels deliver messages to ALL subscriber grains (fan-out).
+    /// Multiple addBroadcastChannel calls accumulate.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="name">The name of the broadcast channel provider.</param>
+    /// <returns>The updated silo configuration with the broadcast channel added.</returns>
+    [<CustomOperation("addBroadcastChannel")>]
+    member _.AddBroadcastChannel(config: SiloConfig, name: string) =
+        { config with
+            BroadcastChannels = config.BroadcastChannels @ [ name ]
+        }
+
+    /// <summary>
+    /// Configures grain interface versioning with the specified compatibility and selector strategies.
+    /// This controls how grains of different versions communicate during rolling upgrades.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="compatibility">The compatibility strategy (e.g., BackwardCompatible).</param>
+    /// <param name="selector">The version selector strategy (e.g., AllCompatibleVersions).</param>
+    /// <returns>The updated silo configuration with grain versioning configured.</returns>
+    [<CustomOperation("useGrainVersioning")>]
+    member _.UseGrainVersioning(config: SiloConfig, compatibility: CompatibilityStrategy, selector: VersionSelectorStrategy) =
+        { config with
+            VersioningConfig = Some(compatibility, selector)
+        }
+
     /// <summary>Returns the completed silo configuration.</summary>
     member _.Run(config: SiloConfig) = config
 
@@ -496,6 +546,6 @@ module SiloConfigBuilderInstance =
     /// addRedisStorage, addRedisClustering, addAzureBlobStorage, addAzureTableStorage,
     /// addAzureTableClustering, addAdoNetStorage, addAdoNetClustering,
     /// addMemoryStreams, addMemoryReminderService, useSerilog, configureServices,
-    /// addIncomingFilter, addOutgoingFilter.
+    /// addIncomingFilter, addOutgoingFilter, addBroadcastChannel, useGrainVersioning.
     /// </summary>
     let siloConfig = SiloConfigBuilder()

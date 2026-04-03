@@ -21,6 +21,7 @@ type TestSiloConfigurator() =
             siloBuilder.UseInMemoryReminderService() |> ignore
             siloBuilder.AddLogStorageBasedLogConsistencyProviderAsDefault() |> ignore
             siloBuilder.AddLogStorageBasedLogConsistencyProvider("LogStorage") |> ignore
+            siloBuilder.AddBroadcastChannel("BroadcastProvider") |> ignore
 
             siloBuilder.Services.Configure<Orleans.Hosting.ReminderOptions>(fun (options: Orleans.Hosting.ReminderOptions) ->
                 options.MinimumReminderPeriod <- TimeSpan.FromSeconds(1.0))
