@@ -176,6 +176,7 @@ dotnet new orleans-fsharp -n MyApp
 | [Grain Definition](docs/grain-definition.md) | Complete `grain { }` CE reference |
 | [Silo Configuration](docs/silo-configuration.md) | Complete `siloConfig { }` CE reference |
 | [Client Configuration](docs/client-configuration.md) | `clientConfig { }` CE reference |
+| [Serialization](docs/serialization.md) | 3 modes: F# Binary, JSON, Orleans Native |
 | [Streaming](docs/streaming.md) | Publish, subscribe, TaskSeq, broadcast |
 | [Event Sourcing](docs/event-sourcing.md) | `eventSourcedGrain { }` CE guide |
 | [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |

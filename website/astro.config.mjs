@@ -23,6 +23,7 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Grain Definition', slug: 'guides/grain-definition' },
+						{ label: 'Serialization', slug: 'guides/serialization' },
 						{ label: 'Silo Configuration', slug: 'guides/silo-configuration' },
 						{ label: 'Client Configuration', slug: 'guides/client-configuration' },
 						{ label: 'Streaming', slug: 'guides/streaming' },
