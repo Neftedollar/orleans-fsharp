@@ -99,7 +99,7 @@ let ``grain CE readOnly does not affect other fields`` () =
             readOnly "GetValue"
         }
 
-    test <@ def.DefaultState = 42 @>
+    test <@ def.DefaultState = Some 42 @>
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.ReadOnlyMethods |> Set.contains "GetValue" @>
     test <@ def.IsReentrant = false @>

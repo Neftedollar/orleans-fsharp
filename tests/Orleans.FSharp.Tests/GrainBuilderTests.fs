@@ -13,7 +13,7 @@ let ``grain CE sets defaultState`` () =
             handle (fun state _msg -> task { return state, box state })
         }
 
-    test <@ def.DefaultState = 0 @>
+    test <@ def.DefaultState = Some 0 @>
 
 [<Fact>]
 let ``grain CE sets defaultState with DU`` () =
@@ -23,7 +23,7 @@ let ``grain CE sets defaultState with DU`` () =
             handle (fun state _msg -> task { return state, box state })
         }
 
-    test <@ def.DefaultState = "initial" @>
+    test <@ def.DefaultState = Some "initial" @>
 
 [<Fact>]
 let ``grain CE registers handler`` () =
@@ -158,7 +158,7 @@ let ``grain CE produces complete definition`` () =
             onDeactivate (fun _ -> task { return () })
         }
 
-    test <@ def.DefaultState = "idle" @>
+    test <@ def.DefaultState = Some "idle" @>
     test <@ def.Handler |> Option.isSome @>
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.OnActivate |> Option.isSome @>

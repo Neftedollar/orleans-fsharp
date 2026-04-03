@@ -23,7 +23,7 @@ public class AggregatorGrainImpl : Grain, IAggregatorGrain
     public AggregatorGrainImpl(ILogger<AggregatorGrainImpl> logger)
     {
         _logger = logger;
-        _currentState = AggregatorGrainDef.aggregator.DefaultState;
+        _currentState = AggregatorGrainDef.aggregator.DefaultState.Value;
     }
 
     /// <inheritdoc/>

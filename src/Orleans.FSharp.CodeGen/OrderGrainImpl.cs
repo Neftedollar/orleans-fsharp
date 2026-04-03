@@ -27,7 +27,7 @@ public class OrderGrainImpl : Grain, IOrderGrain
     {
         _persistentState = persistentState;
         _logger = logger;
-        _currentState = OrderGrainDef.order.DefaultState;
+        _currentState = OrderGrainDef.order.DefaultState.Value;
     }
 
     /// <inheritdoc/>

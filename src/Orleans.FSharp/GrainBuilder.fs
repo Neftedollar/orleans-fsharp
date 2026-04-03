@@ -268,7 +268,7 @@ type AdditionalStateSpec =
 type GrainDefinition<'State, 'Message> =
     {
         /// <summary>The initial state value for the grain when first activated.</summary>
-        DefaultState: 'State
+        DefaultState: 'State option
         /// <summary>The message handler function. Takes current state and a message, returns new state and a boxed result.</summary>
         Handler: ('State -> 'Message -> Task<'State * obj>) option
         /// <summary>The context-aware message handler function. Takes a GrainContext, current state and a message, returns new state and a boxed result.</summary>
@@ -484,7 +484,7 @@ type GrainBuilder() =
     /// <summary>Yields the initial empty grain definition.</summary>
     member _.Yield(_: unit) : GrainDefinition<'State, 'Message> =
         {
-            DefaultState = Unchecked.defaultof<'State>
+            DefaultState = None
             Handler = None
             ContextHandler = None
             CancellableHandler = None
@@ -517,7 +517,7 @@ type GrainBuilder() =
     /// <returns>The updated grain definition with the default state set.</returns>
     [<CustomOperation("defaultState")>]
     member _.DefaultState(definition: GrainDefinition<'State, 'Message>, value: 'State) =
-        { definition with DefaultState = value }
+        { definition with DefaultState = Some value }
 
     /// <summary>
     /// Registers the message handler function for the grain.
@@ -1004,8 +1004,7 @@ type GrainBuilder() =
     /// and stateless workers cannot use persistent state.</summary>
     /// <exception cref="System.InvalidOperationException">Thrown when validation fails.</exception>
     member _.Run(definition: GrainDefinition<'State, 'Message>) =
-        if Object.ReferenceEquals(definition.DefaultState |> box, null)
-           && typeof<'State>.IsClass then
+        if definition.DefaultState.IsNone then
             invalidOp
                 $"No default state set for grain definition with state type '{typeof<'State>.Name}'. Use 'defaultState' in the grain {{ }} CE. Every grain must have an explicit initial state."
 

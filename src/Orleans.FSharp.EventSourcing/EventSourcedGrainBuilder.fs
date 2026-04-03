@@ -11,7 +11,7 @@ namespace Orleans.FSharp.EventSourcing
 type EventSourcedGrainDefinition<'State, 'Event, 'Command> =
     {
         /// <summary>The initial state value for the grain when no events have been applied.</summary>
-        DefaultState: 'State
+        DefaultState: 'State option
         /// <summary>
         /// Pure function that applies a single event to the current state, producing a new state.
         /// Must be deterministic and free of side effects.
@@ -86,7 +86,7 @@ type EventSourcedGrainBuilder() =
     /// <summary>Yields the initial empty event-sourced grain definition.</summary>
     member _.Yield(_: unit) : EventSourcedGrainDefinition<'State, 'Event, 'Command> =
         {
-            DefaultState = Unchecked.defaultof<'State>
+            DefaultState = None
             Apply = fun state _event -> state
             Handle = fun _state _command -> []
             ConsistencyProvider = None
@@ -101,7 +101,7 @@ type EventSourcedGrainBuilder() =
     /// <returns>The updated definition with the default state set.</returns>
     [<CustomOperation("defaultState")>]
     member _.DefaultState(definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>, state: 'State) =
-        { definition with DefaultState = state }
+        { definition with DefaultState = Some state }
 
     /// <summary>
     /// Sets the event application function for the grain.
@@ -152,8 +152,7 @@ type EventSourcedGrainBuilder() =
     /// <summary>Returns the completed event-sourced grain definition. Validates that defaultState was set.</summary>
     /// <exception cref="System.InvalidOperationException">Thrown when defaultState was not set for reference types.</exception>
     member _.Run(definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>) =
-        if System.Object.ReferenceEquals(definition.DefaultState |> box, null)
-           && typeof<'State>.IsClass then
+        if definition.DefaultState.IsNone then
             invalidOp
                 $"No default state set for event-sourced grain with state type '{typeof<'State>.Name}'. Use 'defaultState' in the eventSourcedGrain {{ }} CE."
 

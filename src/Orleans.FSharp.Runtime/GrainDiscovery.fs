@@ -94,7 +94,7 @@ type FSharpGrain<'State, 'Message>
     ) =
     inherit Grain()
 
-    let mutable currentState = definition.DefaultState
+    let mutable currentState = definition.DefaultState.Value
     let mutable additionalStates: Map<string, obj> = Map.empty
 
     /// <summary>Internal bridge for the protected DelayDeactivation method, callable from lambdas.</summary>

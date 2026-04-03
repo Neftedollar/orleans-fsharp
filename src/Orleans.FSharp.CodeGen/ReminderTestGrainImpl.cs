@@ -26,7 +26,7 @@ public class ReminderTestGrainImpl : Grain, IReminderTestGrain, IRemindable
     {
         _persistentState = persistentState;
         _logger = logger;
-        _currentState = ReminderTestGrainDef.reminderTestGrain.DefaultState;
+        _currentState = ReminderTestGrainDef.reminderTestGrain.DefaultState.Value;
     }
 
     /// <inheritdoc/>

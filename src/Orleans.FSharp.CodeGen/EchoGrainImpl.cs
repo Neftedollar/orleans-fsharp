@@ -22,7 +22,7 @@ public class EchoGrainImpl : Grain, IEchoGrain
     public EchoGrainImpl(ILogger<EchoGrainImpl> logger)
     {
         _logger = logger;
-        _currentState = EchoGrainDef.echo.DefaultState;
+        _currentState = EchoGrainDef.echo.DefaultState.Value;
     }
 
     /// <inheritdoc/>

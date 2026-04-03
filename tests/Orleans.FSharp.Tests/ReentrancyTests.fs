@@ -84,7 +84,7 @@ let ``grain CE reentrant does not affect other fields`` () =
             reentrant
         }
 
-    test <@ def.DefaultState = 42 @>
+    test <@ def.DefaultState = Some 42 @>
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.IsReentrant = true @>
     test <@ def.Handler |> Option.isSome @>

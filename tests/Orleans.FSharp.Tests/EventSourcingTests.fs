@@ -51,7 +51,7 @@ let ``eventSourcedGrain CE sets defaultState`` () =
             handle handleCommand
         }
 
-    test <@ def.DefaultState = { Balance = 0m } @>
+    test <@ def.DefaultState = Some { Balance = 0m } @>
 
 [<Fact>]
 let ``eventSourcedGrain CE sets apply function`` () =
@@ -108,7 +108,7 @@ let ``eventSourcedGrain CE produces complete definition`` () =
             logConsistencyProvider "LogStorage"
         }
 
-    test <@ def.DefaultState = { Balance = 0m } @>
+    test <@ def.DefaultState = Some { Balance = 0m } @>
     test <@ def.ConsistencyProvider = Some "LogStorage" @>
     // Verify apply works
     test <@ def.Apply { Balance = 0m } (Deposited 100m) = { Balance = 100m } @>

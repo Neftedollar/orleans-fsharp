@@ -27,7 +27,7 @@ public class CounterGrainImpl : Grain, ICounterGrain
     {
         _persistentState = persistentState;
         _logger = logger;
-        _currentState = CounterGrainDef.counter.DefaultState;
+        _currentState = CounterGrainDef.counter.DefaultState.Value;
     }
 
     /// <inheritdoc/>

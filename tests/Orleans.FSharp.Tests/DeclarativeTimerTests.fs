@@ -111,7 +111,7 @@ let ``onTimer composes with other CE keywords`` () =
                 task { return state })
         }
 
-    test <@ def.DefaultState = "idle" @>
+    test <@ def.DefaultState = Some "idle" @>
     test <@ def.Handler |> Option.isSome @>
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.OnActivate |> Option.isSome @>

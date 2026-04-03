@@ -96,7 +96,7 @@ let ``grain CE advanced placement does not affect other fields`` () =
             activationCountPlacement
         }
 
-    test <@ def.DefaultState = 42 @>
+    test <@ def.DefaultState = Some 42 @>
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.IsReentrant = true @>
     test <@ def.PlacementStrategy = PlacementStrategy.ActivationCountBased @>

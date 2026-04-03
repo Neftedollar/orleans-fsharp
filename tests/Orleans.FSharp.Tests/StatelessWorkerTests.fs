@@ -72,7 +72,7 @@ let ``grain CE statelessWorker does not affect other fields`` () =
             statelessWorker
         }
 
-    test <@ def.DefaultState = "hello" @>
+    test <@ def.DefaultState = Some "hello" @>
     test <@ def.IsStatelessWorker = true @>
     test <@ def.Handler |> Option.isSome @>
 

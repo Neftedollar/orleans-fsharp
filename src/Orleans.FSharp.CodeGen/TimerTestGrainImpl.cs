@@ -22,7 +22,7 @@ public class TimerTestGrainImpl : Grain, ITimerTestGrain
     public TimerTestGrainImpl(ILogger<TimerTestGrainImpl> logger)
     {
         _logger = logger;
-        _currentState = TimerTestGrainDef.timerTestGrain.DefaultState;
+        _currentState = TimerTestGrainDef.timerTestGrain.DefaultState.Value;
     }
 
     /// <inheritdoc/>

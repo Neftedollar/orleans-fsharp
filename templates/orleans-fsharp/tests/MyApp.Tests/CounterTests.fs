@@ -89,7 +89,7 @@ let ``Count 1 decremented gives Zero`` () =
 
 [<Fact>]
 let ``grain definition has default state Zero`` () =
-    test <@ CounterGrainDef.counter.DefaultState = Zero @>
+    test <@ CounterGrainDef.counter.DefaultState = Some Zero @>
 
 [<Fact>]
 let ``grain definition has persistence configured`` () =

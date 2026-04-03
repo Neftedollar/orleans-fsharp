@@ -41,7 +41,7 @@ let ``Reminder handler fold is consistent with sequential application`` (ticks: 
     let dummyStatus = TickStatus()
 
     // Apply the handler for each true tick
-    let mutable state = def.DefaultState
+    let mutable state = def.DefaultState.Value
 
     for shouldTick in ticks do
         if shouldTick then
@@ -73,7 +73,7 @@ let ``Multiple reminder handlers compose correctly`` (ticksA: bool list) (ticksB
     let handlerB = def.ReminderHandlers.["ReminderB"]
     let dummyStatus = TickStatus()
 
-    let mutable state = def.DefaultState
+    let mutable state = def.DefaultState.Value
 
     // Interleave the two tick sequences
     let maxLen = max ticksA.Length ticksB.Length

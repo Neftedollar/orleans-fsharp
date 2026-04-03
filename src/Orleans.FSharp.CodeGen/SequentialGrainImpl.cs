@@ -20,7 +20,7 @@ public class SequentialGrainImpl : Grain, ISequentialGrain
     public SequentialGrainImpl(ILogger<SequentialGrainImpl> logger)
     {
         _logger = logger;
-        _currentState = SequentialGrainDef.sequential.DefaultState;
+        _currentState = SequentialGrainDef.sequential.DefaultState.Value;
     }
 
     /// <inheritdoc/>

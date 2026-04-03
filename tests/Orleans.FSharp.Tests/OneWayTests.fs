@@ -69,7 +69,7 @@ let ``grain CE oneWay does not affect other fields`` () =
             oneWay "FireAndForget"
         }
 
-    test <@ def.DefaultState = 42 @>
+    test <@ def.DefaultState = Some 42 @>
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.Handler |> Option.isSome @>
     test <@ def.OneWayMethods |> Set.contains "FireAndForget" @>
