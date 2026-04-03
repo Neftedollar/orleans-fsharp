@@ -70,6 +70,24 @@ let runSample () : Task =
         let! result = GrainRef.invoke orderRef (fun g -> g.HandleMessage(GetStatus))
         printfn "Status: %A" result
 
+        // Universal grain pattern demo (FSharpGrain.ref — no CodeGen interface)
+        printfn ""
+        printfn "--- Universal Grain Pattern Demo (no C# stubs) ---"
+
+        // String-keyed: FSharpGrainImpl handles messages via IUniversalGrainHandler dispatch.
+        // FSharpBinaryCodec was registered automatically by AddFSharpGrain above.
+        let uHandle = FSharpGrain.ref<CounterState, CounterCommand> factory "universal-counter"
+
+        let! s1 = uHandle |> FSharpGrain.send Increment
+        printfn "Universal counter after Increment: %A" s1
+
+        let! s2 = uHandle |> FSharpGrain.send Increment
+        printfn "Universal counter after Increment: %A" s2
+
+        do! uHandle |> FSharpGrain.post Decrement   // fire-and-forget (no return value needed)
+        let! s3 = uHandle |> FSharpGrain.send GetValue
+        printfn "Universal counter after Decrement: %A" s3
+
         printfn ""
         printfn "Sample complete. Shutting down..."
         do! host.StopAsync()
