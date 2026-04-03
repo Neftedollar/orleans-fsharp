@@ -249,6 +249,20 @@ let ``Registry throws InvalidOperationException for unregistered message type`` 
     }
 
 [<Fact>]
+let ``Registry throws InvalidOperationException on duplicate message type registration`` () =
+    let registry = UniversalGrainHandlerRegistry()
+    let def =
+        grain {
+            defaultState { N = 0 }
+            handle (fun state _ -> task { return state, box state })
+        }
+    registry.Register<CountState, CountMsg>(def)
+    // Second registration for the same message type should throw
+    let ex = Assert.Throws<InvalidOperationException>(fun () ->
+        registry.Register<CountState, CountMsg>(def))
+    test <@ ex.Message.Contains("CountMsg") @>
+
+[<Fact>]
 let ``Registry supports multiple distinct (State, Message) pairs`` () =
     task {
         let registry = UniversalGrainHandlerRegistry()

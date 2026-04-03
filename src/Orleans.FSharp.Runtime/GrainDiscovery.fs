@@ -374,6 +374,16 @@ module SiloBuilderExtensions =
         /// </remarks>
         member _.Register<'State, 'Message>(definition: GrainDefinition<'State, 'Message>) : unit =
             let msgBaseKey = typeof<'Message>.FullName
+
+            // Guard against duplicate message type registrations.
+            // Each message type can only map to one (State, handler) pair because the
+            // universal dispatcher keys solely on the message's runtime type.
+            if handlers |> Map.containsKey msgBaseKey then
+                invalidOp
+                    $"Duplicate handler registration: message type '{msgBaseKey}' is already registered. \
+Each message type can only be registered with one FSharpGrain definition. \
+Use distinct command/message types for each grain."
+
             let simpleHandler = GrainDefinition.getHandler definition
 
             let h (state: obj option) (msg: obj) : Task<GrainDispatchResult> =
