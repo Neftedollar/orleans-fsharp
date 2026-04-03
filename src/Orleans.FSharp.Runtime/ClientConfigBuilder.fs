@@ -44,6 +44,8 @@ type ClientConfig =
         GatewayListRefreshPeriod: TimeSpan option
         /// <summary>The preferred gateway index for client connections, or None if not set.</summary>
         PreferredGatewayIndex: int option
+        /// <summary>Whether to register FSharp.SystemTextJson as a fallback serializer for types without [GenerateSerializer].</summary>
+        UseJsonFallbackSerialization: bool
     }
 
 /// <summary>
@@ -65,6 +67,7 @@ module ClientConfig =
             ServiceId = None
             GatewayListRefreshPeriod = None
             PreferredGatewayIndex = None
+            UseJsonFallbackSerialization = false
         }
 
     /// <summary>
@@ -171,6 +174,18 @@ module ClientConfig =
                 // Persistent streams are silo-side only; skip on client
                 ())
 
+        // Apply JSON fallback serialization (FSharp.SystemTextJson as fallback for unattributed types)
+        if config.UseJsonFallbackSerialization then
+            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                clientBuilder.Services,
+                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
+                    Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
+                        serializerBuilder,
+                        isSupported = System.Func<System.Type, bool>(fun _ -> true),
+                        jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
+                    |> ignore))
+            |> ignore
+
         // Apply TLS configuration
         match config.TlsConfig with
         | Some(TlsSubject subject) ->
@@ -230,6 +245,19 @@ type ClientConfigBuilder() =
 
     /// <summary>Returns the default configuration when the CE body is empty.</summary>
     member _.Zero() : ClientConfig = ClientConfig.Default
+
+    /// <summary>
+    /// Registers FSharp.SystemTextJson as a fallback JSON serializer for Orleans.
+    /// Types without [GenerateSerializer] will be serialized using System.Text.Json
+    /// with FSharp.SystemTextJson converters (DU, Record, Option, etc.).
+    /// This enables "clean" F# types (no Orleans attributes) to pass through grain boundaries.
+    /// Requires the Microsoft.Orleans.Serialization.SystemTextJson NuGet package (included in Orleans.FSharp.Runtime).
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <returns>The updated client configuration with JSON fallback serialization enabled.</returns>
+    [<CustomOperation("useJsonFallbackSerialization")>]
+    member _.UseJsonFallbackSerialization(config: ClientConfig) =
+        { config with UseJsonFallbackSerialization = true }
 
     /// <summary>
     /// Configures the client to use localhost clustering for local development.

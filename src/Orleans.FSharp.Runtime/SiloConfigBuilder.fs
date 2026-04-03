@@ -159,6 +159,8 @@ type SiloConfig =
         AdvertisedIpAddress: string option
         /// <summary>The global default grain collection age (idle timeout before deactivation), or None if not set.</summary>
         GrainCollectionAge: TimeSpan option
+        /// <summary>Whether to register FSharp.SystemTextJson as a fallback serializer for types without [GenerateSerializer].</summary>
+        UseJsonFallbackSerialization: bool
     }
 
 /// <summary>
@@ -194,6 +196,7 @@ module SiloConfig =
             GatewayPort = None
             AdvertisedIpAddress = None
             GrainCollectionAge = None
+            UseJsonFallbackSerialization = false
         }
 
     /// <summary>
@@ -382,6 +385,18 @@ module SiloConfig =
         | Some(DashboardWithOptions(intervalMs, historyLen, hideTrace)) ->
             invokeExtensionMethod "AddDashboard" [||] "Microsoft.Orleans.Dashboard" siloBuilder
         | None -> ()
+
+        // Apply JSON fallback serialization (FSharp.SystemTextJson as fallback for unattributed types)
+        if config.UseJsonFallbackSerialization then
+            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                siloBuilder.Services,
+                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
+                    Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
+                        serializerBuilder,
+                        isSupported = System.Func<System.Type, bool>(fun _ -> true),
+                        jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
+                    |> ignore))
+            |> ignore
 
         // Apply startup tasks
         config.StartupTasks
@@ -650,6 +665,19 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with Serilog enabled.</returns>
     [<CustomOperation("useSerilog")>]
     member _.UseSerilog(config: SiloConfig) = { config with UseSerilog = true }
+
+    /// <summary>
+    /// Registers FSharp.SystemTextJson as a fallback JSON serializer for Orleans.
+    /// Types without [GenerateSerializer] will be serialized using System.Text.Json
+    /// with FSharp.SystemTextJson converters (DU, Record, Option, etc.).
+    /// This enables "clean" F# types (no Orleans attributes) to pass through grain boundaries.
+    /// Requires the Microsoft.Orleans.Serialization.SystemTextJson NuGet package (included in Orleans.FSharp.Runtime).
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <returns>The updated silo configuration with JSON fallback serialization enabled.</returns>
+    [<CustomOperation("useJsonFallbackSerialization")>]
+    member _.UseJsonFallbackSerialization(config: SiloConfig) =
+        { config with UseJsonFallbackSerialization = true }
 
     /// <summary>
     /// Registers a custom service configuration function.

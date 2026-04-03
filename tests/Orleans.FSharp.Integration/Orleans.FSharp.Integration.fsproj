@@ -23,11 +23,13 @@
     <Compile Include="ScriptingTests.fs" />
     <Compile Include="BroadcastChannelIntegrationTests.fs" />
     <Compile Include="VersioningIntegrationTests.fs" />
+    <Compile Include="SerializationModeIntegrationTests.fs" />
     <Compile Include="TemplateTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="FsCheck.Xunit" Version="3.*" />
+    <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="10.*" />
     <PackageReference Include="Unquote" Version="7.*" />
     <PackageReference Include="xunit" Version="2.*" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
