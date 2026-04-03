@@ -239,6 +239,80 @@ type UniversalPatternTests(fixture: ClusterFixture) =
             test <@ state.Count = 1 @>
         }
 
+    // ── FSharpGrain.ask — typed result distinct from state ────────────────────
+
+    [<Fact>]
+    member _.``FSharpGrain.ask returns typed int result from GetValue`` () =
+        task {
+            let handle = FSharpGrain.ref<QueryState, QueryCommand> fixture.GrainFactory "ask-query-1"
+            let! _ = handle |> FSharpGrain.send (SetValue 42)
+            let! value = handle |> FSharpGrain.ask<QueryState, QueryCommand, int> GetValue
+            test <@ value = 42 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.ask returns typed string result from GetLabel`` () =
+        task {
+            let handle = FSharpGrain.ref<QueryState, QueryCommand> fixture.GrainFactory "ask-query-2"
+            let! _ = handle |> FSharpGrain.send (SetLabel "hello")
+            let! label = handle |> FSharpGrain.ask<QueryState, QueryCommand, string> GetLabel
+            test <@ label = "hello" @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.ask returns tuple snapshot`` () =
+        task {
+            let handle = FSharpGrain.ref<QueryState, QueryCommand> fixture.GrainFactory "ask-query-3"
+            let! _ = handle |> FSharpGrain.send (SetValue 7)
+            let! _ = handle |> FSharpGrain.send (SetLabel "snap")
+            let! (v, lbl) = handle |> FSharpGrain.ask<QueryState, QueryCommand, int * string> GetSnapshot
+            test <@ v = 7 @>
+            test <@ lbl = "snap" @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.ask does not mutate state`` () =
+        task {
+            let handle = FSharpGrain.ref<QueryState, QueryCommand> fixture.GrainFactory "ask-query-4"
+            let! _ = handle |> FSharpGrain.send (SetValue 99)
+            let! _ = handle |> FSharpGrain.ask<QueryState, QueryCommand, int> GetValue
+            // ask is read-only for GetValue — state should be unchanged
+            let! value2 = handle |> FSharpGrain.ask<QueryState, QueryCommand, int> GetValue
+            test <@ value2 = 99 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.ask pipeline operator syntax`` () =
+        task {
+            let handle = FSharpGrain.ref<QueryState, QueryCommand> fixture.GrainFactory "ask-query-5"
+            let! _ = handle |> FSharpGrain.send (SetValue 5)
+            // pipeline style: handle |> FSharpGrain.ask cmd
+            let askValue = FSharpGrain.ask<QueryState, QueryCommand, int> GetValue
+            let! v = handle |> askValue
+            test <@ v = 5 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.askGuid returns typed result`` () =
+        task {
+            let key = Guid.NewGuid()
+            let handle = FSharpGrain.refGuid<QueryState, QueryCommand> fixture.GrainFactory key
+            let! _ = handle |> FSharpGrain.sendGuid (SetValue 33)
+            let! value = handle |> FSharpGrain.askGuid<QueryState, QueryCommand, int> GetValue
+            test <@ value = 33 @>
+        }
+
+    [<Fact>]
+    member _.``FSharpGrain.askInt returns typed result`` () =
+        task {
+            let handle = FSharpGrain.refInt<QueryState, QueryCommand> fixture.GrainFactory 8001L
+            let! _ = handle |> FSharpGrain.sendInt (SetValue 77)
+            let! value = handle |> FSharpGrain.askInt<QueryState, QueryCommand, int> GetValue
+            test <@ value = 77 @>
+        }
+
+    // ── String, GUID, and int key isolation ──────────────────────────────────
+
     [<Fact>]
     member _.``String, GUID, and int key grain instances are independent`` () =
         task {

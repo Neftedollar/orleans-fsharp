@@ -71,6 +71,48 @@ module TestGrains =
         }
 
 /// <summary>
+/// State for the query grain used to test <c>FSharpGrain.ask</c> — the handler returns typed
+/// values (<c>int</c>, <c>string</c>) that are distinct from the state type.
+/// </summary>
+[<Orleans.GenerateSerializer>]
+type QueryState =
+    { [<Orleans.Id(0u)>] Value: int
+      [<Orleans.Id(1u)>] Label: string }
+
+/// <summary>Commands for the query grain.</summary>
+[<Orleans.GenerateSerializer>]
+type QueryCommand =
+    | [<Orleans.Id(0u)>] SetValue of int
+    | [<Orleans.Id(1u)>] SetLabel of string
+    | [<Orleans.Id(2u)>] GetValue      // returns int, not QueryState
+    | [<Orleans.Id(3u)>] GetLabel      // returns string, not QueryState
+    | [<Orleans.Id(4u)>] GetSnapshot   // returns (int * string), not QueryState
+
+module TestGrains2 =
+    /// <summary>
+    /// Query grain used to verify <c>FSharpGrain.ask</c>: every command returns a typed result
+    /// that differs from the state, exercising the <c>'Result</c> type parameter of <c>ask</c>.
+    /// </summary>
+    let queryGrain =
+        grain {
+            defaultState { Value = 0; Label = "" }
+            handle (fun state cmd ->
+                task {
+                    match cmd with
+                    | SetValue n   ->
+                        let ns = { state with Value = n }
+                        // Return new state so FSharpGrain.send callers can cast to QueryState
+                        return ns, box ns
+                    | SetLabel lbl ->
+                        let ns = { state with Label = lbl }
+                        return ns, box ns
+                    | GetValue     -> return state, box state.Value    // int ← ask target
+                    | GetLabel     -> return state, box state.Label    // string ← ask target
+                    | GetSnapshot  -> return state, box (state.Value, state.Label)  // tuple ← ask target
+                })
+        }
+
+/// <summary>
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
 /// for grain discovery by Orleans.
 /// </summary>
@@ -96,6 +138,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
             // Register the text-accumulator grain for field-carrying DU case dispatch tests
             siloBuilder.Services.AddFSharpGrain<TextState, TextCommand>(textGrain) |> ignore
+            // Register the query grain for FSharpGrain.ask typed-result tests
+            siloBuilder.Services.AddFSharpGrain<QueryState, QueryCommand>(TestGrains2.queryGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side
