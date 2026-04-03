@@ -45,6 +45,12 @@
     <Compile Include="AdvancedReentrancyTests.fs" />
     <Compile Include="AdvancedPlacementTests.fs" />
     <Compile Include="VersioningTests.fs" />
+    <Compile Include="GrainServiceTests.fs" />
+    <Compile Include="GrainExtensionTests.fs" />
+    <Compile Include="PersistentStreamTests.fs" />
+    <Compile Include="TransactionTests.fs" />
+    <Compile Include="GrainDirectoryTests.fs" />
+    <Compile Include="TelemetryTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 
@@ -58,6 +64,7 @@
     <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Transactions" Version="10.*" />
     <PackageReference Include="FSharp.Analyzers.SDK" Version="0.*" />
   </ItemGroup>
 

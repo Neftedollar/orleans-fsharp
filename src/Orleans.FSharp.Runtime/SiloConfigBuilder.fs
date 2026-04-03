@@ -595,6 +595,7 @@ module SiloConfigBuilderInstance =
     /// addRedisStorage, addRedisClustering, addAzureBlobStorage, addAzureTableStorage,
     /// addAzureTableClustering, addAdoNetStorage, addAdoNetClustering,
     /// addMemoryStreams, addMemoryReminderService, useSerilog, configureServices,
-    /// addIncomingFilter, addOutgoingFilter, addBroadcastChannel, useGrainVersioning.
+    /// addIncomingFilter, addOutgoingFilter, addBroadcastChannel, useGrainVersioning,
+    /// addGrainService, addPersistentStreams.
     /// </summary>
     let siloConfig = SiloConfigBuilder()
