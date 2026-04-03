@@ -1,0 +1,14 @@
+name: Question
+description: Ask a usage question about Orleans.FSharp
+labels: [question]
+body:
+  - type: textarea
+    attributes:
+      label: Question
+      description: What are you trying to figure out?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What I've Tried
+      description: What docs/code have you already looked at?
