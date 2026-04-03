@@ -70,6 +70,9 @@
     <Compile Include="GrainMockTests.fs" />
     <Compile Include="FSharpSerializationTests.fs" />
     <Compile Include="SerializationModeTests.fs" />
+    <Compile Include="SerializationPropertyTests.fs" />
+    <Compile Include="SerializationEdgeCaseTests.fs" />
+    <Compile Include="SchemaEvolutionTests.fs" />
     <Compile Include="ApiParityTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
     <Compile Include="InputValidationTests.fs" />
