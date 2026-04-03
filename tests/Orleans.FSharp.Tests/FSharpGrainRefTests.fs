@@ -233,6 +233,48 @@ let ``FSharpGrain.sendInt supports pipeline operator`` () =
 
     test <@ true @>
 
+// ── ask / askGuid / askInt type-signature tests ──
+
+[<Fact>]
+let ``FSharpGrain.ask exists and returns Task of Result type`` () =
+    // ask returns 'Result (different from 'State)
+    let _fn: TestCommand -> FSharpGrainHandle<TestState, TestCommand> -> Task<int> =
+        FSharpGrain.ask<TestState, TestCommand, int>
+
+    test <@ true @>
+
+[<Fact>]
+let ``FSharpGrain.askGuid exists and returns Task of Result type`` () =
+    let _fn: GuidCommand -> FSharpGrainGuidHandle<GuidState, GuidCommand> -> Task<string> =
+        FSharpGrain.askGuid<GuidState, GuidCommand, string>
+
+    test <@ true @>
+
+[<Fact>]
+let ``FSharpGrain.askInt exists and returns Task of Result type`` () =
+    let _fn: IntCommand -> FSharpGrainIntHandle<IntState, IntCommand> -> Task<bool> =
+        FSharpGrain.askInt<IntState, IntCommand, bool>
+
+    test <@ true @>
+
+[<Fact>]
+let ``FSharpGrain.ask supports pipeline operator`` () =
+    let _pipeline: FSharpGrainHandle<TestState, TestCommand> -> Task<int> =
+        FSharpGrain.ask<TestState, TestCommand, int> (Add 5)
+
+    test <@ true @>
+
+[<Fact>]
+let ``FSharpGrain.ask result type can differ from state type`` () =
+    // The key distinction: send<S,C> returns Task<S>, ask<S,C,R> returns Task<R>
+    let _sendFn: TestCommand -> FSharpGrainHandle<TestState, TestCommand> -> Task<TestState> =
+        FSharpGrain.send<TestState, TestCommand>
+
+    let _askFn: TestCommand -> FSharpGrainHandle<TestState, TestCommand> -> Task<int> =
+        FSharpGrain.ask<TestState, TestCommand, int>
+
+    test <@ true @>
+
 // ── Interface relationship tests ──
 
 [<Fact>]

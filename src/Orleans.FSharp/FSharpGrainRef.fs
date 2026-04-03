@@ -171,3 +171,57 @@ module FSharpGrain =
             let! _ = handle.Grain.HandleMessage(box cmd)
             ()
         }
+
+    /// <summary>
+    /// Sends a command to a string-keyed grain and returns the typed result value.
+    /// Unlike <c>send</c> which expects the result to be the new state, <c>ask</c> lets
+    /// you specify a separate <typeparamref name="'Result"/> type for the handler's
+    /// second return value (the boxed result). Use this when the handler returns a value
+    /// that is not the state — e.g., a count, a string message, or a boolean flag.
+    /// </summary>
+    /// <param name="cmd">The command to send.</param>
+    /// <param name="handle">The typed grain handle.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+    /// <typeparam name="'Result">The expected result type returned by the handler.</typeparam>
+    /// <returns>A Task containing the typed result.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// Thrown if the handler's result value cannot be cast to <typeparamref name="'Result"/>.
+    /// </exception>
+    let ask<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainHandle<'State, 'Command>) : Task<'Result> =
+        task {
+            let! result = handle.Grain.HandleMessage(box cmd)
+            return result :?> 'Result
+        }
+
+    /// <summary>
+    /// Sends a command to a GUID-keyed grain and returns the typed result value.
+    /// Use this when the handler's result differs from the grain state type.
+    /// </summary>
+    /// <param name="cmd">The command to send.</param>
+    /// <param name="handle">The typed grain handle.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+    /// <typeparam name="'Result">The expected result type returned by the handler.</typeparam>
+    /// <returns>A Task containing the typed result.</returns>
+    let askGuid<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainGuidHandle<'State, 'Command>) : Task<'Result> =
+        task {
+            let! result = handle.Grain.HandleMessage(box cmd)
+            return result :?> 'Result
+        }
+
+    /// <summary>
+    /// Sends a command to an integer-keyed grain and returns the typed result value.
+    /// Use this when the handler's result differs from the grain state type.
+    /// </summary>
+    /// <param name="cmd">The command to send.</param>
+    /// <param name="handle">The typed grain handle.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+    /// <typeparam name="'Result">The expected result type returned by the handler.</typeparam>
+    /// <returns>A Task containing the typed result.</returns>
+    let askInt<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainIntHandle<'State, 'Command>) : Task<'Result> =
+        task {
+            let! result = handle.Grain.HandleMessage(box cmd)
+            return result :?> 'Result
+        }
