@@ -67,6 +67,48 @@ grain {
 }
 ```
 
+### `handleState`
+
+A simpler variant of `handle` for grains where the caller only needs the updated state. The handler returns `Task<'State>` — no need to box a result separately.
+
+```fsharp
+grain {
+    defaultState { Count = 0 }
+    handleState (fun state msg ->
+        task {
+            match msg with
+            | Increment -> return { Count = state.Count + 1 }
+            | Decrement -> return { Count = state.Count - 1 }
+            | GetValue  -> return state
+        })
+}
+```
+
+The result returned to the caller is the new state (boxed internally).
+
+### `handleTyped`
+
+Like `handle`, but accepts a strongly-typed result instead of `obj`. No manual `box` call needed.
+
+```fsharp
+grain {
+    defaultState { Count = 0 }
+    handleTyped (fun state msg ->
+        task {
+            match msg with
+            | Increment ->
+                let ns = { Count = state.Count + 1 }
+                return ns, ns.Count    // 'Result = int — no box needed
+            | GetValue ->
+                return state, state.Count
+        })
+}
+```
+
+The `'Result` type is inferred from the handler return type. The framework boxes it internally before sending to the caller.
+
+---
+
 ### `handleWithContext`
 
 Like `handle`, but the handler receives a `GrainContext` as the first argument. Use this when you need to call other grains or resolve DI services from within the handler.

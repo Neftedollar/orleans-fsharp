@@ -54,9 +54,17 @@ let config = siloConfig {
 |---|---|
 | `defaultState` | Set the initial state value |
 | `handle` | Register a `state -> msg -> Task<state * obj>` handler |
+| `handleState` | Simpler: `state -> msg -> Task<state>` — result IS the new state |
+| `handleTyped` | Typed result without manual boxing: `state -> msg -> Task<state * 'R>` |
 | `handleWithContext` | Handler with `GrainContext` for grain-to-grain calls and DI |
+| `handleStateWithContext` | `GrainContext` + state-only result |
+| `handleTypedWithContext` | `GrainContext` + typed result |
 | `handleWithServices` | Alias for `handleWithContext` emphasizing DI access |
+| `handleStateWithServices` | Services + state-only result |
+| `handleTypedWithServices` | Services + typed result |
 | `handleCancellable` | Handler with `CancellationToken` support |
+| `handleStateCancellable` | State-only result + cancellation |
+| `handleTypedCancellable` | Typed result + cancellation |
 | `handleWithContextCancellable` | Context + cancellation |
 | `handleWithServicesCancellable` | Services + cancellation |
 | `persist` | Name the storage provider for state persistence |

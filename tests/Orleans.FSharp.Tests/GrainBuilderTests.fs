@@ -163,3 +163,124 @@ let ``grain CE produces complete definition`` () =
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.OnActivate |> Option.isSome @>
     test <@ def.OnDeactivate |> Option.isSome @>
+
+// ── handleState variant tests ─────────────────────────────────────────────────
+
+// Types for handleState tests
+type HsState = { N: int }
+type HsMsg = Tick | Read
+
+// Types for handleTyped tests
+type HtGreetCmd = GreetBy of string | GetLen
+
+[<Fact>]
+let ``handleState registers a handler`` () =
+    let def =
+        grain {
+            defaultState 0
+            handleState (fun state (_msg: string) -> task { return state + 1 })
+        }
+
+    test <@ def.Handler |> Option.isSome @>
+
+[<Fact>]
+let ``handleState returns state as result`` () =
+    task {
+        let def =
+            grain {
+                defaultState 0
+                handleState (fun state (_msg: string) -> task { return state + 10 })
+            }
+
+        let handler = def.Handler.Value
+        let! (newState, boxedResult) = handler 5 "inc"
+        test <@ newState = 15 @>
+        test <@ unbox<int> boxedResult = 15 @>
+    }
+
+[<Fact>]
+let ``handleState with record state`` () =
+    task {
+        let def =
+            grain {
+                defaultState { N = 0 }
+                handleState (fun state (msg: HsMsg) ->
+                    task {
+                        match msg with
+                        | Tick -> return { N = state.N + 1 }
+                        | Read -> return state
+                    })
+            }
+
+        let handler = def.Handler.Value
+        let! (s1, _) = handler { N = 0 } Tick
+        test <@ s1.N = 1 @>
+        let! (s2, boxed) = handler s1 Read
+        test <@ s2.N = 1 @>
+        test <@ (unbox<HsState> boxed).N = 1 @>
+    }
+
+// ── handleTyped variant tests ─────────────────────────────────────────────────
+
+[<Fact>]
+let ``handleTyped registers a handler`` () =
+    let def =
+        grain {
+            defaultState 0
+            handleTyped (fun state (_msg: string) -> task { return state + 1, state })
+        }
+
+    test <@ def.Handler |> Option.isSome @>
+
+[<Fact>]
+let ``handleTyped boxes result without manual box call`` () =
+    task {
+        let def =
+            grain {
+                defaultState 0
+                handleTyped (fun state (_msg: string) -> task { return state + 5, state + 5 })
+            }
+
+        let handler = def.Handler.Value
+        let! (newState, boxedResult) = handler 0 "inc"
+        test <@ newState = 5 @>
+        test <@ unbox<int> boxedResult = 5 @>
+    }
+
+[<Fact>]
+let ``handleTyped can return different type for result`` () =
+    task {
+        let def =
+            grain {
+                defaultState ""
+                handleTyped (fun state (msg: HtGreetCmd) ->
+                    task {
+                        match msg with
+                        | GreetBy name -> return name, $"Hello, {name}!"
+                        | GetLen       -> return state, state.Length.ToString()
+                    })
+            }
+
+        let handler = def.Handler.Value
+        let! (s1, r1) = handler "" (GreetBy "Orleans")
+        test <@ s1 = "Orleans" @>
+        test <@ unbox<string> r1 = "Hello, Orleans!" @>
+
+        let! (s2, r2) = handler "hi" GetLen
+        test <@ s2 = "hi" @>
+        test <@ unbox<string> r2 = "2" @>
+    }
+
+[<Fact>]
+let ``handleTyped with unit result`` () =
+    task {
+        let def =
+            grain {
+                defaultState 0
+                handleTyped (fun state (_msg: string) -> task { return state + 1, () })
+            }
+
+        let handler = def.Handler.Value
+        let! (newState, _) = handler 0 "fire"
+        test <@ newState = 1 @>
+    }
