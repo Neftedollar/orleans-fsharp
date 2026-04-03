@@ -59,6 +59,16 @@
     <Compile Include="GrainLifecycleTests.fs" />
     <Compile Include="StartupTaskTests.fs" />
     <Compile Include="HealthCheckTests.fs" />
+    <Compile Include="TlsConfigTests.fs" />
+    <Compile Include="DashboardConfigTests.fs" />
+    <Compile Include="ImplicitStreamSubscriptionTests.fs" />
+    <Compile Include="AdditionalPersistenceTests.fs" />
+    <Compile Include="RedisReminderTests.fs" />
+    <Compile Include="StreamProvidersTests.fs" />
+    <Compile Include="KubernetesTests.fs" />
+    <Compile Include="StreamRewindTests.fs" />
+    <Compile Include="GrainMockTests.fs" />
+    <Compile Include="FSharpSerializationTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 

@@ -252,6 +252,10 @@ type GrainDefinition<'State, 'Message> =
         /// Each hook is invoked during the corresponding lifecycle stage with a CancellationToken.
         /// Standard stages: First=2000, SetupState=4000, Activate=6000, Last=int.MaxValue.</summary>
         LifecycleHooks: Map<int, (CancellationToken -> Task<unit>) list>
+        /// <summary>Implicit stream subscriptions mapping stream namespace to event handler functions.
+        /// In C# CodeGen, maps to [ImplicitStreamSubscription("namespace")] on the grain class.
+        /// Each handler receives the current state and a stream event (boxed), and returns the new state.</summary>
+        ImplicitSubscriptions: Map<string, 'State -> obj -> Task<'State>>
     }
 
 /// <summary>
@@ -433,6 +437,7 @@ type GrainBuilder() =
             ReadOnlyMethods = Set.empty
             MayInterleavePredicate = None
             LifecycleHooks = Map.empty
+            ImplicitSubscriptions = Map.empty
         }
 
     /// <summary>
@@ -878,6 +883,27 @@ type GrainBuilder() =
             LifecycleHooks = definition.LifecycleHooks |> Map.add stage (existing @ [ hook ])
         }
 
+    /// <summary>
+    /// Declares an implicit stream subscription for the given namespace.
+    /// In C# CodeGen, maps to [ImplicitStreamSubscription("namespace")] on the grain class.
+    /// The handler receives the current state and a stream event (boxed), and returns the new state.
+    /// Multiple implicit subscriptions can be registered for different namespaces.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="ns">The stream namespace to subscribe to.</param>
+    /// <param name="handler">The event handler function that transforms state based on the stream event.</param>
+    /// <returns>The updated grain definition with the implicit stream subscription registered.</returns>
+    [<CustomOperation("implicitStreamSubscription")>]
+    member _.ImplicitStreamSubscription
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            ns: string,
+            handler: 'State -> obj -> Task<'State>
+        ) =
+        { definition with
+            ImplicitSubscriptions = definition.ImplicitSubscriptions |> Map.add ns handler
+        }
+
     /// <summary>Returns the completed grain definition. Validates constraints:
     /// defaultState must be explicitly set, at least one handler must be registered,
     /// and stateless workers cannot use persistent state.</summary>
@@ -911,6 +937,7 @@ module GrainBuilderInstance =
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
     /// preferLocalPlacement, randomPlacement, hashBasedPlacement, activationCountPlacement,
     /// resourceOptimizedPlacement, siloRolePlacement, customPlacement,
-    /// reentrant, interleave, readOnly, mayInterleave, oneWay, onLifecycleStage.
+    /// reentrant, interleave, readOnly, mayInterleave, oneWay, onLifecycleStage,
+    /// implicitStreamSubscription.
     /// </summary>
     let grain = GrainBuilder()

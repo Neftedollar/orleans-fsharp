@@ -1,6 +1,7 @@
 namespace Orleans.FSharp.Runtime
 
 open System
+open System.Security.Cryptography.X509Certificates
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
@@ -12,6 +13,36 @@ open Orleans.Streams
 open Serilog
 open System.Threading
 open Microsoft.Extensions.Diagnostics.HealthChecks
+
+/// <summary>
+/// Specifies TLS/mTLS configuration for securing Orleans silo communication.
+/// </summary>
+[<NoEquality; NoComparison>]
+type TlsConfig =
+    /// <summary>TLS using a certificate subject name from the certificate store.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.</summary>
+    | TlsSubject of subject: string
+    /// <summary>TLS using an X509Certificate2 instance.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.</summary>
+    | TlsCertificate of certificate: X509Certificate2
+    /// <summary>Mutual TLS using a certificate subject name from the certificate store.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.</summary>
+    | MutualTlsSubject of subject: string
+    /// <summary>Mutual TLS using an X509Certificate2 instance.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.</summary>
+    | MutualTlsCertificate of certificate: X509Certificate2
+
+/// <summary>
+/// Configuration for the Orleans Dashboard.
+/// </summary>
+[<NoEquality; NoComparison>]
+type DashboardConfig =
+    /// <summary>Enable the dashboard with default options.
+    /// Requires the Microsoft.Orleans.Dashboard NuGet package at runtime.</summary>
+    | DashboardDefaults
+    /// <summary>Enable the dashboard with a custom counter update interval in milliseconds.
+    /// Requires the Microsoft.Orleans.Dashboard NuGet package at runtime.</summary>
+    | DashboardWithOptions of counterUpdateIntervalMs: int * historyLength: int * hideTrace: bool
 
 /// <summary>
 /// Specifies how the silo discovers and communicates with other silos in the cluster.
@@ -44,6 +75,12 @@ type StorageProvider =
     | AzureTableStorage of connectionString: string
     /// <summary>ADO.NET-based grain storage using the given connection string and provider invariant (e.g., "Npgsql", "System.Data.SqlClient").</summary>
     | AdoNetStorage of connectionString: string * invariant: string
+    /// <summary>Azure Cosmos DB-based grain storage using the given account endpoint and database name.
+    /// Requires the Microsoft.Orleans.Persistence.Cosmos NuGet package at runtime.</summary>
+    | CosmosStorage of accountEndpoint: string * databaseName: string
+    /// <summary>Amazon DynamoDB-based grain storage using the given AWS region.
+    /// Requires the Microsoft.Orleans.Persistence.DynamoDB NuGet package at runtime.</summary>
+    | DynamoDbStorage of region: string
     /// <summary>Custom storage provider configuration via an ISiloBuilder transformation.</summary>
     | CustomStorage of (ISiloBuilder -> ISiloBuilder)
 
@@ -66,6 +103,9 @@ type StreamProvider =
 type ReminderProvider =
     /// <summary>In-memory reminder service (data lost on silo restart, suitable for development and testing).</summary>
     | MemoryReminder
+    /// <summary>Redis-based reminder service using the given connection string.
+    /// Requires the Microsoft.Orleans.Reminders.Redis NuGet package at runtime.</summary>
+    | RedisReminder of connectionString: string
     /// <summary>Custom reminder service configuration via an ISiloBuilder transformation.</summary>
     | CustomReminder of (ISiloBuilder -> ISiloBuilder)
 
@@ -101,6 +141,10 @@ type SiloConfig =
         StartupTasks: (IServiceProvider -> CancellationToken -> Tasks.Task) list
         /// <summary>Whether to register Orleans health checks with the DI container.</summary>
         EnableHealthChecks: bool
+        /// <summary>TLS/mTLS configuration for securing silo communication, or None if not configured.</summary>
+        TlsConfig: TlsConfig option
+        /// <summary>Orleans Dashboard configuration, or None if not configured.</summary>
+        DashboardConfig: DashboardConfig option
     }
 
 /// <summary>
@@ -127,6 +171,8 @@ module SiloConfig =
             GrainServiceTypes = []
             StartupTasks = []
             EnableHealthChecks = false
+            TlsConfig = None
+            DashboardConfig = None
         }
 
     /// <summary>
@@ -202,11 +248,17 @@ module SiloConfig =
                 invokeExtensionMethod "AddAzureTableGrainStorage" [| box name; box connStr |] "Microsoft.Orleans.Persistence.AzureStorage" siloBuilder
             | AdoNetStorage(connStr, invariant) ->
                 invokeExtensionMethod "AddAdoNetGrainStorage" [| box name; box connStr; box invariant |] "Microsoft.Orleans.Persistence.AdoNet" siloBuilder
+            | CosmosStorage(accountEndpoint, databaseName) ->
+                invokeExtensionMethod "AddCosmosGrainStorage" [| box name; box accountEndpoint; box databaseName |] "Microsoft.Orleans.Persistence.Cosmos" siloBuilder
+            | DynamoDbStorage region ->
+                invokeExtensionMethod "AddDynamoDBGrainStorage" [| box name; box region |] "Microsoft.Orleans.Persistence.DynamoDB" siloBuilder
             | CustomStorage f -> f siloBuilder |> ignore)
 
         // Apply reminder provider
         match config.ReminderProvider with
         | Some MemoryReminder -> siloBuilder.UseInMemoryReminderService() |> ignore
+        | Some(RedisReminder connStr) ->
+            invokeExtensionMethod "UseRedisReminderService" [| box connStr |] "Microsoft.Orleans.Reminders.Redis" siloBuilder
         | Some(CustomReminder f) -> f siloBuilder |> ignore
         | None -> ()
 
@@ -257,6 +309,26 @@ module SiloConfig =
         config.GrainServiceTypes
         |> List.iter (fun serviceType ->
             GrainServicesSiloBuilderExtensions.AddGrainService(siloBuilder.Services, serviceType) |> ignore)
+
+        // Apply TLS configuration
+        match config.TlsConfig with
+        | Some(TlsSubject subject) ->
+            invokeExtensionMethod "UseTls" [| box subject |] "Microsoft.Orleans.Connections.Security" siloBuilder
+        | Some(TlsCertificate cert) ->
+            invokeExtensionMethod "UseTls" [| box cert |] "Microsoft.Orleans.Connections.Security" siloBuilder
+        | Some(MutualTlsSubject subject) ->
+            invokeExtensionMethod "UseTls" [| box subject |] "Microsoft.Orleans.Connections.Security" siloBuilder
+        | Some(MutualTlsCertificate cert) ->
+            invokeExtensionMethod "UseTls" [| box cert |] "Microsoft.Orleans.Connections.Security" siloBuilder
+        | None -> ()
+
+        // Apply Dashboard configuration
+        match config.DashboardConfig with
+        | Some DashboardDefaults ->
+            invokeExtensionMethod "AddDashboard" [||] "Microsoft.Orleans.Dashboard" siloBuilder
+        | Some(DashboardWithOptions(intervalMs, historyLen, hideTrace)) ->
+            invokeExtensionMethod "AddDashboard" [||] "Microsoft.Orleans.Dashboard" siloBuilder
+        | None -> ()
 
         // Apply startup tasks
         config.StartupTasks
@@ -622,6 +694,129 @@ type SiloConfigBuilder() =
     member _.EnableHealthChecks(config: SiloConfig) =
         { config with EnableHealthChecks = true }
 
+    /// <summary>
+    /// Configures TLS using a certificate subject name from the certificate store.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
+    /// <returns>The updated silo configuration with TLS enabled.</returns>
+    [<CustomOperation("useTls")>]
+    member _.UseTls(config: SiloConfig, subject: string) =
+        { config with TlsConfig = Some(TlsSubject subject) }
+
+    /// <summary>
+    /// Configures TLS using an X509Certificate2 instance.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="certificate">The X509Certificate2 to use for TLS.</param>
+    /// <returns>The updated silo configuration with TLS enabled.</returns>
+    [<CustomOperation("useTlsWithCertificate")>]
+    member _.UseTlsWithCertificate(config: SiloConfig, certificate: X509Certificate2) =
+        { config with
+            TlsConfig = Some(TlsCertificate certificate)
+        }
+
+    /// <summary>
+    /// Configures mutual TLS (mTLS) using a certificate subject name from the certificate store.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
+    /// <returns>The updated silo configuration with mutual TLS enabled.</returns>
+    [<CustomOperation("useMutualTls")>]
+    member _.UseMutualTls(config: SiloConfig, subject: string) =
+        { config with
+            TlsConfig = Some(MutualTlsSubject subject)
+        }
+
+    /// <summary>
+    /// Configures mutual TLS (mTLS) using an X509Certificate2 instance.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="certificate">The X509Certificate2 to use for mutual TLS.</param>
+    /// <returns>The updated silo configuration with mutual TLS enabled.</returns>
+    [<CustomOperation("useMutualTlsWithCertificate")>]
+    member _.UseMutualTlsWithCertificate(config: SiloConfig, certificate: X509Certificate2) =
+        { config with
+            TlsConfig = Some(MutualTlsCertificate certificate)
+        }
+
+    /// <summary>
+    /// Adds the Orleans Dashboard with default options.
+    /// Requires the Microsoft.Orleans.Dashboard NuGet package at runtime.
+    /// Map the dashboard endpoints with MapOrleansDashboard() in your ASP.NET Core pipeline.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <returns>The updated silo configuration with the dashboard enabled.</returns>
+    [<CustomOperation("addDashboard")>]
+    member _.AddDashboard(config: SiloConfig) =
+        { config with
+            DashboardConfig = Some DashboardDefaults
+        }
+
+    /// <summary>
+    /// Adds the Orleans Dashboard with custom options.
+    /// Requires the Microsoft.Orleans.Dashboard NuGet package at runtime.
+    /// Map the dashboard endpoints with MapOrleansDashboard() in your ASP.NET Core pipeline.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="counterUpdateIntervalMs">The counter update interval in milliseconds (minimum 1000).</param>
+    /// <param name="historyLength">The number of historical data points to retain.</param>
+    /// <param name="hideTrace">Whether to disable the live trace endpoint.</param>
+    /// <returns>The updated silo configuration with the dashboard enabled.</returns>
+    [<CustomOperation("addDashboardWithOptions")>]
+    member _.AddDashboardWithOptions(config: SiloConfig, counterUpdateIntervalMs: int, historyLength: int, hideTrace: bool) =
+        { config with
+            DashboardConfig = Some(DashboardWithOptions(counterUpdateIntervalMs, historyLength, hideTrace))
+        }
+
+    /// <summary>
+    /// Adds an Azure Cosmos DB grain storage provider with the given name, account endpoint, and database name.
+    /// Requires the Microsoft.Orleans.Persistence.Cosmos NuGet package at runtime.
+    /// If a provider with the same name already exists, it is replaced.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="name">The name of the storage provider.</param>
+    /// <param name="accountEndpoint">The Cosmos DB account endpoint (e.g., "AccountEndpoint=...").</param>
+    /// <param name="databaseName">The Cosmos DB database name.</param>
+    /// <returns>The updated silo configuration with the Cosmos DB storage provider added.</returns>
+    [<CustomOperation("addCosmosStorage")>]
+    member _.AddCosmosStorage(config: SiloConfig, name: string, accountEndpoint: string, databaseName: string) =
+        { config with
+            StorageProviders = config.StorageProviders |> Map.add name (CosmosStorage(accountEndpoint, databaseName))
+        }
+
+    /// <summary>
+    /// Adds an Amazon DynamoDB grain storage provider with the given name and AWS region.
+    /// Requires the Microsoft.Orleans.Persistence.DynamoDB NuGet package at runtime.
+    /// If a provider with the same name already exists, it is replaced.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="name">The name of the storage provider.</param>
+    /// <param name="region">The AWS region (e.g., "us-east-1").</param>
+    /// <returns>The updated silo configuration with the DynamoDB storage provider added.</returns>
+    [<CustomOperation("addDynamoDbStorage")>]
+    member _.AddDynamoDbStorage(config: SiloConfig, name: string, region: string) =
+        { config with
+            StorageProviders = config.StorageProviders |> Map.add name (DynamoDbStorage region)
+        }
+
+    /// <summary>
+    /// Configures the silo to use a Redis-based reminder service.
+    /// Requires the Microsoft.Orleans.Reminders.Redis NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="connectionString">The Redis connection string (e.g., "localhost:6379").</param>
+    /// <returns>The updated silo configuration with the Redis reminder service configured.</returns>
+    [<CustomOperation("addRedisReminderService")>]
+    member _.AddRedisReminderService(config: SiloConfig, connectionString: string) =
+        { config with
+            ReminderProvider = Some(RedisReminder connectionString)
+        }
+
     /// <summary>Returns the completed silo configuration.</summary>
     member _.Run(config: SiloConfig) = config
 
@@ -634,9 +829,11 @@ module SiloConfigBuilderInstance =
     /// Computation expression for declaratively configuring an Orleans silo.
     /// Supports custom operations: useLocalhostClustering, addMemoryStorage, addCustomStorage,
     /// addRedisStorage, addRedisClustering, addAzureBlobStorage, addAzureTableStorage,
-    /// addAzureTableClustering, addAdoNetStorage, addAdoNetClustering,
-    /// addMemoryStreams, addMemoryReminderService, useSerilog, configureServices,
-    /// addIncomingFilter, addOutgoingFilter, addBroadcastChannel, useGrainVersioning,
-    /// addGrainService, addPersistentStreams.
+    /// addAzureTableClustering, addAdoNetStorage, addAdoNetClustering, addCosmosStorage,
+    /// addDynamoDbStorage, addMemoryStreams, addMemoryReminderService, addRedisReminderService,
+    /// useSerilog, configureServices, addIncomingFilter, addOutgoingFilter, addBroadcastChannel,
+    /// useGrainVersioning, addGrainService, addPersistentStreams, useTls, useTlsWithCertificate,
+    /// useMutualTls, useMutualTlsWithCertificate, addDashboard, addDashboardWithOptions,
+    /// enableHealthChecks, addStartupTask.
     /// </summary>
     let siloConfig = SiloConfigBuilder()

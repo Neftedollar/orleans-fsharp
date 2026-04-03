@@ -8,6 +8,7 @@
     <Compile Include="LogCapture.fs" />
     <Compile Include="TestHarness.fs" />
     <Compile Include="GrainArbitrary.fs" />
+    <Compile Include="GrainMock.fs" />
     <Compile Include="FsCheckIntegration.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>

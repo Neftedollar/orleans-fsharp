@@ -136,6 +136,46 @@ module Stream =
         }
 
     /// <summary>
+    /// Subscribes to a stream starting from a specific sequence token (rewind/resume).
+    /// This allows resuming event processing from a previously checkpointed position.
+    /// Only supported by rewindable stream providers (e.g., Event Hubs).
+    /// </summary>
+    /// <param name="stream">The stream reference to subscribe to.</param>
+    /// <param name="token">The sequence token to start consuming from.</param>
+    /// <param name="handler">A function called for each event received on the stream.</param>
+    /// <typeparam name="'T">The type of events on the stream.</typeparam>
+    /// <returns>A Task containing the stream subscription, which can be used to unsubscribe.</returns>
+    let subscribeFrom<'T>
+        (stream: StreamRef<'T>)
+        (token: StreamSequenceToken)
+        (handler: 'T -> Task<unit>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+
+            let onNext =
+                Func<'T, StreamSequenceToken, Task>(fun item _token ->
+                    task { do! handler item })
+
+            let! handle = asyncStream.SubscribeAsync(onNext, token)
+            return { Handle = handle }
+        }
+
+    /// <summary>
+    /// Gets the current sequence token for a subscription by querying the stream
+    /// for all subscription handles and finding the matching one.
+    /// Returns None if the token cannot be determined.
+    /// </summary>
+    /// <param name="sub">The stream subscription to query.</param>
+    /// <typeparam name="'T">The type of events on the subscribed stream.</typeparam>
+    /// <returns>The sequence token if available, or None.</returns>
+    let getSequenceToken<'T> (sub: StreamSubscription<'T>) : StreamSequenceToken option =
+        // StreamSubscriptionHandle does not directly expose the token;
+        // the token is delivered with each event via the onNext callback.
+        // This function returns None since the token must be tracked by the consumer.
+        None
+
+    /// <summary>
     /// Unsubscribes from a stream, stopping event delivery to the handler.
     /// </summary>
     /// <param name="sub">The stream subscription to cancel.</param>

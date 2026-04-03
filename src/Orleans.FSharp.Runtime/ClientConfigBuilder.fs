@@ -2,6 +2,7 @@ namespace Orleans.FSharp.Runtime
 
 open System
 open System.Net
+open System.Security.Cryptography.X509Certificates
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Orleans
@@ -32,6 +33,8 @@ type ClientConfig =
         StreamProviders: Map<string, StreamProvider>
         /// <summary>Custom service registrations to apply to the host's DI container.</summary>
         CustomServices: (IServiceCollection -> unit) list
+        /// <summary>TLS configuration for securing client communication, or None if not configured.</summary>
+        TlsConfig: TlsConfig option
     }
 
 /// <summary>
@@ -48,6 +51,7 @@ module ClientConfig =
             ClusteringMode = None
             StreamProviders = Map.empty
             CustomServices = []
+            TlsConfig = None
         }
 
     /// <summary>
@@ -68,6 +72,35 @@ module ClientConfig =
     /// </summary>
     /// <param name="config">The client configuration to apply.</param>
     /// <param name="clientBuilder">The IClientBuilder to configure.</param>
+    /// <summary>
+    /// Invokes an extension method on IClientBuilder by name, searching loaded assemblies.
+    /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
+    /// </summary>
+    let private invokeClientExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (clientBuilder: IClientBuilder) =
+        let clientBuilderType = typeof<IClientBuilder>
+
+        let extensionMethod =
+            AppDomain.CurrentDomain.GetAssemblies()
+            |> Array.collect (fun asm ->
+                try asm.GetTypes() with _ -> Array.empty)
+            |> Array.collect (fun t ->
+                if t.IsAbstract && t.IsSealed then // static classes
+                    t.GetMethods(Reflection.BindingFlags.Static ||| Reflection.BindingFlags.Public)
+                    |> Array.filter (fun m ->
+                        m.Name = methodName
+                        && m.GetParameters().Length = args.Length + 1
+                        && clientBuilderType.IsAssignableFrom(m.GetParameters().[0].ParameterType))
+                else
+                    Array.empty)
+            |> Array.tryHead
+
+        match extensionMethod with
+        | Some m ->
+            m.Invoke(null, Array.append [| box clientBuilder |] args) |> ignore
+        | None ->
+            invalidOp
+                $"Extension method '{methodName}' not found. Install the NuGet package '{packageHint}' and ensure it is referenced in your project."
+
     let applyToBuilder (config: ClientConfig) (clientBuilder: IClientBuilder) : unit =
         // Apply clustering
         match config.ClusteringMode with
@@ -102,6 +135,18 @@ module ClientConfig =
             | PersistentStream _ ->
                 // Persistent streams are silo-side only; skip on client
                 ())
+
+        // Apply TLS configuration
+        match config.TlsConfig with
+        | Some(TlsSubject subject) ->
+            invokeClientExtensionMethod "UseTls" [| box subject |] "Microsoft.Orleans.Connections.Security" clientBuilder
+        | Some(TlsCertificate cert) ->
+            invokeClientExtensionMethod "UseTls" [| box cert |] "Microsoft.Orleans.Connections.Security" clientBuilder
+        | Some(MutualTlsSubject subject) ->
+            invokeClientExtensionMethod "UseTls" [| box subject |] "Microsoft.Orleans.Connections.Security" clientBuilder
+        | Some(MutualTlsCertificate cert) ->
+            invokeClientExtensionMethod "UseTls" [| box cert |] "Microsoft.Orleans.Connections.Security" clientBuilder
+        | None -> ()
 
     /// <summary>
     /// Applies the client configuration to a HostApplicationBuilder.
@@ -200,6 +245,43 @@ type ClientConfigBuilder() =
             CustomServices = config.CustomServices @ [ f ]
         }
 
+    /// <summary>
+    /// Configures TLS for the client using a certificate subject name from the certificate store.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
+    /// <returns>The updated client configuration with TLS enabled.</returns>
+    [<CustomOperation("useTls")>]
+    member _.UseTls(config: ClientConfig, subject: string) =
+        { config with TlsConfig = Some(TlsSubject subject) }
+
+    /// <summary>
+    /// Configures TLS for the client using an X509Certificate2 instance.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="certificate">The X509Certificate2 to use for TLS.</param>
+    /// <returns>The updated client configuration with TLS enabled.</returns>
+    [<CustomOperation("useTlsWithCertificate")>]
+    member _.UseTlsWithCertificate(config: ClientConfig, certificate: X509Certificate2) =
+        { config with
+            TlsConfig = Some(TlsCertificate certificate)
+        }
+
+    /// <summary>
+    /// Configures mutual TLS (mTLS) for the client using a certificate subject name from the certificate store.
+    /// Requires the Microsoft.Orleans.Connections.Security NuGet package at runtime.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="subject">The certificate subject name to look up in the certificate store.</param>
+    /// <returns>The updated client configuration with mutual TLS enabled.</returns>
+    [<CustomOperation("useMutualTls")>]
+    member _.UseMutualTls(config: ClientConfig, subject: string) =
+        { config with
+            TlsConfig = Some(MutualTlsSubject subject)
+        }
+
     /// <summary>Returns the completed client configuration.</summary>
     member _.Run(config: ClientConfig) = config
 
@@ -211,6 +293,6 @@ module ClientConfigBuilderInstance =
     /// <summary>
     /// Computation expression for declaratively configuring an Orleans client.
     /// Supports custom operations: useLocalhostClustering, useStaticClustering,
-    /// addMemoryStreams, configureServices.
+    /// addMemoryStreams, configureServices, useTls, useTlsWithCertificate, useMutualTls.
     /// </summary>
     let clientConfig = ClientConfigBuilder()
