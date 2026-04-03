@@ -310,4 +310,4 @@ do! Log.withCorrelation requestId (fun () ->
 
 - [Silo Configuration](silo-configuration.md) -- TLS and filter configuration
 - [Advanced](advanced.md) -- transactions and more security patterns
-- [Korat Integration](korat-integration.md) -- principal propagation with Korat
+- [API Reference](api-reference.md) -- all public security-related APIs

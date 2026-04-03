@@ -182,7 +182,6 @@ dotnet new orleans-fsharp -n MyApp
 | [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |
 | [Security](docs/security.md) | TLS, mTLS, filters, secrets |
 | [Advanced](docs/advanced.md) | Transactions, telemetry, shutdown, migration |
-| [Korat Integration](docs/korat-integration.md) | Using Orleans.FSharp with Korat |
 | [API Reference](docs/api-reference.md) | All public modules, types, functions |
 
 ## Package Structure
