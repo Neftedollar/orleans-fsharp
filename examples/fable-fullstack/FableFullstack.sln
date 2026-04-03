@@ -7,7 +7,6 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Shared", "src\Shared\Shared
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Grains", "src\Grains\Grains.fsproj", "{F1B2C3D4-2222-2222-2222-222222222222}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeGen", "src\CodeGen\CodeGen.csproj", "{F1B2C3D4-3333-3333-3333-333333333333}"
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Server", "src\Server\Server.fsproj", "{F1B2C3D4-4444-4444-4444-444444444444}"
 EndProject

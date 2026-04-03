@@ -1,0 +1,56 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  silo1:
+    build:
+      context: ..
+      dockerfile: testbed/Dockerfile.silo
+    environment:
+      - SILO_NAME=silo1
+      - SILO_PORT=11111
+      - GATEWAY_PORT=30000
+      - REDIS_CONNECTION=redis:6379
+      - ADVERTISED_IP=silo1
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "11111:11111"
+      - "30000:30000"
+
+  silo2:
+    build:
+      context: ..
+      dockerfile: testbed/Dockerfile.silo
+    environment:
+      - SILO_NAME=silo2
+      - SILO_PORT=11112
+      - GATEWAY_PORT=30001
+      - REDIS_CONNECTION=redis:6379
+      - ADVERTISED_IP=silo2
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "11112:11112"
+      - "30001:30001"
+
+  client:
+    build:
+      context: ..
+      dockerfile: testbed/Dockerfile.client
+    environment:
+      - REDIS_CONNECTION=redis:6379
+    depends_on:
+      - silo1
+      - silo2
+    profiles:
+      - test

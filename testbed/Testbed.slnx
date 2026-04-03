@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Client/Client.fsproj" />
+    <Project Path="src/CodeGen/CodeGen.csproj" />
+    <Project Path="src/Shared/Shared.fsproj" />
+    <Project Path="src/Silo/Silo.fsproj" />
+  </Folder>
+  <Project Path="../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
+  <Project Path="../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+</Solution>

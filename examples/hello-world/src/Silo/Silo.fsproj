@@ -12,7 +12,6 @@
     <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
     <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
     <ProjectReference Include="..\Grains\Grains.fsproj" />
-    <ProjectReference Include="..\CodeGen\CodeGen.csproj" />
   </ItemGroup>
 
 </Project>
