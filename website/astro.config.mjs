@@ -33,6 +33,9 @@ export default defineConfig({
 					],
 				},
 				{ label: 'API Reference', slug: 'api-reference' },
+				{ label: 'How To', slug: 'how-to' },
+				{ label: 'FAQ', slug: 'faq' },
+				{ label: 'Comparison', slug: 'comparison' },
 			],
 			customCss: [],
 			head: [
