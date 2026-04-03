@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Orleans.FSharp",
+  "classifications": ["F#", "Orleans", "Actor Model"],
+  "identity": "Orleans.FSharp.ProjectTemplate",
+  "name": "Orleans F# Project",
+  "shortName": "orleans-fsharp",
+  "tags": {
+    "language": "F#",
+    "type": "solution"
+  },
+  "sourceName": "MyApp",
+  "preferNameDirectory": true
+}

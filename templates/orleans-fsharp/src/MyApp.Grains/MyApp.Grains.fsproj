@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <Compile Include="CounterGrain.fs" />
+    <Compile Include="AssemblyInfo.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Orleans.FSharp" Version="2.*" />
+    <PackageReference Include="FsToolkit.ErrorHandling" Version="5.*" />
+  </ItemGroup>
+
+</Project>

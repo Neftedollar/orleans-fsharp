@@ -1,0 +1,74 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Visual Studio
+.vs/
+*.DotSettings.user
+
+## JetBrains Rider
+.idea/
+
+## NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResult.xml
+coverage.*
+
+## OS files
+.DS_Store
+Thumbs.db
+
+## AI assistants
+.claude/
+.codex/
+.cursor/
+.copilot/
+.aider*
+.continue/
+.codeium/
+.tabnine/
+.windsurf/
+.augment/
+.sourcegraph/
+.cody/
+.supermaven/
+.junie/
+.kiro/
+.roo/
+.amp/
+CLAUDE.md
+
+## Specify (project management, not source)
+.specify/memory/
+
+## Temp / local
+*.tmp
+*.swp
+*~
+.env
+.env.*
+nupkgs/

@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="ClusterFixture.fs" />
+    <Compile Include="GrainLifecycleTests.fs" />
+    <Compile Include="PersistenceRoundtripTests.fs" />
+    <Compile Include="SiloConfigTests.fs" />
+    <Compile Include="StreamingIntegrationTests.fs" />
+    <Compile Include="CorrelationTests.fs" />
+    <Compile Include="TestHarnessIntegrationTests.fs" />
+    <Compile Include="ReminderIntegrationTests.fs" />
+    <Compile Include="ObserverIntegrationTests.fs" />
+    <Compile Include="ReentrancyIntegrationTests.fs" />
+    <Compile Include="StatelessWorkerIntegrationTests.fs" />
+    <Compile Include="EventSourcingIntegrationTests.fs" />
+    <Compile Include="ScriptingTests.fs" />
+    <Compile Include="TemplateTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FsCheck.Xunit" Version="3.*" />
+    <PackageReference Include="Unquote" Version="7.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.TestingHost" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Orleans.FSharp\Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.Runtime\Orleans.FSharp.Runtime.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.Testing\Orleans.FSharp.Testing.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.CodeGen\Orleans.FSharp.CodeGen.csproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
+  </ItemGroup>
+
+</Project>
