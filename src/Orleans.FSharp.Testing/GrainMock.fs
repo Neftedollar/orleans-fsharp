@@ -2,8 +2,10 @@ namespace Orleans.FSharp.Testing
 
 open System
 open System.Collections.Generic
+open System.Threading.Tasks
 open Orleans
 open Orleans.Runtime
+open Orleans.FSharp
 
 /// <summary>
 /// A mock grain factory that responds with predefined grain implementations.
@@ -121,4 +123,117 @@ module GrainMock =
     /// <returns>The same mock grain factory with the registration added.</returns>
     let withGrain<'T when 'T :> IGrain> (key: obj) (impl: 'T) (factory: MockGrainFactory) : MockGrainFactory =
         factory.Register(typeof<'T>, string key, box impl)
+        factory
+
+    /// <summary>
+    /// Registers a mock F# grain (universal pattern) for unit-testing code that uses
+    /// <c>FSharpGrain.ref</c> / <c>FSharpGrain.send</c> / <c>FSharpGrain.ask</c>.
+    /// </summary>
+    /// <remarks>
+    /// The mock simulates the grain in memory: it starts with <paramref name="def"/>'s
+    /// <c>DefaultState</c>, applies the handler on each message, and maintains local state.
+    /// No Orleans silo is required — all dispatching happens in-process.
+    /// </remarks>
+    /// <param name="key">The string key used to look up the grain handle.</param>
+    /// <param name="def">The grain definition produced by the <c>grain { }</c> CE.</param>
+    /// <param name="factory">The mock grain factory to register with.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+    /// <returns>The same mock grain factory with the registration added.</returns>
+    let withFSharpGrain<'State, 'Command>
+        (key: string)
+        (def: GrainDefinition<'State, 'Command>)
+        (factory: MockGrainFactory)
+        : MockGrainFactory =
+        let mutable state =
+            match def.DefaultState with
+            | Some s -> s
+            | None   -> failwith $"GrainMock.withFSharpGrain: grain definition for '{typeof<'State>.Name}' has no default state. Call 'defaultState' in the grain {{ }} CE."
+
+        let mock =
+            { new IFSharpGrain with
+                member _.HandleMessage(msg: obj) : Task<obj> =
+                    task {
+                        match def.Handler with
+                        | None ->
+                            return failwith $"GrainMock: no handler registered for grain with state '{typeof<'State>.Name}'."
+                        | Some handler ->
+                            let! (newState, result) = handler state (msg :?> 'Command)
+                            state <- newState
+                            return result
+                    } }
+
+        factory.Register(typeof<IFSharpGrain>, key, box mock)
+        factory
+
+    /// <summary>
+    /// Registers a mock GUID-keyed F# grain for unit-testing code that uses
+    /// <c>FSharpGrain.refGuid</c> / <c>FSharpGrain.sendGuid</c> / <c>FSharpGrain.askGuid</c>.
+    /// </summary>
+    /// <param name="key">The GUID key used to look up the grain handle.</param>
+    /// <param name="def">The grain definition produced by the <c>grain { }</c> CE.</param>
+    /// <param name="factory">The mock grain factory to register with.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+    /// <returns>The same mock grain factory with the registration added.</returns>
+    let withFSharpGrainGuid<'State, 'Command>
+        (key: Guid)
+        (def: GrainDefinition<'State, 'Command>)
+        (factory: MockGrainFactory)
+        : MockGrainFactory =
+        let mutable state =
+            match def.DefaultState with
+            | Some s -> s
+            | None   -> failwith $"GrainMock.withFSharpGrainGuid: grain definition for '{typeof<'State>.Name}' has no default state."
+
+        let mock =
+            { new IFSharpGrainWithGuidKey with
+                member _.HandleMessage(msg: obj) : Task<obj> =
+                    task {
+                        match def.Handler with
+                        | None ->
+                            return failwith $"GrainMock: no handler registered for grain with state '{typeof<'State>.Name}'."
+                        | Some handler ->
+                            let! (newState, result) = handler state (msg :?> 'Command)
+                            state <- newState
+                            return result
+                    } }
+
+        factory.Register(typeof<IFSharpGrainWithGuidKey>, string key, box mock)
+        factory
+
+    /// <summary>
+    /// Registers a mock integer-keyed F# grain for unit-testing code that uses
+    /// <c>FSharpGrain.refInt</c> / <c>FSharpGrain.sendInt</c> / <c>FSharpGrain.askInt</c>.
+    /// </summary>
+    /// <param name="key">The int64 key used to look up the grain handle.</param>
+    /// <param name="def">The grain definition produced by the <c>grain { }</c> CE.</param>
+    /// <param name="factory">The mock grain factory to register with.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+    /// <returns>The same mock grain factory with the registration added.</returns>
+    let withFSharpGrainInt<'State, 'Command>
+        (key: int64)
+        (def: GrainDefinition<'State, 'Command>)
+        (factory: MockGrainFactory)
+        : MockGrainFactory =
+        let mutable state =
+            match def.DefaultState with
+            | Some s -> s
+            | None   -> failwith $"GrainMock.withFSharpGrainInt: grain definition for '{typeof<'State>.Name}' has no default state."
+
+        let mock =
+            { new IFSharpGrainWithIntKey with
+                member _.HandleMessage(msg: obj) : Task<obj> =
+                    task {
+                        match def.Handler with
+                        | None ->
+                            return failwith $"GrainMock: no handler registered for grain with state '{typeof<'State>.Name}'."
+                        | Some handler ->
+                            let! (newState, result) = handler state (msg :?> 'Command)
+                            state <- newState
+                            return result
+                    } }
+
+        factory.Register(typeof<IFSharpGrainWithIntKey>, string key, box mock)
         factory
