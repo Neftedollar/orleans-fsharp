@@ -6,6 +6,7 @@ open System.Security.Cryptography.X509Certificates
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Orleans
+open Orleans.Configuration
 open Orleans.Hosting
 
 /// <summary>
@@ -35,6 +36,14 @@ type ClientConfig =
         CustomServices: (IServiceCollection -> unit) list
         /// <summary>TLS configuration for securing client communication, or None if not configured.</summary>
         TlsConfig: TlsConfig option
+        /// <summary>The cluster identifier to connect to, or None if not set.</summary>
+        ClusterId: string option
+        /// <summary>The unique service identifier for the target Orleans deployment, or None if not set.</summary>
+        ServiceId: string option
+        /// <summary>The gateway list refresh period, or None if not set.</summary>
+        GatewayListRefreshPeriod: TimeSpan option
+        /// <summary>The preferred gateway index for client connections, or None if not set.</summary>
+        PreferredGatewayIndex: int option
     }
 
 /// <summary>
@@ -52,6 +61,10 @@ module ClientConfig =
             StreamProviders = Map.empty
             CustomServices = []
             TlsConfig = None
+            ClusterId = None
+            ServiceId = None
+            GatewayListRefreshPeriod = None
+            PreferredGatewayIndex = None
         }
 
     /// <summary>
@@ -102,6 +115,28 @@ module ClientConfig =
                 $"Extension method '{methodName}' not found. Install the NuGet package '{packageHint}' and ensure it is referenced in your project."
 
     let applyToBuilder (config: ClientConfig) (clientBuilder: IClientBuilder) : unit =
+        // Apply cluster identity (ClusterId, ServiceId)
+        if config.ClusterId.IsSome || config.ServiceId.IsSome then
+            clientBuilder.Services.Configure<ClusterOptions>(fun (options: ClusterOptions) ->
+                config.ClusterId |> Option.iter (fun id -> options.ClusterId <- id)
+                config.ServiceId |> Option.iter (fun id -> options.ServiceId <- id))
+            |> ignore
+
+        // Apply gateway config
+        match config.GatewayListRefreshPeriod with
+        | Some period ->
+            clientBuilder.Services.Configure<GatewayOptions>(fun (options: GatewayOptions) ->
+                options.GatewayListRefreshPeriod <- period)
+            |> ignore
+        | None -> ()
+
+        match config.PreferredGatewayIndex with
+        | Some idx ->
+            clientBuilder.Services.Configure<GatewayOptions>(fun (options: GatewayOptions) ->
+                options.PreferredGatewayIndex <- idx)
+            |> ignore
+        | None -> ()
+
         // Apply clustering
         match config.ClusteringMode with
         | Some Localhost -> clientBuilder.UseLocalhostClustering() |> ignore
@@ -281,6 +316,50 @@ type ClientConfigBuilder() =
         { config with
             TlsConfig = Some(MutualTlsSubject subject)
         }
+
+    /// <summary>
+    /// Sets the cluster identifier to connect to.
+    /// Maps to Orleans ClusterOptions.ClusterId.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="id">The cluster identifier string.</param>
+    /// <returns>The updated client configuration with the cluster ID set.</returns>
+    [<CustomOperation("clusterId")>]
+    member _.ClusterId(config: ClientConfig, id: string) =
+        { config with ClusterId = Some id }
+
+    /// <summary>
+    /// Sets the unique service identifier for the target Orleans deployment.
+    /// Maps to Orleans ClusterOptions.ServiceId.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="id">The service identifier string.</param>
+    /// <returns>The updated client configuration with the service ID set.</returns>
+    [<CustomOperation("serviceId")>]
+    member _.ServiceId(config: ClientConfig, id: string) =
+        { config with ServiceId = Some id }
+
+    /// <summary>
+    /// Sets how often the client refreshes its list of available gateways.
+    /// Maps to Orleans GatewayOptions.GatewayListRefreshPeriod.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="period">The refresh period as a TimeSpan.</param>
+    /// <returns>The updated client configuration with the refresh period set.</returns>
+    [<CustomOperation("gatewayListRefreshPeriod")>]
+    member _.GatewayListRefreshPeriod(config: ClientConfig, period: TimeSpan) =
+        { config with GatewayListRefreshPeriod = Some period }
+
+    /// <summary>
+    /// Sets the preferred gateway index for client connections.
+    /// Maps to Orleans GatewayOptions.PreferredGatewayIndex.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="index">The zero-based preferred gateway index.</param>
+    /// <returns>The updated client configuration with the preferred gateway index set.</returns>
+    [<CustomOperation("preferredGatewayIndex")>]
+    member _.PreferredGatewayIndex(config: ClientConfig, index: int) =
+        { config with PreferredGatewayIndex = Some index }
 
     /// <summary>Returns the completed client configuration.</summary>
     member _.Run(config: ClientConfig) = config

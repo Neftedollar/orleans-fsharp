@@ -98,6 +98,8 @@ let ``GrainContext has States field`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     test <@ ctx.States |> Map.isEmpty @>
@@ -111,6 +113,8 @@ let ``GrainContext.getState throws KeyNotFoundException for missing state`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     Assert.Throws<System.Collections.Generic.KeyNotFoundException>(fun () ->
@@ -126,6 +130,8 @@ let ``GrainContext.getState error message contains state name`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     let ex =

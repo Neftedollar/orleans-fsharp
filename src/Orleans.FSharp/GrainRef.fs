@@ -204,6 +204,35 @@ module GrainRef =
     /// <typeparam name="'TInterface">The grain interface type.</typeparam>
     /// <typeparam name="'TKey">The grain key type.</typeparam>
     /// <returns>A Task that completes when the message is enqueued (not when the grain finishes processing).</returns>
+    /// <summary>
+    /// Invokes a method on the referenced grain with a timeout.
+    /// Uses a CancellationTokenSource to enforce the timeout. If the call does not
+    /// complete within the specified duration, the Task is cancelled.
+    /// </summary>
+    /// <param name="ref">The grain reference to invoke the method on.</param>
+    /// <param name="timeout">The maximum duration to wait for the call to complete.</param>
+    /// <param name="call">A function that takes the grain proxy and returns a Task of the result.</param>
+    /// <typeparam name="'TInterface">The grain interface type.</typeparam>
+    /// <typeparam name="'TKey">The grain key type.</typeparam>
+    /// <typeparam name="'Result">The return type of the grain method call.</typeparam>
+    /// <returns>A Task containing the result of the grain method call.</returns>
+    /// <exception cref="System.Threading.Tasks.TaskCanceledException">Thrown when the call exceeds the timeout.</exception>
+    let invokeWithTimeout<'TInterface, 'TKey, 'Result>
+        (ref: GrainRef<'TInterface, 'TKey>)
+        (timeout: TimeSpan)
+        (call: 'TInterface -> Task<'Result>)
+        : Task<'Result> =
+        task {
+            use cts = new System.Threading.CancellationTokenSource(timeout)
+            let callTask = call ref.Grain
+            let! completed = Task.WhenAny(callTask, Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, cts.Token))
+            if completed = (callTask :> Task) then
+                return! callTask
+            else
+                cts.Cancel()
+                return raise (System.TimeoutException($"Grain call timed out after {timeout}."))
+        }
+
     let invokeOneWay<'TInterface, 'TKey>
         (ref: GrainRef<'TInterface, 'TKey>)
         (call: 'TInterface -> Task)

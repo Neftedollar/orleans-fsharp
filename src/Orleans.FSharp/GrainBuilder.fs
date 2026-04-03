@@ -49,6 +49,10 @@ type GrainContext =
         /// <summary>Instructs the runtime to delay deactivation of this grain for at least the specified duration.
         /// Set by the runtime grain host; None when running outside the runtime (e.g., unit tests).</summary>
         DelayDeactivation: (TimeSpan -> unit) option
+        /// <summary>The unique GrainId of this grain activation, or None when running outside the runtime.</summary>
+        GrainId: GrainId option
+        /// <summary>The primary key of the grain (string, Guid, or int64), boxed, or None when running outside the runtime.</summary>
+        PrimaryKey: obj option
     }
 
 /// <summary>
@@ -110,6 +114,64 @@ module GrainContext =
         | Some f -> f delay
         | None ->
             invalidOp "DelayDeactivation is not available outside the Orleans runtime. Ensure the grain is running inside a silo."
+
+    /// <summary>
+    /// Gets the GrainId of this grain activation.
+    /// Throws InvalidOperationException when called outside the Orleans runtime.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to grain identity.</param>
+    /// <returns>The GrainId of this grain.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when called outside the Orleans runtime.</exception>
+    let grainId (ctx: GrainContext) : GrainId =
+        match ctx.GrainId with
+        | Some id -> id
+        | None ->
+            invalidOp "GrainId is not available outside the Orleans runtime. Ensure the grain is running inside a silo."
+
+    /// <summary>
+    /// Gets the primary key of this grain as a string.
+    /// Throws InvalidOperationException when the primary key is not available or is not a string.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to grain identity.</param>
+    /// <returns>The string primary key.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when called outside the Orleans runtime or key is not a string.</exception>
+    let primaryKeyString (ctx: GrainContext) : string =
+        match ctx.PrimaryKey with
+        | Some (:? string as s) -> s
+        | Some other ->
+            invalidOp $"Primary key is not a string. Actual type: '{other.GetType().Name}'."
+        | None ->
+            invalidOp "PrimaryKey is not available outside the Orleans runtime. Ensure the grain is running inside a silo."
+
+    /// <summary>
+    /// Gets the primary key of this grain as a Guid.
+    /// Throws InvalidOperationException when the primary key is not available or is not a Guid.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to grain identity.</param>
+    /// <returns>The Guid primary key.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when called outside the Orleans runtime or key is not a Guid.</exception>
+    let primaryKeyGuid (ctx: GrainContext) : Guid =
+        match ctx.PrimaryKey with
+        | Some (:? Guid as g) -> g
+        | Some other ->
+            invalidOp $"Primary key is not a Guid. Actual type: '{other.GetType().Name}'."
+        | None ->
+            invalidOp "PrimaryKey is not available outside the Orleans runtime. Ensure the grain is running inside a silo."
+
+    /// <summary>
+    /// Gets the primary key of this grain as an int64.
+    /// Throws InvalidOperationException when the primary key is not available or is not an int64.
+    /// </summary>
+    /// <param name="ctx">The grain context providing access to grain identity.</param>
+    /// <returns>The int64 primary key.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when called outside the Orleans runtime or key is not an int64.</exception>
+    let primaryKeyInt64 (ctx: GrainContext) : int64 =
+        match ctx.PrimaryKey with
+        | Some (:? int64 as i) -> i
+        | Some other ->
+            invalidOp $"Primary key is not an int64. Actual type: '{other.GetType().Name}'."
+        | None ->
+            invalidOp "PrimaryKey is not available outside the Orleans runtime. Ensure the grain is running inside a silo."
 
     /// <summary>
     /// Gets a type-safe reference to a grain by string key from within a grain handler.
@@ -256,6 +318,11 @@ type GrainDefinition<'State, 'Message> =
         /// In C# CodeGen, maps to [ImplicitStreamSubscription("namespace")] on the grain class.
         /// Each handler receives the current state and a stream event (boxed), and returns the new state.</summary>
         ImplicitSubscriptions: Map<string, 'State -> obj -> Task<'State>>
+        /// <summary>Per-grain deactivation timeout override. When set, configures the idle timeout
+        /// before this grain type is deactivated. In C# CodeGen, maps to [CollectionAgeLimit] attribute.</summary>
+        DeactivationTimeout: TimeSpan option
+        /// <summary>Custom grain type name. In C# CodeGen, maps to [GrainType("name")] attribute on the grain class.</summary>
+        GrainTypeName: string option
     }
 
 /// <summary>
@@ -438,6 +505,8 @@ type GrainBuilder() =
             MayInterleavePredicate = None
             LifecycleHooks = Map.empty
             ImplicitSubscriptions = Map.empty
+            DeactivationTimeout = None
+            GrainTypeName = None
         }
 
     /// <summary>
@@ -902,6 +971,32 @@ type GrainBuilder() =
         ) =
         { definition with
             ImplicitSubscriptions = definition.ImplicitSubscriptions |> Map.add ns handler
+        }
+
+    /// <summary>
+    /// Sets the per-grain deactivation timeout (idle timeout before this grain type is deactivated).
+    /// In C# CodeGen, maps to the [CollectionAgeLimit] attribute on the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="timeout">The deactivation timeout as a TimeSpan.</param>
+    /// <returns>The updated grain definition with the deactivation timeout set.</returns>
+    [<CustomOperation("deactivationTimeout")>]
+    member _.DeactivationTimeout(definition: GrainDefinition<'State, 'Message>, timeout: TimeSpan) =
+        { definition with
+            DeactivationTimeout = Some timeout
+        }
+
+    /// <summary>
+    /// Sets a custom grain type name for this grain.
+    /// In C# CodeGen, maps to [GrainType("name")] attribute on the grain class.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="name">The custom grain type name.</param>
+    /// <returns>The updated grain definition with the grain type name set.</returns>
+    [<CustomOperation("grainType")>]
+    member _.GrainType(definition: GrainDefinition<'State, 'Message>, name: string) =
+        { definition with
+            GrainTypeName = Some name
         }
 
     /// <summary>Returns the completed grain definition. Validates constraints:

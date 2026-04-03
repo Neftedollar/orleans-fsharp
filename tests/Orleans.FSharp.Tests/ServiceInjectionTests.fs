@@ -16,6 +16,8 @@ let ``GrainContext includes ServiceProvider`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     test <@ not (isNull (box ctx.ServiceProvider |> ignore; ctx.ServiceProvider)) || true @>
@@ -33,6 +35,8 @@ let ``GrainContext.getService resolves registered service`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     let resolved = GrainContext.getService<TimeProvider> ctx
@@ -50,6 +54,8 @@ let ``GrainContext.getService throws for unregistered service`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     Assert.Throws<InvalidOperationException>(fun () ->
@@ -99,6 +105,8 @@ let ``grain CE handleWithServices handler receives working ServiceProvider`` () 
                 States = Map.empty
                 DeactivateOnIdle = None
                 DelayDeactivation = None
+                GrainId = None
+                PrimaryKey = None
             }
 
         let! (newState, result) = handler ctx 10 5

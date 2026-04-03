@@ -1,5 +1,6 @@
 namespace Orleans.FSharp
 
+open System
 open System.Threading.Tasks
 open Orleans
 
@@ -85,3 +86,38 @@ module Filter =
                 do! context.Invoke()
                 do! after context
             })
+
+/// <summary>
+/// Helper functions for extracting call context details from grain call filter contexts.
+/// Useful for logging, metrics, and authorization filters.
+/// </summary>
+module FilterContext =
+
+    /// <summary>
+    /// Gets the method name being called on the grain.
+    /// </summary>
+    /// <param name="ctx">The incoming grain call context.</param>
+    /// <returns>The name of the method being invoked.</returns>
+    let methodName (ctx: IIncomingGrainCallContext) : string =
+        ctx.ImplementationMethod.Name
+
+    /// <summary>
+    /// Gets the grain interface type being called.
+    /// </summary>
+    /// <param name="ctx">The incoming grain call context.</param>
+    /// <returns>The System.Type of the grain interface.</returns>
+    let interfaceType (ctx: IIncomingGrainCallContext) : Type =
+        ctx.InterfaceMethod.DeclaringType
+
+    /// <summary>
+    /// Gets the grain instance (if available) from the call context.
+    /// Returns None if the grain instance is not accessible.
+    /// </summary>
+    /// <param name="ctx">The incoming grain call context.</param>
+    /// <returns>Some with the grain instance object, or None if not available.</returns>
+    let grainInstance (ctx: IIncomingGrainCallContext) : obj option =
+        try
+            let target = ctx.TargetContext
+            if isNull (box target) then None
+            else Some (box target)
+        with _ -> None

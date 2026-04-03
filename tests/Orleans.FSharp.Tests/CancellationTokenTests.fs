@@ -127,6 +127,8 @@ let ``grain CE handleWithContextCancellable handler receives context and token``
                 States = Map.empty
                 DeactivateOnIdle = None
                 DelayDeactivation = None
+                GrainId = None
+                PrimaryKey = None
             }
 
         let! _ = handler ctx 0 5 cts.Token
@@ -197,6 +199,8 @@ let ``getContextHandler falls back to CancellableContextHandler with None token`
                 States = Map.empty
                 DeactivateOnIdle = None
                 DelayDeactivation = None
+                GrainId = None
+                PrimaryKey = None
             }
 
         let! (newState, _) = handler ctx 10 5
@@ -223,6 +227,8 @@ let ``getCancellableContextHandler falls back through all handler variants`` () 
                 States = Map.empty
                 DeactivateOnIdle = None
                 DelayDeactivation = None
+                GrainId = None
+                PrimaryKey = None
             }
 
         let! (newState, _) = handler1 ctx 10 5 CancellationToken.None
@@ -255,6 +261,8 @@ let ``getCancellableContextHandler passes token to cancellable handler`` () =
                 States = Map.empty
                 DeactivateOnIdle = None
                 DelayDeactivation = None
+                GrainId = None
+                PrimaryKey = None
             }
 
         let! _ = handler ctx 0 1 cts.Token

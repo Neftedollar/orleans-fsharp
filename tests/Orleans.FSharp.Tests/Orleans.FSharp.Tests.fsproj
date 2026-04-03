@@ -69,6 +69,7 @@
     <Compile Include="StreamRewindTests.fs" />
     <Compile Include="GrainMockTests.fs" />
     <Compile Include="FSharpSerializationTests.fs" />
+    <Compile Include="ApiParityTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 

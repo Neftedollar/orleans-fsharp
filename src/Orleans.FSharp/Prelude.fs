@@ -97,6 +97,32 @@ module TaskHelpers =
         }
 
 /// <summary>
+/// Provides F#-idiomatic access to Orleans Immutable&lt;T&gt; for zero-copy grain argument passing.
+/// Opening this module (via AutoOpen) exposes the Immutable type alias and helper functions.
+/// </summary>
+[<AutoOpen>]
+module ImmutableTypes =
+    /// <summary>Alias for Orleans.Concurrency.Immutable&lt;'T&gt;. Wraps a value to indicate it will not be modified,
+    /// allowing Orleans to skip serialization copies for improved performance.</summary>
+    type Immutable<'T> = Orleans.Concurrency.Immutable<'T>
+
+    /// <summary>
+    /// Wrap a value as Immutable for zero-copy grain argument passing.
+    /// </summary>
+    /// <param name="value">The value to wrap.</param>
+    /// <typeparam name="'T">The type of the value.</typeparam>
+    /// <returns>An Immutable wrapper around the value.</returns>
+    let immutable (value: 'T) = Immutable<'T>(value)
+
+    /// <summary>
+    /// Unwrap an Immutable value.
+    /// </summary>
+    /// <param name="imm">The Immutable wrapper.</param>
+    /// <typeparam name="'T">The type of the wrapped value.</typeparam>
+    /// <returns>The unwrapped value.</returns>
+    let unwrapImmutable (imm: Immutable<'T>) = imm.Value
+
+/// <summary>
 /// Re-exports FsToolkit.ErrorHandling for convenient access from Orleans.FSharp consumers.
 /// Opening this module provides taskResult { }, result { }, option { }, and validation { } CEs
 /// for composable error handling in grain handlers.

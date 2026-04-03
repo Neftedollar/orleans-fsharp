@@ -213,10 +213,27 @@ type FSharpGrain<'State, 'Message>
     /// <param name="message">The message to handle.</param>
     /// <param name="ct">Optional cancellation token for cooperative cancellation.</param>
     /// <returns>A boxed result value from the handler.</returns>
+    /// <summary>Extracts the primary key from a GrainId as a boxed value (string, Guid, or int64).</summary>
+    static member private ExtractPrimaryKey(grainId: GrainId) : obj option =
+        try
+            let key = grainId.Key.ToString()
+            // Try parsing as Guid first
+            match System.Guid.TryParse(key) with
+            | true, guid -> Some(box guid)
+            | false, _ ->
+                // Try parsing as int64
+                match System.Int64.TryParse(key) with
+                | true, i -> Some(box i)
+                | false, _ ->
+                    // Default to string
+                    Some(box key)
+        with _ -> None
+
     member this.HandleMessage(message: 'Message, [<System.Runtime.InteropServices.Optional; System.Runtime.InteropServices.DefaultParameterValue(CancellationToken())>] ct: CancellationToken) : Task<obj> =
         // Capture protected members before entering task CE
         let sp = this.ServiceProvider
         let gf = this.GrainFactory
+        let gid = this.GetGrainId()
         let ctx: GrainContext =
             {
                 GrainFactory = gf
@@ -224,6 +241,8 @@ type FSharpGrain<'State, 'Message>
                 States = additionalStates
                 DeactivateOnIdle = Some(fun () -> (this :> IGrainBase).DeactivateOnIdle())
                 DelayDeactivation = Some(fun delay -> this.InternalDelayDeactivation(delay))
+                GrainId = Some gid
+                PrimaryKey = FSharpGrain<'State, 'Message>.ExtractPrimaryKey(gid)
             }
         let handler = GrainDefinition.getCancellableContextHandler definition
 

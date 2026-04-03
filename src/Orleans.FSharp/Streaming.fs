@@ -183,3 +183,42 @@ module Stream =
     /// <returns>A Task that completes when the unsubscription is processed.</returns>
     let unsubscribe<'T> (sub: StreamSubscription<'T>) : Task<unit> =
         task { do! sub.Handle.UnsubscribeAsync() }
+
+    /// <summary>
+    /// Gets all active subscriptions for a stream.
+    /// </summary>
+    /// <param name="stream">The stream reference to query.</param>
+    /// <typeparam name="'T">The type of events on the stream.</typeparam>
+    /// <returns>A Task containing a list of active stream subscriptions.</returns>
+    let getSubscriptions<'T> (stream: StreamRef<'T>) : Task<StreamSubscription<'T> list> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let! handles = asyncStream.GetAllSubscriptionHandles()
+
+            return
+                handles
+                |> Seq.map (fun h -> { Handle = h })
+                |> Seq.toList
+        }
+
+    /// <summary>
+    /// Resume all existing subscriptions for a stream with a new handler.
+    /// Useful after grain reactivation to reattach handlers to durable subscriptions.
+    /// </summary>
+    /// <param name="stream">The stream reference whose subscriptions to resume.</param>
+    /// <param name="handler">The handler function to attach to each subscription.</param>
+    /// <typeparam name="'T">The type of events on the stream.</typeparam>
+    /// <returns>A Task that completes when all subscriptions have been resumed.</returns>
+    let resumeAll<'T> (stream: StreamRef<'T>) (handler: 'T -> Task<unit>) : Task<unit> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let! handles = asyncStream.GetAllSubscriptionHandles()
+
+            let onNext =
+                Func<'T, StreamSequenceToken, Task>(fun item _token ->
+                    task { do! handler item })
+
+            for handle in handles do
+                let! _ = handle.ResumeAsync(onNext)
+                ()
+        }

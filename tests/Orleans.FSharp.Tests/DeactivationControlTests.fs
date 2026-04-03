@@ -18,6 +18,8 @@ let ``GrainContext deactivateOnIdle calls the registered function`` () =
             States = Map.empty
             DeactivateOnIdle = Some(fun () -> deactivateCalled <- true)
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     GrainContext.deactivateOnIdle ctx
@@ -34,6 +36,8 @@ let ``GrainContext delayDeactivation calls the registered function with correct 
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = Some(fun delay -> receivedDelay <- delay)
+            GrainId = None
+            PrimaryKey = None
         }
 
     let expectedDelay = TimeSpan.FromMinutes(5.0)
@@ -49,6 +53,8 @@ let ``GrainContext deactivateOnIdle throws when None`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     raises<InvalidOperationException> <@ GrainContext.deactivateOnIdle ctx @>
@@ -62,6 +68,8 @@ let ``GrainContext delayDeactivation throws when None`` () =
             States = Map.empty
             DeactivateOnIdle = None
             DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
         }
 
     raises<InvalidOperationException> <@ GrainContext.delayDeactivation ctx (TimeSpan.FromMinutes(1.0)) @>
@@ -89,6 +97,8 @@ let ``grain CE handler can use deactivateOnIdle via context`` () =
                 States = Map.empty
                 DeactivateOnIdle = Some(fun () -> deactivateCalled <- true)
                 DelayDeactivation = None
+                GrainId = None
+                PrimaryKey = None
             }
 
         let handler = GrainDefinition.getContextHandler def
@@ -119,6 +129,8 @@ let ``grain CE handler can use delayDeactivation via context`` () =
                 States = Map.empty
                 DeactivateOnIdle = None
                 DelayDeactivation = Some(fun delay -> receivedDelay <- delay)
+                GrainId = None
+                PrimaryKey = None
             }
 
         let handler = GrainDefinition.getContextHandler def

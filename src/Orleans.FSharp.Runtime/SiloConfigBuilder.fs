@@ -145,6 +145,20 @@ type SiloConfig =
         TlsConfig: TlsConfig option
         /// <summary>Orleans Dashboard configuration, or None if not configured.</summary>
         DashboardConfig: DashboardConfig option
+        /// <summary>The cluster identifier shared by all silos in the cluster, or None if not set.</summary>
+        ClusterId: string option
+        /// <summary>The unique service identifier for this Orleans deployment, or None if not set.</summary>
+        ServiceId: string option
+        /// <summary>A human-readable name for this silo instance, or None if not set.</summary>
+        SiloName: string option
+        /// <summary>The silo-to-silo communication port, or None if not set.</summary>
+        SiloPort: int option
+        /// <summary>The client-to-silo gateway port, or None if not set.</summary>
+        GatewayPort: int option
+        /// <summary>The IP address that this silo advertises to other silos, or None if not set.</summary>
+        AdvertisedIpAddress: string option
+        /// <summary>The global default grain collection age (idle timeout before deactivation), or None if not set.</summary>
+        GrainCollectionAge: TimeSpan option
     }
 
 /// <summary>
@@ -173,6 +187,13 @@ module SiloConfig =
             EnableHealthChecks = false
             TlsConfig = None
             DashboardConfig = None
+            ClusterId = None
+            ServiceId = None
+            SiloName = None
+            SiloPort = None
+            GatewayPort = None
+            AdvertisedIpAddress = None
+            GrainCollectionAge = None
         }
 
     /// <summary>
@@ -233,6 +254,38 @@ module SiloConfig =
         | Some(AdoNetClustering(connStr, invariant)) ->
             invokeExtensionMethod "UseAdoNetClustering" [| box connStr; box invariant |] "Microsoft.Orleans.Clustering.AdoNet" siloBuilder
         | Some(CustomClustering f) -> f siloBuilder |> ignore
+        | None -> ()
+
+        // Apply cluster identity (ClusterId, ServiceId)
+        if config.ClusterId.IsSome || config.ServiceId.IsSome then
+            siloBuilder.Services.Configure<ClusterOptions>(fun (options: ClusterOptions) ->
+                config.ClusterId |> Option.iter (fun id -> options.ClusterId <- id)
+                config.ServiceId |> Option.iter (fun id -> options.ServiceId <- id))
+            |> ignore
+
+        // Apply silo name
+        match config.SiloName with
+        | Some name ->
+            siloBuilder.Services.Configure<SiloOptions>(fun (options: SiloOptions) ->
+                options.SiloName <- name)
+            |> ignore
+        | None -> ()
+
+        // Apply endpoint options (SiloPort, GatewayPort, AdvertisedIPAddress)
+        if config.SiloPort.IsSome || config.GatewayPort.IsSome || config.AdvertisedIpAddress.IsSome then
+            siloBuilder.Services.Configure<EndpointOptions>(fun (options: EndpointOptions) ->
+                config.SiloPort |> Option.iter (fun p -> options.SiloPort <- p)
+                config.GatewayPort |> Option.iter (fun p -> options.GatewayPort <- p)
+                config.AdvertisedIpAddress |> Option.iter (fun ip ->
+                    options.AdvertisedIPAddress <- System.Net.IPAddress.Parse(ip)))
+            |> ignore
+
+        // Apply grain collection age
+        match config.GrainCollectionAge with
+        | Some age ->
+            siloBuilder.Services.Configure<GrainCollectionOptions>(fun (options: GrainCollectionOptions) ->
+                options.CollectionAge <- age)
+            |> ignore
         | None -> ()
 
         // Apply storage providers
@@ -816,6 +869,83 @@ type SiloConfigBuilder() =
         { config with
             ReminderProvider = Some(RedisReminder connectionString)
         }
+
+    /// <summary>
+    /// Sets the cluster identifier shared by all silos in the cluster.
+    /// Maps to Orleans ClusterOptions.ClusterId.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="id">The cluster identifier string.</param>
+    /// <returns>The updated silo configuration with the cluster ID set.</returns>
+    [<CustomOperation("clusterId")>]
+    member _.ClusterId(config: SiloConfig, id: string) =
+        { config with ClusterId = Some id }
+
+    /// <summary>
+    /// Sets the unique service identifier for this Orleans deployment.
+    /// Maps to Orleans ClusterOptions.ServiceId.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="id">The service identifier string.</param>
+    /// <returns>The updated silo configuration with the service ID set.</returns>
+    [<CustomOperation("serviceId")>]
+    member _.ServiceId(config: SiloConfig, id: string) =
+        { config with ServiceId = Some id }
+
+    /// <summary>
+    /// Sets a human-readable name for this silo instance.
+    /// Maps to Orleans SiloOptions.SiloName.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="name">The silo name string.</param>
+    /// <returns>The updated silo configuration with the silo name set.</returns>
+    [<CustomOperation("siloName")>]
+    member _.SiloName(config: SiloConfig, name: string) =
+        { config with SiloName = Some name }
+
+    /// <summary>
+    /// Sets the silo-to-silo communication port.
+    /// Maps to Orleans EndpointOptions.SiloPort.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="port">The port number for silo-to-silo communication.</param>
+    /// <returns>The updated silo configuration with the silo port set.</returns>
+    [<CustomOperation("siloPort")>]
+    member _.SiloPort(config: SiloConfig, port: int) =
+        { config with SiloPort = Some port }
+
+    /// <summary>
+    /// Sets the client-to-silo gateway port.
+    /// Maps to Orleans EndpointOptions.GatewayPort.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="port">The port number for the client gateway.</param>
+    /// <returns>The updated silo configuration with the gateway port set.</returns>
+    [<CustomOperation("gatewayPort")>]
+    member _.GatewayPort(config: SiloConfig, port: int) =
+        { config with GatewayPort = Some port }
+
+    /// <summary>
+    /// Sets the IP address that this silo advertises to other silos.
+    /// Maps to Orleans EndpointOptions.AdvertisedIPAddress.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="ip">The IP address string (e.g., "10.0.0.1").</param>
+    /// <returns>The updated silo configuration with the advertised IP set.</returns>
+    [<CustomOperation("advertisedIpAddress")>]
+    member _.AdvertisedIpAddress(config: SiloConfig, ip: string) =
+        { config with AdvertisedIpAddress = Some ip }
+
+    /// <summary>
+    /// Sets the global default grain collection age (idle timeout before deactivation).
+    /// Maps to Orleans GrainCollectionOptions.CollectionAge.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="age">The collection age as a TimeSpan.</param>
+    /// <returns>The updated silo configuration with the grain collection age set.</returns>
+    [<CustomOperation("grainCollectionAge")>]
+    member _.GrainCollectionAge(config: SiloConfig, age: TimeSpan) =
+        { config with GrainCollectionAge = Some age }
 
     /// <summary>Returns the completed silo configuration.</summary>
     member _.Run(config: SiloConfig) = config
