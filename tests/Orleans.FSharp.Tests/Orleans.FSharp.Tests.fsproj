@@ -80,6 +80,7 @@
     <Compile Include="TypedResultTests.fs" />
     <Compile Include="TransactionalGrainDiscoveryTests.fs" />
     <Compile Include="FSharpGrainRefTests.fs" />
+    <Compile Include="UniversalGrainHandlerTests.fs" />
     <Compile Include="BehaviorPatternTests.fs" />
   </ItemGroup>
 

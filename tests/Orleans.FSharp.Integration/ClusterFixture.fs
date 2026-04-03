@@ -21,6 +21,20 @@ type PingCommand =
     | [<Orleans.Id(0u)>] Ping
     | [<Orleans.Id(1u)>] GetCount
 
+/// <summary>State for the text-accumulator grain (tests field-carrying DU cases).</summary>
+[<Orleans.GenerateSerializer>]
+type TextState = { [<Orleans.Id(0u)>] Text: string }
+
+/// <summary>
+/// Commands for the text-accumulator grain.
+/// <c>Append</c> carries a payload (a field-carrying DU case), exercising the
+/// nested-type dispatch fix in <c>UniversalGrainHandlerRegistry</c>.
+/// </summary>
+[<Orleans.GenerateSerializer>]
+type TextCommand =
+    | [<Orleans.Id(0u)>] Append of string
+    | [<Orleans.Id(1u)>] GetText
+
 /// <summary>Definition of the ping grain used to test <c>FSharpGrain.ref</c>.</summary>
 [<AutoOpen>]
 module TestGrains =
@@ -36,6 +50,23 @@ module TestGrains =
                         // so that FSharpGrain.send<PingState, PingCommand> can cast the result.
                         return ns, box ns
                     | GetCount  -> return state, box state
+                })
+        }
+
+    /// <summary>
+    /// Text-accumulator grain definition used to verify that field-carrying F# DU cases
+    /// (e.g. <c>Append of string</c>) are correctly dispatched by <c>UniversalGrainHandlerRegistry</c>.
+    /// </summary>
+    let textGrain =
+        grain {
+            defaultState { Text = "" }
+            handle (fun state cmd ->
+                task {
+                    match cmd with
+                    | Append s  ->
+                        let ns = { Text = state.Text + s }
+                        return ns, box ns
+                    | GetText   -> return state, box state
                 })
         }
 
@@ -69,6 +100,8 @@ type TestSiloConfigurator() =
 
             // Register the universal-pattern ping grain for FSharpGrain.ref tests
             siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
+            // Register the text-accumulator grain for field-carrying DU case dispatch tests
+            siloBuilder.Services.AddFSharpGrain<TextState, TextCommand>(textGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

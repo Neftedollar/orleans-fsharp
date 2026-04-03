@@ -105,3 +105,51 @@ type UniversalPatternTests(fixture: ClusterFixture) =
             // Both references target the same virtual actor
             test <@ state.Count = 1 @>
         }
+
+    // ── Field-carrying DU cases ───────────────────────────────────────────────
+
+    [<Fact>]
+    member _.``Field-carrying DU case Append is dispatched correctly`` () =
+        task {
+            let handle = FSharpGrain.ref<TextState, TextCommand> fixture.GrainFactory "text-append-1"
+            let! state = handle |> FSharpGrain.send (Append "hello")
+            test <@ state.Text = "hello" @>
+        }
+
+    [<Fact>]
+    member _.``Multiple Append calls accumulate text`` () =
+        task {
+            let handle = FSharpGrain.ref<TextState, TextCommand> fixture.GrainFactory "text-append-2"
+            let! _ = handle |> FSharpGrain.send (Append "foo")
+            let! _ = handle |> FSharpGrain.send (Append "bar")
+            let! state = handle |> FSharpGrain.send GetText
+            test <@ state.Text = "foobar" @>
+        }
+
+    [<Fact>]
+    member _.``GetText returns state without modification`` () =
+        task {
+            let handle = FSharpGrain.ref<TextState, TextCommand> fixture.GrainFactory "text-append-3"
+            let! _ = handle |> FSharpGrain.send (Append "x")
+            let! s1 = handle |> FSharpGrain.send GetText
+            let! s2 = handle |> FSharpGrain.send GetText
+            test <@ s1.Text = s2.Text @>
+        }
+
+    // ── Two different grain types share the same FSharpGrainImpl class ────────
+
+    [<Fact>]
+    member _.``PingGrain and TextGrain coexist in the same silo`` () =
+        task {
+            let ping = FSharpGrain.ref<PingState, PingCommand> fixture.GrainFactory "coexist-ping"
+            let text = FSharpGrain.ref<TextState, TextCommand> fixture.GrainFactory "coexist-text"
+
+            let! _ = ping |> FSharpGrain.send Ping
+            let! _ = text |> FSharpGrain.send (Append "world")
+
+            let! ps = ping |> FSharpGrain.send GetCount
+            let! ts = text |> FSharpGrain.send GetText
+
+            test <@ ps.Count = 1 @>
+            test <@ ts.Text = "world" @>
+        }

@@ -1,6 +1,7 @@
 namespace Orleans.FSharp.Runtime
 
 open System
+open System.Reflection
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
@@ -365,8 +366,14 @@ module SiloBuilderExtensions =
         /// Registers a grain definition. Called once per <c>AddFSharpGrain&lt;S,M&gt;</c> invocation.
         /// Not thread-safe — must be called only during silo startup (single-threaded configuration phase).
         /// </summary>
+        /// <remarks>
+        /// F# discriminated union cases with fields compile to nested types that inherit from the DU
+        /// base type (e.g. <c>StringMsg+Append</c> inherits from <c>StringMsg</c>). The dispatch key
+        /// is registered for both the base DU type AND all its directly-nested subtypes so that
+        /// field-carrying DU cases are routed to the correct handler.
+        /// </remarks>
         member _.Register<'State, 'Message>(definition: GrainDefinition<'State, 'Message>) : unit =
-            let msgKey = typeof<'Message>.FullName
+            let msgBaseKey = typeof<'Message>.FullName
             let simpleHandler = GrainDefinition.getHandler definition
 
             let h (state: obj option) (msg: obj) : Task<GrainDispatchResult> =
@@ -385,10 +392,25 @@ module SiloBuilderExtensions =
                     return GrainDispatchResult(box newState, result)
                 }
 
-            handlers <- Map.add msgKey h handlers
+            // Register handler under the DU base type key.
+            handlers <- Map.add msgBaseKey h handlers
+
+            // Also register under each nested type that is assignable to 'Message.
+            // F# DU cases with fields compile to PUBLIC nested subclasses (e.g. TextCommand+Append).
+            // F# nullary DU cases in a mixed DU compile to PRIVATE nested subclasses (e.g. TextCommand+_GetText).
+            // We need BindingFlags.NonPublic to capture those private case types.
+            let nestedFlags = BindingFlags.Public ||| BindingFlags.NonPublic
+            for nestedType in typeof<'Message>.GetNestedTypes(nestedFlags) do
+                if typeof<'Message>.IsAssignableFrom(nestedType) then
+                    handlers <- Map.add nestedType.FullName h handlers
 
             match definition.DefaultState with
-            | Some d -> defaults <- Map.add msgKey (box d) defaults
+            | Some d ->
+                defaults <- Map.add msgBaseKey (box d) defaults
+                // Mirror default under nested case types as well.
+                for nestedType in typeof<'Message>.GetNestedTypes(nestedFlags) do
+                    if typeof<'Message>.IsAssignableFrom(nestedType) then
+                        defaults <- Map.add nestedType.FullName (box d) defaults
             | None -> ()
 
         interface IUniversalGrainHandler with
