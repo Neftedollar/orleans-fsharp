@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  <IsPackable>false</IsPackable></PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="CounterGrain.fs" />
+    <Compile Include="EchoGrain.fs" />
+    <Compile Include="OrderGrain.fs" />
+    <Compile Include="ChatGrain.fs" />
+    <Compile Include="ReminderGrain.fs" />
+    <Compile Include="TimerGrain.fs" />
+    <Compile Include="AggregatorGrain.fs" />
+    <Compile Include="SequentialGrain.fs" />
+    <Compile Include="ProcessorGrain.fs" />
+    <Compile Include="BankAccountGrain.fs" />
+    <Compile Include="AssemblyInfo.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.FSharp\Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\Orleans.FSharp.Runtime\Orleans.FSharp.Runtime.fsproj" />
+    <ProjectReference Include="..\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
+  </ItemGroup>
+
+</Project>

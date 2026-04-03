@@ -1,0 +1,27 @@
+name: Bug Report
+description: Report a bug in Orleans.FSharp
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: Description
+      description: What happened vs what you expected?
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Orleans.FSharp Version
+      placeholder: "0.8.0"
+  - type: input
+    attributes:
+      label: .NET Version
+      placeholder: "net10.0"
+  - type: textarea
+    attributes:
+      label: Reproduction Steps
+      description: Minimal code to reproduce the issue
+      render: fsharp
+  - type: textarea
+    attributes:
+      label: Error Output
+      render: shell

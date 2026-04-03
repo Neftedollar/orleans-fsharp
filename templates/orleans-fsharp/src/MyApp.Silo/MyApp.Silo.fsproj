@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Orleans.FSharp" Version="2.*" />
+    <PackageReference Include="Orleans.FSharp.Runtime" Version="2.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MyApp.Grains\MyApp.Grains.fsproj" />
+    <ProjectReference Include="..\MyApp.CodeGen\MyApp.CodeGen.csproj" />
+  </ItemGroup>
+
+</Project>

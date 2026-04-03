@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>F# computation expressions for configuring Orleans silos and clients — siloConfig {}, clientConfig {}, GrainDiscovery, and Serilog integration.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="SiloConfigBuilder.fs" />
+    <Compile Include="ClientConfigBuilder.fs" />
+    <Compile Include="SerilogIntegration.fs" />
+    <Compile Include="GrainDiscovery.fs" />
+    <Compile Include="Library.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Server" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.FSharp\Orleans.FSharp.fsproj" />
+  </ItemGroup>
+
+</Project>

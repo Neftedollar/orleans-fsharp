@@ -1,0 +1,113 @@
+# Changelog
+
+## [1.0.0] - 2026-04-03
+
+### First stable release — full Orleans 10.0.1 parity from F#
+
+804 tests (718 unit + 86 integration), zero warnings, zero `Unchecked.defaultof` in source.
+
+### Core (`Orleans.FSharp`)
+
+#### Grain Definition — `grain { }` CE (31 keywords)
+- `defaultState`, `handle`, `handleWithContext`, `handleWithServices` — basic grain definition
+- `handleCancellable`, `handleWithContextCancellable`, `handleWithServicesCancellable` — CancellationToken support
+- `persist`, `additionalState` — single and multiple named persistent states
+- `onActivate`, `onDeactivate`, `onLifecycleStage` — lifecycle hooks
+- `onReminder`, `onTimer` — declarative reminders and timers
+- `reentrant`, `interleave`, `readOnly`, `mayInterleave` — concurrency control
+- `statelessWorker`, `maxActivations` — stateless worker grains
+- `implicitStreamSubscription` — automatic stream subscriptions
+- `oneWay`, `grainType`, `deactivationTimeout` — method and type annotations
+- 7 placement strategies: `preferLocalPlacement`, `randomPlacement`, `hashBasedPlacement`, `activationCountPlacement`, `resourceOptimizedPlacement`, `siloRolePlacement`, `customPlacement`
+
+#### Modules
+- **GrainRef** — type-safe grain references: `ofString`, `ofGuid`, `ofInt64`, `ofGuidCompound`, `ofIntCompound`, `invoke`, `invokeOneWay`, `invokeWithTimeout`
+- **GrainState** — immutable state wrapper: `read`, `write`, `clear`, `current`
+- **GrainContext** — DI access from handlers: `getService<'T>`, `getState<'T>`, `grainId`, `primaryKeyString/Guid/Int64`, `deactivateOnIdle`, `delayDeactivation`
+- **Stream** — Orleans streaming with TaskSeq: `getStream`, `publish`, `subscribe`, `asTaskSeq`, `unsubscribe`, `subscribeFrom`, `getSubscriptions`, `resumeAll`
+- **BroadcastChannel** — fan-out pub/sub: `getChannel`, `publish`
+- **StreamProviders** — `addEventHubStreams`, `addAzureQueueStreams`
+- **Reminder** — persistent reminders: `register`, `unregister`, `get`
+- **Timers** — in-memory timers: `register`, `registerWithState`
+- **Observer** — grain observers: `createRef`, `deleteRef`, `subscribe` + `FSharpObserverManager<'T>`
+- **Filter** — call interceptors: `incoming`, `outgoing`, `incomingWithAround`, `outgoingWithAround`
+- **FilterContext** — introspect grain calls: `methodName`, `interfaceType`, `grainInstance`
+- **RequestCtx** — propagate context across calls: `set`, `get`, `getOrDefault`, `remove`, `withValue`
+- **Log** — structured logging with correlation: `logInfo`, `logWarning`, `logError`, `logDebug`, `withCorrelation`, `currentCorrelationId`
+- **Transactions** — `TransactionalState.read`, `update`, `performRead` + `TransactionOption` DU
+- **Versioning** — `CompatibilityStrategy`, `VersionSelectorStrategy`
+- **Telemetry** — OpenTelemetry: `runtimeActivitySourceName`, `meterName`, `enableActivityPropagation`
+- **GrainDirectory** — `Default`, `Redis`, `AzureStorage`, `Custom`
+- **GrainServices** — `addGrainService<'T>`
+- **GrainExtension** — `getExtension<'T>`
+- **Kubernetes** — `useKubernetesClustering`, `useKubernetesClusteringWithNamespace`
+- **Shutdown** — `configureGracefulShutdown`, `stopHost`, `onShutdown`
+- **StateMigration** — typed migrations: `migration`, `applyMigrations`, `validate`
+- **Serialization** — `fsharpJsonOptions`, `addFSharpConverters`, `withConverters`
+- **FSharpSerialization** — `addFSharpSerialization` (native Orleans serializer)
+- **Scripting** — `quickStart`, `getGrain`, `shutdown` for .fsx REPL
+- **Immutable<'T>** — `immutable`, `unwrapImmutable` for zero-copy
+
+### Silo Configuration (`Orleans.FSharp.Runtime`)
+
+#### `siloConfig { }` CE (39 keywords)
+- **Clustering**: `useLocalhostClustering`, `addRedisClustering`, `addAzureTableClustering`, `addAdoNetClustering`
+- **Storage**: `addMemoryStorage`, `addRedisStorage`, `addAzureBlobStorage`, `addAzureTableStorage`, `addAdoNetStorage`, `addCosmosStorage`, `addDynamoDbStorage`, `addCustomStorage`
+- **Streaming**: `addMemoryStreams`, `addPersistentStreams`, `addBroadcastChannel`
+- **Reminders**: `addMemoryReminderService`, `addRedisReminderService`, `addCustomReminderService`
+- **Security**: `useTls`, `useTlsWithCertificate`, `useMutualTls`, `useMutualTlsWithCertificate`
+- **Infrastructure**: `addDashboard`, `addDashboardWithOptions`, `enableHealthChecks`, `addStartupTask`, `addGrainService`
+- **Filters**: `addIncomingFilter`, `addOutgoingFilter`
+- **Identity**: `clusterId`, `serviceId`, `siloName`, `siloPort`, `gatewayPort`, `advertisedIpAddress`
+- **Tuning**: `grainCollectionAge`, `useGrainVersioning`, `useSerilog`, `configureServices`
+
+#### `clientConfig { }` CE (11 keywords)
+- `useLocalhostClustering`, `useStaticClustering`, `clusterId`, `serviceId`
+- `useTls`, `useTlsWithCertificate`, `useMutualTls`
+- `addMemoryStreams`, `configureServices`
+- `gatewayListRefreshPeriod`, `preferredGatewayIndex`
+
+### Event Sourcing (`Orleans.FSharp.EventSourcing`)
+- `eventSourcedGrain { }` CE: `defaultState`, `apply`, `handle`, `logConsistencyProvider`
+- `EventStore` module: wraps JournaledGrain methods
+- `MartenConfig`: placeholder for PostgreSQL event store integration
+
+### Testing (`Orleans.FSharp.Testing`)
+- **TestHarness** — in-process test cluster: `createTestCluster`, `getGrain`, `captureLogs`, `reset`, `dispose`
+- **GrainMock** — mock factory for unit tests: `create`, `withGrain`, `createMockContext`
+- **GrainArbitrary** — TypeShape-based auto FsCheck Arbitrary: `forState<'T>`, `forCommands<'T>`
+- **FsCheckHelpers** — `stateMachineProperty`, `commandSequenceArb`
+- **LogCapture** — `CapturedLogEntry`, `CapturingLoggerFactory`
+
+### Analyzers (`Orleans.FSharp.Analyzers`)
+- **OF0001**: Warns on `async { }` usage — suggests `task { }` for Orleans compatibility
+- Supports `[<AllowAsync>]` opt-out attribute
+
+### CodeGen (`Orleans.FSharp.CodeGen`)
+- C# bridge project for Orleans Roslyn source generators
+- Required because Orleans source generators only work on C# projects
+
+### Infrastructure
+- `.NET 10` / `F# 9+` / `Orleans 10.0.1`
+- `FsToolkit.ErrorHandling 5.2.0` — `taskResult { }` CE available
+- `TypeShape` — auto FsCheck Arbitrary generation
+- `FSharp.SystemTextJson` — DU/Record serialization
+- `FSharp.Control.TaskSeq` — streaming with `taskSeq { }`
+- `IcedTasks` — ColdTask, CancellableTask CE extensions
+- `Serilog` — structured logging
+- GitHub Actions CI with Gitleaks security scanning
+- NuGet trusted publisher (OIDC)
+- Source Link + symbol packages (snupkg)
+- `dotnet new orleans-fsharp` project template
+- Allocation benchmarks: GrainRef struct confirmed zero-alloc
+- Input validation on all CE string parameters (35 tests)
+- TLS/mTLS security warnings in XML docs
+
+### Documentation
+- 10 comprehensive guides (3,800+ lines)
+- Per-package NuGet README files
+- CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md
+- 3 sample patterns: CQRS, Saga, Rate Limiter
+- Complete API reference
+
+[1.0.0]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v1.0.0

@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- FSharp.Analyzers.SDK 0.36.0 pins FSharp.Core 10.0.101; we run 10.1.x -->
+    <NoWarn>$(NoWarn);NU1608</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="PreludeTests.fs" />
+    <Compile Include="ApiSurfaceTests.fs" />
+    <Compile Include="ErrorMessageTests.fs" />
+    <Compile Include="GrainBuilderTests.fs" />
+    <Compile Include="GrainRefTests.fs" />
+    <Compile Include="GrainStateTests.fs" />
+    <Compile Include="SerializationProperties.fs" />
+    <Compile Include="StateMachineProperties.fs" />
+    <Compile Include="StreamingTests.fs" />
+    <Compile Include="SiloConfigTests.fs" />
+    <Compile Include="LoggingTests.fs" />
+    <Compile Include="TestHarnessTests.fs" />
+    <Compile Include="FsCheckIntegrationTests.fs" />
+    <Compile Include="Benchmarks.fs" />
+    <Compile Include="ReminderTests.fs" />
+    <Compile Include="ReminderPersistenceProperties.fs" />
+    <Compile Include="ReminderExceptionTests.fs" />
+    <Compile Include="TimerTests.fs" />
+    <Compile Include="ApiSurfaceV2Tests.fs" />
+    <Compile Include="ObserverTests.fs" />
+    <Compile Include="ReentrancyTests.fs" />
+    <Compile Include="StatelessWorkerTests.fs" />
+    <Compile Include="EventSourcingTests.fs" />
+    <Compile Include="GrainArbitraryTests.fs" />
+    <Compile Include="ServiceInjectionTests.fs" />
+    <Compile Include="PlacementTests.fs" />
+    <Compile Include="DeclarativeTimerTests.fs" />
+    <Compile Include="PersistenceProviderTests.fs" />
+    <Compile Include="FilterTests.fs" />
+    <Compile Include="RequestCtxTests.fs" />
+    <Compile Include="CancellationTokenTests.fs" />
+    <Compile Include="AdditionalStateTests.fs" />
+    <Compile Include="CompoundKeyTests.fs" />
+    <Compile Include="OneWayTests.fs" />
+    <Compile Include="BroadcastChannelTests.fs" />
+    <Compile Include="AdvancedReentrancyTests.fs" />
+    <Compile Include="AdvancedPlacementTests.fs" />
+    <Compile Include="VersioningTests.fs" />
+    <Compile Include="GrainServiceTests.fs" />
+    <Compile Include="GrainExtensionTests.fs" />
+    <Compile Include="PersistentStreamTests.fs" />
+    <Compile Include="TransactionTests.fs" />
+    <Compile Include="GrainDirectoryTests.fs" />
+    <Compile Include="TelemetryTests.fs" />
+    <Compile Include="SerializationTests.fs" />
+    <Compile Include="StateMigrationTests.fs" />
+    <Compile Include="ShutdownTests.fs" />
+    <Compile Include="ClientConfigTests.fs" />
+    <Compile Include="DeactivationControlTests.fs" />
+    <Compile Include="GrainLifecycleTests.fs" />
+    <Compile Include="StartupTaskTests.fs" />
+    <Compile Include="HealthCheckTests.fs" />
+    <Compile Include="TlsConfigTests.fs" />
+    <Compile Include="DashboardConfigTests.fs" />
+    <Compile Include="ImplicitStreamSubscriptionTests.fs" />
+    <Compile Include="AdditionalPersistenceTests.fs" />
+    <Compile Include="RedisReminderTests.fs" />
+    <Compile Include="StreamProvidersTests.fs" />
+    <Compile Include="KubernetesTests.fs" />
+    <Compile Include="StreamRewindTests.fs" />
+    <Compile Include="GrainMockTests.fs" />
+    <Compile Include="FSharpSerializationTests.fs" />
+    <Compile Include="ApiParityTests.fs" />
+    <Compile Include="AnalyzerTests.fs" />
+    <Compile Include="InputValidationTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
+    <PackageReference Include="FsCheck.Xunit" Version="3.*" />
+    <PackageReference Include="Unquote" Version="7.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Transactions" Version="10.*" />
+    <PackageReference Include="FSharp.Analyzers.SDK" Version="0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Orleans.FSharp\Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.Runtime\Orleans.FSharp.Runtime.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.Testing\Orleans.FSharp.Testing.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp.Analyzers\Orleans.FSharp.Analyzers.fsproj" />
+  </ItemGroup>
+
+</Project>

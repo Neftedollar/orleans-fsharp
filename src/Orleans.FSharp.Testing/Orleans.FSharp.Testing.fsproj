@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsTestProject>false</IsTestProject>
+    <Description>Test utilities for Orleans.FSharp grains — TestHarness, GrainMock, GrainArbitrary (TypeShape-based FsCheck), FsCheckHelpers, and LogCapture.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="LogCapture.fs" />
+    <Compile Include="TestHarness.fs" />
+    <Compile Include="GrainArbitrary.fs" />
+    <Compile Include="GrainMock.fs" />
+    <Compile Include="FsCheckIntegration.fs" />
+    <Compile Include="Library.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.TestingHost" Version="10.*" />
+    <PackageReference Include="FsCheck" Version="3.*" />
+    <PackageReference Include="TypeShape" Version="10.0.0" />
+    <PackageReference Include="xunit" Version="2.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.FSharp\Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\Orleans.FSharp.Runtime\Orleans.FSharp.Runtime.fsproj" />
+  </ItemGroup>
+
+</Project>

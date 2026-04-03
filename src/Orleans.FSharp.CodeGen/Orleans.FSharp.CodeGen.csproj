@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>C# bridge project enabling Orleans Roslyn source generators for F# grain definitions. Contains no runtime logic — only assembly attributes.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Disable XML doc warnings for Orleans-generated serialization code -->
+    <NoWarn>CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Orleans.Sdk" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.FSharp\Orleans.FSharp.fsproj" />
+    <ProjectReference Include="..\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj" />
+    <ProjectReference Include="..\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
+  </ItemGroup>
+
+</Project>

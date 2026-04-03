@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Orleans.FSharp.Analyzers/Orleans.FSharp.Analyzers.fsproj" />
+    <Project Path="src/Orleans.FSharp.CodeGen/Orleans.FSharp.CodeGen.csproj" />
+    <Project Path="src/Orleans.FSharp.EventSourcing/Orleans.FSharp.EventSourcing.fsproj" />
+    <Project Path="src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
+    <Project Path="src/Orleans.FSharp.Sample/Orleans.FSharp.Sample.fsproj" />
+    <Project Path="src/Orleans.FSharp.Testing/Orleans.FSharp.Testing.fsproj" />
+    <Project Path="src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Orleans.FSharp.Integration/Orleans.FSharp.Integration.fsproj" />
+    <Project Path="tests/Orleans.FSharp.Tests/Orleans.FSharp.Tests.fsproj" />
+  </Folder>
+</Solution>

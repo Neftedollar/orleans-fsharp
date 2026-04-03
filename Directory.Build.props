@@ -1,0 +1,27 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <PackageVersion>1.0.0</PackageVersion>
+    <Authors>Orleans.FSharp Contributors</Authors>
+    <Description>Idiomatic F# API for Microsoft Orleans</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Neftedollar/orleans-fsharp</PackageProjectUrl>
+    <PackageTags>fsharp;orleans;actors;distributed;grains</PackageTags>
+    <RepositoryUrl>https://github.com/Neftedollar/orleans-fsharp</RepositoryUrl>
+    <IsPackable>true</IsPackable>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.*" PrivateAssets="All" />
+  </ItemGroup>
+</Project>
