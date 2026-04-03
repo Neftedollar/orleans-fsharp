@@ -260,6 +260,59 @@ let factory =
 
 The key is converted to a string internally for lookup matching.
 
+### Mock universal-pattern grains (no silo needed)
+
+`withFSharpGrain` / `withFSharpGrainGuid` / `withFSharpGrainInt` register an in-memory
+`IFSharpGrain` implementation built directly from your grain definition. You can unit-test
+code that calls `FSharpGrain.ref/send/ask/post` without starting a `TestCluster`:
+
+```fsharp
+open Orleans.FSharp.Testing
+
+// Define the grain with the grain { } CE as usual
+let counterDef =
+    grain {
+        defaultState { Count = 0 }
+        handle (fun state (cmd: CounterCommand) ->
+            task {
+                match cmd with
+                | Increment -> let ns = { Count = state.Count + 1 } in return ns, box ns
+                | GetValue  -> return state, box state
+            })
+    }
+
+// Create a mock factory with the grain registered for key "test-counter"
+let factory =
+    GrainMock.create()
+    |> GrainMock.withFSharpGrain "test-counter" counterDef
+
+// Call it exactly as you would in production code
+let handle = FSharpGrain.ref<CounterState, CounterCommand> factory "test-counter"
+let! state = handle |> FSharpGrain.send Increment   // returns CounterState
+
+// ask also works
+let typedDef =
+    grain {
+        defaultState { Count = 0 }
+        handleTyped (fun state (cmd: CounterCommand) ->
+            task {
+                match cmd with
+                | Increment -> return { Count = state.Count + 1 }, state.Count + 1
+                | GetValue  -> return state, state.Count
+            })
+    }
+let typedFactory = GrainMock.create() |> GrainMock.withFSharpGrain "test" typedDef
+let handle2 = FSharpGrain.ref<CounterState, CounterCommand> typedFactory "test"
+let! count = handle2 |> FSharpGrain.ask<CounterState, CounterCommand, int> Increment
+
+// GUID and int64 keys
+let guidFactory = GrainMock.create() |> GrainMock.withFSharpGrainGuid myGuid counterDef
+let intFactory  = GrainMock.create() |> GrainMock.withFSharpGrainInt 42L counterDef
+```
+
+The mock maintains grain state across calls exactly like a real grain — each `send` or `ask`
+updates the internal state.
+
 ---
 
 ## GrainArbitrary
