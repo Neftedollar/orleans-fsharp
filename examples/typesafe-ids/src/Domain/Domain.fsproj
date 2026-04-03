@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <Compile Include="Ids.fs" />
+    <Compile Include="Routing.fs" />
+    <Compile Include="UserGrain.fs" />
+    <Compile Include="OrderGrain.fs" />
+    <Compile Include="RouterGrain.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+  </ItemGroup>
+
+</Project>
