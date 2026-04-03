@@ -132,7 +132,7 @@ F# Silo only            → F# Binary (recommended)
 
 **Migrating from C# to F#.** If you're gradually moving C# grains to F#, start with Orleans Native for compatibility. Once all silos are F#, switch to F# Binary.
 
-**Korat pattern (C# core + F# new grains).** Existing C# grains keep Orleans Native serialization. New F# grains can use F# Binary — they have separate state types that don't cross the C#/F# boundary.
+**Mixed codebase (C# core + F# new grains).** Existing C# grains keep Orleans Native serialization. New F# grains can use F# Binary — they have separate state types that don't cross the C#/F# boundary.
 
 ### Setting Up CodeGen (Orleans Native only)
 
