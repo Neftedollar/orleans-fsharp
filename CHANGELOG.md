@@ -39,17 +39,47 @@ Full end-to-end integration test suite for `FSharpObserverManager<'T>` running i
 - `Unsubscribe` stops notification delivery
 - Empty broadcast completes without error
 
+### New: `ask` / `askGuid` / `askInt` — typed result access
+
+New variants in `FSharpGrain` module that return a separately-specified result type `'R`
+instead of the grain state. Use these with `handleTyped` grains or any handler that
+returns a value different from the state:
+
+```fsharp
+// Handler defined with handleTyped — result is int, not CalcState
+let handle = FSharpGrain.ref<CalcState, CalcCommand> factory "calc-1"
+let! result: int = handle |> FSharpGrain.ask<CalcState, CalcCommand, int> (AddValues(3, 4))
+// result = 7
+
+// Also available for GUID and integer key grains
+let! label: string = guidHandle |> FSharpGrain.askGuid<S, C, string> GetLabel
+let! count: int64  = intHandle  |> FSharpGrain.askInt<S, C, int64> GetCount
+```
+
+### New: `handleTyped` end-to-end integration tests
+
+Added `CalcGrain` (registered in `ClusterFixture`) that uses `handleTyped` to define a
+calculator without any manual `box` calls. 8 integration tests cover `AddValues`,
+`MultiplyValues`, `OpCount`, and the `post+ask` pattern.
+
 ### Improvements
 - `GrainDefinition.invokeReminderHandler` — new C#-callable function for delegating to F# reminder handlers by name; used internally by backward-compat grain stubs
 - **`AddFSharpGrain` auto-registers `FSharpBinaryCodec`** — no manual `FSharpBinaryCodecRegistration.addToSerializerBuilder` call needed on the silo side when using the universal pattern. Registration is idempotent across multiple `AddFSharpGrain<_,_>` calls.
+- **XML remarks on `FSharpGrain` module** clarify when to use `send` vs `ask` vs `post`
 - 30 new integration tests (universal pattern string/GUID/int keys + observers)
 - 54 new unit tests: GrainDispatchResult, impl class metadata, registry dispatch, FsCheck properties, `AddFSharpGrain` DI wiring (14 new)
+- 6 FsCheck property tests for `handleState`/`handleTyped` CE variants in `GrainBuilderTests`
+- 8 `ask`/`askGuid`/`askInt` integration tests with `QueryGrain`
+- 8 `handleTyped` integration tests with `CalcGrain`
+- Total: **1089 unit + 159 integration = 1248 tests**
 
 ### Documentation
 - Rewrote `docs/getting-started.md` to lead with the universal grain pattern (no attributes, no C# stubs)
+- Added `ask` to getting-started quick-reference table
 - Added auto-registration callout to `docs/serialization.md`
-- Added `FSharpGrain` module section to `docs/api-reference.md`
+- Added `ask`/`askGuid`/`askInt` entries to `docs/api-reference.md` FSharpGrain table
 - Expanded `docs/testing.md` with direct handler testing and universal pattern test examples
+- Added `handleState`/`handleTyped` documentation to `docs/grain-definition.md`
 
 ### Breaking changes
 - `IFSharpGrain` no longer inherits `IRemindable`. `IRemindable` is implemented directly by `FSharpGrain<'S,'M>` in `Orleans.FSharp.Runtime`. This avoids pulling the `Microsoft.Orleans.Reminders` source generator into the Abstractions project.
