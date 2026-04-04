@@ -41,8 +41,13 @@ Every grain definition requires at minimum:
 | `handleStateCancellable` | `'S -> 'M -> CancellationToken -> Task<'S>` | Long-running ops, state-only |
 | `handleTypedCancellable` | `'S -> 'M -> CancellationToken -> Task<'S * 'R>` | Long-running ops, typed result |
 | `handleWithContextCancellable` | `GrainContext -> 'S -> 'M -> CancellationToken -> Task<'S * obj>` | Context + cancellation |
+| `handleStateWithContextCancellable` | `GrainContext -> 'S -> 'M -> CancellationToken -> Task<'S>` | Context + cancellation, state-only |
+| `handleTypedWithContextCancellable` | `GrainContext -> 'S -> 'M -> CancellationToken -> Task<'S * 'R>` | Context + cancellation, typed result |
 
-Aliases: `handleWithServices` = `handleWithContext`, `handleStateWithServices` = `handleStateWithContext`, etc.
+Aliases: `handleWithServices` = `handleWithContext`, `handleStateWithServices` = `handleStateWithContext`,
+`handleWithServicesCancellable` = `handleWithContextCancellable`,
+`handleStateWithServicesCancellable` = `handleStateWithContextCancellable`,
+`handleTypedWithServicesCancellable` = `handleTypedWithContextCancellable`.
 
 ---
 
@@ -302,6 +307,56 @@ grain {
 ### `handleWithServicesCancellable`
 
 Alias for `handleWithContextCancellable`.
+
+### `handleStateWithContextCancellable`
+
+Combines `GrainContext`, CancellationToken, and state-only return — no manual `box` needed. The maximum set of inputs with the simplest return.
+
+```fsharp
+grain {
+    defaultState { Items = [] }
+    handleStateWithContextCancellable (fun ctx state msg ct ->
+        task {
+            match msg with
+            | FetchAndStore url ->
+                let http = GrainContext.getService<HttpClient> ctx
+                let! body = http.GetStringAsync(url, ct)
+                return { Items = body :: state.Items }
+            | Clear ->
+                return { Items = [] }
+        })
+}
+```
+
+### `handleStateWithServicesCancellable`
+
+Alias for `handleStateWithContextCancellable`.
+
+### `handleTypedWithContextCancellable`
+
+The full combination: `GrainContext`, CancellationToken, and a typed result — no `box` needed.
+
+```fsharp
+grain {
+    defaultState { Total = 0 }
+    handleTypedWithContextCancellable (fun ctx state msg ct ->
+        task {
+            match msg with
+            | FetchAndAdd url ->
+                let http = GrainContext.getService<HttpClient> ctx
+                let! n = http.GetStringAsync(url, ct) |> Task.map int
+                return { Total = state.Total + n }, state.Total + n  // 'Result = int
+            | GetTotal ->
+                return state, state.Total
+        })
+}
+```
+
+> Pair with `FSharpGrain.ask<'S,'C,int>` to receive the typed result.
+
+### `handleTypedWithServicesCancellable`
+
+Alias for `handleTypedWithContextCancellable`.
 
 ---
 

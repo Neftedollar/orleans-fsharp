@@ -343,6 +343,85 @@ module TestGrains11 =
                 })
         }
 
+// ── handleStateWithContextCancellable test grain ─────────────────────────────
+
+/// <summary>State for the state-with-context-cancellable grain.</summary>
+[<Orleans.GenerateSerializer>]
+type SWCCState =
+    { [<Orleans.Id(0u)>] SWCCSum: int
+      [<Orleans.Id(1u)>] SWCCPeerPings: int }
+
+/// <summary>Commands for the state-with-context-cancellable grain.</summary>
+[<Orleans.GenerateSerializer>]
+type SWCCCommand =
+    | [<Orleans.Id(0u)>] SWCCAdd of int
+    | [<Orleans.Id(1u)>] SWCCForwardPing of peerKey: string
+    | [<Orleans.Id(2u)>] GetSWCCState
+
+module TestGrains12 =
+    /// <summary>
+    /// State-with-context-cancellable grain using <c>handleStateWithContextCancellable</c>.
+    /// Returns only the new state — no manual <c>box</c> needed. Exercises the full
+    /// context + CancellationToken combination via <c>CancellableContextHandler</c>.
+    /// </summary>
+    let swccGrain =
+        grain {
+            defaultState { SWCCSum = 0; SWCCPeerPings = 0 }
+            handleStateWithContextCancellable (fun ctx state (cmd: SWCCCommand) _ct ->
+                task {
+                    match cmd with
+                    | SWCCAdd n ->
+                        return { state with SWCCSum = state.SWCCSum + n }
+                    | SWCCForwardPing peerKey ->
+                        let peer = FSharpGrain.ref<PingState, PingCommand> ctx.GrainFactory peerKey
+                        let! _ = FSharpGrain.send Ping peer
+                        return { state with SWCCPeerPings = state.SWCCPeerPings + 1 }
+                    | GetSWCCState ->
+                        return state
+                })
+        }
+
+// ── handleTypedWithContextCancellable test grain ──────────────────────────────
+
+/// <summary>State for the typed-with-context-cancellable calculator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type TWCCState =
+    { [<Orleans.Id(0u)>] TWCCLastResult: int
+      [<Orleans.Id(1u)>] TWCCOps: int }
+
+/// <summary>Commands for the typed-with-context-cancellable calculator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type TWCCCommand =
+    | [<Orleans.Id(0u)>] TWCCAdd of int * int
+    | [<Orleans.Id(1u)>] TWCCMul of int * int
+    | [<Orleans.Id(2u)>] GetTWCCLastResult
+    | [<Orleans.Id(3u)>] GetTWCCOps
+
+module TestGrains13 =
+    /// <summary>
+    /// Typed-with-context-cancellable calculator using <c>handleTypedWithContextCancellable</c>.
+    /// Returns a typed <c>int</c> result — no manual <c>box</c> needed. Tests the full
+    /// context + CT + typed-result combination via <c>CancellableContextHandler</c>.
+    /// </summary>
+    let twccGrain =
+        grain {
+            defaultState { TWCCLastResult = 0; TWCCOps = 0 }
+            handleTypedWithContextCancellable (fun _ctx state (cmd: TWCCCommand) _ct ->
+                task {
+                    match cmd with
+                    | TWCCAdd(a, b) ->
+                        let r = a + b
+                        return { TWCCLastResult = r; TWCCOps = state.TWCCOps + 1 }, r
+                    | TWCCMul(a, b) ->
+                        let r = a * b
+                        return { TWCCLastResult = r; TWCCOps = state.TWCCOps + 1 }, r
+                    | GetTWCCLastResult ->
+                        return state, state.TWCCLastResult
+                    | GetTWCCOps ->
+                        return state, state.TWCCOps
+                })
+        }
+
 // ── handleCancellable (raw) test grain ───────────────────────────────────────
 
 /// <summary>State for the raw cancellable accumulator grain.</summary>
@@ -499,6 +578,10 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<RelayState, RelayCommand>(TestGrains5.relayGrain) |> ignore
             // Register the cancellable accumulator for handleStateCancellable tests
             siloBuilder.Services.AddFSharpGrain<CancellableAccState, CancellableAccCommand>(TestGrains6.cancellableAccGrain) |> ignore
+            // Register the state-with-context-cancellable grain for handleStateWithContextCancellable tests
+            siloBuilder.Services.AddFSharpGrain<SWCCState, SWCCCommand>(TestGrains12.swccGrain) |> ignore
+            // Register the typed-with-context-cancellable grain for handleTypedWithContextCancellable tests
+            siloBuilder.Services.AddFSharpGrain<TWCCState, TWCCCommand>(TestGrains13.twccGrain) |> ignore
             // Register the state-with-context grain for handleStateWithContext tests
             siloBuilder.Services.AddFSharpGrain<StateWithCtxState, StateWithCtxCommand>(TestGrains10.stateWithCtxGrain) |> ignore
             // Register the typed-with-context grain for handleTypedWithContext tests

@@ -144,7 +144,22 @@ calculator without any manual `box` calls. 8 integration tests cover `AddValues`
   testing actual handler pipeline (handleState, handleTyped, handleStateCancellable):
   net-score invariant, Reset to zero, N-wins, GetScore idempotency, Win+Lose symmetry,
   handleState/handleStateCancellable equivalence
-- Total: **1171 unit + 224 integration = 1395 tests**
+### New CE operations: `handleStateWithContextCancellable` / `handleTypedWithContextCancellable`
+
+Two new CE keywords completing the handler variant matrix — the final combination of
+context + cancellation + convenience return style:
+
+- `handleStateWithContextCancellable` — `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State>` (no manual `box`)
+- `handleTypedWithContextCancellable` — `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * 'Result>` (no manual `box`)
+- Aliases: `handleStateWithServicesCancellable`, `handleTypedWithServicesCancellable`
+
+Both store in `CancellableContextHandler` (the same slot as `handleWithContextCancellable`) and are
+reachable through the full fallback chain in `getCancellableContextHandler`.
+
+- 6 integration tests for `handleStateWithContextCancellable` (state-only + ctx.GrainFactory)
+- 6 integration tests for `handleTypedWithContextCancellable` (typed result via `ask`)
+- 5 FsCheck properties (ctx+token threading, equivalence, hasAnyHandler)
+- Total: **1176 unit + 238 integration = 1414 tests**
 
 ### Documentation
 - Rewrote `docs/getting-started.md` to lead with the universal grain pattern (no attributes, no C# stubs)

@@ -44,6 +44,8 @@
 | `handleStateCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State>` | Cancellation, state-only return |
 | `handleTypedCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Cancellation, typed result |
 | `handleWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * obj>` | Context + cancellation |
+| `handleStateWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State>` | Context + cancellation, state-only return |
+| `handleTypedWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Context + cancellation, typed result |
 | `persist` | `string` | Name of the storage provider for state |
 | `onActivate` | `GrainContext -> Task<unit>` | Runs on grain activation |
 | `onDeactivate` | `GrainContext -> DeactivationReason -> Task<unit>` | Runs on grain deactivation |

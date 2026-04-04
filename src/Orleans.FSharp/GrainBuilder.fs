@@ -982,6 +982,103 @@ type GrainBuilder() =
         }
 
     /// <summary>
+    /// Registers a cancellable context-aware state-only handler that eliminates the need for manual boxing.
+    /// The handler receives a GrainContext, the current state, a message, and a CancellationToken,
+    /// and returns a Task of the new state only — no result value, no manual <c>box</c> call.
+    /// The framework boxes the state internally and uses it as both the persisted state and the
+    /// returned result, identical to how <c>handleStateCancellable</c> behaves.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable context-aware state-only handler function.</param>
+    /// <returns>The updated grain definition with the cancellable context handler registered.</returns>
+    [<CustomOperation("handleStateWithContextCancellable")>]
+    member _.HandleStateWithContextCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State>
+        ) =
+        { definition with
+            CancellableContextHandler =
+                Some(fun ctx state msg ct ->
+                    task {
+                        let! newState = handler ctx state msg ct
+                        return newState, box newState
+                    })
+        }
+
+    /// <summary>
+    /// Convenience alias for <c>handleStateWithContextCancellable</c> that emphasizes
+    /// access to the IServiceProvider for dependency injection.
+    /// Identical behavior.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable service-aware state-only handler function.</param>
+    /// <returns>The updated grain definition with the cancellable context handler registered.</returns>
+    [<CustomOperation("handleStateWithServicesCancellable")>]
+    member _.HandleStateWithServicesCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State>
+        ) =
+        { definition with
+            CancellableContextHandler =
+                Some(fun ctx state msg ct ->
+                    task {
+                        let! newState = handler ctx state msg ct
+                        return newState, box newState
+                    })
+        }
+
+    /// <summary>
+    /// Registers a cancellable context-aware typed-result handler that eliminates the need for manual boxing.
+    /// The handler receives a GrainContext, the current state, a message, and a CancellationToken,
+    /// and returns a Task of the new state paired with a strongly-typed result.
+    /// The framework boxes the result internally; use <c>FSharpGrain.ask</c> to unbox it.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable context-aware typed-result handler function.</param>
+    /// <typeparam name="'Result">The type of the result value returned alongside the new state.</typeparam>
+    /// <returns>The updated grain definition with the cancellable context handler registered.</returns>
+    [<CustomOperation("handleTypedWithContextCancellable")>]
+    member _.HandleTypedWithContextCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State * 'Result>
+        ) =
+        { definition with
+            CancellableContextHandler =
+                Some(fun ctx state msg ct ->
+                    task {
+                        let! (newState, result) = handler ctx state msg ct
+                        return newState, box result
+                    })
+        }
+
+    /// <summary>
+    /// Convenience alias for <c>handleTypedWithContextCancellable</c> that emphasizes
+    /// access to the IServiceProvider for dependency injection.
+    /// Identical behavior.
+    /// </summary>
+    /// <param name="definition">The current grain definition being built.</param>
+    /// <param name="handler">The cancellable service-aware typed-result handler function.</param>
+    /// <typeparam name="'Result">The type of the result value returned alongside the new state.</typeparam>
+    /// <returns>The updated grain definition with the cancellable context handler registered.</returns>
+    [<CustomOperation("handleTypedWithServicesCancellable")>]
+    member _.HandleTypedWithServicesCancellable
+        (
+            definition: GrainDefinition<'State, 'Message>,
+            handler: GrainContext -> 'State -> 'Message -> CancellationToken -> Task<'State * 'Result>
+        ) =
+        { definition with
+            CancellableContextHandler =
+                Some(fun ctx state msg ct ->
+                    task {
+                        let! (newState, result) = handler ctx state msg ct
+                        return newState, box result
+                    })
+        }
+
+    /// <summary>
     /// Declares a named additional persistent state for the grain.
     /// The state can be accessed in context-aware handlers via GrainContext.getState.
     /// Multiple additional states can be declared by calling additionalState multiple times.
