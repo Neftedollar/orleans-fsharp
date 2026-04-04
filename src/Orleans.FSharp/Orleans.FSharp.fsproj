@@ -32,6 +32,7 @@
     <Compile Include="Serialization.fs" />
     <Compile Include="StateMigration.fs" />
     <Compile Include="Shutdown.fs" />
+    <Compile Include="GrainResilience.fs" />
     <Compile Include="StreamProviders.fs" />
     <Compile Include="Kubernetes.fs" />
     <Compile Include="FSharpSerialization.fs" />
@@ -58,6 +59,7 @@
     <PackageReference Include="FSharp.Control.TaskSeq" Version="0.*" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Transactions" Version="10.*" />
+    <PackageReference Include="Polly" Version="8.*" />
   </ItemGroup>
 
 </Project>
