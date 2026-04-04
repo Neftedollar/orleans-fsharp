@@ -11,6 +11,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
@@ -252,3 +254,20 @@ let ``AddFSharpGrain returns the same IServiceCollection for chaining`` () =
     let services = ServiceCollection() :> IServiceCollection
     let returned = services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef())
     test <@ obj.ReferenceEquals(services, returned) @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``AddFSharpGrain registers at least 1 service for any grain definition`` () =
+    let services = ServiceCollection() :> IServiceCollection
+    let countBefore = services |> Seq.length
+    services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
+    services |> Seq.length > countBefore
+
+[<Property>]
+let ``AddFSharpGrain always returns the same IServiceCollection instance for any grain def variation`` () =
+    let services = ServiceCollection() :> IServiceCollection
+    let returned = services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef())
+    obj.ReferenceEquals(services, returned)

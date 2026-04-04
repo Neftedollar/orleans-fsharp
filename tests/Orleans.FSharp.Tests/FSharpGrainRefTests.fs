@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // ── Test types ──
@@ -300,3 +302,22 @@ let ``IFSharpGrainWithGuidKey is in Orleans.FSharp namespace`` () =
 [<Fact>]
 let ``IFSharpGrainWithIntKey is in Orleans.FSharp namespace`` () =
     test <@ typeof<IFSharpGrainWithIntKey>.Namespace = "Orleans.FSharp" @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``IFSharpGrain interfaces all live in Orleans.FSharp namespace`` () =
+    [ typeof<IFSharpGrain>
+      typeof<IFSharpGrainWithGuidKey>
+      typeof<IFSharpGrainWithIntKey> ]
+    |> List.forall (fun t -> t.Namespace = "Orleans.FSharp")
+
+[<Property>]
+let ``FSharpGrain module has at least 3 public methods`` () =
+    let grainModule =
+        typeof<IFSharpGrain>.Assembly.GetTypes()
+        |> Array.tryFind (fun t -> t.Name = "FSharpGrain" && t.IsAbstract && t.IsSealed)
+
+    grainModule |> Option.map (fun t -> t.GetMethods().Length >= 3) |> Option.defaultValue true

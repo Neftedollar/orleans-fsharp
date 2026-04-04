@@ -4,6 +4,8 @@ open System
 open System.Reflection
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 
 /// <summary>Get the Orleans.FSharp assembly via the marker type.</summary>
 let private orleansFSharpAssembly =
@@ -88,3 +90,16 @@ let ``GrainBuilder has onReminder custom operation`` () =
     // Should have CustomOperation attribute
     let attrs = onReminderMethod.Value.GetCustomAttributes(typeof<FSharp.Core.CustomOperationAttribute>, false)
     test <@ attrs.Length > 0 @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``all public types in v2 assembly have non-empty names`` () =
+    publicTypes |> Array.forall (fun t -> t.Name.Length > 0)
+
+[<Property>]
+let ``GrainBuilder has at least 10 public instance methods`` () =
+    let builderType = typeof<Orleans.FSharp.GrainBuilder>
+    builderType.GetMethods(BindingFlags.Public ||| BindingFlags.Instance).Length >= 10

@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.EventSourcedGrainDiscoveryTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp.EventSourcing
 
@@ -121,3 +123,23 @@ let ``handle GetBalance produces no events`` () =
     state.Balance <- 100m
     let events = testDefinition.Handle state GetBalance
     test <@ events = [] @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``apply Credited increases balance by any positive amount`` (amount: PositiveInt) =
+    let state = TestState()
+    state.Balance <- 0m
+    let event = Credited (decimal amount.Get)
+    let updated = testDefinition.Apply state event
+    updated.Balance = decimal amount.Get
+
+[<Property>]
+let ``handle Debit with overdraft protection rejects for any amount exceeding balance`` (balance: PositiveInt) (excess: PositiveInt) =
+    let state = TestState()
+    state.Balance <- decimal balance.Get
+    let debit = decimal (balance.Get + excess.Get)
+    let events = testDefinition.Handle state (Debit debit)
+    events = []

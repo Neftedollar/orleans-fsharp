@@ -4,6 +4,8 @@ open System
 open System.Reflection
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 
 /// <summary>Get the Orleans.FSharp assembly via the marker type.</summary>
 let private orleansFSharpAssembly =
@@ -56,3 +58,23 @@ let ``TaskHelpers module is publicly accessible`` () =
         |> Array.exists (fun t -> t.Name.Contains("TaskHelpers"))
 
     test <@ hasTaskHelpers @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``all public types have non-empty names`` () =
+    publicTypes |> Array.forall (fun t -> t.Name.Length > 0)
+
+[<Property>]
+let ``no public methods return FSharpAsync — assembly-level invariant holds across runs`` () =
+    let asyncMethods =
+        publicTypes
+        |> Array.collect (fun t ->
+            t.GetMethods(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.Static))
+        |> Array.filter (fun m ->
+            let ret = m.ReturnType
+            isFSharpAsyncType ret || isFSharpAsyncNonGeneric ret)
+
+    asyncMethods.Length = 0

@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans
 open Orleans.Runtime
@@ -576,3 +578,32 @@ let ``grain CE combines deactivationTimeout and grainType`` () =
 
     test <@ def.DeactivationTimeout = Some(TimeSpan.FromMinutes 20.) @>
     test <@ def.GrainTypeName = Some "my-grain" @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``deactivationTimeout stores any positive TimeSpan for grain definition`` (seconds: PositiveInt) =
+    let timeout = TimeSpan.FromSeconds(float seconds.Get)
+
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            deactivationTimeout timeout
+        }
+
+    def.DeactivationTimeout = Some timeout
+
+[<Property>]
+let ``grain CE deactivationTimeout and grainType do not disturb DefaultState for any initial int`` (initial: int) =
+    let def =
+        grain {
+            defaultState initial
+            handle (fun state (_msg: string) -> task { return state, box state })
+            deactivationTimeout (TimeSpan.FromMinutes 5.)
+            grainType "my-grain"
+        }
+
+    def.DefaultState = Some initial && def.GrainTypeName = Some "my-grain"

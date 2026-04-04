@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.TransactionalGrainDiscoveryTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp.Runtime
 
@@ -151,3 +153,23 @@ let ``registered definition preserves GetBalance function`` () =
     let state = AccountState()
     state.Balance <- 42.5m
     test <@ resolved.GetBalance state = 42.5m @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``CopyState copies any decimal balance correctly`` (balance: NormalFloat) =
+    let b = decimal balance.Get
+    let source = AccountState()
+    source.Balance <- b
+    let target = AccountState()
+    accountDefinition.CopyState source target
+    target.Balance = b
+
+[<Property>]
+let ``GetBalance returns any balance set on AccountState`` (balance: NormalFloat) =
+    let b = decimal balance.Get
+    let state = AccountState()
+    state.Balance <- b
+    accountDefinition.GetBalance state = b

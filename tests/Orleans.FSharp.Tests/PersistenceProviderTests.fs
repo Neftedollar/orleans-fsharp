@@ -1,7 +1,10 @@
 module Orleans.FSharp.Tests.PersistenceProviderTests
 
+open System
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Runtime
 
 // --- StorageProvider DU tests ---
@@ -240,3 +243,28 @@ let ``siloConfig CE later storage overrides earlier with same name for new provi
 
     test <@ config.StorageProviders |> Map.count = 1 @>
     test <@ config.StorageProviders.["Default"] |> isAzureBlobStorage @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addRedisStorage stores any non-whitespace provider name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addRedisStorage name.Get "localhost:6379" }
+        config.StorageProviders |> Map.containsKey name.Get
+        && config.StorageProviders.[name.Get] |> isRedisStorage)
+
+[<Property>]
+let ``addAzureBlobStorage stores any non-whitespace provider name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addAzureBlobStorage name.Get "connStr" }
+        config.StorageProviders |> Map.containsKey name.Get
+        && config.StorageProviders.[name.Get] |> isAzureBlobStorage)
+
+[<Property>]
+let ``addAdoNetStorage stores any non-whitespace provider name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addAdoNetStorage name.Get "connStr" "npgsql" }
+        config.StorageProviders |> Map.containsKey name.Get
+        && config.StorageProviders.[name.Get] |> isAdoNetStorage)

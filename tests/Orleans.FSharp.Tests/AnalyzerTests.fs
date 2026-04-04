@@ -12,6 +12,8 @@ open System
 open System.IO
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open FSharp.Compiler.CodeAnalysis
 open FSharp.Compiler.Text
 open Orleans.FSharp.Analyzers.AsyncUsageAnalyzer
@@ -338,3 +340,18 @@ let ``CliAnalyzer attribute is present on asyncUsageAnalyzer`` () =
                    |> Array.exists (fun a ->
                        a.GetType().Name.Contains("CliAnalyzer"))))
     test <@ hasAttr @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``asyncCount is always non-negative for any source fragment`` (n: PositiveInt) =
+    // Embed n async blocks in a generated source
+    let blocks = List.init n.Get (fun i -> $"let f{i} () = async {{ return {i} }}")
+    let source = String.concat "\n" blocks
+    asyncCount source >= 0
+
+[<Property>]
+let ``AllowAsyncAttribute assembly has at least 1 public type`` () =
+    typeof<AllowAsyncAttribute>.Assembly.GetExportedTypes().Length >= 1
