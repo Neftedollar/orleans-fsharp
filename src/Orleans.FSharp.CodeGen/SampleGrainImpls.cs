@@ -245,6 +245,74 @@ public class AggregatorGrainImpl : Grain, IAggregatorGrain
 
 // ─── ObserverTest ────────────────────────────────────────────────────────────
 
+// ─── LifecycleTest ──────────────────────────────────────────────────────────
+
+/// <summary>
+/// Concrete grain implementation for the lifecycle-hook test grain.
+/// Inherits from <see cref="Grain"/> (NOT from the generic
+/// <c>Orleans.FSharp.Runtime.FSharpGrain&lt;S,M&gt;</c>) so it does not accidentally
+/// implement <see cref="IFSharpGrain"/> and conflict with <see cref="FSharpGrainImpl"/>
+/// in Orleans' grain-type resolution table.
+///
+/// Lifecycle hooks (<c>onActivate</c> / <c>onDeactivate</c>) are called manually from
+/// <see cref="OnActivateAsync"/> and <see cref="OnDeactivateAsync"/> by inspecting the
+/// <c>GrainDefinition</c>'s <c>OnActivate</c> and <c>OnDeactivate</c> option fields,
+/// exercising the same code path that <c>FSharpGrain&lt;S,M&gt;</c> uses internally.
+/// </summary>
+public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
+{
+    private readonly GrainDefinition<LifecycleState, LifecycleTestCommand> _def;
+    private readonly IPersistentState<LifecycleState> _state;
+    private LifecycleState _current;
+
+    /// <summary>
+    /// Initialises the grain from DI.
+    /// <c>GrainDefinition</c> is registered as a singleton by <c>AddFSharpGrain</c>;
+    /// <c>IPersistentState</c> is injected with the "Default" storage provider.
+    /// </summary>
+    public LifecycleTestGrainImpl(
+        GrainDefinition<LifecycleState, LifecycleTestCommand> definition,
+        [PersistentState("state", "Default")] IPersistentState<LifecycleState> state)
+    {
+        _def = definition;
+        _state = state;
+        _current = definition.DefaultState.Value;
+    }
+
+    /// <summary>
+    /// Restores persisted state (if any), then invokes the <c>onActivate</c> F# hook
+    /// via <see cref="GrainDefinition.invokeOnActivate"/>.
+    /// </summary>
+    public override async Task OnActivateAsync(CancellationToken ct)
+    {
+        if (_state.RecordExists)
+            _current = _state.State;
+
+        _current = await GrainDefinition.invokeOnActivate(_def, _current);
+    }
+
+    /// <summary>
+    /// Invokes the <c>onDeactivate</c> F# hook via <see cref="GrainDefinition.invokeOnDeactivate"/>.
+    /// </summary>
+    public override async Task OnDeactivateAsync(DeactivationReason reason, CancellationToken ct)
+    {
+        await GrainDefinition.invokeOnDeactivate(_def, _current);
+    }
+
+    /// <summary>
+    /// Dispatches a lifecycle command to the F# handler, persists the updated state,
+    /// and returns the boxed result.
+    /// </summary>
+    public async Task<object> HandleMessage(LifecycleTestCommand cmd)
+    {
+        var (next, result) = await GrainDefinition.invokeHandler(_def, _current, cmd);
+        _current = next;
+        _state.State = _current;
+        await _state.WriteStateAsync();
+        return result;
+    }
+}
+
 /// <summary>
 /// Observer interface used by <see cref="ITestChatGrain"/> integration tests.
 /// Defined in C# so Orleans source generators produce the required observer proxy.

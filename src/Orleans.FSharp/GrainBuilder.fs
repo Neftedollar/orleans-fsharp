@@ -504,6 +504,33 @@ module GrainDefinition =
             | None -> return state
         }
 
+    /// <summary>
+    /// Invokes the <c>onActivate</c> lifecycle hook registered in a GrainDefinition,
+    /// returning the (possibly modified) state.  If no hook is registered, returns the
+    /// state unchanged.  Designed for C# grain impl interop (e.g. custom CodeGen wrappers
+    /// that want to call the hook from <c>OnActivateAsync</c> without touching F# option types).
+    /// </summary>
+    /// <param name="definition">The grain definition that may contain an onActivate hook.</param>
+    /// <param name="state">The current state at activation time (after loading persisted state).</param>
+    /// <returns>A Task containing the state after the hook (or the original state if no hook).</returns>
+    let invokeOnActivate (definition: GrainDefinition<'State, 'Message>) (state: 'State) : Task<'State> =
+        match definition.OnActivate with
+        | Some f -> f state
+        | None -> Task.FromResult(state)
+
+    /// <summary>
+    /// Invokes the <c>onDeactivate</c> lifecycle hook registered in a GrainDefinition.
+    /// If no hook is registered, completes immediately.  Designed for C# grain impl interop
+    /// so callers do not need to inspect F# option types directly.
+    /// </summary>
+    /// <param name="definition">The grain definition that may contain an onDeactivate hook.</param>
+    /// <param name="state">The current state at deactivation time.</param>
+    /// <returns>A Task that completes after the hook (or immediately if no hook is registered).</returns>
+    let invokeOnDeactivate (definition: GrainDefinition<'State, 'Message>) (state: 'State) : Task =
+        match definition.OnDeactivate with
+        | Some f -> f state :> Task
+        | None -> Task.CompletedTask
+
 /// <summary>
 /// Computation expression builder for declaratively defining grain behavior.
 /// Use the <c>grain {{ }}</c> syntax with custom operations to build a GrainDefinition.

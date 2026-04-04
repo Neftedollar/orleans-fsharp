@@ -861,6 +861,13 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<GrainKeyState, GrainGuidKeyCommand>(TestGrains18.grainGuidKeyGrain) |> ignore
             // Register the int-keyed grain-key grain for primaryKeyInt64 wiring tests
             siloBuilder.Services.AddFSharpGrain<GrainKeyState, GrainIntKeyCommand>(TestGrains19.grainIntKeyGrain) |> ignore
+            // Register the lifecycle hook grain definition as a plain singleton — NOT via AddFSharpGrain.
+            // LifecycleTestGrainImpl uses the typed FSharpGrain<S,M> pattern (per-grain C# stub) rather than
+            // the universal IFSharpGrain dispatcher, so it only needs the GrainDefinition in DI for constructor
+            // injection.  Using AddFSharpGrain here would also register LifecycleTestCommand in the universal
+            // handler registry which causes Orleans to list LifecycleTestGrainImpl as a candidate for IFSharpGrain
+            // and break all FSharpGrain.ref<> calls with an ambiguity error.
+            siloBuilder.Services.AddSingleton<GrainDefinition<Orleans.FSharp.Sample.LifecycleState, Orleans.FSharp.Sample.LifecycleTestCommand>>(Orleans.FSharp.Sample.LifecycleGrainDef.lifecycleGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

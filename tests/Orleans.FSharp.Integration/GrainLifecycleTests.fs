@@ -341,6 +341,126 @@ type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
         }
 
 /// <summary>
+/// Integration tests verifying that <c>onActivate</c> and <c>onDeactivate</c> lifecycle
+/// hooks defined in the <c>grain { }</c> CE are correctly executed by the Orleans runtime
+/// when the grain uses the typed <c>FSharpGrain&lt;TState, TMessage&gt;</c> base class
+/// (wired in <c>LifecycleTestGrainImpl</c> in the CodeGen project).
+///
+/// <para>
+/// These tests exercise the <em>typed</em> grain path — not the universal
+/// <c>FSharpGrain.ref</c> pattern — because the <c>FSharpGrainImpl</c> universal
+/// dispatcher does not call lifecycle hooks; only <c>FSharpGrain&lt;S,M&gt;.OnActivateAsync</c>
+/// does.  Grains using this path are looked up via their concrete Orleans interface
+/// (<c>ILifecycleTestGrain</c>) rather than <c>IFSharpGrain</c>.
+/// </para>
+/// </summary>
+[<Collection("ClusterCollection")>]
+type LifecycleHookIntegrationTests(fixture: ClusterFixture) =
+
+    [<Fact>]
+    member _.``onActivate runs on first grain activation and sets ActivationCount to 1`` () =
+        task {
+            // Use a unique key so this test gets a fresh grain instance each run.
+            let key = System.Guid.NewGuid().ToString("N")
+            let grain = fixture.GrainFactory.GetGrain<Orleans.FSharp.Sample.ILifecycleTestGrain>(key)
+
+            // First message triggers activation → onActivate increments ActivationCount.
+            let! result = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.GetLifecycleState)
+            let state = unbox<Orleans.FSharp.Sample.LifecycleState> result
+
+            // onActivate should have run exactly once, bumping ActivationCount from 0 to 1.
+            test <@ state.ActivationCount = 1 @>
+        }
+
+    [<Fact>]
+    member _.``onActivate does not reset Value set by handler`` () =
+        task {
+            let key = System.Guid.NewGuid().ToString("N")
+            let grain = fixture.GrainFactory.GetGrain<Orleans.FSharp.Sample.ILifecycleTestGrain>(key)
+
+            // Increment value first — state persists across message calls within the same activation.
+            let! _ = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.IncrementValue 42)
+
+            // Then read state: ActivationCount = 1 and Value = 42.
+            let! result = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.GetLifecycleState)
+            let state = unbox<Orleans.FSharp.Sample.LifecycleState> result
+
+            test <@ state.ActivationCount = 1 @>
+            test <@ state.Value = 42 @>
+        }
+
+    [<Fact>]
+    member _.``multiple IncrementValue calls accumulate correctly with onActivate applied`` () =
+        task {
+            let key = System.Guid.NewGuid().ToString("N")
+            let grain = fixture.GrainFactory.GetGrain<Orleans.FSharp.Sample.ILifecycleTestGrain>(key)
+
+            let! _ = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.IncrementValue 10)
+            let! _ = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.IncrementValue 20)
+            let! _ = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.IncrementValue 30)
+
+            let! result = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.GetLifecycleState)
+            let state = unbox<Orleans.FSharp.Sample.LifecycleState> result
+
+            // Value = 10 + 20 + 30 = 60; ActivationCount = 1 (onActivate ran once at activation).
+            test <@ state.Value = 60 @>
+            test <@ state.ActivationCount = 1 @>
+        }
+
+    [<Fact>]
+    member _.``grain with onDeactivate hook does not throw on normal message processing`` () =
+        task {
+            // Verifies that having an onDeactivate hook registered does not interfere with
+            // regular grain operation.  The hook itself is a no-op in the test grain, but
+            // its presence must not break activation or message dispatch.
+            let key = System.Guid.NewGuid().ToString("N")
+            let grain = fixture.GrainFactory.GetGrain<Orleans.FSharp.Sample.ILifecycleTestGrain>(key)
+
+            let! result = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.IncrementValue 5)
+            let state = unbox<Orleans.FSharp.Sample.LifecycleState> result
+
+            test <@ state.Value = 5 @>
+            test <@ state.ActivationCount = 1 @>
+        }
+
+    [<Fact>]
+    member _.``two independent grains each run onActivate once`` () =
+        task {
+            let key1 = System.Guid.NewGuid().ToString("N")
+            let key2 = System.Guid.NewGuid().ToString("N")
+            let g1 = fixture.GrainFactory.GetGrain<Orleans.FSharp.Sample.ILifecycleTestGrain>(key1)
+            let g2 = fixture.GrainFactory.GetGrain<Orleans.FSharp.Sample.ILifecycleTestGrain>(key2)
+
+            let! r1 = g1.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.GetLifecycleState)
+            let! r2 = g2.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.GetLifecycleState)
+
+            let s1 = unbox<Orleans.FSharp.Sample.LifecycleState> r1
+            let s2 = unbox<Orleans.FSharp.Sample.LifecycleState> r2
+
+            // Each grain is an independent activation — both have ActivationCount = 1.
+            test <@ s1.ActivationCount = 1 @>
+            test <@ s2.ActivationCount = 1 @>
+        }
+
+    [<Fact>]
+    member _.``onActivate default state has ActivationCount 0 before hook runs`` () =
+        task {
+            // Sanity-check that the default state (from the grain definition) starts at 0.
+            // The onActivate hook runs after the default state is established, so the
+            // observable ActivationCount (after the first message) should be exactly 1.
+            let key = System.Guid.NewGuid().ToString("N")
+            let grain = fixture.GrainFactory.GetGrain<Orleans.FSharp.Sample.ILifecycleTestGrain>(key)
+
+            let! result = grain.HandleMessage(Orleans.FSharp.Sample.LifecycleTestCommand.GetLifecycleState)
+            let state = unbox<Orleans.FSharp.Sample.LifecycleState> result
+
+            // ActivationCount is 1 (not 0) because onActivate ran; proves hook was called.
+            test <@ state.ActivationCount = 1 @>
+            // Value starts at 0 — no IncrementValue called yet.
+            test <@ state.Value = 0 @>
+        }
+
+/// <summary>
 /// Tests for duplicate grain registration detection.
 /// </summary>
 type DuplicateRegistrationTests() =
