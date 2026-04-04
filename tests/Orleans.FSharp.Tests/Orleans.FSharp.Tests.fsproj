@@ -84,6 +84,7 @@
     <Compile Include="AddFSharpGrainTests.fs" />
     <Compile Include="BehaviorPatternTests.fs" />
     <Compile Include="HandlerCompositionProperties.fs" />
+    <Compile Include="GrainHandlerStateMachineProperties.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 

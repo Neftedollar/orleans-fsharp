@@ -38,10 +38,12 @@
 | `handleState` | `'State -> 'Msg -> Task<'State>` | Handler returning only state (no result value) |
 | `handleTyped` | `'State -> 'Msg -> Task<'State * 'R>` | Handler with typed result — no `box` needed |
 | `handleWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * obj>` | Handler with DI/grain-to-grain access |
-| `handleStateWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State>` | Context + state-only result |
+| `handleStateWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State>` | Context + state-only return |
 | `handleTypedWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * 'R>` | Context + typed result |
-| `handleCancellable` | `CancellationToken -> 'State -> 'Msg -> Task<'State * obj>` | Handler with cancellation support |
-| `handleTypedCancellable` | `CancellationToken -> 'State -> 'Msg -> Task<'State * 'R>` | Typed result + cancellation |
+| `handleCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State * obj>` | Cancellation, manual `box` |
+| `handleStateCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State>` | Cancellation, state-only return |
+| `handleTypedCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Cancellation, typed result |
+| `handleWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * obj>` | Context + cancellation |
 | `persist` | `string` | Name of the storage provider for state |
 | `onActivate` | `GrainContext -> Task<unit>` | Runs on grain activation |
 | `onDeactivate` | `GrainContext -> DeactivationReason -> Task<unit>` | Runs on grain deactivation |

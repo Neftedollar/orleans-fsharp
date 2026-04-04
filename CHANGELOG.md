@@ -140,7 +140,11 @@ calculator without any manual `box` calls. 8 integration tests cover `AddValues`
 - 6 FsCheck property tests for `handleState`/`handleTyped` CE variants in `GrainBuilderTests`
 - 8 `ask`/`askGuid`/`askInt` integration tests with `QueryGrain`
 - 8 `handleTyped` integration tests with `CalcGrain`
-- Total: **1160 unit + 224 integration = 1384 tests**
+- `GrainHandlerStateMachineProperties.fs` — 11 FsCheck properties for score-tracker grain
+  testing actual handler pipeline (handleState, handleTyped, handleStateCancellable):
+  net-score invariant, Reset to zero, N-wins, GetScore idempotency, Win+Lose symmetry,
+  handleState/handleStateCancellable equivalence
+- Total: **1171 unit + 224 integration = 1395 tests**
 
 ### Documentation
 - Rewrote `docs/getting-started.md` to lead with the universal grain pattern (no attributes, no C# stubs)
