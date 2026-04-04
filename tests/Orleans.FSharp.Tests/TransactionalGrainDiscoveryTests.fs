@@ -173,3 +173,72 @@ let ``GetBalance returns any balance set on AccountState`` (balance: NormalFloat
     let state = AccountState()
     state.Balance <- b
     accountDefinition.GetBalance state = b
+
+[<Property>]
+let ``Deposit increases balance by exactly the deposited amount`` (initial: NormalFloat) (amount: NormalFloat) =
+    let b0 = abs (decimal initial.Get) % 1_000_000m
+    let d  = abs (decimal amount.Get)  % 1_000_000m + 0.01m
+    let state = AccountState()
+    state.Balance <- b0
+    let after = accountDefinition.Deposit state d
+    after.Balance = b0 + d
+
+[<Property>]
+let ``Withdraw decreases balance by exactly the withdrawn amount when funds are sufficient`` (amount: NormalFloat) =
+    let a = abs (decimal amount.Get) % 1_000_000m + 0.01m
+    // Start with a balance that is strictly greater so withdrawal is valid
+    let state = AccountState()
+    state.Balance <- a + 1m
+    let after = accountDefinition.Withdraw state a
+    after.Balance = (a + 1m) - a
+
+[<Property>]
+let ``Deposit then Withdraw the same amount returns to original balance`` (initial: NormalFloat) (amount: NormalFloat) =
+    let b0 = abs (decimal initial.Get) % 1_000_000m
+    let a  = abs (decimal amount.Get)  % 1_000_000m + 0.01m
+    let state = AccountState()
+    state.Balance <- b0
+    let afterDeposit  = accountDefinition.Deposit  state  a
+    let afterWithdraw = accountDefinition.Withdraw afterDeposit a
+    afterWithdraw.Balance = b0
+
+[<Property>]
+let ``Deposit is commutative: two deposits in either order yield the same final balance`` (a: NormalFloat) (b: NormalFloat) =
+    let d1 = abs (decimal a.Get) % 500_000m + 0.01m
+    let d2 = abs (decimal b.Get) % 500_000m + 0.01m
+    let s0 = AccountState()
+    s0.Balance <- 0m
+    let left  = accountDefinition.Deposit (accountDefinition.Deposit s0 d1) d2
+    let right = accountDefinition.Deposit (accountDefinition.Deposit s0 d2) d1
+    left.Balance = right.Balance
+
+[<Property>]
+let ``Withdraw below zero balance always throws`` (excess: PositiveInt) =
+    let amount = decimal excess.Get + 1m   // amount > balance = 0
+    let state = AccountState()
+    state.Balance <- 0m
+    try
+        accountDefinition.Withdraw state amount |> ignore
+        false   // should have thrown
+    with _ -> true
+
+[<Property>]
+let ``CopyState does not mutate source`` (balance: NormalFloat) =
+    let b = decimal balance.Get
+    let source = AccountState()
+    source.Balance <- b
+    let target = AccountState()
+    accountDefinition.CopyState source target
+    source.Balance = b    // source must be unchanged
+
+[<Property>]
+let ``toOrleans is injective: distinct F# cases map to distinct Orleans values`` () =
+    let cases = [ Orleans.FSharp.Transactions.TransactionOption.Create
+                  Orleans.FSharp.Transactions.TransactionOption.Join
+                  Orleans.FSharp.Transactions.TransactionOption.CreateOrJoin
+                  Orleans.FSharp.Transactions.TransactionOption.Supported
+                  Orleans.FSharp.Transactions.TransactionOption.NotAllowed
+                  Orleans.FSharp.Transactions.TransactionOption.Suppress ]
+    let mapped = cases |> List.map Orleans.FSharp.Transactions.TransactionOption.toOrleans
+    // All mapped values must be distinct
+    mapped |> List.distinct |> List.length = cases.Length
