@@ -21,6 +21,7 @@
     <Compile Include="BehaviorPatternIntegrationTests.fs" />
     <Compile Include="GrainLifecycleTests.fs" />
     <Compile Include="AdditionalStateIntegrationTests.fs" />
+    <Compile Include="TransactionIntegrationTests.fs" />
     <Compile Include="PersistenceRoundtripTests.fs" />
     <Compile Include="SiloConfigTests.fs" />
     <Compile Include="StreamingIntegrationTests.fs" />

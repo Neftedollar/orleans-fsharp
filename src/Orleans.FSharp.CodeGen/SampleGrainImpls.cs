@@ -23,6 +23,7 @@ using Orleans.FSharp;
 using Orleans.FSharp.Runtime;
 using Orleans.FSharp.Sample;
 using Orleans.FSharp.EventSourcing;
+using Orleans.Transactions.Abstractions;
 
 namespace Orleans.FSharp.CodeGen;
 
@@ -441,6 +442,40 @@ public class TestChatGrainImpl : Grain, ITestChatGrain
     /// <inheritdoc/>
     public Task<int> GetSubscriberCount() =>
         Task.FromResult(_manager.Count);
+}
+
+// ─── TransactionalAccount ──────────────────────────────────────────────────
+
+/// <summary>
+/// Concrete transactional account grain for integration tests.
+/// Inherits the generic <see cref="Orleans.FSharp.Runtime.FSharpTransactionalGrain{TState}"/>
+/// base, which wires <see cref="Orleans.Transactions.Abstractions.ITransactionalState{T}"/>
+/// and delegates all logic to the F# <c>TransactionalGrainDefinition</c> singleton.
+/// </summary>
+public class TransactionalAccountGrainImpl
+    : Orleans.FSharp.Runtime.FSharpTransactionalGrain<Orleans.FSharp.Sample.TransactionalAccountState>,
+      Orleans.FSharp.Sample.ITransactionalAccountGrain
+{
+    public TransactionalAccountGrainImpl(
+        [TransactionalState("state", "TransactionStore")] ITransactionalState<Orleans.FSharp.Sample.TransactionalAccountState> state,
+        Orleans.FSharp.Runtime.TransactionalGrainDefinition<Orleans.FSharp.Sample.TransactionalAccountState> definition,
+        Microsoft.Extensions.Logging.ILogger<Orleans.FSharp.Runtime.FSharpTransactionalGrain<Orleans.FSharp.Sample.TransactionalAccountState>> logger)
+        : base(state, definition, logger) { }
+}
+
+/// <summary>
+/// Concrete ATM grain for integration tests.
+/// Inherits the generic <see cref="Orleans.FSharp.Runtime.FSharpAtmGrain{TAccountGrain}"/>
+/// base which orchestrates cross-account transfers within a single Orleans transaction.
+/// </summary>
+public class TransactionalAtmGrainImpl
+    : Orleans.FSharp.Runtime.FSharpAtmGrain<Orleans.FSharp.Sample.ITransactionalAccountGrain>,
+      Orleans.FSharp.Sample.ITransactionalAtmGrain
+{
+    public TransactionalAtmGrainImpl(
+        Orleans.FSharp.Runtime.AtmGrainDefinition<Orleans.FSharp.Sample.ITransactionalAccountGrain> definition,
+        Microsoft.Extensions.Logging.ILogger<Orleans.FSharp.Runtime.FSharpAtmGrain<Orleans.FSharp.Sample.ITransactionalAccountGrain>> logger)
+        : base(definition, logger) { }
 }
 
 #pragma warning restore CS1591

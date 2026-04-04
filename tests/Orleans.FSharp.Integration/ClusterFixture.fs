@@ -874,6 +874,24 @@ type TestSiloConfigurator() =
             // handler registry (which would cause IFSharpGrain ambiguity).
             siloBuilder.Services.AddSingleton<GrainDefinition<Orleans.FSharp.Sample.AdditionalState, Orleans.FSharp.Sample.AdditionalStateCommand>>(Orleans.FSharp.Sample.AdditionalStateGrainDef.additionalStateGrain) |> ignore
 
+            // Configure Orleans transactions with in-memory transaction log storage.
+            // This is required for TransactionalAccountGrainImpl and TransactionalAtmGrainImpl.
+            siloBuilder.UseTransactions() |> ignore
+            // Register transactional state grain definitions.
+            siloBuilder.Services.AddFSharpTransactionalGrain(Orleans.FSharp.Sample.TransactionalAccountGrainDef.transactionalAccountDef) |> ignore
+            // Register ATM grain definition that transfers between account grains.
+            let atmDef: Orleans.FSharp.Runtime.AtmGrainDefinition<Orleans.FSharp.Sample.ITransactionalAccountGrain> =
+                {
+                    Transfer = fun (from: Orleans.FSharp.Sample.ITransactionalAccountGrain) (to': Orleans.FSharp.Sample.ITransactionalAccountGrain) (amount: decimal) ->
+                        task {
+                            do! from.Withdraw(amount)
+                            do! to'.Deposit(amount)
+                        }
+                }
+            siloBuilder.Services.AddFSharpAtmGrain<Orleans.FSharp.Sample.ITransactionalAccountGrain>(atmDef) |> ignore
+            // Register in-memory grain storage for the transactional state store.
+            siloBuilder.AddMemoryGrainStorage("TransactionStore") |> ignore
+
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side
 /// for type alias resolution.
