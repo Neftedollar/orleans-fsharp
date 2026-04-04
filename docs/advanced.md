@@ -1,6 +1,6 @@
 # Advanced Topics
 
-**Transactions, grain directory, OpenTelemetry, shutdown, state migration, and serialization.**
+**Transactions, grain directory, OpenTelemetry, shutdown, state migration, serialization, and behavior pattern.**
 
 ## What you'll learn
 
@@ -10,6 +10,7 @@
 - How to perform graceful shutdown
 - How to migrate grain state between versions
 - How to configure F# type serialization
+- How to model grains as phase state machines with the behavior pattern
 
 ---
 
@@ -431,6 +432,143 @@ let timer = Timers.register grain callback dueTime period
 
 let timerWithState = Timers.registerWithState grain callback state dueTime period
 ```
+
+---
+
+## Behavior Pattern
+
+The **behavior pattern** models a grain as a state machine where the state type includes
+a _phase_ discriminated union. The handler dispatches on `(phase, command)` tuples, making
+illegal transitions compile errors.
+
+### Define the domain
+
+```fsharp
+open Orleans.FSharp
+
+type Phase =
+    | WaitingForConfig
+    | Running of maxHistory: int
+    | Suspended of reason: string
+
+type ChatState = { Phase: Phase; Messages: string list }
+
+type ChatCommand =
+    | Configure of maxHistory: int
+    | Send of text: string
+    | GetHistory
+    | Suspend of reason: string
+    | Resume
+```
+
+### Write the behavior handler
+
+Return `BehaviorResult<'State>` to express transitions:
+
+```fsharp
+let chatHandler (state: ChatState) (cmd: ChatCommand) : Task<BehaviorResult<ChatState>> =
+    task {
+        match state.Phase, cmd with
+        | WaitingForConfig, Configure maxHistory ->
+            return Become { state with Phase = Running maxHistory }
+        | WaitingForConfig, _ ->
+            return Stay state
+        | Running maxHistory, Send msg ->
+            let newMessages = (msg :: state.Messages) |> List.truncate maxHistory
+            return Stay { state with Messages = newMessages }
+        | Running _, Suspend reason ->
+            return Become { state with Phase = Suspended reason }
+        | Running _, _ ->
+            return Stay state
+        | Suspended _, Resume ->
+            return Become { state with Phase = Running 50 }
+        | Suspended _, _ ->
+            return Stay state
+    }
+```
+
+| Case | Meaning |
+|---|---|
+| `Stay state` | Keep the current phase, update state. |
+| `Become state` | Transition to a new phase (phase is part of state). |
+| `Stop` | Signal that this grain should deactivate. |
+
+### Wire it into the grain CE
+
+Use `Behavior.run` to plug the handler into `handleState` without any manual unwrapping:
+
+```fsharp
+let chatGrain =
+    grain {
+        defaultState { Phase = WaitingForConfig; Messages = [] }
+        persist "Default"
+        handleState (Behavior.run chatHandler)  // one line — no match on BehaviorResult
+    }
+```
+
+If you need access to `ctx.GrainFactory` or grain-to-grain calls, use `handleStateWithContext`
+and `Behavior.runWithContext`. When the handler returns `Stop`, it automatically calls
+`ctx.DeactivateOnIdle()`:
+
+```fsharp
+let chatHandler' (ctx: GrainContext) (state: ChatState) (cmd: ChatCommand) : Task<BehaviorResult<ChatState>> =
+    task {
+        match state.Phase, cmd with
+        | Running _, Stop -> return Stop   // grain will deactivate after this message
+        | _ -> return! chatHandler state cmd  // delegate to the context-free handler
+    }
+
+let chatGrain =
+    grain {
+        defaultState { Phase = WaitingForConfig; Messages = [] }
+        handleStateWithContext (Behavior.runWithContext chatHandler')
+    }
+```
+
+### Helper functions
+
+| Function | Description |
+|---|---|
+| `Behavior.run handler` | Adapts a `BehaviorResult` handler for `handleState`. Stop returns original state. |
+| `Behavior.runWithContext handler` | Adapts a `BehaviorResult` handler for `handleStateWithContext`. Stop calls `DeactivateOnIdle`. |
+| `Behavior.unwrap original result` | Extracts state from Stay/Become; returns `original` for Stop. |
+| `Behavior.map f result` | Maps a function over the state inside a BehaviorResult. |
+| `Behavior.isTransition result` | True if result is `Become`. |
+| `Behavior.isStopped result` | True if result is `Stop`. |
+| `Behavior.toHandlerResult original result` | Converts to `state * obj` tuple for use with raw `handle`. |
+
+### Testing behavior handlers directly
+
+Because behavior handlers are pure functions returning `Task<BehaviorResult<'State>>`, they
+test without a silo — and with `Behavior.run` the whole grain can be driven via `getHandler`:
+
+```fsharp
+open Orleans.FSharp
+open Xunit
+open Swensen.Unquote
+open FsCheck.Xunit
+
+[<Fact>]
+let ``Configure transitions from WaitingForConfig to Running`` () =
+    task {
+        let initial = { Phase = WaitingForConfig; Messages = [] }
+        let! ns = Behavior.run chatHandler initial (Configure 10)
+        test <@ ns.Phase = Running 10 @>
+    }
+
+// Property: phase invariants hold for any command sequence
+[<Property>]
+let ``chat phase invariant`` (commands: ChatCommand list) =
+    let mutable s = { Phase = WaitingForConfig; Messages = [] }
+    for cmd in commands do
+        s <- (Behavior.run chatHandler s cmd).GetAwaiter().GetResult()
+    match s.Phase with
+    | WaitingForConfig -> true
+    | Running n -> n > 0
+    | Suspended r -> r.Length > 0
+```
+
+---
 
 ## Next steps
 

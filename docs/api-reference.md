@@ -74,6 +74,21 @@ See [Grain Definition guide](grain-definition.md) for the full keyword list.
 | `primaryKeyString` | `GrainContext -> string` | Get string primary key |
 | `primaryKeyGuid` | `GrainContext -> Guid` | Get Guid primary key |
 | `primaryKeyInt64` | `GrainContext -> int64` | Get int64 primary key |
+| `empty` | `GrainContext` | Empty context for unit tests (all fields null/None) |
+
+#### `Behavior`
+
+Helpers for the behavior pattern — grains whose state includes a phase discriminated union.
+
+| Function | Signature | Description |
+|---|---|---|
+| `run` | `('S -> 'M -> Task<BehaviorResult<'S>>) -> 'S -> 'M -> Task<'S>` | Adapter for `handleState`: unwraps result, Stop returns original state |
+| `runWithContext` | `(GrainContext -> 'S -> 'M -> Task<BehaviorResult<'S>>) -> GrainContext -> 'S -> 'M -> Task<'S>` | Adapter for `handleStateWithContext`: Stop calls `DeactivateOnIdle` |
+| `unwrap` | `'S -> BehaviorResult<'S> -> 'S` | Extract state from Stay/Become; fallback to original for Stop |
+| `map` | `('S -> 'S) -> BehaviorResult<'S> -> BehaviorResult<'S>` | Map over state inside a BehaviorResult |
+| `isTransition` | `BehaviorResult<'S> -> bool` | True if result is `Become` |
+| `isStopped` | `BehaviorResult<'S> -> bool` | True if result is `Stop` |
+| `toHandlerResult` | `'S -> BehaviorResult<'S> -> 'S * obj` | Convert to `state * obj` for use with raw `handle` |
 
 #### `GrainDefinition`
 
