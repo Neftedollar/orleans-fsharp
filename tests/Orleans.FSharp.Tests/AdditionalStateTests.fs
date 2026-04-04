@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // --- additionalState CE keyword tests ---
@@ -187,3 +189,47 @@ let ``GrainDefinition has AdditionalStates field`` () =
         |> Array.tryFind (fun p -> p.Name = "AdditionalStates")
 
     test <@ field.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``additionalState stores correct name for any non-empty name`` (name: NonEmptyString) (storage: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            additionalState name.Get storage.Get 42
+        }
+    def.AdditionalStates.[name.Get].Name = name.Get
+
+[<Property>]
+let ``additionalState stores correct storage name for any non-empty storage name`` (name: NonEmptyString) (storage: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            additionalState name.Get storage.Get 0
+        }
+    def.AdditionalStates.[name.Get].StorageName = storage.Get
+
+[<Property>]
+let ``additionalState stores correct default int value for any value`` (name: NonEmptyString) (value: int) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            additionalState name.Get "Default" value
+        }
+    unbox<int> def.AdditionalStates.[name.Get].DefaultValue = value
+
+[<Property>]
+let ``additionalState entry always has StateType equal to the supplied type`` (name: NonEmptyString) (value: int) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            additionalState name.Get "Default" value
+        }
+    def.AdditionalStates.[name.Get].StateType = typeof<int>
