@@ -57,6 +57,23 @@ public interface IFSharpGrainWithIntKey : IGrainWithIntegerKey
 }
 
 /// <summary>
+/// Universal grain interface for F# event-sourced grains with a string key.
+/// Backed by <c>Orleans.FSharp.EventSourcing.FSharpEventSourcedGrain&lt;TState, TEvent, TCommand&gt;</c>.
+/// No per-grain C# stub needed — register via <c>AddFSharpEventSourcedGrain</c>.
+/// </summary>
+public interface IFSharpEventSourcedGrain : IGrainWithStringKey
+{
+    /// <summary>
+    /// Dispatches a command to the event-sourced grain. The command is handled
+    /// by the F# EventSourcedGrainDefinition's Handle function, producing events
+    /// that are raised on the JournaledGrain and confirmed.
+    /// </summary>
+    /// <param name="command">The command object. Must be serializable.</param>
+    /// <returns>The grain state after all events are applied, boxed as <c>object</c>.</returns>
+    Task<object> HandleCommand(object command);
+}
+
+/// <summary>
 /// Encapsulates the result of dispatching a message through the universal grain handler.
 /// Contains both the updated grain state and the value to return to the caller.
 /// </summary>

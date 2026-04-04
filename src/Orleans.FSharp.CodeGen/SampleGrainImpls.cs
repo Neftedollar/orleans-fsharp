@@ -98,25 +98,21 @@ public class OrderGrainImpl : Grain, IOrderGrain
 }
 
 // ─── BankAccount (event-sourced) ─────────────────────────────────────────────
+// Thin stub: extends FSharpEventSourcedGrain — all event-sourcing logic lives in F#.
+// Only exists to give Orleans a non-generic concrete class for IBankAccountGrain proxy generation.
 
-[LogConsistencyProvider(ProviderName = "LogStorage")]
-public class BankAccountGrainImpl : JournaledGrain<BankAccountState, BankAccountEvent>, IBankAccountGrain
+public class BankAccountGrainImpl
+    : FSharpEventSourcedGrain<BankAccountState, BankAccountEvent, BankAccountCommand>
+    , IBankAccountGrain
 {
-    private readonly ILogger<BankAccountGrainImpl> _logger;
+    public BankAccountGrainImpl(
+        EventSourcedGrainDefinition<BankAccountState, BankAccountEvent, BankAccountCommand> definition,
+        ILogger<FSharpEventSourcedGrain<BankAccountState, BankAccountEvent, BankAccountCommand>> logger)
+        : base(definition, logger) { }
 
-    public BankAccountGrainImpl(ILogger<BankAccountGrainImpl> logger) => _logger = logger;
-
-    protected override void TransitionState(BankAccountState state, BankAccountEvent @event)
+    public new async Task<object> HandleCommand(BankAccountCommand cmd)
     {
-        var next = EventStore.applyEvent(BankAccountGrainDef.bankAccount, state, @event);
-        state.Balance = next.Balance;
-    }
-
-    public async Task<object> HandleCommand(BankAccountCommand cmd)
-    {
-        var events = EventStore.processCommand(BankAccountGrainDef.bankAccount, State, cmd);
-        foreach (var e in events) RaiseEvent(e);
-        await ConfirmEvents();
+        await base.HandleCommand(cmd);
         return (object)State.Balance;
     }
 }

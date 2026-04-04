@@ -8,6 +8,7 @@ open Orleans
 open Orleans.Hosting
 open Orleans.TestingHost
 open Orleans.FSharp.Sample
+open Orleans.FSharp.EventSourcing
 
 // ===========================================================================
 // Binary codec TestCluster fixture
@@ -27,6 +28,9 @@ type BinaryCodecSiloConfigurator() =
             siloBuilder.UseInMemoryReminderService() |> ignore
             siloBuilder.AddLogStorageBasedLogConsistencyProviderAsDefault() |> ignore
             siloBuilder.AddLogStorageBasedLogConsistencyProvider("LogStorage") |> ignore
+
+            // Register the BankAccount event-sourced grain for IFSharpEventSourcedGrain dispatch.
+            siloBuilder.Services.AddFSharpEventSourcedGrain<Orleans.FSharp.Sample.BankAccountState, Orleans.FSharp.Sample.BankAccountEvent, Orleans.FSharp.Sample.BankAccountCommand>(Orleans.FSharp.Sample.BankAccountGrainDef.bankAccount) |> ignore
 
             // Enable F# binary serialization
             Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(

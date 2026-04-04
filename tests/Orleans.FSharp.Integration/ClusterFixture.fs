@@ -8,6 +8,7 @@ open Orleans.TestingHost
 open Xunit
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
+open Orleans.FSharp.EventSourcing
 
 // ── Test grain types for the universal IFSharpGrain pattern ──────────────────
 
@@ -873,6 +874,9 @@ type TestSiloConfigurator() =
             // FSharpGrain<S,M> pattern and must not register AdditionalStateCommand in the universal
             // handler registry (which would cause IFSharpGrain ambiguity).
             siloBuilder.Services.AddSingleton<GrainDefinition<Orleans.FSharp.Sample.AdditionalState, Orleans.FSharp.Sample.AdditionalStateCommand>>(Orleans.FSharp.Sample.AdditionalStateGrainDef.additionalStateGrain) |> ignore
+
+            // Register the BankAccount event-sourced grain for IFSharpEventSourcedGrain dispatch.
+            siloBuilder.Services.AddFSharpEventSourcedGrain<Orleans.FSharp.Sample.BankAccountState, Orleans.FSharp.Sample.BankAccountEvent, Orleans.FSharp.Sample.BankAccountCommand>(Orleans.FSharp.Sample.BankAccountGrainDef.bankAccount) |> ignore
 
             // Configure Orleans transactions with in-memory transaction log storage.
             // This is required for TransactionalAccountGrainImpl and TransactionalAtmGrainImpl.
