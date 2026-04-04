@@ -63,6 +63,7 @@ module CounterGrainDef =
     /// <summary>
     /// The counter grain definition, built using the grain computation expression.
     /// </summary>
+    [<FSharpGrain>]
     let counter =
         grain {
             defaultState Zero

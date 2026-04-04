@@ -25,7 +25,10 @@ type EventSourcedStubInfo =
       /// Short name of the source assembly
       AssemblyName: string
       /// DU case names of the command type (for documentation)
-      CommandCases: string list }
+      CommandCases: string list
+      /// True when the grain interface inherits IFSharpEventSourcedGrain —
+      /// use the thin FSharpEventSourcedGrainImpl-based stub template.
+      UseThinStub: bool }
 
 // ---------------------------------------------------------------------------
 // TypeShape helpers
@@ -69,6 +72,16 @@ let private AttrFullName =
 [<Literal>]
 let private DefTypeBaseName =
     "Orleans.FSharp.EventSourcing.EventSourcedGrainDefinition`3"
+
+/// Full name of the universal event-sourced grain interface.
+[<Literal>]
+let private UniversalInterfaceFullName =
+    "Orleans.FSharp.IFSharpEventSourcedGrain"
+
+/// True when the interface inherits IFSharpEventSourcedGrain (by name, cross-load-context safe).
+let private inheritsUniversalInterface (t: Type) : bool =
+    t.GetInterfaces()
+    |> Array.exists (fun i -> i.FullName = UniversalInterfaceFullName)
 
 /// Scan all public static properties in the assembly for
 /// [<FSharpEventSourcedGrain(typeof<IGrainInterface>)>] bindings.
@@ -122,4 +135,5 @@ let discoverEventSourcedGrains (assembly: Assembly) : EventSourcedStubInfo list 
                         DefinitionName = prop.Name
                         SourceModule = t.Name
                         AssemblyName = assembly.GetName().Name
-                        CommandCases = getUnionCaseNames commandType } ]
+                        CommandCases = getUnionCaseNames commandType
+                        UseThinStub = inheritsUniversalInterface grainInterface } ]

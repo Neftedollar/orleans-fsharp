@@ -273,7 +273,8 @@ public sealed class WrappedEventSourcedEvent
 /// configurator and obtain a grain reference via
 /// <c>grainFactory.GetGrain&lt;IFSharpEventSourcedGrain&gt;("key")</c>.
 /// </remarks>
-public sealed class FSharpEventSourcedGrainImpl
+[GrainType("fsharp-eventsourced")]
+public class FSharpEventSourcedGrainImpl
     : JournaledGrain<WrappedEventSourcedState, WrappedEventSourcedEvent>
     , IFSharpEventSourcedGrain
 {

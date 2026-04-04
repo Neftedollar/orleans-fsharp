@@ -43,12 +43,11 @@ type BankAccountState() =
 
 /// <summary>
 /// Grain interface for the event-sourced bank account grain.
+/// Inherits <see cref="IFSharpEventSourcedGrain"/> so Orleans can back it with the
+/// universal <c>FSharpEventSourcedGrainImpl</c> — no F# type parameters in the C# stub.
 /// </summary>
 type IBankAccountGrain =
-    inherit IGrainWithStringKey
-
-    /// <summary>Handle a bank account command and return a result.</summary>
-    abstract HandleCommand: BankAccountCommand -> Task<obj>
+    inherit Orleans.FSharp.IFSharpEventSourcedGrain
 
 /// <summary>
 /// Module containing the bank account event-sourced grain definition.

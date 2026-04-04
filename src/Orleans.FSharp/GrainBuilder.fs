@@ -8,6 +8,25 @@ open Orleans
 open Orleans.Runtime
 
 /// <summary>
+/// Marks a module-level F# grain definition for automatic registration via
+/// <c>AddFSharpGrainsFromAssembly</c>.
+/// Apply this attribute to a <c>let</c> binding of type
+/// <c>GrainDefinition&lt;TState, TMessage&gt;</c>.
+/// </summary>
+/// <example>
+/// <code lang="fsharp">
+/// [&lt;FSharpGrain&gt;]
+/// let counter = grain {
+///     defaultState (CounterState())
+///     handle (fun state cmd -> task { ... })
+/// }
+/// </code>
+/// </example>
+[<AttributeUsage(AttributeTargets.Property ||| AttributeTargets.Field)>]
+type FSharpGrainAttribute() =
+    inherit Attribute()
+
+/// <summary>
 /// Specifies the grain placement strategy that determines which silo activates a grain.
 /// In C# CodeGen, these map to Orleans placement attributes on the grain class.
 /// </summary>

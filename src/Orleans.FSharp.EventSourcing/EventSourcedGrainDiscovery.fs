@@ -1,5 +1,6 @@
 namespace Orleans.FSharp.EventSourcing
 
+open System.Reflection
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
@@ -149,4 +150,47 @@ module EventSourcedGrainSiloBuilderExtensions =
                     r)
 
             handlerRegistry.Register<'State, 'Event, 'Command>(definition)
+            services
+
+        /// <summary>
+        /// Scans the given assembly for all module-level
+        /// <c>EventSourcedGrainDefinition&lt;TState, TEvent, TCommand&gt;</c> values marked
+        /// with <see cref="FSharpEventSourcedGrainAttribute"/> and registers each one via
+        /// <see cref="AddFSharpEventSourcedGrain{TState, TEvent, TCommand}"/>.
+        /// </summary>
+        /// <param name="assembly">The assembly to scan.</param>
+        /// <returns>The service collection for chaining.</returns>
+        member services.AddFSharpEventSourcedGrainsFromAssembly(assembly: System.Reflection.Assembly) : IServiceCollection =
+            let defOpenType = typedefof<EventSourcedGrainDefinition<_, _, _>>
+            let attrType = typeof<FSharpEventSourcedGrainAttribute>
+            let flags = System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public
+
+            // Resolve or create the shared EventSourcedHandlerRegistry once.
+            let handlerRegistry =
+                services
+                |> Seq.tryFind (fun sd -> sd.ServiceType = typeof<EventSourcedHandlerRegistry>)
+                |> Option.map (fun sd -> sd.ImplementationInstance :?> EventSourcedHandlerRegistry)
+                |> Option.defaultWith (fun () ->
+                    let r = EventSourcedHandlerRegistry()
+                    services.AddSingleton<EventSourcedHandlerRegistry>(r) |> ignore
+                    services.AddSingleton<IEventSourcedHandlerRegistry>(r) |> ignore
+                    r)
+
+            for t in assembly.GetTypes() do
+                for prop in t.GetProperties(flags : System.Reflection.BindingFlags) do
+                    let pt = prop.PropertyType
+                    if pt.IsGenericType
+                       && pt.GetGenericTypeDefinition() = defOpenType
+                       && prop.IsDefined(attrType, false) then
+                        let definition : obj = prop.GetValue(null)
+                        let typeArgs = pt.GetGenericArguments()
+                        // AddSingleton<EventSourcedGrainDefinition<S,E,C>>(definition)
+                        services.Add(ServiceDescriptor.Singleton(pt, definition))
+                        // handlerRegistry.Register<S,E,C>(definition) via reflection
+                        let registerMethod =
+                            typeof<EventSourcedHandlerRegistry>
+                                .GetMethod("Register")
+                                .MakeGenericMethod(typeArgs)
+                        registerMethod.Invoke(handlerRegistry, [| definition |]) |> ignore
+
             services

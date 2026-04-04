@@ -199,51 +199,86 @@ type EventSourcingPropertyTests(fixture: ClusterFixture) =
         }
 
 // ---------------------------------------------------------------------------
-// Universal IFSharpEventSourcedGrain pattern (FSharpEventSourcedGrainImpl)
+// Universal IFSharpEventSourcedGrain pattern — ref<S,C> (zero codegen path)
 // ---------------------------------------------------------------------------
 
 [<Collection("ClusterCollection")>]
 type UniversalEventSourcedGrainTests(fixture: ClusterFixture) =
 
-    /// <summary>
-    /// Universal pattern: IFSharpEventSourcedGrain.HandleCommand routes through
-    /// FSharpEventSourcedGrainImpl + EventSourcedHandlerRegistry without a per-grain C# stub.
-    /// </summary>
     [<Fact>]
-    member _.``Universal: BankAccount starts with zero balance`` () =
+    member _.``ref: BankAccount starts with zero balance`` () =
         task {
-            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-zero")
-            let! result = grain.HandleCommand(GetBalance)
-            let bal = (result :?> BankAccountState).Balance
-            test <@ bal = 0m @>
+            let grain = FSharpEventSourcedGrain.ref<BankAccountState, BankAccountCommand> fixture.GrainFactory "univ-bank-zero"
+            let! state = FSharpEventSourcedGrain.send GetBalance grain
+            test <@ state.Balance = 0m @>
         }
 
     [<Fact>]
-    member _.``Universal: BankAccount Deposit increases balance`` () =
+    member _.``ref: BankAccount Deposit increases balance`` () =
         task {
-            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-deposit")
-            let! result = grain.HandleCommand(Deposit 150m)
-            let bal = (result :?> BankAccountState).Balance
-            test <@ bal = 150m @>
+            let grain = FSharpEventSourcedGrain.ref<BankAccountState, BankAccountCommand> fixture.GrainFactory "univ-bank-deposit"
+            let! state = FSharpEventSourcedGrain.send (Deposit 150m) grain
+            test <@ state.Balance = 150m @>
         }
 
     [<Fact>]
-    member _.``Universal: BankAccount full lifecycle`` () =
+    member _.``ref: BankAccount full lifecycle via post + send`` () =
         task {
-            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-lifecycle")
-            let! _ = grain.HandleCommand(Deposit 500m)
-            let! _ = grain.HandleCommand(Withdraw 200m)
-            let! result = grain.HandleCommand(GetBalance)
-            let bal = (result :?> BankAccountState).Balance
-            test <@ bal = 300m @>
+            let grain = FSharpEventSourcedGrain.ref<BankAccountState, BankAccountCommand> fixture.GrainFactory "univ-bank-lifecycle"
+            do! FSharpEventSourcedGrain.post (Deposit 500m) grain
+            do! FSharpEventSourcedGrain.post (Withdraw 200m) grain
+            let! state = FSharpEventSourcedGrain.send GetBalance grain
+            test <@ state.Balance = 300m @>
         }
 
     [<Fact>]
-    member _.``Universal: Withdraw rejected when insufficient funds`` () =
+    member _.``ref: Withdraw rejected when insufficient funds`` () =
         task {
-            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-insufficient")
-            let! _ = grain.HandleCommand(Deposit 100m)
-            let! result = grain.HandleCommand(Withdraw 999m)
-            let bal = (result :?> BankAccountState).Balance
-            test <@ bal = 100m @>
+            let grain = FSharpEventSourcedGrain.ref<BankAccountState, BankAccountCommand> fixture.GrainFactory "univ-bank-insufficient"
+            do! FSharpEventSourcedGrain.post (Deposit 100m) grain
+            let! state = FSharpEventSourcedGrain.send (Withdraw 999m) grain
+            test <@ state.Balance = 100m @>
+        }
+
+// ---------------------------------------------------------------------------
+// Named-interface pattern — refTyped<IBankAccountGrain,S,C>
+// Routes via IBankAccountGrain → BankAccountGrainImpl (thin stub)
+// ---------------------------------------------------------------------------
+
+[<Collection("ClusterCollection")>]
+type TypedEventSourcedGrainTests(fixture: ClusterFixture) =
+
+    [<Fact>]
+    member _.``refTyped: BankAccount starts with zero balance`` () =
+        task {
+            let grain = FSharpEventSourcedGrain.refTyped<IBankAccountGrain, BankAccountState, BankAccountCommand> fixture.GrainFactory "typed-bank-zero"
+            let! state = FSharpEventSourcedGrain.send GetBalance grain
+            test <@ state.Balance = 0m @>
+        }
+
+    [<Fact>]
+    member _.``refTyped: BankAccount Deposit increases balance`` () =
+        task {
+            let grain = FSharpEventSourcedGrain.refTyped<IBankAccountGrain, BankAccountState, BankAccountCommand> fixture.GrainFactory "typed-bank-deposit"
+            let! state = FSharpEventSourcedGrain.send (Deposit 300m) grain
+            test <@ state.Balance = 300m @>
+        }
+
+    [<Fact>]
+    member _.``refTyped: BankAccount full lifecycle`` () =
+        task {
+            let grain = FSharpEventSourcedGrain.refTyped<IBankAccountGrain, BankAccountState, BankAccountCommand> fixture.GrainFactory "typed-bank-lifecycle"
+            do! FSharpEventSourcedGrain.post (Deposit 1000m) grain
+            do! FSharpEventSourcedGrain.post (Withdraw 400m) grain
+            let! state = FSharpEventSourcedGrain.send GetBalance grain
+            test <@ state.Balance = 600m @>
+        }
+
+    [<Fact>]
+    member _.``from: wraps existing IBankAccountGrain reference cleanly`` () =
+        task {
+            let raw = fixture.GrainFactory.GetGrain<IBankAccountGrain>("from-bank-test")
+            let grain = FSharpEventSourcedGrain.from<BankAccountState, BankAccountCommand> raw
+            let! state = FSharpEventSourcedGrain.send (Deposit 77m) grain
+            test <@ state.Balance = 77m @>
         }

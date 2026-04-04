@@ -244,3 +244,115 @@ module FSharpGrain =
             let! result = handle.Grain.HandleMessage(box cmd)
             return result :?> 'Result
         }
+
+// ---------------------------------------------------------------------------
+// Event-sourced grain handles
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// A typed handle to an F# event-sourced grain with a string key.
+/// Wraps <see cref="IFSharpEventSourcedGrain"/>, hiding the object boxing/unboxing
+/// so callers work with strongly-typed commands and state.
+/// </summary>
+/// <typeparam name="'State">The grain's state type, returned from send operations.</typeparam>
+/// <typeparam name="'Command">The grain's command type.</typeparam>
+[<Struct>]
+type FSharpEventSourcedGrainHandle<'State, 'Command> =
+    internal
+        {
+            /// <summary>The underlying IFSharpEventSourcedGrain proxy.</summary>
+            Grain: IFSharpEventSourcedGrain
+        }
+
+/// <summary>
+/// Functions for creating typed handles and sending commands to F# event-sourced grains.
+/// Uses the universal <see cref="IFSharpEventSourcedGrain"/> proxy — no per-grain C# stub needed.
+/// Register the grain definition via <c>AddFSharpEventSourcedGrain</c> in the silo configurator.
+/// </summary>
+/// <example>
+/// <code lang="fsharp">
+/// // Get a typed handle — no IBankAccountGrain interface or C# stub needed
+/// let grain = FSharpEventSourcedGrain.ref&lt;BankAccountState, BankAccountCommand&gt; grainFactory "acc-1"
+/// // Send a command, get back strongly-typed state
+/// let! state = FSharpEventSourcedGrain.send (Deposit 100m) grain
+/// printfn "Balance: %M" state.Balance
+/// </code>
+/// </example>
+[<RequireQualifiedAccess>]
+module FSharpEventSourcedGrain =
+
+    /// <summary>
+    /// Creates a typed handle for a string-keyed event-sourced grain.
+    /// </summary>
+    /// <param name="factory">The Orleans grain factory.</param>
+    /// <param name="key">The string primary key of the grain.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command type.</typeparam>
+    /// <returns>A typed event-sourced grain handle.</returns>
+    let ref<'State, 'Command> (factory: IGrainFactory) (key: string) : FSharpEventSourcedGrainHandle<'State, 'Command> =
+        // grainClassNamePrefix uses StartsWith against the grain's full C# type name.
+        // Use typeof<FSharpEventSourcedGrainImpl>.FullName so Orleans picks the universal
+        // base class unambiguously when thin stubs (e.g. BankAccountGrainImpl) also
+        // implement IFSharpEventSourcedGrain via a derived interface.
+        { Grain = factory.GetGrain<IFSharpEventSourcedGrain>(key, typeof<FSharpEventSourcedGrainImpl>.FullName) }
+
+    /// <summary>
+    /// Sends a command to an event-sourced grain and returns the new state.
+    /// The command is boxed, dispatched via <c>IFSharpEventSourcedGrain.HandleCommand</c>,
+    /// and the result is unboxed to <typeparamref name="'State"/>.
+    /// </summary>
+    /// <param name="cmd">The command to send.</param>
+    /// <param name="handle">The typed grain handle.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command type.</typeparam>
+    /// <returns>A Task containing the new typed state after the command is applied.</returns>
+    let send<'State, 'Command> (cmd: 'Command) (handle: FSharpEventSourcedGrainHandle<'State, 'Command>) : Task<'State> =
+        task {
+            let! result = handle.Grain.HandleCommand(box cmd)
+            return result :?> 'State
+        }
+
+    /// <summary>
+    /// Sends a command to an event-sourced grain, discarding the returned state.
+    /// Use when you need the side-effect but not the resulting state value.
+    /// </summary>
+    /// <param name="cmd">The command to send.</param>
+    /// <param name="handle">The typed grain handle.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command type.</typeparam>
+    /// <returns>A Task that completes when the grain finishes processing.</returns>
+    let post<'State, 'Command> (cmd: 'Command) (handle: FSharpEventSourcedGrainHandle<'State, 'Command>) : Task =
+        task {
+            let! _ = handle.Grain.HandleCommand(box cmd)
+            ()
+        }
+
+    /// <summary>
+    /// Creates a typed handle for a grain that inherits <see cref="IFSharpEventSourcedGrain"/>.
+    /// Use this when your grain interface is defined as <c>type IMyGrain = inherit IFSharpEventSourcedGrain</c>
+    /// and is backed by a generated thin stub (<c>MyGrainImpl : FSharpEventSourcedGrainImpl, IMyGrain</c>).
+    /// Unlike <c>ref</c>, this routes through the named interface rather than the universal one,
+    /// giving a distinct grain type in the Orleans system (visible in dashboards and logs).
+    /// </summary>
+    /// <param name="factory">The Orleans grain factory.</param>
+    /// <param name="key">The string primary key of the grain.</param>
+    /// <typeparam name="'Iface">The specific grain interface (must inherit IFSharpEventSourcedGrain).</typeparam>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command type.</typeparam>
+    /// <returns>A typed event-sourced grain handle.</returns>
+    let refTyped<'Iface, 'State, 'Command when 'Iface :> IFSharpEventSourcedGrain>
+        (factory: IGrainFactory)
+        (key: string)
+        : FSharpEventSourcedGrainHandle<'State, 'Command> =
+        { Grain = factory.GetGrain<'Iface>(key) :> IFSharpEventSourcedGrain }
+
+    /// <summary>
+    /// Wraps an already-obtained grain reference (that inherits <see cref="IFSharpEventSourcedGrain"/>)
+    /// into a typed handle. Useful when you already have a grain reference from elsewhere.
+    /// </summary>
+    /// <param name="grain">The grain reference to wrap.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command type.</typeparam>
+    /// <returns>A typed event-sourced grain handle.</returns>
+    let from<'State, 'Command> (grain: IFSharpEventSourcedGrain) : FSharpEventSourcedGrainHandle<'State, 'Command> =
+        { Grain = grain }

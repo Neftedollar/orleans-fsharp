@@ -52,7 +52,12 @@ let private fqn (t: Type) =
 // ---------------------------------------------------------------------------
 
 let renderEventSourcedStub (info: EventSourcedStubInfo) (ns: string) : string =
-    let tmpl = loadTemplate "EventSourcedGrainStub.scriban"
+    // Choose thin template when interface inherits IFSharpEventSourcedGrain.
+    let templateName =
+        if info.UseThinStub then "EventSourcedGrainStubThin.scriban"
+        else "EventSourcedGrainStub.scriban"
+
+    let tmpl = loadTemplate templateName
 
     let so = ScriptObject()
     so.["class_name"]     <- toClassName info.InterfaceType :> obj
