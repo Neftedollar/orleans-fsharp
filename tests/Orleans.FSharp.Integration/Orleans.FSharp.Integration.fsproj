@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <Compile Include="ClusterFixture.fs" />
+    <Compile Include="GrainBatchIntegrationTests.fs" />
     <Compile Include="UniversalGrainPatternTests.fs" />
     <Compile Include="HandleTypedIntegrationTests.fs" />
     <Compile Include="HandleStateIntegrationTests.fs" />
