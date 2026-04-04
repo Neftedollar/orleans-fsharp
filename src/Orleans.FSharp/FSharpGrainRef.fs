@@ -115,7 +115,14 @@ module FSharpGrain =
         }
 
     /// <summary>
-    /// Sends a command to a string-keyed grain, ignoring the result.
+    /// Sends a command to a string-keyed grain, discarding the return value.
+    /// <para>
+    /// <b>Note:</b> this function awaits the full round-trip RPC call to the grain and
+    /// discards the result. It is <em>not</em> a true fire-and-forget (one-way) call.
+    /// Use this when you want to send a state-changing command without needing the new state.
+    /// For a genuine one-way message, annotate the handler method with <c>[&lt;OneWay&gt;]</c>
+    /// and use <c>FSharpGrain.post</c> — both approaches will complete the Task on return.
+    /// </para>
     /// </summary>
     /// <param name="cmd">The command to send.</param>
     /// <param name="handle">The typed grain handle.</param>

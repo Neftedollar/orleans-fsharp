@@ -7,7 +7,7 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Orleans 10](https://img.shields.io/badge/Orleans-10.0.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
-[![Tests](https://img.shields.io/badge/tests-1277-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1324-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 
 ---
@@ -154,7 +154,7 @@ siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
 // Client / handler — string, GUID, or int key
 let handle = FSharpGrain.ref<PingState, PingCommand> factory "ping-1"
 let! state  = handle |> FSharpGrain.send Ping          // returns Task<PingState>
-do! handle  |> FSharpGrain.post Ping                   // fire-and-forget Task
+do! handle  |> FSharpGrain.post Ping                   // awaits RPC but discards result
 
 // ask returns a type you choose — useful when the handler returns something other than the state
 let! count  = handle |> FSharpGrain.ask<PingState, PingCommand, int> GetCount
