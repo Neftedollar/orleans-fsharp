@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### `StateMigration.tryApplyMigrations` — safe Result-based migration
+
+A new function that validates the migration chain before applying it, returning
+`Result<'T, string list>` instead of throwing on an invalid chain:
+
+```fsharp
+match StateMigration.tryApplyMigrations<StateV3> migrations 1 (box oldState) with
+| Ok newState -> // use newState
+| Error errs  -> for e in errs do log.LogError("Migration error: {Error}", e)
+```
+
+Compared to `applyMigrations` (which throws on gaps/duplicates), `tryApplyMigrations`
+is the preferred choice for production grain activation paths where you want to surface
+migration errors through structured logging rather than runtime exceptions.
+
+Also fixes a dead-code `List.iter` call in `StateMigration.validate` that was a no-op.
+
 ### `Behavior.run` and `Behavior.runWithContext` adapters
 
 Two new adapter functions in the `Behavior` module eliminate the need to manually unwrap
