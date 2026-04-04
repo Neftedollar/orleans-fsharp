@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
@@ -454,3 +456,83 @@ let ``clientConfig addMemoryStreams with empty name throws ArgumentException`` (
                 addMemoryStreams ""
             }
         @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+/// Helper: create a minimal grain definition, run an action, return whether an
+/// ArgumentException was thrown.
+let private grainPersistThrows (providerName: string) =
+    let mutable threw = false
+    try
+        grain {
+            defaultState 0
+            handle (fun s (_m: string) -> task { return s, box s })
+            persist providerName
+        }
+        |> ignore
+    with :? ArgumentException ->
+        threw <- true
+    threw
+
+[<Property>]
+let ``persist throws for any string consisting only of spaces`` (n: NonNegativeInt) =
+    let ws = String(' ', n.Get)
+    grainPersistThrows ws
+
+[<Property>]
+let ``persist throws for any string consisting only of tabs`` (n: PositiveInt) =
+    let ws = String('\t', n.Get)
+    grainPersistThrows ws
+
+[<Property>]
+let ``persist accepts any non-whitespace provider name`` (name: NonNull<string>) =
+    // Vacuously true for whitespace names (covered by separate tests); validates the non-throwing path
+    String.IsNullOrWhiteSpace name.Get || not (grainPersistThrows name.Get)
+
+[<Property>]
+let ``siloConfig clusterId throws for any whitespace-only string`` (n: PositiveInt) =
+    let ws = String(' ', n.Get)
+    let mutable threw = false
+    try
+        siloConfig {
+            useLocalhostClustering
+            clusterId ws
+        }
+        |> ignore
+    with :? ArgumentException ->
+        threw <- true
+    threw
+
+[<Property>]
+let ``siloConfig clusterId accepts any non-whitespace id`` (id: NonNull<string>) =
+    // Vacuously true for whitespace ids; validates the non-throwing path
+    if String.IsNullOrWhiteSpace id.Get then true
+    else
+        let mutable ok = false
+        try
+            siloConfig { useLocalhostClustering; clusterId id.Get } |> ignore
+            ok <- true
+        with :? ArgumentException -> ()
+        ok
+
+[<Property>]
+let ``siloConfig addMemoryStorage throws for any whitespace-only name`` (n: PositiveInt) =
+    let ws = String(' ', n.Get)
+    let mutable threw = false
+    try
+        siloConfig { useLocalhostClustering; addMemoryStorage ws } |> ignore
+    with :? ArgumentException ->
+        threw <- true
+    threw
+
+[<Property>]
+let ``clientConfig clusterId throws for any whitespace-only string`` (n: PositiveInt) =
+    let ws = String(' ', n.Get)
+    let mutable threw = false
+    try
+        clientConfig { useLocalhostClustering; clusterId ws } |> ignore
+    with :? ArgumentException ->
+        threw <- true
+    threw
