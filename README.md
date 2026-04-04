@@ -224,6 +224,7 @@ dotnet new orleans-fsharp -n MyApp
 | [Streaming](docs/streaming.md) | Publish, subscribe, TaskSeq, broadcast |
 | [Event Sourcing](docs/event-sourcing.md) | `eventSourcedGrain { }` CE guide |
 | [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |
+| [Analyzers](docs/analyzers.md) | OF0001: async {} detection, AllowAsync opt-out |
 | [Security](docs/security.md) | TLS, mTLS, filters, secrets |
 | [Advanced](docs/advanced.md) | Transactions, telemetry, shutdown, migration |
 | [API Reference](docs/api-reference.md) | All public modules, types, functions |
@@ -238,6 +239,7 @@ dotnet new orleans-fsharp -n MyApp
 | `Orleans.FSharp.EventSourcing` | Event-sourced grain CE |
 | `Orleans.FSharp.CodeGen` | Optional: per-grain C# code generation for custom grain interfaces (legacy pattern) |
 | `Orleans.FSharp.Testing` | Test harness, GrainArbitrary, GrainMock, log capture |
+| `Orleans.FSharp.Analyzers` | F# analyzer: OF0001 warns on `async { }` usage; `[<AllowAsync>]` opt-out |
 | `Orleans.FSharp.Templates` | `dotnet new` project template |
 
 ## Security
