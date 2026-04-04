@@ -217,6 +217,41 @@ let f () = async {
     // The outer async is suppressed, but the nested one inside let! is not
     test <@ asyncCount src = 1 @>
 
+[<Fact>]
+let ``detects async nested inside use! binding`` () =
+    let src = """
+module M
+let f () = async {
+    use! _ = async { return new System.IO.MemoryStream() :> System.IDisposable }
+    return 1
+}
+"""
+    // outer async { } + async { } inside use! rhs = 2
+    test <@ asyncCount src = 2 @>
+
+[<Fact>]
+let ``detects async inside while loop in CE`` () =
+    let src = """
+module M
+let f () =
+    let mutable i = 0
+    while i < 3 do
+        i <- i + 1
+    async { return i }
+"""
+    test <@ asyncCount src = 1 @>
+
+[<Fact>]
+let ``detects async inside for loop body`` () =
+    let src = """
+module M
+let f items =
+    for _ in items do
+        ()
+    async { return items }
+"""
+    test <@ asyncCount src = 1 @>
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Nested modules / types
 // ──────────────────────────────────────────────────────────────────────────────

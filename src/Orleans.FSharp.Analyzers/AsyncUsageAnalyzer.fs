@@ -88,9 +88,11 @@ module internal AstWalker =
                 walkExpr suppress e1
                 walkExpr suppress e2
 
-            // LetOrUse (covers both let/use and let!/use! — isBang discriminates).
-            // In FCS 43.10+, LetOrUseBang was merged into LetOrUse; the isBang field (pos 3)
-            // is true for CE let!/use! bindings, so nested async { } in let! RHS is covered here.
+            // LetOrUse covers both let/use and let!/use! bindings.
+            // In FCS 43.10+, the former LetOrUseBang case was merged into LetOrUse;
+            // the 4th positional field (isBang) distinguishes them at runtime, but the
+            // walker treats both identically — it recurses into bindings and body regardless,
+            // so any nested async { } on either side of a let! RHS will be detected.
             | SynExpr.LetOrUse(_, _, _, _, bindings, body, _, _) ->
                 for b in bindings do walkBinding b
                 walkExpr suppress body

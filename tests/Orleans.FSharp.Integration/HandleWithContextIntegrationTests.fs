@@ -65,6 +65,7 @@ type HandleWithContextIntegrationTests(fixture: ClusterFixture) =
             let! _ = FSharpGrain.send (ForwardPing "ping-c") relay
             let! s3 = FSharpGrain.send (ForwardPing "ping-c") relay
             test <@ s3.LastPeerCount = 3 @>
+            test <@ s3.PingsSent = 3 @>
         }
 
     [<Fact>]
@@ -113,8 +114,9 @@ type HandleWithContextIntegrationTests(fixture: ClusterFixture) =
         task {
             let gf = fixture.GrainFactory
             let relay = FSharpGrain.ref<RelayState, RelayCommand> gf "relay-post"
+            // FSharpGrain.post awaits the RPC but discards the return value (not a true
+            // one-way call). State is observable immediately after the awaited post.
             do! FSharpGrain.post (ForwardPing "ping-post") relay
-            // After one-way post, state should reflect the forward
             let! s = FSharpGrain.send GetRelayState relay
             test <@ s.PingsSent = 1 @>
         }

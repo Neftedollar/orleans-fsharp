@@ -89,7 +89,7 @@ let ``getHandler on context-only grain throws InvalidOperationException when inv
 
         let handler = GrainDefinition.getHandler def
         let! ex = Assert.ThrowsAsync<InvalidOperationException>(fun () -> handler 0 5 :> Task)
-        test <@ ex.Message.Contains("context-aware") || ex.Message.Contains("GrainContext") @>
+        test <@ ex.Message.Contains("context-aware") && ex.Message.Contains("GrainContext") @>
     }
 
 [<Fact>]
@@ -100,7 +100,7 @@ let ``getContextHandler on definition with no handler throws immediately`` () =
             GrainDefinition.getContextHandler emptyDef |> ignore)
 
     test <@ ex.Message.Contains("Int32") @>
-    test <@ ex.Message.Contains("handle") || ex.Message.Contains("handler") @>
+    test <@ ex.Message.Contains("handle") @>   // "handle" or "handleWithContext" both satisfy
 
 [<Fact>]
 let ``getCancellableContextHandler on empty definition throws immediately`` () =
@@ -109,7 +109,7 @@ let ``getCancellableContextHandler on empty definition throws immediately`` () =
         Assert.Throws<InvalidOperationException>(fun () ->
             GrainDefinition.getCancellableContextHandler emptyDef |> ignore)
 
-    test <@ ex.Message.Contains("String") || ex.Message.Contains("Boolean") @>
+    test <@ ex.Message.Contains("String") && ex.Message.Contains("Boolean") @>
 
 // ── getHandler fallback chain ─────────────────────────────────────────────────
 
@@ -167,6 +167,59 @@ let ``getContextHandler on handleWithContext uses stored context handler`` () =
         let! (ns, _) = handler mockCtx 0 3
         test <@ ns = 3 @>
         test <@ ctxSeen.IsSome @>
+    }
+
+// ── CancellableContextHandler-only: getHandler throws ────────────────────────
+
+[<Fact>]
+let ``getHandler on CancellableContextHandler-only grain throws when invoked`` () =
+    task {
+        let def =
+            grain {
+                defaultState 0
+                handleWithContextCancellable (fun _ctx state (msg: int) _ct ->
+                    task { return state + msg, box (state + msg) })
+            }
+
+        let handler = GrainDefinition.getHandler def
+        let! ex = Assert.ThrowsAsync<InvalidOperationException>(fun () -> handler 0 5 :> Task)
+        test <@ ex.Message.Contains("context-aware") || ex.Message.Contains("cancellable") @>
+    }
+
+// ── getCancellableContextHandler falls back to plain handle ───────────────────
+
+[<Fact>]
+let ``getCancellableContextHandler falls back from plain handle, discarding context and token`` () =
+    task {
+        // The fallback chain: CancellableContextHandler > CancellableHandler > ContextHandler > Handler.
+        // A grain with only a plain 'handle' should be reachable via getCancellableContextHandler.
+        let def =
+            grain {
+                defaultState 0
+                handle (fun state (msg: int) -> task { return state + msg, box (state + msg) })
+            }
+
+        let handler = GrainDefinition.getCancellableContextHandler def
+        let ctx = Unchecked.defaultof<GrainContext>
+        use cts = new System.Threading.CancellationTokenSource()
+        let! (ns, _) = handler ctx 0 9 cts.Token
+        test <@ ns = 9 @>
+    }
+
+[<Fact>]
+let ``getCancellableContextHandler falls back from ContextHandler, discarding token`` () =
+    task {
+        let def =
+            grain {
+                defaultState 0
+                handleWithContext (fun _ctx state (msg: int) ->
+                    task { return state * msg, box (state * msg) })
+            }
+
+        let handler = GrainDefinition.getCancellableContextHandler def
+        let ctx = Unchecked.defaultof<GrainContext>
+        let! (ns, _) = handler ctx 3 4 System.Threading.CancellationToken.None
+        test <@ ns = 12 @>
     }
 
 // ── Error message FsCheck properties ─────────────────────────────────────────
