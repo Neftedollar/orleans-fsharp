@@ -469,84 +469,242 @@ let ``replaying events produces the same state as fold`` () =
 
 ## Testing Handlers Directly
 
-You can test grain handlers without a silo by calling the definition directly:
+All 12 CE handler variants can be tested without a silo by extracting the handler function from a
+`GrainDefinition` and calling it directly. Three dispatch helpers cover all variants:
+
+| Helper | Variants covered |
+|---|---|
+| `GrainDefinition.getHandler` | `handle`, `handleState`, `handleTyped` |
+| `GrainDefinition.getContextHandler` | `handleWithContext`, `handleStateWithContext`, `handleTypedWithContext`, and their `WithServices` aliases |
+| `GrainDefinition.getCancellableContextHandler` | all six `*Cancellable` variants (falls back through the chain) |
+
+### `handle` / `handleState` / `handleTyped`
 
 ```fsharp
-let handler = GrainDefinition.getHandler counter
+open Orleans.FSharp
+open Xunit
 
-let! newState, result = handler Zero Increment
-Assert.Equal(Count 1, newState)
-Assert.Equal(box 1, result)
+let counter =
+    grain {
+        defaultState { Count = 0 }
+        handleTyped (fun state (cmd: CounterCommand) ->
+            task {
+                match cmd with
+                | Increment -> return { Count = state.Count + 1 }, state.Count + 1
+                | GetValue  -> return state, state.Count
+            })
+    }
+
+[<Fact>]
+let ``increment returns next count`` () =
+    task {
+        let handler = GrainDefinition.getHandler counter
+        let! newState, boxedResult = handler { Count = 0 } Increment
+        Assert.Equal({ Count = 1 }, newState)
+        Assert.Equal(box 1, boxedResult)
+    }
 ```
 
-For context-aware handlers:
+### `handleWithContext` / `handleStateWithContext` / `handleTypedWithContext`
+
+Pass `Unchecked.defaultof<GrainContext>` when the handler does not actually use the context (common in
+unit tests). Use `GrainMock` to build a real context when the handler calls `ctx.GrainFactory`:
 
 ```fsharp
-let handler = GrainDefinition.getContextHandler myGrain
+open System.Threading
+open Orleans.FSharp
 
-let ctx = { ... }  // Build a GrainContext with mocks
-let! newState, result = handler ctx initialState myCommand
+let sumGrain =
+    grain {
+        defaultState 0
+        handleStateWithContext (fun _ctx state (delta: int) ->
+            task { return state + delta })
+    }
+
+[<Fact>]
+let ``handleStateWithContext accumulates correctly`` () =
+    task {
+        let handler = GrainDefinition.getContextHandler sumGrain
+        let ctx = Unchecked.defaultof<GrainContext>
+        let! s1, _ = handler ctx 0 10
+        let! s2, _ = handler ctx s1 5
+        Assert.Equal(15, s2)
+    }
+```
+
+### All `*Cancellable` variants
+
+`getCancellableContextHandler` is the universal entry point for every cancellable variant. It follows
+the fallback chain `CancellableContextHandler → CancellableHandler → ContextHandler → Handler`, so
+you always get the most-specific handler registered. Use `CancellationToken.None` in tests unless
+you are specifically testing cancellation behaviour:
+
+```fsharp
+open System.Threading
+open Orleans.FSharp
+
+// handleStateWithContextCancellable
+let accumulator =
+    grain {
+        defaultState 0
+        handleStateWithContextCancellable (fun _ctx state (delta: int) _ct ->
+            task { return state + delta })
+    }
+
+[<Fact>]
+let ``handleStateWithContextCancellable accumulates`` () =
+    task {
+        let handler = GrainDefinition.getCancellableContextHandler accumulator
+        let ctx = Unchecked.defaultof<GrainContext>
+        let! s1, _ = handler ctx 0  10 CancellationToken.None
+        let! s2, _ = handler ctx s1  5 CancellationToken.None
+        Assert.Equal(15, s2)
+    }
+
+// handleTypedWithContextCancellable — result type differs from state type
+let calculator =
+    grain {
+        defaultState 0
+        handleTypedWithContextCancellable (fun _ctx state (n: int) _ct ->
+            task { return state + n, string (state + n) })
+    }
+
+[<Fact>]
+let ``handleTypedWithContextCancellable returns typed result`` () =
+    task {
+        let handler = GrainDefinition.getCancellableContextHandler calculator
+        let ctx = Unchecked.defaultof<GrainContext>
+        let! newState, boxed = handler ctx 5 3 CancellationToken.None
+        Assert.Equal(8, newState)
+        Assert.Equal("8", unbox<string> boxed)
+    }
+```
+
+### Quick reference: which helper to use
+
+```fsharp
+// plain handle / handleState / handleTyped
+let h = GrainDefinition.getHandler myDef
+let! (ns, r) = h state msg
+
+// handleWithContext / handleStateWithContext / handleTypedWithContext
+let h = GrainDefinition.getContextHandler myDef
+let! (ns, r) = h ctx state msg
+
+// any *Cancellable variant (also works as fallback for non-cancellable)
+let h = GrainDefinition.getCancellableContextHandler myDef
+let! (ns, r) = h ctx state msg CancellationToken.None
 ```
 
 ---
 
 ## Complete Test Suite Example
 
+The example below shows the full testing spectrum for a score-tracking grain — unit tests,
+property-based state-machine tests, and cross-variant equivalence checks.
+
 ```fsharp
+open System.Threading
 open Xunit
-open FsCheck
+open Swensen.Unquote
 open FsCheck.Xunit
 open Orleans.FSharp
 open Orleans.FSharp.Testing
 
-module CounterTests =
+// ── domain ───────────────────────────────────────────────────────────────────
 
-    // Unit test: handler logic
+type ScoreState = { Wins: int; Losses: int; Draws: int }
+    with member s.NetScore = s.Wins - s.Losses
+
+type ScoreCommand = Win | Lose | Draw | Reset | GetScore
+
+// ── grain definition ─────────────────────────────────────────────────────────
+
+let scoreGrain =
+    grain {
+        defaultState { Wins = 0; Losses = 0; Draws = 0 }
+        handleTyped (fun state (cmd: ScoreCommand) ->
+            task {
+                match cmd with
+                | Win   -> return { state with Wins    = state.Wins    + 1 }, state.Wins + 1
+                | Lose  -> return { state with Losses  = state.Losses  + 1 }, state.Losses + 1
+                | Draw  -> return { state with Draws   = state.Draws   + 1 }, state.Draws + 1
+                | Reset -> return { Wins = 0; Losses = 0; Draws = 0 },        0
+                | GetScore -> return state, state.NetScore
+            })
+    }
+
+// ── unit tests ───────────────────────────────────────────────────────────────
+
+module ScoreUnitTests =
+
     [<Fact>]
-    let ``increment from zero produces Count 1`` () =
+    let ``Win increments wins`` () =
         task {
-            let handler = GrainDefinition.getHandler counter
-            let! state, result = handler Zero Increment
-            Assert.Equal(Count 1, state)
-            Assert.Equal(box 1, result)
+            let h = GrainDefinition.getHandler scoreGrain
+            let! ns, _ = h { Wins = 0; Losses = 0; Draws = 0 } Win
+            test <@ ns.Wins = 1 @>
         }
 
-    // Unit test: get value
     [<Fact>]
-    let ``get value returns current count`` () =
+    let ``Reset zeroes all counters`` () =
         task {
-            let handler = GrainDefinition.getHandler counter
-            let! state, result = handler (Count 5) GetValue
-            Assert.Equal(Count 5, state)
-            Assert.Equal(box 5, result)
+            let h = GrainDefinition.getHandler scoreGrain
+            let! ns, _ = h { Wins = 5; Losses = 3; Draws = 2 } Reset
+            test <@ ns = { Wins = 0; Losses = 0; Draws = 0 } @>
         }
 
-    // Property test: invariant
-    [<Property>]
-    let ``counter is never negative`` () =
-        let arb = GrainArbitrary.forCommands<CounterCommand>()
-        Prop.forAll arb (fun commands ->
-            let applySync state cmd =
-                match state, cmd with
-                | Zero, Increment -> Count 1
-                | Zero, Decrement -> Zero
-                | Count n, Increment -> Count(n + 1)
-                | Count n, Decrement when n > 1 -> Count(n - 1)
-                | Count _, Decrement -> Zero
-                | s, GetValue -> s
+    [<Fact>]
+    let ``GetScore returns net score`` () =
+        task {
+            let h = GrainDefinition.getHandler scoreGrain
+            let! _, boxed = h { Wins = 7; Losses = 3; Draws = 1 } GetScore
+            test <@ unbox<int> boxed = 4 @>
+        }
 
-            FsCheckHelpers.stateMachineProperty Zero applySync
-                (fun s -> match s with Zero -> true | Count n -> n > 0)
-                commands)
+// ── property tests ───────────────────────────────────────────────────────────
 
-    // Property test: round-trip
+module ScoreProperties =
+
+    let applyHandler (state: ScoreState) (cmd: ScoreCommand) =
+        let h = GrainDefinition.getHandler scoreGrain
+        let (ns, _) = (h state cmd).Result
+        ns
+
+    // Core invariant: NetScore = Wins - Losses must always hold
     [<Property>]
-    let ``state round-trips through all command sequences`` () =
-        let arb = GrainArbitrary.forState<CounterState>()
-        Prop.forAll arb (fun state ->
-            match state with
-            | Zero -> true
-            | Count n -> n <> 0)
+    let ``net score invariant holds for any command sequence`` (commands: ScoreCommand list) =
+        let mutable s = { Wins = 0; Losses = 0; Draws = 0 }
+        for cmd in commands do
+            s <- applyHandler s cmd
+        s.NetScore = s.Wins - s.Losses
+
+    // Monotonicity: total count never decreases except after Reset
+    [<Property>]
+    let ``total count only resets on Reset`` (commands: ScoreCommand list) =
+        let mutable s = { Wins = 0; Losses = 0; Draws = 0 }
+        let mutable ok = true
+        for cmd in commands do
+            let prev = s.Wins + s.Losses + s.Draws
+            s <- applyHandler s cmd
+            let curr = s.Wins + s.Losses + s.Draws
+            if cmd <> Reset then
+                ok <- ok && (curr >= prev)
+        ok
+
+    // Cross-variant equivalence: handleTyped and getCancellableContextHandler
+    // must produce identical state for every command sequence
+    [<Property>]
+    let ``getCancellableContextHandler is equivalent to getHandler`` (commands: ScoreCommand list) =
+        let h1 = GrainDefinition.getHandler scoreGrain
+        let h2 = GrainDefinition.getCancellableContextHandler scoreGrain
+        let ctx = Unchecked.defaultof<GrainContext>
+        let mutable s1 = { Wins = 0; Losses = 0; Draws = 0 }
+        let mutable s2 = { Wins = 0; Losses = 0; Draws = 0 }
+        for cmd in commands do
+            s1 <- fst (h1 s1 cmd).Result
+            s2 <- fst (h2 ctx s2 cmd CancellationToken.None).Result
+        s1 = s2
 ```
 
 ## Next steps
