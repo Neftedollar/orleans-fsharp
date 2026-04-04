@@ -261,6 +261,88 @@ module TestGrains6 =
                 })
         }
 
+// ── handleStateWithContext test grain ────────────────────────────────────────
+
+/// <summary>State for the state-with-context grain.</summary>
+[<Orleans.GenerateSerializer>]
+type StateWithCtxState =
+    { [<Orleans.Id(0u)>] SWCSum: int
+      [<Orleans.Id(1u)>] SWCSteps: int
+      [<Orleans.Id(2u)>] SWCPeerPings: int }
+
+/// <summary>Commands for the state-with-context grain.</summary>
+[<Orleans.GenerateSerializer>]
+type StateWithCtxCommand =
+    | [<Orleans.Id(0u)>] SWCAdd of int
+    | [<Orleans.Id(1u)>] SWCForwardPing of peerKey: string
+    | [<Orleans.Id(2u)>] GetSWCState
+
+module TestGrains10 =
+    /// <summary>
+    /// State-with-context grain defined with <c>handleStateWithContext</c>.
+    /// The handler receives a GrainContext and returns only the new state — no manual
+    /// <c>box</c> required. Tests that <c>ContextHandler</c> is correctly populated and
+    /// that <c>GrainFactory</c> is accessible from inside the handler.
+    /// </summary>
+    let stateWithCtxGrain =
+        grain {
+            defaultState { SWCSum = 0; SWCSteps = 0; SWCPeerPings = 0 }
+            handleStateWithContext (fun ctx state (cmd: StateWithCtxCommand) ->
+                task {
+                    match cmd with
+                    | SWCAdd n ->
+                        return { state with SWCSum = state.SWCSum + n; SWCSteps = state.SWCSteps + 1 }
+                    | SWCForwardPing peerKey ->
+                        let peer = FSharpGrain.ref<PingState, PingCommand> ctx.GrainFactory peerKey
+                        let! _ = FSharpGrain.send Ping peer
+                        return { state with SWCPeerPings = state.SWCPeerPings + 1; SWCSteps = state.SWCSteps + 1 }
+                    | GetSWCState ->
+                        return state
+                })
+        }
+
+// ── handleTypedWithContext test grain ────────────────────────────────────────
+
+/// <summary>State for the typed-with-context calculator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type TypedWithCtxState =
+    { [<Orleans.Id(0u)>] TWCLastResult: int
+      [<Orleans.Id(1u)>] TWCOps: int }
+
+/// <summary>Commands for the typed-with-context calculator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type TypedWithCtxCommand =
+    | [<Orleans.Id(0u)>] TWCAdd of int * int
+    | [<Orleans.Id(1u)>] TWCMul of int * int
+    | [<Orleans.Id(2u)>] GetTWCLastResult
+    | [<Orleans.Id(3u)>] GetTWCOps
+
+module TestGrains11 =
+    /// <summary>
+    /// Typed-with-context calculator defined with <c>handleTypedWithContext</c>.
+    /// The handler receives a GrainContext, returns a typed <c>int</c> result without
+    /// manual <c>box</c>. Tests that <c>ContextHandler</c> correctly wraps typed results
+    /// when dispatched through <c>FSharpGrain.ask</c>.
+    /// </summary>
+    let typedWithCtxGrain =
+        grain {
+            defaultState { TWCLastResult = 0; TWCOps = 0 }
+            handleTypedWithContext (fun _ctx state (cmd: TypedWithCtxCommand) ->
+                task {
+                    match cmd with
+                    | TWCAdd(a, b) ->
+                        let r = a + b
+                        return { TWCLastResult = r; TWCOps = state.TWCOps + 1 }, r
+                    | TWCMul(a, b) ->
+                        let r = a * b
+                        return { TWCLastResult = r; TWCOps = state.TWCOps + 1 }, r
+                    | GetTWCLastResult ->
+                        return state, state.TWCLastResult
+                    | GetTWCOps ->
+                        return state, state.TWCOps
+                })
+        }
+
 // ── handleCancellable (raw) test grain ───────────────────────────────────────
 
 /// <summary>State for the raw cancellable accumulator grain.</summary>
@@ -417,6 +499,10 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<RelayState, RelayCommand>(TestGrains5.relayGrain) |> ignore
             // Register the cancellable accumulator for handleStateCancellable tests
             siloBuilder.Services.AddFSharpGrain<CancellableAccState, CancellableAccCommand>(TestGrains6.cancellableAccGrain) |> ignore
+            // Register the state-with-context grain for handleStateWithContext tests
+            siloBuilder.Services.AddFSharpGrain<StateWithCtxState, StateWithCtxCommand>(TestGrains10.stateWithCtxGrain) |> ignore
+            // Register the typed-with-context grain for handleTypedWithContext tests
+            siloBuilder.Services.AddFSharpGrain<TypedWithCtxState, TypedWithCtxCommand>(TestGrains11.typedWithCtxGrain) |> ignore
             // Register the raw cancellable accumulator for handleCancellable tests
             siloBuilder.Services.AddFSharpGrain<RawCancState, RawCancCommand>(TestGrains8.rawCancGrain) |> ignore
             // Register the typed-cancellable calculator for handleTypedCancellable tests

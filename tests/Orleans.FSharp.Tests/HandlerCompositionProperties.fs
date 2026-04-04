@@ -229,3 +229,195 @@ let ``hasAnyHandler is true for handleCancellable`` (n: int) =
                 task { return state, box state })
         }
     GrainDefinition.hasAnyHandler def
+
+[<Property>]
+let ``hasAnyHandler is true for handleStateCancellable`` (n: int) =
+    let def =
+        grain {
+            defaultState n
+            handleStateCancellable (fun state ((): unit) _ct ->
+                task { return state })
+        }
+    GrainDefinition.hasAnyHandler def
+
+[<Property>]
+let ``hasAnyHandler is true for handleTypedCancellable`` (n: int) =
+    let def =
+        grain {
+            defaultState n
+            handleTypedCancellable (fun state ((): unit) _ct ->
+                task { return state, state })
+        }
+    GrainDefinition.hasAnyHandler def
+
+[<Property>]
+let ``hasAnyHandler is true for handleWithContextCancellable`` (n: int) =
+    let def =
+        grain {
+            defaultState n
+            handleWithContextCancellable (fun _ctx state ((): unit) _ct ->
+                task { return state, box state })
+        }
+    GrainDefinition.hasAnyHandler def
+
+// ── handleTypedCancellable: result is independently typed ─────────────────────
+
+[<Property>]
+let ``handleTypedCancellable: result is unboxable to declared result type`` (n: int) (m: int) =
+    let def =
+        grain {
+            defaultState n
+            handleTypedCancellable (fun state (delta: int) _ct ->
+                task { return state + delta, string (state + delta) })
+        }
+    let handler = GrainDefinition.getCancellableContextHandler def
+    let ctx = Unchecked.defaultof<GrainContext>
+    let (_ns, boxedResult) = (handler ctx n m CancellationToken.None).Result
+    unbox<string> boxedResult = string (n + m)
+
+[<Property>]
+let ``handleTypedCancellable: token is threaded to handler`` (n: int) =
+    let mutable ctReceived: CancellationToken option = None
+    let def =
+        grain {
+            defaultState 0
+            handleTypedCancellable (fun state (msg: int) ct ->
+                task {
+                    ctReceived <- Some ct
+                    return state + msg, state + msg
+                })
+        }
+    use cts = new CancellationTokenSource()
+    let handler = GrainDefinition.getCancellableContextHandler def
+    let ctx = Unchecked.defaultof<GrainContext>
+    let (_ns, _) = (handler ctx 0 n cts.Token).Result
+    ctReceived.IsSome && ctReceived.Value = cts.Token
+
+[<Property>]
+let ``handleTypedCancellable: state and result evolve independently`` (words: string list) =
+    // State accumulates word lengths; result is the uppercase word itself.
+    let def =
+        grain {
+            defaultState 0
+            handleTypedCancellable (fun state (word: string) _ct ->
+                task { return state + word.Length, word.ToUpperInvariant() })
+        }
+    let handler = GrainDefinition.getCancellableContextHandler def
+    let ctx = Unchecked.defaultof<GrainContext>
+    let mutable state = 0
+    let results = System.Collections.Generic.List<string>()
+    for w in words do
+        let (ns, boxedResult) = (handler ctx state w CancellationToken.None).Result
+        state <- ns
+        results.Add(unbox<string> boxedResult)
+    let expectedLen = words |> List.sumBy (fun w -> w.Length)
+    state = expectedLen
+    && (words |> List.forall (fun w ->
+        results |> Seq.exists (fun r -> r = w.ToUpperInvariant())))
+
+// ── handleWithContextCancellable: both context and token are threaded ─────────
+
+[<Property>]
+let ``handleWithContextCancellable: context ref and token are both passed to handler`` (n: int) =
+    let mutable capturedCtx: GrainContext option = None
+    let mutable capturedCt: CancellationToken option = None
+    let mockCtx: GrainContext =
+        { GrainFactory = null; ServiceProvider = null; States = Map.empty
+          DeactivateOnIdle = None; DelayDeactivation = None; GrainId = None; PrimaryKey = None }
+    let def =
+        grain {
+            defaultState 0
+            handleWithContextCancellable (fun ctx state (msg: int) ct ->
+                task {
+                    capturedCtx <- Some ctx
+                    capturedCt  <- Some ct
+                    return state + msg, box (state + msg)
+                })
+        }
+    use cts = new CancellationTokenSource()
+    let handler = GrainDefinition.getCancellableContextHandler def
+    let (_ns, _) = (handler mockCtx 0 n cts.Token).Result
+    capturedCtx.IsSome
+    && capturedCt.IsSome
+    && obj.ReferenceEquals(capturedCtx.Value.GrainFactory, mockCtx.GrainFactory)
+    && capturedCt.Value = cts.Token
+
+[<Property>]
+let ``handleWithContextCancellable: equivalent to handleCancellable when context unused`` (n: PositiveInt) =
+    let plain =
+        grain {
+            defaultState 0
+            handleCancellable (fun state (msg: int) ct ->
+                task { return state + msg, box (state + msg) })
+        }
+    let withCtxCanc =
+        grain {
+            defaultState 0
+            handleWithContextCancellable (fun _ctx state (msg: int) ct ->
+                task { return state + msg, box (state + msg) })
+        }
+    let h1 = GrainDefinition.getCancellableContextHandler plain
+    let h2 = GrainDefinition.getCancellableContextHandler withCtxCanc
+    let ctx = Unchecked.defaultof<GrainContext>
+    let (ns1, r1) = (h1 ctx 0 n.Get CancellationToken.None).Result
+    let (ns2, r2) = (h2 ctx 0 n.Get CancellationToken.None).Result
+    ns1 = ns2 && unbox<int> r1 = unbox<int> r2
+
+// ── handleStateWithContext: result equals new state ───────────────────────────
+
+[<Property>]
+let ``handleStateWithContext: context is threaded and result equals state`` (n: int) (delta: int) =
+    let mutable capturedCtxRef: GrainContext option = None
+    let mockCtx: GrainContext =
+        { GrainFactory = null; ServiceProvider = null; States = Map.empty
+          DeactivateOnIdle = None; DelayDeactivation = None; GrainId = None; PrimaryKey = None }
+    let def =
+        grain {
+            defaultState 0
+            handleStateWithContext (fun ctx state (d: int) ->
+                task {
+                    capturedCtxRef <- Some ctx
+                    return state + d
+                })
+        }
+    let handler = GrainDefinition.getContextHandler def
+    let (ns, boxedResult) = (handler mockCtx n delta).Result
+    ns = n + delta
+    && unbox<int> boxedResult = ns
+    && capturedCtxRef.IsSome
+    && obj.ReferenceEquals(capturedCtxRef.Value.GrainFactory, mockCtx.GrainFactory)
+
+// ── handleTypedWithContext: result is independently typed ─────────────────────
+
+[<Property>]
+let ``handleTypedWithContext: result is unboxable to declared result type`` (n: int) (m: int) =
+    let def =
+        grain {
+            defaultState n
+            handleTypedWithContext (fun _ctx state (delta: int) ->
+                task { return state + delta, string (state + delta) })
+        }
+    let handler = GrainDefinition.getContextHandler def
+    let ctx = Unchecked.defaultof<GrainContext>
+    let (_ns, boxedResult) = (handler ctx n m).Result
+    unbox<string> boxedResult = string (n + m)
+
+[<Property>]
+let ``handleTypedWithContext: context reference is passed unchanged`` (n: int) =
+    let mutable capturedCtxRef: GrainContext option = None
+    let mockCtx: GrainContext =
+        { GrainFactory = null; ServiceProvider = null; States = Map.empty
+          DeactivateOnIdle = None; DelayDeactivation = None; GrainId = None; PrimaryKey = None }
+    let def =
+        grain {
+            defaultState 0
+            handleTypedWithContext (fun ctx state (msg: int) ->
+                task {
+                    capturedCtxRef <- Some ctx
+                    return state + msg, state + msg
+                })
+        }
+    let handler = GrainDefinition.getContextHandler def
+    let (_ns, _) = (handler mockCtx 0 n).Result
+    capturedCtxRef.IsSome
+    && obj.ReferenceEquals(capturedCtxRef.Value.GrainFactory, mockCtx.GrainFactory)
