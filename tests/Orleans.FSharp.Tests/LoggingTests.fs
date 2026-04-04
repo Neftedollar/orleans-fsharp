@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.Logging
 open Orleans.FSharp
 open Orleans.FSharp.Testing
@@ -211,3 +213,40 @@ let ``CapturingLogger Clear removes all entries`` () =
     test <@ (LogCapture.captureLogs factory).Length = 2 @>
     factory.Clear()
     test <@ (LogCapture.captureLogs factory).Length = 0 @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``logInfo produces exactly 1 log entry per call for any template`` (template: NonNull<string>) =
+    let factory = LogCapture.create ()
+    let logger = (factory :> ILoggerFactory).CreateLogger("Test")
+    Log.logInfo logger template.Get [||]
+    let entries = LogCapture.captureLogs factory
+    entries.Length = 1
+
+[<Property>]
+let ``logInfo always produces Information level regardless of template`` (template: NonNull<string>) =
+    let factory = LogCapture.create ()
+    let logger = (factory :> ILoggerFactory).CreateLogger("Test")
+    Log.logInfo logger template.Get [||]
+    let entries = LogCapture.captureLogs factory
+    entries.[0].Level = LogLevel.Information
+
+[<Property>]
+let ``logWarning always produces Warning level`` (template: NonNull<string>) =
+    let factory = LogCapture.create ()
+    let logger = (factory :> ILoggerFactory).CreateLogger("Test")
+    Log.logWarning logger template.Get [||]
+    let entries = LogCapture.captureLogs factory
+    entries.[0].Level = LogLevel.Warning
+
+[<Property>]
+let ``n log calls produce n entries for any positive n`` (n: PositiveInt) =
+    let factory = LogCapture.create ()
+    let logger = (factory :> ILoggerFactory).CreateLogger("Test")
+    for i in 1 .. n.Get do
+        Log.logInfo logger $"Entry {{N}}" [| box i |]
+    let entries = LogCapture.captureLogs factory
+    entries.Length = n.Get
