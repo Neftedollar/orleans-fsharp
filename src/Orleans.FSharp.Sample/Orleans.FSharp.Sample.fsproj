@@ -15,6 +15,7 @@
     <Compile Include="SequentialGrain.fs" />
     <Compile Include="ProcessorGrain.fs" />
     <Compile Include="BankAccountGrain.fs" />
+    <Compile Include="LeaderboardGrain.fs" />
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

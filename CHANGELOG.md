@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+### `handleWithContext` — grain-to-grain calls via `IUniversalGrainHandler`
+
+`IUniversalGrainHandler.Handle` now accepts `IServiceProvider` and `IGrainFactory` parameters,
+enabling grains defined with `handleWithContext` (or `handleWithServices`) to make grain-to-grain
+calls and resolve DI services when dispatched through the universal `AddFSharpGrain` pattern:
+
+```fsharp
+// Relay grain: on ForwardPing, calls a peer PingGrain via ctx.GrainFactory
+let relay =
+    grain {
+        defaultState { PingsSent = 0; LastPeerCount = 0 }
+        handleWithContext (fun ctx state cmd ->
+            task {
+                match cmd with
+                | ForwardPing peerKey ->
+                    let peer = FSharpGrain.ref<PingState, PingCommand> ctx.GrainFactory peerKey
+                    let! peerState = FSharpGrain.send Ping peer
+                    return { PingsSent = state.PingsSent + 1; LastPeerCount = peerState.Count }, box ()
+                | ...
+            })
+    }
+
+// Register with AddFSharpGrain and call as usual — context is threaded automatically
+siloBuilder.Services.AddFSharpGrain<RelayState, RelayCommand>(relay) |> ignore
+```
+
+**Breaking change:** `IUniversalGrainHandler.Handle` signature changed from 2 to 4 parameters.
+Callers of `Handle` must pass `serviceProvider` and `grainFactory` (use `null` in tests that do not exercise context).
+
+### Sample: `LeaderboardGrain`
+
+New sample grain in `Orleans.FSharp.Sample` demonstrating the `handleWithContext` pattern
+for grain-to-grain fan-out: a leaderboard grain queries multiple player-score grains in
+parallel via `Task.WhenAll`, sorts by score, and caches the snapshot.
+
+### Test coverage
+
+- 7 integration tests for `handleWithContext` (relay grain, grain-to-grain forwarding, isolation)
+- 9 integration tests for `handleState` (score accumulator grain)
+- `HandlerCompositionProperties.fs` — 14 FsCheck property tests for handler invariants
+- Expanded `ErrorMessageTests.fs` — error paths for context-only, CancellableContextHandler-only,
+  and empty definitions; strengthened assertions to use `&&` instead of `||`
+- `AnalyzerTests.fs` — `use!` binding, while/for loop tests; 23 total analyzer tests
+
+### Bug fixes
+
+- `AsyncUsageAnalyzer` — remove phantom `LetOrUseBang` case (merged into `LetOrUse(isBang=true)` in FCS 43.10+)
+- `GrainBuilderTests` — FsCheck persist-name property: `IsNullOrEmpty` → `IsNullOrWhiteSpace` for tab characters
+- `GrainMockTests` — fix spurious test that discarded `s1.Total` rather than asserting it
+
 ### New Package: `Orleans.FSharp.Analyzers`
 
 Compile-time F# analyzer for Orleans grain code:
