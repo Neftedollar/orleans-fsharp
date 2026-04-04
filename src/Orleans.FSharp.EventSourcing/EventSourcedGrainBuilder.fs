@@ -1,5 +1,32 @@
 namespace Orleans.FSharp.EventSourcing
 
+open System
+
+/// <summary>
+/// Marks a module-level F# event-sourced grain definition for automatic C# stub generation.
+/// Apply this attribute to a <c>let</c> binding of type
+/// <c>EventSourcedGrainDefinition&lt;TState, TEvent, TCommand&gt;</c>.
+/// The <c>Orleans.FSharp.Generator</c> tool reads this attribute at build time and emits a
+/// minimal C# class that extends
+/// <c>FSharpEventSourcedGrain&lt;TState, TEvent, TCommand&gt;</c>
+/// and implements the specified grain interface — no hand-written C# stub needed.
+/// </summary>
+/// <example>
+/// <code lang="fsharp">
+/// [&lt;FSharpEventSourcedGrain(typeof&lt;IBankAccountGrain&gt;)&gt;]
+/// let bankAccount = eventSourcedGrain {
+///     defaultState (BankAccountState())
+///     apply applyEvent
+///     handle handleCommand
+/// }
+/// </code>
+/// </example>
+[<AttributeUsage(AttributeTargets.Property ||| AttributeTargets.Field)>]
+type FSharpEventSourcedGrainAttribute(grainInterface: Type) =
+    inherit Attribute()
+    /// <summary>The Orleans grain interface that the generated C# stub will implement.</summary>
+    member _.GrainInterface = grainInterface
+
 /// <summary>
 /// Controls when state snapshots are written alongside the event log.
 /// Snapshots allow a future hybrid log-consistency provider to load the latest

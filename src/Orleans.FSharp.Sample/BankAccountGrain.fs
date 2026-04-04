@@ -90,7 +90,10 @@ module BankAccountGrainDef =
 
     /// <summary>
     /// The bank account grain definition using the eventSourcedGrain CE.
+    /// The [&lt;FSharpEventSourcedGrain&gt;] attribute instructs Orleans.FSharp.Generator
+    /// to emit a C# stub that wires this definition to IBankAccountGrain.
     /// </summary>
+    [<FSharpEventSourcedGrain(typeof<IBankAccountGrain>)>]
     let bankAccount =
         eventSourcedGrain {
             defaultState (BankAccountState())

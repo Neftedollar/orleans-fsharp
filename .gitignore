@@ -77,3 +77,6 @@ nupkgs/
 website/node_modules/
 website/dist/
 website/.astro/
+
+# Auto-generated C# stubs
+src/Orleans.FSharp.CodeGen/Generated/

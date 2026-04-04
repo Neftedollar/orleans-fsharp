@@ -6,6 +6,9 @@ open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp.Sample
 
+/// Unbox result as BankAccountState and return the Balance.
+let inline balance (result: obj) = (unbox<BankAccountState> result).Balance
+
 // ---------------------------------------------------------------------------
 // V032: Event-sourced grain integration tests
 // ---------------------------------------------------------------------------
@@ -18,7 +21,7 @@ type EventSourcingIntegrationTests(fixture: ClusterFixture) =
         task {
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("bank-zero-test")
             let! result = grain.HandleCommand(GetBalance)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 0m @>
         }
 
@@ -27,7 +30,7 @@ type EventSourcingIntegrationTests(fixture: ClusterFixture) =
         task {
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("bank-deposit-test")
             let! result = grain.HandleCommand(Deposit 100m)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 100m @>
         }
 
@@ -38,7 +41,7 @@ type EventSourcingIntegrationTests(fixture: ClusterFixture) =
             let! _ = grain.HandleCommand(Deposit 50m)
             let! _ = grain.HandleCommand(Deposit 30m)
             let! result = grain.HandleCommand(Deposit 20m)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 100m @>
         }
 
@@ -48,7 +51,7 @@ type EventSourcingIntegrationTests(fixture: ClusterFixture) =
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("bank-withdraw-test")
             let! _ = grain.HandleCommand(Deposit 100m)
             let! result = grain.HandleCommand(Withdraw 30m)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 70m @>
         }
 
@@ -58,7 +61,7 @@ type EventSourcingIntegrationTests(fixture: ClusterFixture) =
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("bank-insufficient-test")
             let! _ = grain.HandleCommand(Deposit 50m)
             let! result = grain.HandleCommand(Withdraw 100m)
-            let balance = unbox<decimal> result
+            let balance = balance result
             // Balance should remain unchanged since withdraw was rejected
             test <@ balance = 50m @>
         }
@@ -69,7 +72,7 @@ type EventSourcingIntegrationTests(fixture: ClusterFixture) =
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("bank-getbalance-test")
             let! _ = grain.HandleCommand(Deposit 75m)
             let! result = grain.HandleCommand(GetBalance)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 75m @>
         }
 
@@ -80,23 +83,23 @@ type EventSourcingIntegrationTests(fixture: ClusterFixture) =
 
             // Start with zero
             let! r1 = grain.HandleCommand(GetBalance)
-            test <@ unbox<decimal> r1 = 0m @>
+            test <@ balance r1 = 0m @>
 
             // Deposit 200
             let! r2 = grain.HandleCommand(Deposit 200m)
-            test <@ unbox<decimal> r2 = 200m @>
+            test <@ balance r2 = 200m @>
 
             // Withdraw 50
             let! r3 = grain.HandleCommand(Withdraw 50m)
-            test <@ unbox<decimal> r3 = 150m @>
+            test <@ balance r3 = 150m @>
 
             // Deposit 25
             let! r4 = grain.HandleCommand(Deposit 25m)
-            test <@ unbox<decimal> r4 = 175m @>
+            test <@ balance r4 = 175m @>
 
             // Verify final balance
             let! r5 = grain.HandleCommand(GetBalance)
-            test <@ unbox<decimal> r5 = 175m @>
+            test <@ balance r5 = 175m @>
         }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +116,7 @@ type EventSourcingErrorTests(fixture: ClusterFixture) =
             let! _ = grain.HandleCommand(Deposit 100m)
             // Zero deposit should produce no events (handler rejects it)
             let! result = grain.HandleCommand(Deposit 0m)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 100m @>
         }
 
@@ -124,7 +127,7 @@ type EventSourcingErrorTests(fixture: ClusterFixture) =
             let! _ = grain.HandleCommand(Deposit 100m)
             // Negative deposit should produce no events
             let! result = grain.HandleCommand(Deposit -50m)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 100m @>
         }
 
@@ -133,7 +136,7 @@ type EventSourcingErrorTests(fixture: ClusterFixture) =
         task {
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("bank-zero-withdraw-test")
             let! result = grain.HandleCommand(Withdraw 10m)
-            let balance = unbox<decimal> result
+            let balance = balance result
             // Should remain at zero
             test <@ balance = 0m @>
         }
@@ -156,7 +159,7 @@ type EventSourcingPropertyTests(fixture: ClusterFixture) =
                 ()
 
             let! result = grain.HandleCommand(GetBalance)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 100m @>
         }
 
@@ -167,7 +170,7 @@ type EventSourcingPropertyTests(fixture: ClusterFixture) =
             let! _ = grain.HandleCommand(Deposit 500m)
             let! _ = grain.HandleCommand(Withdraw 500m)
             let! result = grain.HandleCommand(GetBalance)
-            let balance = unbox<decimal> result
+            let balance = balance result
             test <@ balance = 0m @>
         }
 
@@ -188,7 +191,7 @@ type EventSourcingPropertyTests(fixture: ClusterFixture) =
                 ()
 
             let! result = grain.HandleCommand(GetBalance)
-            let balance = unbox<decimal> result
+            let balance = balance result
             // 100 (deposit) + 50 (deposit) - 30 (withdraw) = 120
             // The Withdraw 200 was rejected because balance was only 100
             test <@ balance = 120m @>

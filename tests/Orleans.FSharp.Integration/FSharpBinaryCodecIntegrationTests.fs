@@ -210,7 +210,7 @@ type BinaryCodecIntegrationTests(fixture: BinaryCodecClusterFixture) =
         task {
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("bin-bank-deposit")
             let! result = grain.HandleCommand(Deposit 500m)
-            let balance = result :?> decimal
+            let balance = (result :?> BankAccountState).Balance
             test <@ balance = 500m @>
         }
 
@@ -224,7 +224,7 @@ type BinaryCodecIntegrationTests(fixture: BinaryCodecClusterFixture) =
             let! _ = grain.HandleCommand(Deposit 2000m)
             let! _ = grain.HandleCommand(Withdraw 500m)
             let! result = grain.HandleCommand(GetBalance)
-            let balance = result :?> decimal
+            let balance = (result :?> BankAccountState).Balance
             test <@ balance = 1500m @>
         }
 

@@ -25,4 +25,29 @@
     <ProjectReference Include="..\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj" />
   </ItemGroup>
 
+  <!-- Exclude Generated/ from SDK auto-discovery — files are added dynamically by IncludeGeneratedStubs. -->
+  <ItemGroup>
+    <Compile Remove="Generated\**" />
+  </ItemGroup>
+
+  <!-- Step 1: Run the F# generator to emit *.g.cs files into Generated/.
+       Orleans.FSharp.Sample is already built via ProjectReference above, so its DLL exists. -->
+  <Target Name="RunFSharpGrainGenerator" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <_GeneratorProject>$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\Orleans.FSharp.Generator.fsproj</_GeneratorProject>
+      <_SampleAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Sample\bin\$(Configuration)\net10.0\Orleans.FSharp.Sample.dll'))</_SampleAssembly>
+      <_GeneratedDir>$(MSBuildThisFileDirectory)Generated\</_GeneratedDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_GeneratedDir)" />
+    <Exec Command="dotnet run --project &quot;$(_GeneratorProject)&quot; -- --assembly &quot;$(_SampleAssembly)&quot; --output &quot;$(_GeneratedDir)&quot; --namespace Orleans.FSharp.CodeGen" />
+  </Target>
+
+  <!-- Step 2: Add the generated files to the Compile ItemGroup AFTER they exist.
+       BeforeTargets="CoreCompile" ensures the C# compiler sees them. -->
+  <Target Name="IncludeGeneratedStubs" AfterTargets="RunFSharpGrainGenerator" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Compile Include="$(MSBuildThisFileDirectory)Generated\*.g.cs" />
+    </ItemGroup>
+  </Target>
+
 </Project>

@@ -254,7 +254,7 @@ type ExplicitModeExtendedTests(fixture: ClusterFixture) =
         task {
             let grain = fixture.GrainFactory.GetGrain<IBankAccountGrain>("ser-bank-deposit")
             let! result = grain.HandleCommand(Deposit 250m)
-            let balance = result :?> decimal
+            let balance = (result :?> BankAccountState).Balance
             test <@ balance = 250m @>
         }
 
@@ -268,7 +268,7 @@ type ExplicitModeExtendedTests(fixture: ClusterFixture) =
             let! _ = grain.HandleCommand(Deposit 1000m)
             let! _ = grain.HandleCommand(Withdraw 300m)
             let! result = grain.HandleCommand(GetBalance)
-            let balance = result :?> decimal
+            let balance = (result :?> BankAccountState).Balance
             test <@ balance = 700m @>
         }
 

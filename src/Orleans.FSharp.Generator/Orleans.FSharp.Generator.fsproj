@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Orleans.FSharp.Generator</AssemblyName>
+    <RootNamespace>Orleans.FSharp.Generator</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Build tool with heavy reflection — null safety is handled programmatically. -->
+    <Nullable>disable</Nullable>
+    <WarnAsError>false</WarnAsError>
+    <!-- Scriban NuGet audit: template-injection only applies to untrusted input;
+         our templates are embedded resources. -->
+    <NoWarn>NU1902;NU1903;NU1904</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Discovery.fs" />
+    <Compile Include="CodeGen.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Scriban" Version="5.*" />
+    <PackageReference Include="TypeShape" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference EventSourcing so the attribute type is resolvable at runtime -->
+    <ProjectReference Include="..\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates\*.scriban" />
+  </ItemGroup>
+
+</Project>
