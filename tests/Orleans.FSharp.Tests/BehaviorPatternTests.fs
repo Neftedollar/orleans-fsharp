@@ -407,3 +407,171 @@ let ``behavior transitions are deterministic`` (commands: SimpleChatCommand list
     let result1 = run ()
     let result2 = run ()
     result1 = result2
+
+// ── Behavior.run tests ──────────────────────────────────────────────────────
+
+[<Fact>]
+let ``Behavior.run returns Stay state unchanged`` () =
+    task {
+        let h = fun state (_cmd: ChatCommand) -> task { return Stay state }
+        let state = { Phase = Running 10; Messages = [ "hi" ] }
+        let! result = Behavior.run h state GetHistory
+        test <@ result = state @>
+    }
+
+[<Fact>]
+let ``Behavior.run returns Become state`` () =
+    task {
+        let h = fun state (_cmd: ChatCommand) ->
+            task { return Become { state with Phase = Suspended "test" } }
+        let state = { Phase = Running 10; Messages = [] }
+        let! result = Behavior.run h state GetHistory
+        test <@ result.Phase = Suspended "test" @>
+    }
+
+[<Fact>]
+let ``Behavior.run on Stop returns original state`` () =
+    task {
+        let h = fun _state (_cmd: ChatCommand) -> task { return Stop }
+        let state = { Phase = Running 5; Messages = [ "a"; "b" ] }
+        let! result = Behavior.run h state GetHistory
+        test <@ result = state @>
+    }
+
+[<Fact>]
+let ``Behavior.run can be plugged into handleState directly`` () =
+    task {
+        // Verify that Behavior.run produces the right type signature for handleState
+        let graInDef =
+            grain {
+                defaultState { Phase = WaitingForConfig; Messages = [] }
+                handleState (Behavior.run chatHandler)
+            }
+
+        let handler = GrainDefinition.getHandler graInDef
+        let! (ns, _) = handler { Phase = WaitingForConfig; Messages = [] } (Configure 5)
+        test <@ ns.Phase = Running 5 @>
+    }
+
+[<Fact>]
+let ``Behavior.run: Configure then Send works end-to-end`` () =
+    task {
+        let initial = { Phase = WaitingForConfig; Messages = [] }
+        let! s1 = Behavior.run chatHandler initial (Configure 3)
+        test <@ s1.Phase = Running 3 @>
+
+        let! s2 = Behavior.run chatHandler s1 (Send "hello")
+        test <@ s2.Messages = [ "hello" ] @>
+
+        let! s3 = Behavior.run chatHandler s2 (Suspend "maintenance")
+        test <@ s3.Phase = Suspended "maintenance" @>
+
+        let! s4 = Behavior.run chatHandler s3 Resume
+        test <@ s4.Phase = Running 50 @>
+    }
+
+// ── Behavior.runWithContext tests ───────────────────────────────────────────
+
+[<Fact>]
+let ``Behavior.runWithContext Stay returns new state without deactivating`` () =
+    task {
+        let mutable deactivateCalled = false
+        let ctx =
+            { GrainContext.empty with
+                DeactivateOnIdle = Some(fun () -> deactivateCalled <- true) }
+
+        let h = fun _ctx state (_cmd: ChatCommand) -> task { return Stay state }
+        let state = { Phase = Running 10; Messages = [] }
+        let! result = Behavior.runWithContext h ctx state GetHistory
+        test <@ result = state @>
+        test <@ not deactivateCalled @>
+    }
+
+[<Fact>]
+let ``Behavior.runWithContext Stop calls DeactivateOnIdle and returns original state`` () =
+    task {
+        let mutable deactivateCalled = false
+        let ctx =
+            { GrainContext.empty with
+                DeactivateOnIdle = Some(fun () -> deactivateCalled <- true) }
+
+        let h = fun _ctx _state (_cmd: ChatCommand) -> task { return Stop }
+        let state = { Phase = Running 5; Messages = [ "x" ] }
+        let! result = Behavior.runWithContext h ctx state GetHistory
+        test <@ result = state @>       // original state returned
+        test <@ deactivateCalled @>     // deactivation was triggered
+    }
+
+[<Fact>]
+let ``Behavior.runWithContext Stop with no DeactivateOnIdle is safe`` () =
+    task {
+        // GrainContext.empty has DeactivateOnIdle = None
+        let ctx = GrainContext.empty
+        let h = fun _ctx _state (_cmd: ChatCommand) -> task { return Stop }
+        let state = { Phase = WaitingForConfig; Messages = [] }
+        let! result = Behavior.runWithContext h ctx state GetHistory
+        test <@ result = state @>  // does not throw, returns original state
+    }
+
+[<Fact>]
+let ``Behavior.runWithContext Become returns new state without deactivating`` () =
+    task {
+        let mutable deactivateCalled = false
+        let ctx =
+            { GrainContext.empty with
+                DeactivateOnIdle = Some(fun () -> deactivateCalled <- true) }
+
+        let newState = { Phase = Suspended "upgrade"; Messages = [] }
+        let h = fun _ctx _state (_cmd: ChatCommand) -> task { return Become newState }
+        let state = { Phase = Running 10; Messages = [] }
+        let! result = Behavior.runWithContext h ctx state GetHistory
+        test <@ result = newState @>
+        test <@ not deactivateCalled @>
+    }
+
+[<Fact>]
+let ``Behavior.runWithContext can be plugged into handleStateWithContext`` () =
+    task {
+        let grainDef =
+            grain {
+                defaultState { Phase = WaitingForConfig; Messages = [] }
+                handleStateWithContext (Behavior.runWithContext (fun _ctx state cmd -> chatHandler state cmd))
+            }
+
+        let handler = GrainDefinition.getContextHandler grainDef
+        let ctx = GrainContext.empty
+        let! (ns, _) = handler ctx { Phase = WaitingForConfig; Messages = [] } (Configure 10)
+        test <@ ns.Phase = Running 10 @>
+    }
+
+// ── Property tests for Behavior.run ────────────────────────────────────────
+
+[<Property>]
+let ``Behavior.run: arbitrary commands never crash`` (commands: SimpleChatCommand list) =
+    let mutable state = { Phase = WaitingForConfig; Messages = [] }
+
+    for cmd in commands do
+        let realCmd = toRealCommand cmd
+        state <- (Behavior.run chatHandler state realCmd).GetAwaiter().GetResult()
+
+    match state.Phase with
+    | WaitingForConfig -> true
+    | Running n -> n > 0
+    | Suspended reason -> reason.Length > 0
+
+[<Property>]
+let ``Behavior.run is equivalent to manual unwrap`` (commands: SimpleChatCommand list) =
+    let runWithHelper =
+        let mutable s = { Phase = WaitingForConfig; Messages = [] }
+        for cmd in commands do
+            s <- (Behavior.run chatHandler s (toRealCommand cmd)).GetAwaiter().GetResult()
+        s
+
+    let runManual =
+        let mutable s = { Phase = WaitingForConfig; Messages = [] }
+        for cmd in commands do
+            let result = (chatHandler s (toRealCommand cmd)).GetAwaiter().GetResult()
+            s <- Behavior.unwrap s result
+        s
+
+    runWithHelper = runManual

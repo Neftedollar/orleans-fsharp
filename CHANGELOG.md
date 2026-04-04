@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### `Behavior.run` and `Behavior.runWithContext` adapters
+
+Two new adapter functions in the `Behavior` module eliminate the need to manually unwrap
+`BehaviorResult` inside handler lambdas:
+
+```fsharp
+// Before — manual unwrap inside handleState
+handleState (fun state cmd -> task {
+    let! result = myBehaviorHandler state cmd
+    return Behavior.unwrap state result
+})
+
+// After — plug the behavior handler directly
+handleState (Behavior.run myBehaviorHandler)
+
+// With context + deactivation on Stop
+handleStateWithContext (Behavior.runWithContext myContextBehaviorHandler)
+```
+
+`Behavior.runWithContext` calls `ctx.DeactivateOnIdle()` automatically when the handler
+returns `Stop`, so the grain is scheduled for deactivation without any extra code in the handler.
+
+### `GrainContext.empty` convenience value
+
+A pre-built empty `GrainContext` for use in unit tests where the handler does not interact
+with the grain factory or service provider:
+
+```fsharp
+let handler = GrainDefinition.getContextHandler myGrain
+let! ns, _ = handler GrainContext.empty initialState myCmd
+```
+
+### Testing guide expanded
+
+`docs/testing.md` now covers direct handler testing for all 12 CE variants including
+`getCancellableContextHandler` as the universal dispatch fallback, with a complete
+score-tracker FsCheck property test example.
+
+### Test coverage
+
+- 12 new unit tests for `Behavior.run` / `Behavior.runWithContext` (including 2 FsCheck properties)
+- Total: **1432 tests** (1194 unit + 238 integration)
+
+---
+
 ### `handleWithContext` — grain-to-grain calls via `IUniversalGrainHandler`
 
 `IUniversalGrainHandler.Handle` now accepts `IServiceProvider` and `IGrainFactory` parameters,

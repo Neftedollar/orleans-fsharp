@@ -242,6 +242,22 @@ module GrainContext =
         : GrainRef<'TInterface, CompoundIntKey> =
         GrainRef.ofIntCompound<'TInterface> ctx.GrainFactory key ext
 
+    /// <summary>
+    /// An empty <see cref="GrainContext"/> with all fields set to <c>null</c> / <c>None</c>.
+    /// Useful in unit tests where the handler does not use the context.
+    /// Do not use in production code — call from within a real grain handler instead.
+    /// </summary>
+    let empty : GrainContext =
+        {
+            GrainFactory = Unchecked.defaultof<IGrainFactory>
+            ServiceProvider = Unchecked.defaultof<IServiceProvider>
+            States = Map.empty
+            DeactivateOnIdle = None
+            DelayDeactivation = None
+            GrainId = None
+            PrimaryKey = None
+        }
+
 /// <summary>
 /// Defines the complete specification for an F# grain, including its initial state,
 /// message handler, persistence configuration, and lifecycle hooks.

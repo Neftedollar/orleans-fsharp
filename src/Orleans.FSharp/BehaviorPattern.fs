@@ -27,21 +27,21 @@ type BehaviorResult<'State> =
 /// type MyState = { Phase: Phase; Items: string list }
 /// type MyCommand = Start of int | AddItem of string | Pause of string | Resume
 ///
+/// // Write a behavior handler that returns BehaviorResult
+/// let handler (state: MyState) (cmd: MyCommand) = task {
+///     match state.Phase, cmd with
+///     | Idle, Start max    -> return Become { state with Phase = Running max }
+///     | Running max, AddItem item ->
+///         return Stay { state with Items = (item :: state.Items) |> List.truncate max }
+///     | Running _, Pause reason -> return Become { state with Phase = Paused reason }
+///     | Paused _, Resume   -> return Become { state with Phase = Running 50 }
+///     | _, _               -> return Stay state
+/// }
+///
+/// // Plug it into handleState with Behavior.run — no manual unwrapping needed
 /// let myGrain = grain {
 ///     defaultState { Phase = Idle; Items = [] }
-///     handleState (fun state cmd -> task {
-///         match state |> Behavior.run (fun s -> s.Phase) cmd (fun s c -> task {
-///             match s.Phase, c with
-///             | Idle, Start max -> return Become { s with Phase = Running max }
-///             | Running max, AddItem item ->
-///                 return Stay { s with Items = (item :: s.Items) |> List.truncate max }
-///             | Running _, Pause reason -> return Become { s with Phase = Paused reason }
-///             | Paused _, Resume -> return Become { s with Phase = Running 50 }
-///             | _, _ -> return Stay s
-///         }) with
-///         | Stay s | Become s -> return s
-///         | Stop -> return state
-///     })
+///     handleState (Behavior.run handler)
 /// }
 /// </code>
 /// </example>
@@ -105,3 +105,78 @@ module Behavior =
     let toHandlerResult (original: 'State) (result: BehaviorResult<'State>) : 'State * obj =
         let s = unwrap original result
         s, box s
+
+    /// <summary>
+    /// Adapts a <c>BehaviorResult</c>-returning handler for direct use in a <c>handleState</c>
+    /// computation expression block.
+    /// </summary>
+    /// <remarks>
+    /// <c>Stay s</c> and <c>Become s</c> both return the new state.
+    /// <c>Stop</c> returns the <em>original</em> state unchanged (no deactivation side-effect,
+    /// since <c>handleState</c> has no access to the grain context).
+    /// Use <see cref="runWithContext"/> when you need the grain to actually deactivate on Stop.
+    /// </remarks>
+    /// <param name="handler">A function <c>'State -&gt; 'Message -&gt; Task&lt;BehaviorResult&lt;'State&gt;&gt;</c>.</param>
+    /// <param name="state">The current grain state.</param>
+    /// <param name="msg">The incoming message.</param>
+    /// <returns>A <c>Task&lt;'State&gt;</c> of the resulting state.</returns>
+    /// <example>
+    /// <code>
+    /// let myGrain = grain {
+    ///     defaultState initialState
+    ///     handleState (Behavior.run myBehaviorHandler)
+    /// }
+    /// </code>
+    /// </example>
+    let run
+        (handler: 'State -> 'Message -> Task<BehaviorResult<'State>>)
+        (state: 'State)
+        (msg: 'Message)
+        : Task<'State> =
+        task {
+            let! result = handler state msg
+            return unwrap state result
+        }
+
+    /// <summary>
+    /// Adapts a <c>BehaviorResult</c>-returning handler for use in a <c>handleStateWithContext</c>
+    /// computation expression block.
+    /// </summary>
+    /// <remarks>
+    /// <c>Stay s</c> and <c>Become s</c> return the new state.
+    /// <c>Stop</c> calls <c>ctx.DeactivateOnIdle()</c> to schedule grain deactivation,
+    /// then returns the original state.
+    /// </remarks>
+    /// <param name="handler">
+    /// A function <c>GrainContext -&gt; 'State -&gt; 'Message -&gt; Task&lt;BehaviorResult&lt;'State&gt;&gt;</c>.
+    /// </param>
+    /// <param name="ctx">The grain context, providing access to <c>DeactivateOnIdle</c> and <c>GrainFactory</c>.</param>
+    /// <param name="state">The current grain state.</param>
+    /// <param name="msg">The incoming message.</param>
+    /// <returns>A <c>Task&lt;'State&gt;</c> of the resulting state.</returns>
+    /// <example>
+    /// <code>
+    /// let myGrain = grain {
+    ///     defaultState initialState
+    ///     handleStateWithContext (Behavior.runWithContext myBehaviorHandler)
+    /// }
+    /// </code>
+    /// </example>
+    let runWithContext
+        (handler: GrainContext -> 'State -> 'Message -> Task<BehaviorResult<'State>>)
+        (ctx: GrainContext)
+        (state: 'State)
+        (msg: 'Message)
+        : Task<'State> =
+        task {
+            let! result = handler ctx state msg
+
+            match result with
+            | Stop ->
+                match ctx.DeactivateOnIdle with
+                | Some deactivate -> deactivate ()
+                | None -> ()
+
+                return state
+            | _ -> return unwrap state result
+        }
