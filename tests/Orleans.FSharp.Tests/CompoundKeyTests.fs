@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans
 open Orleans.FSharp
 
@@ -150,3 +152,39 @@ let ``GrainRef.unwrap works with compound int key`` () =
         let! result = grain.GetInfo()
         test <@ result = "7:zone" @>
     }
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``CompoundGuidKey roundtrips Guid for any GUID and extension`` (ext: NonNull<string>) =
+    let guid = Guid.NewGuid()
+    let key = { Guid = guid; Extension = ext.Get }
+    key.Guid = guid && key.Extension = ext.Get
+
+[<Property>]
+let ``CompoundIntKey roundtrips Int and Extension for any values`` (n: int64) (ext: NonNull<string>) =
+    let key = { Int = n; Extension = ext.Get }
+    key.Int = n && key.Extension = ext.Get
+
+[<Property>]
+let ``CompoundGuidKey equality: same components are equal`` (ext: NonNull<string>) =
+    let guid = Guid.NewGuid()
+    let k1 = { Guid = guid; Extension = ext.Get }
+    let k2 = { Guid = guid; Extension = ext.Get }
+    k1 = k2
+
+[<Property>]
+let ``CompoundIntKey equality: different Int values produce different keys`` (n1: int64) (n2: int64) (ext: NonNull<string>) =
+    n1 = n2 || { Int = n1; Extension = ext.Get } <> { Int = n2; Extension = ext.Get }
+
+[<Property>]
+let ``GrainRef.key roundtrips CompoundIntKey for any key and extension`` (n: int64) (ext: NonNull<string>) =
+    let ref: GrainRef<IIntCompoundGrain, CompoundIntKey> =
+        {
+            Factory = Unchecked.defaultof<IGrainFactory>
+            Key = { Int = n; Extension = ext.Get }
+            Grain = FakeIntCompoundGrain(n, ext.Get)
+        }
+    GrainRef.key ref = { Int = n; Extension = ext.Get }
