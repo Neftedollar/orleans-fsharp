@@ -87,16 +87,42 @@ module StateMigration =
                 |> List.filter (fun (_, group) -> group.Length > 1)
 
             for (ver, _) in duplicates do
-                $"Duplicate migration from version {ver}."
+                yield $"Duplicate migration from version {ver}."
 
             // Check that ToVersion = FromVersion of next migration (contiguous chain)
-            sorted
-            |> List.pairwise
-            |> List.iter (fun (a, b) ->
-                if a.ToVersion <> b.FromVersion then
-                    ())
-
             for (a, b) in sorted |> List.pairwise do
                 if a.ToVersion <> b.FromVersion then
-                    $"Gap in migration chain: version {a.ToVersion} to {b.FromVersion}."
+                    yield $"Gap in migration chain: version {a.ToVersion} to {b.FromVersion}."
         ]
+
+    /// <summary>
+    /// Validates the migration chain and, if valid, applies all migrations to upgrade the state.
+    /// Returns <c>Ok 'T</c> on success, or <c>Error (string list)</c> with validation errors if
+    /// the chain has gaps or duplicate versions.
+    /// </summary>
+    /// <param name="migrations">The list of migrations to validate and apply.</param>
+    /// <param name="currentVersion">The version of the provided state.</param>
+    /// <param name="state">The boxed state value at the given version.</param>
+    /// <typeparam name="'T">The target state type after all migrations are applied.</typeparam>
+    /// <returns><c>Ok</c> with the migrated state, or <c>Error</c> with a list of validation errors.</returns>
+    /// <example>
+    /// <code>
+    /// let migrations = [
+    ///     StateMigration.migration&lt;StateV1, StateV2&gt; 1 2 (fun v1 -> { Name = v1.Name; Email = "" })
+    /// ]
+    /// match StateMigration.tryApplyMigrations&lt;StateV2&gt; migrations 1 (box oldState) with
+    /// | Ok newState -> // use newState
+    /// | Error errs  -> // log errs
+    /// </code>
+    /// </example>
+    let tryApplyMigrations<'T>
+        (migrations: Migration<obj, obj> list)
+        (currentVersion: int)
+        (state: obj)
+        : Result<'T, string list> =
+        let errors = validate migrations
+
+        if errors.IsEmpty then
+            Ok(applyMigrations<'T> migrations currentVersion state)
+        else
+            Error errors

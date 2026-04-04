@@ -167,6 +167,46 @@ let ``validate returns empty list for empty migration list`` () =
     test <@ errors = [] @>
 
 // ---------------------------------------------------------------------------
+// tryApplyMigrations tests
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``tryApplyMigrations returns Ok for valid chain`` () =
+    let migrations = [
+        StateMigration.migration<StateV1, StateV2> 1 2 (fun v1 -> { Name = v1.Name; Email = "default" })
+    ]
+    let result = StateMigration.tryApplyMigrations<StateV2> migrations 1 (box { Name = "Alice" })
+    match result with
+    | Ok v2 ->
+        test <@ v2.Name = "Alice" @>
+        test <@ v2.Email = "default" @>
+    | Error _ -> failwith "Expected Ok"
+
+[<Fact>]
+let ``tryApplyMigrations returns Error for duplicate FromVersion`` () =
+    let migrations = [
+        StateMigration.migration<StateV1, StateV2> 1 2 (fun v1 -> { Name = v1.Name; Email = "" })
+        StateMigration.migration<StateV1, StateV2> 1 2 (fun v1 -> { Name = v1.Name; Email = "x" })
+    ]
+    let result = StateMigration.tryApplyMigrations<StateV2> migrations 1 (box { Name = "Bob" })
+    test <@ result |> Result.isError @>
+
+[<Fact>]
+let ``tryApplyMigrations returns Error for gap in chain`` () =
+    let migrations = [
+        StateMigration.migration<StateV1, StateV2> 1 2 (fun v1 -> { Name = v1.Name; Email = "" })
+        StateMigration.migration<StateV2, StateV3> 3 4 (fun v2 -> { Name = v2.Name; Email = v2.Email; Active = false })
+    ]
+    let result = StateMigration.tryApplyMigrations<StateV3> migrations 1 (box { Name = "Carol" })
+    test <@ result |> Result.isError @>
+
+[<Fact>]
+let ``tryApplyMigrations returns Ok for empty migration list`` () =
+    let input = { Name = "Dave" }
+    let result = StateMigration.tryApplyMigrations<StateV1> [] 1 (box input)
+    test <@ result = Ok input @>
+
+// ---------------------------------------------------------------------------
 // Migration type tests
 // ---------------------------------------------------------------------------
 
@@ -259,3 +299,23 @@ let ``applying identity migrations preserves string content`` (name: NonEmptyStr
     ]
     let result = StateMigration.applyMigrations<string> migrations v (box name.Get)
     result = name.Get
+
+[<Property>]
+let ``tryApplyMigrations returns Ok for contiguous chain of any length`` (startVer: NonNegativeInt) (chainLen: PositiveInt) =
+    let start = startVer.Get + 1
+    let migrations = [ for i in 0 .. chainLen.Get - 1 -> identityMigration (start + i) ]
+    let result = StateMigration.tryApplyMigrations<string> migrations start (box "test")
+    result |> Result.isOk
+
+[<Property>]
+let ``tryApplyMigrations with valid chain returns same value as applyMigrations`` (name: NonEmptyString) (startVer: NonNegativeInt) =
+    let start = startVer.Get + 1
+    let migrations = [ identityMigration start ]
+    let direct = StateMigration.applyMigrations<string> migrations start (box name.Get)
+    let via = StateMigration.tryApplyMigrations<string> migrations start (box name.Get)
+    via = Ok direct
+
+[<Property>]
+let ``tryApplyMigrations with empty list always returns Ok`` (name: NonNull<string>) (ver: PositiveInt) =
+    let result = StateMigration.tryApplyMigrations<string> [] ver.Get (box name.Get)
+    result = Ok name.Get
