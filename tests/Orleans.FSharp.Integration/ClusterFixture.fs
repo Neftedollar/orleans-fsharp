@@ -261,6 +261,51 @@ module TestGrains6 =
                 })
         }
 
+// ── handleWithContextCancellable test grain ──────────────────────────────────
+
+/// <summary>State for the context-cancellable accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type CtxCancAccState =
+    { [<Orleans.Id(0u)>] Sum: int
+      [<Orleans.Id(1u)>] Steps: int
+      [<Orleans.Id(2u)>] PeerPings: int }
+
+/// <summary>Commands for the context-cancellable accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type CtxCancAccCommand =
+    /// <summary>Adds a value to the sum, exercising the basic cancellable-context path.</summary>
+    | [<Orleans.Id(0u)>] CtxCancAdd of int
+    /// <summary>Calls a peer PingGrain via <c>ctx.GrainFactory</c>, incrementing PeerPings.</summary>
+    | [<Orleans.Id(1u)>] CtxCancForwardPing of peerKey: string
+    /// <summary>Returns current state without side effects.</summary>
+    | [<Orleans.Id(2u)>] GetCtxCancState
+
+module TestGrains7 =
+    /// <summary>
+    /// Context-cancellable accumulator defined with <c>handleWithContextCancellable</c>.
+    /// Exercises both the <c>GrainContext</c> (for grain-to-grain calls via
+    /// <c>ctx.GrainFactory</c>) and the <c>CancellationToken</c> threaded through
+    /// the universal handler dispatch chain.
+    /// </summary>
+    let ctxCancAccGrain =
+        grain {
+            defaultState { Sum = 0; Steps = 0; PeerPings = 0 }
+            handleWithContextCancellable (fun ctx state (cmd: CtxCancAccCommand) _ct ->
+                task {
+                    match cmd with
+                    | CtxCancAdd n ->
+                        let ns = { state with Sum = state.Sum + n; Steps = state.Steps + 1 }
+                        return ns, box ns
+                    | CtxCancForwardPing peerKey ->
+                        let peer = FSharpGrain.ref<PingState, PingCommand> ctx.GrainFactory peerKey
+                        let! _peerState = FSharpGrain.send Ping peer
+                        let ns = { state with PeerPings = state.PeerPings + 1; Steps = state.Steps + 1 }
+                        return ns, box ns
+                    | GetCtxCancState ->
+                        return state, box state
+                })
+        }
+
 /// <summary>
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
 /// for grain discovery by Orleans.
@@ -297,6 +342,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<RelayState, RelayCommand>(TestGrains5.relayGrain) |> ignore
             // Register the cancellable accumulator for handleStateCancellable tests
             siloBuilder.Services.AddFSharpGrain<CancellableAccState, CancellableAccCommand>(TestGrains6.cancellableAccGrain) |> ignore
+            // Register the context-cancellable accumulator for handleWithContextCancellable tests
+            siloBuilder.Services.AddFSharpGrain<CtxCancAccState, CtxCancAccCommand>(TestGrains7.ctxCancAccGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

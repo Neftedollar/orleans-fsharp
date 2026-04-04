@@ -11,6 +11,7 @@
     <Compile Include="HandleStateIntegrationTests.fs" />
     <Compile Include="HandleWithContextIntegrationTests.fs" />
     <Compile Include="HandleCancellableIntegrationTests.fs" />
+    <Compile Include="HandleWithContextCancellableIntegrationTests.fs" />
     <Compile Include="GrainLifecycleTests.fs" />
     <Compile Include="PersistenceRoundtripTests.fs" />
     <Compile Include="SiloConfigTests.fs" />
