@@ -296,9 +296,8 @@ type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
     [<Fact>]
     member _.``primaryKeyInt64 inside universal grain handler returns the grain int key`` () =
         task {
-            // Use a key range (50000+) that does not overlap with UniversalGrainPatternTests
-            // (which uses 1001L–9999L) to avoid shared FSharpGrainIntImpl instance conflicts.
-            let intKey = 50001L
+            // Use a random positive key to avoid collisions with other test suites.
+            let intKey = System.Random.Shared.NextInt64(1_000_000L, System.Int64.MaxValue / 2L)
             let grain =
                 FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory intKey
 
@@ -311,8 +310,10 @@ type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
     [<Fact>]
     member _.``two grains with different int keys report different primaryKeyInt64 values`` () =
         task {
-            let key1 = 50002L
-            let key2 = 50003L
+            let key1 = System.Random.Shared.NextInt64(1_000_000L, System.Int64.MaxValue / 2L)
+            let mutable key2 = System.Random.Shared.NextInt64(1_000_000L, System.Int64.MaxValue / 2L)
+            while key2 = key1 do
+                key2 <- System.Random.Shared.NextInt64(1_000_000L, System.Int64.MaxValue / 2L)
             let g1 = FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory key1
             let g2 = FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory key2
 
@@ -330,7 +331,7 @@ type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
     [<Fact>]
     member _.``negative int key is preserved by primaryKeyInt64`` () =
         task {
-            let negKey = -50001L
+            let negKey = -(System.Random.Shared.NextInt64(1_000_000L, System.Int64.MaxValue / 2L))
             let grain =
                 FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory negKey
 
@@ -338,6 +339,19 @@ type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
                 FSharpGrain.askInt<GrainKeyState, GrainIntKeyCommand, int64> GetOwnPrimaryKeyInt64 grain
 
             test <@ returnedKey = negKey @>
+        }
+
+    [<Fact>]
+    member _.``Guid.Empty is a valid grain key for GUID-keyed grains`` () =
+        task {
+            let guidKey = System.Guid.Empty
+            let grain =
+                FSharpGrain.refGuid<GrainKeyState, GrainGuidKeyCommand> fixture.GrainFactory guidKey
+
+            let! returnedKey =
+                FSharpGrain.askGuid<GrainKeyState, GrainGuidKeyCommand, System.Guid> GetOwnPrimaryKeyGuid grain
+
+            test <@ returnedKey = guidKey @>
         }
 
 /// <summary>

@@ -272,7 +272,7 @@ let ``replayEvents is equivalent to List.fold definition.Apply`` (amounts: decim
     let initial = { Balance = 0m }
 
     let viaReplay = EventStore.replayEvents bankAccountDef initial events
-    let viaFold = events |> List.fold (fun s e -> EventStore.applyEvent bankAccountDef s e) initial
+    let viaFold = events |> List.fold (EventStore.applyEvent bankAccountDef) initial
 
     viaReplay = viaFold
 
@@ -296,10 +296,9 @@ let ``replayEvents satisfies fold-concatenation: replay of appended lists equals
     combined = staged
 
 [<Property>]
-let ``replayEvents with only GetBalance commands (no events) does not change state`` (balances: decimal list) =
-    // GetBalance produces no events, so replayEvents on an empty list is identity
-    let initial = { Balance = 0m }
-    // apply no events
+let ``replayEvents with arbitrary initial balance and no events is identity`` (initialBalance: decimal) =
+    // No events applied → state is unchanged regardless of starting balance.
+    let initial = { Balance = abs initialBalance % 1_000_000m }
     let result = EventStore.replayEvents bankAccountDef initial []
     result = initial
 
@@ -324,9 +323,9 @@ let ``applyEvent Withdrawn decreases balance by amount`` (initial: decimal) (amo
 [<Property>]
 let ``processCommand is deterministic: same state + command always produces same events``
     (balance: decimal)
+    (cmd: BankAccountCommand)
     =
     let state = { Balance = abs balance % 1_000_000m }
-    let cmd = Credit 100m
     let events1 = EventStore.processCommand bankAccountDef state cmd
     let events2 = EventStore.processCommand bankAccountDef state cmd
     events1 = events2
@@ -348,6 +347,14 @@ let ``processCommand Credit with positive amount produces exactly one event`` (a
 let ``processCommand Debit with sufficient funds produces exactly one event`` (amount: decimal) =
     let amount = abs amount % 1_000_000m + 0.01m
     let state = { Balance = amount + 1m }
+    let events = EventStore.processCommand bankAccountDef state (Debit amount)
+    events.Length = 1
+
+[<Property>]
+let ``processCommand Debit when amount equals balance exactly produces one event`` (amount: decimal) =
+    // Guard: amount >= state.Balance allows exact-equality debit. Verify the >= branch fires.
+    let amount = abs amount % 1_000_000m + 0.01m
+    let state = { Balance = amount }
     let events = EventStore.processCommand bankAccountDef state (Debit amount)
     events.Length = 1
 

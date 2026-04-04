@@ -540,7 +540,7 @@ Use distinct command/message types for each grain."
                                         Some(box intKey)
                                     else
                                         Some(box (gid.Key.ToString()))
-                            with _ -> None
+                            with :? System.InvalidOperationException -> None
 
                     let ctx: GrainContext =
                         {
