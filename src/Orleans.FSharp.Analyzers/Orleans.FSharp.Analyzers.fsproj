@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Analyzers must target a runtime the build host can load; net8.0 covers all modern .NET hosts. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Orleans.FSharp.Analyzers</AssemblyName>
+    <Description>Roslyn-style F# analyzers for Orleans.FSharp — compile-time feedback for idiomatic grain code.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AsyncUsageAnalyzer.fs" />
+    <Compile Include="AssemblyInfo.fs" />
+  </ItemGroup>
+
+  <!-- FSharp.Analyzers.SDK 0.36.0 pins FSharp.Core 10.0.101; suppress NU1608 -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);NU1608</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Analyzers.SDK" Version="0.*" />
+  </ItemGroup>
+
+</Project>

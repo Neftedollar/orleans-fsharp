@@ -83,6 +83,7 @@
     <Compile Include="UniversalGrainHandlerTests.fs" />
     <Compile Include="AddFSharpGrainTests.fs" />
     <Compile Include="BehaviorPatternTests.fs" />
+    <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -105,8 +106,7 @@
     <ProjectReference Include="..\..\src\Orleans.FSharp.Runtime\Orleans.FSharp.Runtime.fsproj" />
     <ProjectReference Include="..\..\src\Orleans.FSharp.Testing\Orleans.FSharp.Testing.fsproj" />
     <ProjectReference Include="..\..\src\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
-    <!-- Orleans.FSharp.Analyzers not yet created — remove once implemented -->
-    <!-- <ProjectReference Include="..\..\src\Orleans.FSharp.Analyzers\Orleans.FSharp.Analyzers.fsproj" /> -->
+    <ProjectReference Include="..\..\src\Orleans.FSharp.Analyzers\Orleans.FSharp.Analyzers.fsproj" />
   </ItemGroup>
 
 </Project>
