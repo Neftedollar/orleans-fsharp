@@ -43,7 +43,8 @@ score-tracker FsCheck property test example.
 ### Test coverage
 
 - 12 new unit tests for `Behavior.run` / `Behavior.runWithContext` (including 2 FsCheck properties)
-- Total: **1432 tests** (1194 unit + 238 integration)
+- 8 integration tests for the Behavior pattern grain (`TestGrains14`, `WorkflowGrain`)
+- Total: **1440 tests** (1194 unit + 246 integration)
 
 ---
 

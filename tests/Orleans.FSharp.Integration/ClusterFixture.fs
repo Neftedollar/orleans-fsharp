@@ -422,6 +422,58 @@ module TestGrains13 =
                 })
         }
 
+// ── Behavior pattern test grain ─────────────────────────────────────────────
+
+/// <summary>
+/// Phase discriminated union for the workflow grain.
+/// Drives the behavior pattern integration test.
+/// </summary>
+[<Orleans.GenerateSerializer>]
+type WorkflowPhase =
+    | [<Orleans.Id(0u)>] Idle
+    | [<Orleans.Id(1u)>] Running of completedSteps: int
+    | [<Orleans.Id(2u)>] Done of summary: string
+
+/// <summary>State for the behavior-pattern workflow grain.</summary>
+[<Orleans.GenerateSerializer>]
+type WorkflowState =
+    { [<Orleans.Id(0u)>] Phase: WorkflowPhase }
+
+/// <summary>Commands for the behavior-pattern workflow grain.</summary>
+[<Orleans.GenerateSerializer>]
+type WorkflowCommand =
+    | [<Orleans.Id(0u)>] Start
+    | [<Orleans.Id(1u)>] CompleteStep
+    | [<Orleans.Id(2u)>] Finish of summary: string
+    | [<Orleans.Id(3u)>] GetPhase
+
+module TestGrains14 =
+    /// <summary>
+    /// Workflow grain that demonstrates <c>Behavior.run</c> plugged into
+    /// <c>handleState</c>. The handler returns <c>BehaviorResult&lt;WorkflowState&gt;</c>
+    /// and the adapter unwraps it — no manual match on Stay/Become/Stop in the CE.
+    /// </summary>
+    let private workflowHandler (state: WorkflowState) (cmd: WorkflowCommand) =
+        task {
+            match state.Phase, cmd with
+            | Idle, Start ->
+                return Become { Phase = Running 0 }
+            | Running steps, CompleteStep ->
+                return Stay { Phase = Running(steps + 1) }
+            | Running steps, Finish summary ->
+                return Become { Phase = Done($"{summary} ({steps} steps)") }
+            | _, GetPhase ->
+                return Stay state
+            | _ ->
+                return Stay state
+        }
+
+    let workflowGrain =
+        grain {
+            defaultState { Phase = Idle }
+            handleState (Behavior.run workflowHandler)
+        }
+
 // ── handleCancellable (raw) test grain ───────────────────────────────────────
 
 /// <summary>State for the raw cancellable accumulator grain.</summary>
@@ -592,6 +644,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<TypedCancState, TypedCancCommand>(TestGrains9.typedCancGrain) |> ignore
             // Register the context-cancellable accumulator for handleWithContextCancellable tests
             siloBuilder.Services.AddFSharpGrain<CtxCancAccState, CtxCancAccCommand>(TestGrains7.ctxCancAccGrain) |> ignore
+            // Register the behavior-pattern workflow grain for Behavior.run integration tests
+            siloBuilder.Services.AddFSharpGrain<WorkflowState, WorkflowCommand>(TestGrains14.workflowGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side
