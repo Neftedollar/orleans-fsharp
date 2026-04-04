@@ -3,6 +3,7 @@
     <Project Path="src/Orleans.FSharp.Abstractions/Orleans.FSharp.Abstractions.csproj" />
     <Project Path="src/Orleans.FSharp.Analyzers/Orleans.FSharp.Analyzers.fsproj" />
     <Project Path="src/Orleans.FSharp.CodeGen/Orleans.FSharp.CodeGen.csproj" />
+    <Project Path="src/Orleans.FSharp.EventSourcing.Marten/Orleans.FSharp.EventSourcing.Marten.fsproj" />
     <Project Path="src/Orleans.FSharp.EventSourcing/Orleans.FSharp.EventSourcing.fsproj" />
     <Project Path="src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
     <Project Path="src/Orleans.FSharp.Sample/Orleans.FSharp.Sample.fsproj" />

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Marten (PostgreSQL) backend plugin for Orleans.FSharp.EventSourcing — optional package, add when you need PostgreSQL-backed event sourcing.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Library.fs" />
+    <Compile Include="MartenConfig.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Marten" Version="8.*" />
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
+  </ItemGroup>
+
+</Project>
