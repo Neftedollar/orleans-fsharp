@@ -56,26 +56,29 @@ type CounterCommand =
 
 ## Step 3: Define the grain
 
-Use the `grain { }` computation expression:
+Use the `grain { }` computation expression. `handleTyped` is the most convenient handler variant — it auto-boxes the result so you never write `box` by hand:
 
 ```fsharp
 let counter =
     grain {
         defaultState { Count = 0 }
 
-        handle (fun state cmd ->
+        handleTyped (fun state cmd ->
             task {
                 match cmd with
-                | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
-                | Decrement -> return { Count = state.Count - 1 }, box (state.Count - 1)
-                | GetValue  -> return state, box state.Count
+                | Increment -> return { Count = state.Count + 1 }, state.Count + 1
+                | Decrement -> return { Count = state.Count - 1 }, state.Count - 1
+                | GetValue  -> return state, state.Count
             })
 
         persist "Default"  // name of the storage provider
     }
 ```
 
-The handler receives the current state and a command, and returns `(newState, boxedResult)`. The `persist` keyword names the storage provider used for durable state.
+The handler returns `(newState, result)` — the types are inferred, no `box` needed.
+Use `handle` (manual `box`) when the return type varies per command case; use `handleState`
+when you only care about state and don't need to return a separate result.
+The `persist` keyword names the storage provider for durable state.
 
 ## Step 4: Configure the silo
 
@@ -112,9 +115,13 @@ let main _ =
     // Get a typed handle — no generated interface required
     let handle = FSharpGrain.ref<CounterState, CounterCommand> factory "my-counter"
 
-    // Send commands
-    let count = handle |> FSharpGrain.send GetValue |> Async.AwaitTask |> Async.RunSynchronously
-    printfn "Count = %A" count
+    // Send a command, get back the state
+    let state = handle |> FSharpGrain.send Increment |> _.GetAwaiter().GetResult()
+    printfn "Count after increment = %d" state.Count
+
+    // ask returns a typed result (int here), not the state
+    let count = handle |> FSharpGrain.ask<CounterState, CounterCommand, int> GetValue |> _.GetAwaiter().GetResult()
+    printfn "Current count = %d" count
 
     printfn "Silo running. Press Enter to stop."
     System.Console.ReadLine() |> ignore
@@ -203,38 +210,29 @@ dotnet add package xunit
 ```
 
 ```fsharp
-open FsCheck
 open FsCheck.Xunit
-open Orleans.FSharp.Testing
+open Orleans.FSharp
 
-// Pure transition function for testing (no Task overhead)
-let applyCommand (state: CounterState) cmd =
-    match cmd with
-    | Increment -> { Count = state.Count + 1 }
-    | Decrement -> { Count = state.Count - 1 }
-    | GetValue  -> state
+// Drive the grain handler directly — no silo, instant feedback.
+let applyViaHandler (state: CounterState) cmd =
+    let h = GrainDefinition.getHandler counter
+    fst (h state cmd).GetAwaiter().GetResult()
 
 [<Property>]
-let ``Count equals number of Increments minus Decrements`` (commands: CounterCommand list) =
-    let final = List.fold applyCommand { Count = 0 } commands
+let ``Count equals net of Increments minus Decrements`` (commands: CounterCommand list) =
+    let final = List.fold applyViaHandler { Count = 0 } commands
     let net =
         commands |> List.sumBy (function
             | Increment ->  1
             | Decrement -> -1
             | GetValue  ->  0)
     final.Count = net
-```
 
-`GrainArbitrary.forCommands<'T>()` auto-generates random command sequences if you want them constrained:
-
-```fsharp
 [<Property>]
-let ``Non-negative count is preserved after Increment`` (n: PositiveInt) =
-    let arb = GrainArbitrary.forCommands<CounterCommand>()
-    Prop.forAll arb (fun commands ->
-        let final = List.fold applyCommand { Count = 0 } commands
-        true // replace with your invariant
-    )
+let ``GetValue never changes state`` (state: CounterState) =
+    let h = GrainDefinition.getHandler counter
+    let (ns, _) = (h state GetValue).GetAwaiter().GetResult()
+    ns = state
 ```
 
 ## Step 10: Run it
