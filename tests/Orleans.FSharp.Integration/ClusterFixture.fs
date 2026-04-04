@@ -229,6 +229,38 @@ module TestGrains5 =
                 })
         }
 
+// ── handleStateCancellable test grain ────────────────────────────────────────
+
+/// <summary>State for the cancellable accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type CancellableAccState =
+    { [<Orleans.Id(0u)>] Sum: int
+      [<Orleans.Id(1u)>] Steps: int }
+
+/// <summary>Commands for the cancellable accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type CancellableAccCommand =
+    | [<Orleans.Id(0u)>] Accumulate of int
+    | [<Orleans.Id(1u)>] GetAcc
+
+module TestGrains6 =
+    /// <summary>
+    /// Cancellable accumulator using <c>handleStateCancellable</c>.
+    /// Verifies that CancellationToken is threaded through the universal handler chain.
+    /// </summary>
+    let cancellableAccGrain =
+        grain {
+            defaultState { Sum = 0; Steps = 0 }
+            handleStateCancellable (fun state (cmd: CancellableAccCommand) _ct ->
+                task {
+                    match cmd with
+                    | Accumulate n ->
+                        return { Sum = state.Sum + n; Steps = state.Steps + 1 }
+                    | GetAcc ->
+                        return state
+                })
+        }
+
 /// <summary>
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
 /// for grain discovery by Orleans.
@@ -263,6 +295,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<ScoreState, ScoreCommand>(TestGrains4.scoreGrain) |> ignore
             // Register the relay grain for handleWithContext (grain-to-grain) tests
             siloBuilder.Services.AddFSharpGrain<RelayState, RelayCommand>(TestGrains5.relayGrain) |> ignore
+            // Register the cancellable accumulator for handleStateCancellable tests
+            siloBuilder.Services.AddFSharpGrain<CancellableAccState, CancellableAccCommand>(TestGrains6.cancellableAccGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

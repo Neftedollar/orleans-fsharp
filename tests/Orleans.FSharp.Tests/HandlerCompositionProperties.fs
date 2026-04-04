@@ -187,7 +187,10 @@ let ``defaultState round-trips for string values`` (value: NonNull<string>) =
 
 [<Property>]
 let ``persist name round-trips for non-whitespace strings`` (value: NonEmptyString) =
-    // NonEmptyString guarantees at least one character; safe for persist name.
+    // NonEmptyString guarantees at least one character, but may be whitespace-only (e.g. "\t").
+    // persist validates that the name is non-whitespace, so skip whitespace-only inputs.
+    System.String.IsNullOrWhiteSpace(value.Get)
+    ||
     let def =
         grain {
             defaultState 0
