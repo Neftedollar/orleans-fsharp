@@ -1,5 +1,6 @@
 module Orleans.FSharp.Tests.GrainBuilderTests
 
+open System.Threading
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
@@ -375,3 +376,88 @@ let ``grain CE: persist name is preserved exactly`` (name: string) =
             persist safeName
         }
     def.PersistenceName = Some safeName
+
+// ── handleStateWithContextCancellable unit tests ──────────────────────────────
+
+[<Fact>]
+let ``handleStateWithContextCancellable registers CancellableContextHandler`` () =
+    let def =
+        grain {
+            defaultState 0
+            handleStateWithContextCancellable (fun _ctx state (_msg: int) _ct ->
+                task { return state + 1 })
+        }
+    test <@ def.CancellableContextHandler.IsSome @>
+
+[<Fact>]
+let ``handleStateWithContextCancellable boxes result as state`` () =
+    task {
+        let def =
+            grain {
+                defaultState 0
+                handleStateWithContextCancellable (fun _ctx state (d: int) _ct ->
+                    task { return state + d })
+            }
+        let handler = GrainDefinition.getCancellableContextHandler def
+        let ctx = Unchecked.defaultof<GrainContext>
+        let! (ns, boxed) = handler ctx 5 3 CancellationToken.None
+        test <@ ns = 8 @>
+        test <@ unbox<int> boxed = 8 @>
+    }
+
+[<Fact>]
+let ``handleStateWithContextCancellable: CancellableContextHandler takes precedence over ContextHandler`` () =
+    // When both slots are populated, getCancellableContextHandler should pick CancellableContextHandler
+    let def =
+        grain {
+            defaultState 0
+            handleStateWithContextCancellable (fun _ctx state (_: int) _ct ->
+                task { return state + 100 })
+        }
+    // verify that only CancellableContextHandler is populated, ContextHandler is None
+    test <@ def.CancellableContextHandler.IsSome @>
+    test <@ def.ContextHandler.IsNone @>
+
+// ── handleTypedWithContextCancellable unit tests ──────────────────────────────
+
+[<Fact>]
+let ``handleTypedWithContextCancellable registers CancellableContextHandler`` () =
+    let def =
+        grain {
+            defaultState 0
+            handleTypedWithContextCancellable (fun _ctx state (_msg: int) _ct ->
+                task { return state + 1, string (state + 1) })
+        }
+    test <@ def.CancellableContextHandler.IsSome @>
+
+[<Fact>]
+let ``handleTypedWithContextCancellable boxes typed result`` () =
+    task {
+        let def =
+            grain {
+                defaultState 0
+                handleTypedWithContextCancellable (fun _ctx state (d: int) _ct ->
+                    task { return state + d, string (state + d) })
+            }
+        let handler = GrainDefinition.getCancellableContextHandler def
+        let ctx = Unchecked.defaultof<GrainContext>
+        let! (ns, boxed) = handler ctx 5 3 CancellationToken.None
+        test <@ ns = 8 @>
+        test <@ unbox<string> boxed = "8" @>
+    }
+
+[<Fact>]
+let ``handleTypedWithContextCancellable result type independent of state type`` () =
+    task {
+        let def =
+            grain {
+                defaultState ""
+                handleTypedWithContextCancellable (fun _ctx state (word: string) _ct ->
+                    task { return state + word, word.ToUpperInvariant() })
+            }
+        let handler = GrainDefinition.getCancellableContextHandler def
+        let ctx = Unchecked.defaultof<GrainContext>
+        let! (ns, boxed) = handler ctx "" "hello" CancellationToken.None
+        test <@ ns = "hello" @>
+        test <@ unbox<string> boxed = "HELLO" @>
+    }
