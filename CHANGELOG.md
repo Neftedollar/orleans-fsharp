@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### New Package: `Orleans.FSharp.Analyzers`
+
+Compile-time F# analyzer for Orleans grain code:
+
+- **OF0001** — warns when `async { }` is used instead of `task { }` in Orleans grain handlers and Task-returning methods
+- `[<AllowAsync>]` attribute suppresses OF0001 on a specific binding when `async { }` is genuinely required
+- `AstWalker.collectAsyncRanges` walks the full untyped F# AST (LetOrUse, Match, Lambda, If/Then/Else, TryWith, TryFinally, nested modules, class methods, record fields)
+- 20 unit tests covering detection, suppression, structural nesting, and attribute mechanics
+- Add to your project: `dotnet add package Orleans.FSharp.Analyzers`
+
 ### New Packages
 - **`Orleans.FSharp.Abstractions`** — New C# shim package hosting `IFSharpGrain`, `IFSharpGrainWithGuidKey`, and `IFSharpGrainWithIntKey` interfaces. Orleans source generators run on this project and produce public `Proxy_IFSharpGrain*` classes in the same assembly. Reference this from your silo instead of `Orleans.FSharp.CodeGen`.
 
@@ -71,7 +81,7 @@ calculator without any manual `box` calls. 8 integration tests cover `AddValues`
 - 6 FsCheck property tests for `handleState`/`handleTyped` CE variants in `GrainBuilderTests`
 - 8 `ask`/`askGuid`/`askInt` integration tests with `QueryGrain`
 - 8 `handleTyped` integration tests with `CalcGrain`
-- Total: **1089 unit + 159 integration = 1248 tests**
+- Total: **1118 unit + 159 integration = 1277 tests**
 
 ### Documentation
 - Rewrote `docs/getting-started.md` to lead with the universal grain pattern (no attributes, no C# stubs)
