@@ -577,6 +577,167 @@ let ``chat phase invariant`` (commands: ChatCommand list) =
 
 ---
 
+## Request Context
+
+The `RequestCtx` module wraps Orleans `RequestContext` for idiomatic F# access.
+Values placed in the request context are automatically propagated from callers to callees
+by the Orleans runtime — useful for correlation IDs, tenant IDs, or any per-call metadata.
+
+### Set and get a value
+
+```fsharp
+open Orleans.FSharp
+
+// Set before making a grain call
+RequestCtx.set "tenantId" (box "acme-corp")
+
+// Inside the callee grain — returns Some "acme-corp"
+let tenantId = RequestCtx.get<string> "tenantId"
+
+// Or with a fallback
+let tenant = RequestCtx.getOrDefault<string> "tenantId" "unknown"
+```
+
+### Remove a value
+
+```fsharp
+RequestCtx.remove "tenantId"
+```
+
+### Scoped context with `withValue`
+
+`withValue` sets a key before running a Task and removes it afterwards — even if the Task throws:
+
+```fsharp
+let! result =
+    RequestCtx.withValue<OrderState> "correlationId" (box requestId) (fun () ->
+        task {
+            // All grain calls made here propagate correlationId automatically
+            let handle = FSharpGrain.ref<OrderState, OrderCommand> factory "order-42"
+            return! handle |> FSharpGrain.send PlaceOrder
+        })
+```
+
+### API summary
+
+| Function | Signature | Description |
+|---|---|---|
+| `RequestCtx.set` | `string -> obj -> unit` | Set a context value |
+| `RequestCtx.get<'T>` | `string -> 'T option` | Read a typed value (None if missing or wrong type) |
+| `RequestCtx.getOrDefault<'T>` | `string -> 'T -> 'T` | Read with a fallback default |
+| `RequestCtx.remove` | `string -> unit` | Remove a key from the context |
+| `RequestCtx.withValue<'T>` | `string -> obj -> (unit -> Task<'T>) -> Task<'T>` | Scoped set/remove around a Task |
+
+---
+
+## Scripting / REPL
+
+The `Scripting` module starts a local in-process silo from an F# script (`.fsx` file), letting
+you iterate on grain logic without a full project setup.
+
+### Quick start
+
+```fsharp
+#r "nuget: Orleans.FSharp"
+#r "nuget: Orleans.FSharp.Runtime"
+
+open Orleans.FSharp
+open Orleans.FSharp.Runtime
+
+// Define a grain inline
+type PingState = { Count: int }
+type PingCmd = Ping | GetCount
+
+let pingGrain =
+    grain {
+        defaultState { Count = 0 }
+        handle (fun state cmd -> task {
+            match cmd with
+            | Ping     -> return { Count = state.Count + 1 }, box (state.Count + 1)
+            | GetCount -> return state, box state.Count
+        })
+    }
+
+// Start an in-process silo (localhost clustering + in-memory storage)
+let! silo = Scripting.quickStart()
+
+// Register and call the grain
+silo.Host.Services
+    .AddFSharpGrain<PingState, PingCmd>(pingGrain)
+    |> ignore
+
+let handle = FSharpGrain.ref<PingState, PingCmd> silo.GrainFactory "ping-1"
+let! s1 = handle |> FSharpGrain.send Ping
+printfn "Count: %d" s1.Count
+
+// Shut down when done
+do! Scripting.shutdown silo
+```
+
+### API
+
+| Function | Description |
+|---|---|
+| `Scripting.quickStart()` | Start a silo on the default ports (11111 / 30000) |
+| `Scripting.startOnPorts siloPort gatewayPort` | Start a silo on specific ports (useful when running multiple silos) |
+| `Scripting.getGrain<'T> handle key` | Get a grain reference by `int64` key |
+| `Scripting.getGrainByString<'T> handle key` | Get a grain reference by `string` key |
+| `Scripting.shutdown handle` | Stop the silo and release resources |
+
+The `SiloHandle` returned by `quickStart` exposes `.Host`, `.Client`, and `.GrainFactory` for
+direct access when you need lower-level control.
+
+The silo is pre-configured with in-memory storage (`Default` and `PubSubStore`),
+an in-memory stream provider (`StreamProvider`), and in-memory reminders.
+
+---
+
+## Kubernetes
+
+The `Kubernetes` module (namespace `Orleans.FSharp.Kubernetes`) configures silo clustering
+for Kubernetes deployments.  It uses reflection to call the Orleans Kubernetes extension
+method, so the NuGet package `Microsoft.Orleans.Hosting.Kubernetes` remains an optional
+runtime dependency — your silo project only needs it when deployed to Kubernetes.
+
+### Standard Kubernetes clustering
+
+```fsharp
+open Orleans.FSharp.Kubernetes
+
+// Returns ISiloBuilder -> ISiloBuilder; apply during silo configuration
+let configure = Kubernetes.useKubernetesClustering
+
+// Wire it into a siloConfig manually when you need more control
+builder.UseOrleans(fun siloBuilder ->
+    siloBuilder |> configure |> ignore) |> ignore
+```
+
+### Multi-tenant: Kubernetes clustering with a custom namespace
+
+```fsharp
+// Uses the Kubernetes namespace as the Orleans ServiceId
+let configure = Kubernetes.useKubernetesClusteringWithNamespace "my-k8s-namespace"
+
+builder.UseOrleans(fun siloBuilder ->
+    siloBuilder |> configure |> ignore) |> ignore
+```
+
+### How it works
+
+Both functions search all loaded assemblies for the `UseKubernetesHosting` extension method
+at runtime.  If the package is not found, an `InvalidOperationException` is thrown with a
+clear message naming the missing NuGet package.  This keeps the core library free of a hard
+assembly dependency on the Kubernetes hosting package.
+
+### API
+
+| Function | Signature | Description |
+|---|---|---|
+| `Kubernetes.useKubernetesClustering` | `ISiloBuilder -> ISiloBuilder` | Configure Kubernetes clustering (uses Kubernetes API for silo discovery) |
+| `Kubernetes.useKubernetesClusteringWithNamespace` | `string -> ISiloBuilder -> ISiloBuilder` | Same, but sets `ClusterOptions.ServiceId` to the given namespace |
+
+---
+
 ## Next steps
 
 - [Grain Definition](grain-definition.md) -- use these features in grain definitions
