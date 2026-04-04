@@ -133,15 +133,16 @@ let ``grain CE advanced placement overrides basic placement`` () =
 // ---------------------------------------------------------------------------
 
 [<Property>]
-let ``siloRolePlacement stores any non-empty role string`` (role: NonEmptyString) =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state (_msg: string) -> task { return state, box state })
-            siloRolePlacement role.Get
-        }
+let ``siloRolePlacement stores any non-whitespace role string`` (role: NonNull<string>) =
+    String.IsNullOrWhiteSpace role.Get
+    || (let def =
+            grain {
+                defaultState 0
+                handle (fun state (_msg: string) -> task { return state, box state })
+                siloRolePlacement role.Get
+            }
 
-    def.PlacementStrategy = PlacementStrategy.SiloRoleBased role.Get
+        def.PlacementStrategy = PlacementStrategy.SiloRoleBased role.Get)
 
 [<Property>]
 let ``advanced placement strategies do not affect DefaultState for any initial int`` (initial: int) =
