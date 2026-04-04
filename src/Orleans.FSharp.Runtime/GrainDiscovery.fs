@@ -417,21 +417,33 @@ Use distinct command/message types for each grain."
                     // Build a GrainContext so context-aware handlers (handleWithContext etc.)
                     // can access DI services, make grain-to-grain calls, and request deactivation.
                     // grainBase is null in unit-test contexts (AddFSharpGrainTests) where no live
-                    // grain instance exists; DeactivateOnIdle/DelayDeactivation are wired only when
-                    // grainBase is non-null.
+                    // grain instance exists; all runtime-only fields are wired only when grainBase
+                    // is non-null.
+                    let grainBaseOpt = if isNull grainBase then None else Some grainBase
+                    let grainIdOpt =
+                        grainBaseOpt
+                        |> Option.map (fun gb -> gb.GrainContext.GrainId)
+
+                    // Universal grains (FSharpGrainImpl) are always IGrainWithStringKey, so the
+                    // primary key is always a string — no Guid/int64 heuristic is needed.
+                    let primaryKeyOpt =
+                        grainIdOpt
+                        |> Option.bind (fun gid ->
+                            try Some(box (gid.Key.ToString()))
+                            with _ -> None)
+
                     let ctx: GrainContext =
                         {
                             GrainFactory    = grainFactory
                             ServiceProvider = serviceProvider
                             States          = Map.empty
                             DeactivateOnIdle =
-                                if isNull grainBase then None
-                                else Some(fun () -> grainBase.DeactivateOnIdle())
+                                grainBaseOpt |> Option.map (fun gb -> fun () -> gb.DeactivateOnIdle())
                             // DelayDeactivation is a protected Grain method, not on IGrainBase.
                             // It is available via the typed FSharpGrain<'S,'M> path.
                             DelayDeactivation = None
-                            GrainId            = None
-                            PrimaryKey         = None
+                            GrainId   = grainIdOpt
+                            PrimaryKey = primaryKeyOpt
                         }
 
                     let typedMsg = msg :?> 'Message

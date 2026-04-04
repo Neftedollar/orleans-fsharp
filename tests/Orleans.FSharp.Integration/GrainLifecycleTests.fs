@@ -201,6 +201,48 @@ type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
         }
 
 /// <summary>
+/// Integration tests verifying that <c>GrainContext.primaryKeyString</c> returns the
+/// correct value when called from inside a universal-pattern grain handler.
+///
+/// Before the <c>IGrainBase.GrainContext.GrainId</c> wiring, <c>GrainId</c> and
+/// <c>PrimaryKey</c> were always <c>None</c> in the universal path, so
+/// <c>primaryKeyString</c> would throw <c>InvalidOperationException</c>.
+/// </summary>
+[<Collection("ClusterCollection")>]
+type GrainKeyIntegrationTests(fixture: ClusterFixture) =
+
+    [<Fact>]
+    member _.``primaryKeyString inside universal grain handler returns the grain key`` () =
+        task {
+            let keyValue = System.Guid.NewGuid().ToString("N")
+            let grain =
+                FSharpGrain.ref<GrainKeyState, GrainKeyCommand> fixture.GrainFactory keyValue
+
+            let! returnedKey =
+                FSharpGrain.ask<GrainKeyState, GrainKeyCommand, string> GetOwnPrimaryKey grain
+
+            // The key returned from inside the handler must match the key we used to look up the grain.
+            // Before IGrainBase wiring this would throw InvalidOperationException.
+            test <@ returnedKey = keyValue @>
+        }
+
+    [<Fact>]
+    member _.``two grains with different keys report different primaryKeyString values`` () =
+        task {
+            let key1 = System.Guid.NewGuid().ToString("N")
+            let key2 = System.Guid.NewGuid().ToString("N")
+            let g1 = FSharpGrain.ref<GrainKeyState, GrainKeyCommand> fixture.GrainFactory key1
+            let g2 = FSharpGrain.ref<GrainKeyState, GrainKeyCommand> fixture.GrainFactory key2
+
+            let! k1 = FSharpGrain.ask<GrainKeyState, GrainKeyCommand, string> GetOwnPrimaryKey g1
+            let! k2 = FSharpGrain.ask<GrainKeyState, GrainKeyCommand, string> GetOwnPrimaryKey g2
+
+            test <@ k1 = key1 @>
+            test <@ k2 = key2 @>
+            test <@ k1 <> k2 @>
+        }
+
+/// <summary>
 /// Tests for duplicate grain registration detection.
 /// </summary>
 type DuplicateRegistrationTests() =
