@@ -153,6 +153,54 @@ type GrainRefIntegrationTests(fixture: ClusterFixture) =
         }
 
 /// <summary>
+/// Integration tests for <c>GrainContext.deactivateOnIdle</c> in the universal grain pattern.
+///
+/// Verifies that the <c>IGrainBase</c> parameter added to <c>IUniversalGrainHandler.Handle</c>
+/// is correctly forwarded so that <c>DeactivateOnIdle</c> calls inside grain handlers
+/// reach the Orleans runtime without throwing "not available outside Orleans runtime".
+/// </summary>
+[<Collection("ClusterCollection")>]
+type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
+
+    [<Fact>]
+    member _.``deactivateOnIdle inside universal grain handler does not throw`` () =
+        task {
+            let grain =
+                FSharpGrain.ref<DeactivationCtrlState, DeactivationCtrlCommand>
+                    fixture.GrainFactory
+                    (System.Guid.NewGuid().ToString("N"))
+
+            // Process some state so the grain is active
+            do! FSharpGrain.post (DeactivCtrlProcess 5) grain
+
+            // This call internally invokes GrainContext.deactivateOnIdle ctx.
+            // Before the IGrainBase wiring it would throw InvalidOperationException.
+            let! state =
+                FSharpGrain.send DeactivCtrlRequestDeactivation grain
+
+            test <@ state.Processed = 5 @>
+        }
+
+    [<Fact>]
+    member _.``grain continues to process commands before deactivation takes effect`` () =
+        task {
+            let grain =
+                FSharpGrain.ref<DeactivationCtrlState, DeactivationCtrlCommand>
+                    fixture.GrainFactory
+                    (System.Guid.NewGuid().ToString("N"))
+
+            do! FSharpGrain.post (DeactivCtrlProcess 3) grain
+            do! FSharpGrain.post (DeactivCtrlProcess 7) grain
+
+            let! before = FSharpGrain.send DeactivCtrlGetProcessed grain
+            test <@ before.Processed = 10 @>
+
+            // Request deactivation — grain should still respond to this call
+            let! afterRequest = FSharpGrain.send DeactivCtrlRequestDeactivation grain
+            test <@ afterRequest.Processed = 10 @>
+        }
+
+/// <summary>
 /// Tests for duplicate grain registration detection.
 /// </summary>
 type DuplicateRegistrationTests() =

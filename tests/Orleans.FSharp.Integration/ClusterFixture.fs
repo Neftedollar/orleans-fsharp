@@ -620,6 +620,54 @@ type FlakyCommand =
     /// <summary>Returns the current call count without any side-effects.</summary>
     | [<Orleans.Id(2u)>] GetCallCount
 
+// ── DeactivationControl grain — tests GrainContext.deactivateOnIdle in universal path ──
+
+/// <summary>
+/// State for the deactivation-control grain used to verify that
+/// <c>GrainContext.deactivateOnIdle</c> is correctly wired when using the
+/// universal grain pattern (<c>FSharpGrain.ref</c>).
+/// </summary>
+[<Orleans.GenerateSerializer>]
+type DeactivationCtrlState =
+    { [<Orleans.Id(0u)>] Processed: int }
+
+/// <summary>Commands for the deactivation-control grain.</summary>
+[<Orleans.GenerateSerializer>]
+type DeactivationCtrlCommand =
+    /// <summary>Increments the processed counter.</summary>
+    | [<Orleans.Id(0u)>] DeactivCtrlProcess of int
+    /// <summary>
+    /// Calls <c>GrainContext.deactivateOnIdle</c> and returns the current state.
+    /// Verifies that the function does not throw when called from a real grain handler.
+    /// </summary>
+    | [<Orleans.Id(1u)>] DeactivCtrlRequestDeactivation
+    /// <summary>Returns current state without side-effects.</summary>
+    | [<Orleans.Id(2u)>] DeactivCtrlGetProcessed
+
+module TestGrains16 =
+    /// <summary>
+    /// Grain that exposes <c>DeactivCtrlRequestDeactivation</c> — a command that calls
+    /// <c>GrainContext.deactivateOnIdle ctx</c> from within a real Orleans grain activation.
+    /// Used to verify that the <c>IGrainBase</c> parameter added to
+    /// <c>IUniversalGrainHandler.Handle</c> is correctly wired so deactivation requests
+    /// from universal-pattern grains reach the Orleans runtime.
+    /// </summary>
+    let deactivationCtrlGrain =
+        grain {
+            defaultState { Processed = 0 }
+            handleStateWithContext (fun ctx state (cmd: DeactivationCtrlCommand) ->
+                task {
+                    match cmd with
+                    | DeactivCtrlProcess n ->
+                        return { Processed = state.Processed + n }
+                    | DeactivCtrlRequestDeactivation ->
+                        GrainContext.deactivateOnIdle ctx
+                        return state
+                    | DeactivCtrlGetProcessed ->
+                        return state
+                })
+        }
+
 module TestGrains15 =
     /// <summary>
     /// Flaky grain: fails the first <c>FailUntilCall</c> times, then succeeds.
@@ -700,6 +748,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<WorkflowState, WorkflowCommand>(TestGrains14.workflowGrain) |> ignore
             // Register the flaky grain for GrainResilience retry integration tests
             siloBuilder.Services.AddFSharpGrain<FlakyState, FlakyCommand>(TestGrains15.flakyGrain) |> ignore
+            // Register the deactivation-control grain for deactivateOnIdle wiring tests
+            siloBuilder.Services.AddFSharpGrain<DeactivationCtrlState, DeactivationCtrlCommand>(TestGrains16.deactivationCtrlGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

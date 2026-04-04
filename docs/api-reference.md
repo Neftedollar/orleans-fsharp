@@ -263,6 +263,23 @@ DI registration (call once per grain definition at silo startup):
 services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
 ```
 
+#### `GrainResilience` — Polly v8 resilience wrappers
+
+Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](resilience.md).
+
+| Type | Description |
+|---|---|
+| `ResilienceOptions` | Record: `MaxRetryAttempts`, `RetryDelay`, `CircuitBreakerThreshold`, `CircuitBreakerDuration`, `Timeout` |
+
+| Function | Signature | Description |
+|---|---|---|
+| `GrainResilience.defaultOptions` | `ResilienceOptions` | 3 retries · 1s delay · no circuit breaker · no timeout |
+| `GrainResilience.retry<'T>` | `int -> TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Retry N times with delay |
+| `GrainResilience.withTimeout<'T>` | `TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Enforce per-call deadline |
+| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout |
+| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Build reusable Polly pipeline |
+| `GrainResilience.circuitBreaker` | `int -> TimeSpan -> ResiliencePipeline` | Shared circuit breaker (non-generic, long-lived) |
+
 #### Other modules
 
 | Module | Key Function | Description |
