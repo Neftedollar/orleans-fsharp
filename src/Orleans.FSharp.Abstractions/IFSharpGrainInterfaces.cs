@@ -1,4 +1,5 @@
 using Orleans;
+using Orleans.EventSourcing;
 using Orleans.Runtime;
 
 namespace Orleans.FSharp;
@@ -215,6 +216,95 @@ public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
     }
 
     private readonly struct Unit { public static readonly Unit Default = default; }
+}
+
+/// <summary>
+/// Dispatcher that routes commands to registered F# event-sourced grain definitions.
+/// Implemented by <c>EventSourcedHandlerRegistry</c> in <c>Orleans.FSharp.EventSourcing</c>;
+/// registered as a singleton via <c>AddFSharpEventSourcedGrain</c>.
+/// </summary>
+public interface IEventSourcedHandlerRegistry
+{
+    /// <summary>Returns the boxed default state for the grain that handles the given command type.</summary>
+    object GetDefaultStateByCommandType(Type commandType);
+
+    /// <summary>Returns the boxed default state for the grain whose events are of the given type.</summary>
+    object GetDefaultStateByEventType(Type eventType);
+
+    /// <summary>Dispatches a boxed command to the registered F# handler and returns the list of boxed events produced.</summary>
+    IReadOnlyList<object> HandleCommand(object state, object command);
+
+    /// <summary>Applies a boxed event to a boxed state and returns the resulting boxed state.</summary>
+    object ApplyEvent(object state, object @event);
+}
+
+/// <summary>
+/// Wrapper type that carries a boxed grain state value inside a <c>JournaledGrain</c>.
+/// Allows <c>FSharpEventSourcedGrainImpl</c> to work with arbitrary F# state types without
+/// per-grain generic parameters.
+/// </summary>
+[GenerateSerializer]
+public sealed class WrappedEventSourcedState
+{
+    /// <summary>The current grain state, boxed. Null only before the first command or event replay.</summary>
+    [Id(0)] public object? Value { get; set; }
+}
+
+/// <summary>
+/// Wrapper type that carries a boxed grain event value inside a <c>JournaledGrain</c>.
+/// Allows <c>FSharpEventSourcedGrainImpl</c> to work with arbitrary F# event types without
+/// per-grain generic parameters.
+/// </summary>
+[GenerateSerializer]
+public sealed class WrappedEventSourcedEvent
+{
+    /// <summary>The event, boxed.</summary>
+    [Id(0)] public object? Value { get; set; }
+}
+
+/// <summary>
+/// Universal non-generic C# grain class backing <see cref="IFSharpEventSourcedGrain"/>.
+/// Orleans source generators produce <c>Proxy_IFSharpEventSourcedGrain</c> from this assembly.
+/// All event-sourcing logic is delegated to the F# <c>EventSourcedHandlerRegistry</c> registered
+/// via <c>AddFSharpEventSourcedGrain</c> — no per-grain C# stub needed.
+/// </summary>
+/// <remarks>
+/// To use this pattern, call <c>services.AddFSharpEventSourcedGrain(myDef)</c> in the silo
+/// configurator and obtain a grain reference via
+/// <c>grainFactory.GetGrain&lt;IFSharpEventSourcedGrain&gt;("key")</c>.
+/// </remarks>
+public sealed class FSharpEventSourcedGrainImpl
+    : JournaledGrain<WrappedEventSourcedState, WrappedEventSourcedEvent>
+    , IFSharpEventSourcedGrain
+{
+    private readonly IEventSourcedHandlerRegistry _registry;
+
+    /// <summary>Initialises the grain with the event-sourced handler registry.</summary>
+    public FSharpEventSourcedGrainImpl(IEventSourcedHandlerRegistry registry)
+    {
+        _registry = registry;
+    }
+
+    /// <inheritdoc/>
+    protected override void TransitionState(WrappedEventSourcedState state, WrappedEventSourcedEvent @event)
+    {
+        var eventValue = @event.Value!;
+        // On first event replay after activation, state.Value may still be null.
+        var currentValue = state.Value ?? _registry.GetDefaultStateByEventType(eventValue.GetType());
+        state.Value = _registry.ApplyEvent(currentValue, eventValue);
+    }
+
+    /// <inheritdoc/>
+    public async Task<object> HandleCommand(object command)
+    {
+        State.Value ??= _registry.GetDefaultStateByCommandType(command.GetType());
+        var events = _registry.HandleCommand(State.Value!, command);
+        foreach (var evt in events)
+            RaiseEvent(new WrappedEventSourcedEvent { Value = evt });
+        if (events.Count > 0)
+            await ConfirmEvents();
+        return State.Value!;
+    }
 }
 
 /// <summary>

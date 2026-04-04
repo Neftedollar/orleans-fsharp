@@ -132,4 +132,21 @@ module EventSourcedGrainSiloBuilderExtensions =
             and 'Event: not struct>
             (definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>)
             : IServiceCollection =
+
+            // ── Typed FSharpEventSourcedGrain<S,E,C> (per-grain stub pattern) ─────────
             services.AddSingleton<EventSourcedGrainDefinition<'State, 'Event, 'Command>>(definition)
+            |> ignore
+
+            // ── EventSourcedHandlerRegistry (universal FSharpEventSourcedGrainImpl pattern) ─
+            let handlerRegistry =
+                services
+                |> Seq.tryFind (fun sd -> sd.ServiceType = typeof<EventSourcedHandlerRegistry>)
+                |> Option.map (fun sd -> sd.ImplementationInstance :?> EventSourcedHandlerRegistry)
+                |> Option.defaultWith (fun () ->
+                    let r = EventSourcedHandlerRegistry()
+                    services.AddSingleton<EventSourcedHandlerRegistry>(r) |> ignore
+                    services.AddSingleton<IEventSourcedHandlerRegistry>(r) |> ignore
+                    r)
+
+            handlerRegistry.Register<'State, 'Event, 'Command>(definition)
+            services

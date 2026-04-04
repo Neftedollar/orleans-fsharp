@@ -14,25 +14,27 @@ let main argv =
     // Parse: --assembly <path> --output <dir> [--namespace <ns>]
     let args = argv |> Array.toList
 
-    let rec parse remaining (assembly: string option) (output: string option) (ns: string option) =
+    let rec parse remaining (assembly: string option) (output: string option) (ns: string option) (mode: string option) =
         match remaining with
-        | "--assembly" :: v :: rest -> parse rest (Some v) output ns
-        | "--output"   :: v :: rest -> parse rest assembly (Some v) ns
-        | "--namespace":: v :: rest -> parse rest assembly output (Some v)
-        | [] -> assembly, output, ns
+        | "--assembly" :: v :: rest -> parse rest (Some v) output ns mode
+        | "--output"   :: v :: rest -> parse rest assembly (Some v) ns mode
+        | "--namespace":: v :: rest -> parse rest assembly output (Some v) mode
+        | "--mode"     :: v :: rest -> parse rest assembly output ns (Some v)
+        | [] -> assembly, output, ns, mode
         | unknown :: _ ->
             eprintfn "Unknown argument: %s" unknown
-            None, None, None
+            None, None, None, None
 
-    let assemblyPath, outputDir, ns = parse args None None None
+    let assemblyPath, outputDir, ns, mode = parse args None None None None
 
     match assemblyPath, outputDir with
     | None, _ | _, None ->
-        eprintfn "Usage: Orleans.FSharp.Generator --assembly <path.dll> --output <dir> [--namespace <ns>]"
+        eprintfn "Usage: Orleans.FSharp.Generator --assembly <path.dll> --output <dir> [--namespace <ns>] [--mode typed|universal]"
         1
     | Some asmPath, Some outDir ->
 
-    let ns = ns |> Option.defaultValue "Orleans.FSharp.CodeGen"
+    let ns   = ns   |> Option.defaultValue "Orleans.FSharp.CodeGen"
+    let mode = mode |> Option.defaultValue "typed"
 
     if not (File.Exists asmPath) then
         eprintfn "Assembly not found: %s" asmPath
@@ -45,6 +47,12 @@ let main argv =
         // Load into the default context so Orleans.FSharp.EventSourcing types
         // (already referenced by this tool) resolve correctly.
         let assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(asmPath)
+
+        if mode = "universal" then
+            printfn "Orleans.FSharp.Generator: mode=universal — skipping per-grain stub generation."
+            printfn "  Use FSharpEventSourcedGrainImpl + AddFSharpEventSourcedGrain for zero-codegen dispatch."
+            0
+        else
 
         let stubs = Discovery.discoverEventSourcedGrains assembly
 

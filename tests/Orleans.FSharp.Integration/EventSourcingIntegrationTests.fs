@@ -4,6 +4,7 @@ open Xunit
 open Swensen.Unquote
 open FsCheck
 open FsCheck.Xunit
+open Orleans.FSharp
 open Orleans.FSharp.Sample
 
 /// Unbox result as BankAccountState and return the Balance.
@@ -195,4 +196,54 @@ type EventSourcingPropertyTests(fixture: ClusterFixture) =
             // 100 (deposit) + 50 (deposit) - 30 (withdraw) = 120
             // The Withdraw 200 was rejected because balance was only 100
             test <@ balance = 120m @>
+        }
+
+// ---------------------------------------------------------------------------
+// Universal IFSharpEventSourcedGrain pattern (FSharpEventSourcedGrainImpl)
+// ---------------------------------------------------------------------------
+
+[<Collection("ClusterCollection")>]
+type UniversalEventSourcedGrainTests(fixture: ClusterFixture) =
+
+    /// <summary>
+    /// Universal pattern: IFSharpEventSourcedGrain.HandleCommand routes through
+    /// FSharpEventSourcedGrainImpl + EventSourcedHandlerRegistry without a per-grain C# stub.
+    /// </summary>
+    [<Fact>]
+    member _.``Universal: BankAccount starts with zero balance`` () =
+        task {
+            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-zero")
+            let! result = grain.HandleCommand(GetBalance)
+            let bal = (result :?> BankAccountState).Balance
+            test <@ bal = 0m @>
+        }
+
+    [<Fact>]
+    member _.``Universal: BankAccount Deposit increases balance`` () =
+        task {
+            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-deposit")
+            let! result = grain.HandleCommand(Deposit 150m)
+            let bal = (result :?> BankAccountState).Balance
+            test <@ bal = 150m @>
+        }
+
+    [<Fact>]
+    member _.``Universal: BankAccount full lifecycle`` () =
+        task {
+            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-lifecycle")
+            let! _ = grain.HandleCommand(Deposit 500m)
+            let! _ = grain.HandleCommand(Withdraw 200m)
+            let! result = grain.HandleCommand(GetBalance)
+            let bal = (result :?> BankAccountState).Balance
+            test <@ bal = 300m @>
+        }
+
+    [<Fact>]
+    member _.``Universal: Withdraw rejected when insufficient funds`` () =
+        task {
+            let grain = fixture.GrainFactory.GetGrain<IFSharpEventSourcedGrain>("univ-bank-insufficient")
+            let! _ = grain.HandleCommand(Deposit 100m)
+            let! result = grain.HandleCommand(Withdraw 999m)
+            let bal = (result :?> BankAccountState).Balance
+            test <@ bal = 100m @>
         }
