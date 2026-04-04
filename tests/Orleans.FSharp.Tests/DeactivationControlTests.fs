@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 
@@ -137,3 +139,27 @@ let ``grain CE handler can use delayDeactivation via context`` () =
         let! (_newState, _result) = handler ctx 0 "test"
         test <@ receivedDelay = TimeSpan.FromMinutes(10.0) @>
     }
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``delayDeactivation passes any TimeSpan to the registered function`` (minutes: PositiveInt) =
+    let delay = TimeSpan.FromMinutes(float minutes.Get)
+    let mutable received = TimeSpan.Zero
+    let ctx =
+        { GrainContext.empty with
+            DelayDeactivation = Some(fun d -> received <- d) }
+    GrainContext.delayDeactivation ctx delay
+    received = delay
+
+[<Property>]
+let ``deactivateOnIdle always calls the registered function`` (value: int) =
+    // 'value' is just noise to force FsCheck to run multiple times
+    let mutable called = false
+    let ctx =
+        { GrainContext.empty with
+            DeactivateOnIdle = Some(fun () -> called <- true) }
+    GrainContext.deactivateOnIdle ctx
+    called
