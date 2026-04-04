@@ -774,3 +774,4 @@ let chatRoom =
 - [Silo Configuration](silo-configuration.md) -- configure storage, clustering, and streaming for your grains
 - [Streaming](streaming.md) -- publish and subscribe to events
 - [Testing](testing.md) -- test your grain definitions with FsCheck and TestHarness
+- [Advanced](advanced.md#behavior-pattern) -- behavior pattern: state machines with `Behavior.run` / `Behavior.runWithContext`

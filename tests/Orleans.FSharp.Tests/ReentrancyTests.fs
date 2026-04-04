@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.ReentrancyTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 [<Fact>]
@@ -88,3 +90,38 @@ let ``grain CE reentrant does not affect other fields`` () =
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.IsReentrant = true @>
     test <@ def.Handler |> Option.isSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``interleave stores any given method name in InterleavedMethods`` (name: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            interleave name.Get
+        }
+    def.InterleavedMethods |> Set.contains name.Get
+
+[<Property>]
+let ``interleave is idempotent: adding same name twice keeps set size at 1`` (name: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            interleave name.Get
+            interleave name.Get
+        }
+    def.InterleavedMethods |> Set.count = 1
+
+[<Property>]
+let ``reentrant does not affect DefaultState for any default value`` (value: int) =
+    let def =
+        grain {
+            defaultState value
+            handle (fun state (_msg: string) -> task { return state, box state })
+            reentrant
+        }
+    def.DefaultState = Some value && def.IsReentrant = true
