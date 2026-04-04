@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.KubernetesTests
 open System
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.Hosting
 open Orleans.FSharp.Kubernetes
 
@@ -85,3 +87,19 @@ let ``useKubernetesClusteringWithNamespace exists as a method on the module`` ()
         |> Array.tryFind (fun m -> m.Name = "useKubernetesClusteringWithNamespace")
 
     test <@ method.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``useKubernetesClusteringWithNamespace produces distinct functions for distinct namespaces`` (n: PositiveInt) =
+    let count = min n.Get 5
+    let funcs = Array.init count (fun i -> Kubernetes.useKubernetesClusteringWithNamespace $"ns{i}")
+    funcs |> Array.pairwise |> Array.forall (fun (a, b) -> not (obj.ReferenceEquals(a, b)))
+
+[<Property>]
+let ``useKubernetesClusteringWithNamespace throws with package name in message for any namespace`` (ns: NonEmptyString) =
+    let f = Kubernetes.useKubernetesClusteringWithNamespace ns.Get
+    let ex = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
+    ex.Message.Contains("Microsoft.Orleans.Hosting.Kubernetes")

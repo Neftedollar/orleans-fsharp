@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.StreamProvidersTests
 open System
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.Hosting
 open Orleans.FSharp.StreamProviders
 
@@ -97,3 +99,19 @@ let ``addAzureQueueStreams has correct parameter count via reflection`` () =
         |> Array.tryFind (fun m -> m.Name = "addAzureQueueStreams")
 
     test <@ method.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addEventHubStreams produces distinct closures for distinct provider names`` (n: PositiveInt) =
+    let count = min n.Get 5
+    let funcs = Array.init count (fun i -> StreamProviders.addEventHubStreams $"EH{i}" "conn" "hub")
+    funcs |> Array.pairwise |> Array.forall (fun (a, b) -> not (obj.ReferenceEquals(a, b)))
+
+[<Property>]
+let ``addEventHubStreams error contains expected package name for any provider name`` (name: NonEmptyString) =
+    let f = StreamProviders.addEventHubStreams name.Get "conn" "hub"
+    let ex = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
+    ex.Message.Contains("Microsoft.Orleans.Streaming.EventHubs")

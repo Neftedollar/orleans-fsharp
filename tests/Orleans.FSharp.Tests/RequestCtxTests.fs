@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.RequestCtxTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 open Orleans.Runtime
 
@@ -129,3 +131,27 @@ let ``set overwrites existing value`` () =
         test <@ result = Some "second" @>
     finally
         cleanup key
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``set and get round-trip for any int value`` (key: NonEmptyString) (value: int) =
+    let k = $"prop-int-{key.Get}"
+
+    try
+        RequestCtx.set k (box value)
+        RequestCtx.get<int> k = Some value
+    finally
+        RequestContext.Remove(k) |> ignore
+
+[<Property>]
+let ``getOrDefault returns stored value for any string key and value`` (key: NonEmptyString) (value: NonEmptyString) =
+    let k = $"prop-getordefault-{key.Get}"
+
+    try
+        RequestCtx.set k (box value.Get)
+        RequestCtx.getOrDefault<string> k "fallback" = value.Get
+    finally
+        RequestContext.Remove(k) |> ignore

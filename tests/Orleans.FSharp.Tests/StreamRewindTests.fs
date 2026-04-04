@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.StreamRewindTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.Streams
 open Orleans.FSharp.Streaming
 
@@ -107,3 +109,21 @@ let ``StreamSubscription Handle is still StreamSubscriptionHandle after addition
         |> Array.find (fun p -> p.Name = "Handle")
 
     test <@ handleProp.PropertyType = typeof<StreamSubscriptionHandle<int>> @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``getSequenceToken always returns None for any StreamSubscription value`` () =
+    let sub: StreamSubscription<int> = { Handle = Unchecked.defaultof<StreamSubscriptionHandle<int>> }
+    let result = Stream.getSequenceToken sub
+    result.IsNone
+
+[<Property>]
+let ``Stream module methods all have non-empty names`` () =
+    let streamModule =
+        typeof<StreamRef<int>>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "Stream" && t.IsAbstract && t.IsSealed)
+
+    streamModule.GetMethods() |> Array.forall (fun m -> m.Name.Length > 0)

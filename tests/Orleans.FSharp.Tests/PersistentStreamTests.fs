@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.PersistentStreamTests
 open System
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Runtime
 open Orleans.Streams
 
@@ -131,3 +133,38 @@ let ``PersistentStream DU case exists in StreamProvider`` () =
         )
 
     test <@ provider |> isPersistentStream @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addPersistentStreams stores any non-whitespace stream provider name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let factory =
+            Func<IServiceProvider, string, IQueueAdapterFactory>(fun _ _ -> Unchecked.defaultof<IQueueAdapterFactory>)
+
+        let configurator =
+            Action<Orleans.Hosting.ISiloPersistentStreamConfigurator>(fun _ -> ())
+
+        let config = siloConfig { addPersistentStreams name.Get factory configurator }
+        config.StreamProviders |> Map.containsKey name.Get
+        && config.StreamProviders.[name.Get] |> isPersistentStream)
+
+[<Property>]
+let ``n addPersistentStreams with distinct names yields n stream providers`` (n: PositiveInt) =
+    let count = min n.Get 5
+
+    let factory =
+        Func<IServiceProvider, string, IQueueAdapterFactory>(fun _ _ -> Unchecked.defaultof<IQueueAdapterFactory>)
+
+    let configurator =
+        Action<Orleans.Hosting.ISiloPersistentStreamConfigurator>(fun _ -> ())
+
+    let builder = SiloConfigBuilder()
+    let mutable cfg = SiloConfig.Default
+
+    for i in 1 .. count do
+        cfg <- builder.AddPersistentStreams(cfg, $"Stream{i}", factory, configurator)
+
+    cfg.StreamProviders |> Map.count = count

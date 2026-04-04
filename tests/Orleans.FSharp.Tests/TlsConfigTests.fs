@@ -4,6 +4,8 @@ open System.Security.Cryptography
 open System.Security.Cryptography.X509Certificates
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Runtime
 
 /// <summary>Creates a self-signed X509Certificate2 for testing purposes.</summary>
@@ -166,3 +168,33 @@ let ``clientConfig CE later TLS overrides earlier`` () =
         }
 
     test <@ config.TlsConfig.Value |> isMutualTlsSubject @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``useTls stores any non-empty subject in silo config`` (subject: NonEmptyString) =
+    let config = siloConfig { useTls subject.Get }
+
+    match config.TlsConfig.Value with
+    | TlsSubject s -> s = subject.Get
+    | _ -> false
+
+[<Property>]
+let ``useMutualTls stores any non-empty subject in silo config`` (subject: NonEmptyString) =
+    let config = siloConfig { useMutualTls subject.Get }
+
+    match config.TlsConfig.Value with
+    | MutualTlsSubject s -> s = subject.Get
+    | _ -> false
+
+[<Property>]
+let ``useTls and useMutualTls always set TlsConfig to Some in silo config`` (useMutual: bool) (subject: NonEmptyString) =
+    let config =
+        if useMutual then
+            siloConfig { useMutualTls subject.Get }
+        else
+            siloConfig { useTls subject.Get }
+
+    config.TlsConfig.IsSome

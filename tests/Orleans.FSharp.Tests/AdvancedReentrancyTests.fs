@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.AdvancedReentrancyTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 [<Fact>]
@@ -115,3 +117,33 @@ let ``grain CE last mayInterleave wins`` () =
         }
 
     test <@ def.MayInterleavePredicate = Some "Second" @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``readOnly stores any non-empty method name`` (name: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            readOnly name.Get
+        }
+
+    def.ReadOnlyMethods |> Set.contains name.Get
+
+[<Property>]
+let ``two distinct readOnly calls store both method names`` (name1: NonEmptyString) (name2: NonEmptyString) =
+    name1.Get = name2.Get
+    || (let def =
+            grain {
+                defaultState 0
+                handle (fun state (_msg: string) -> task { return state, box state })
+                readOnly name1.Get
+                readOnly name2.Get
+            }
+
+        def.ReadOnlyMethods |> Set.contains name1.Get
+        && def.ReadOnlyMethods |> Set.contains name2.Get
+        && def.ReadOnlyMethods |> Set.count = 2)

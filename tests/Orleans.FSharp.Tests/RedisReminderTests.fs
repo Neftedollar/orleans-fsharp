@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.RedisReminderTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Runtime
 
 /// <summary>Helper to check if a ReminderProvider is RedisReminder.</summary>
@@ -76,3 +78,20 @@ let ``siloConfig CE Redis reminder composes with TLS and dashboard`` () =
     test <@ config.TlsConfig.IsSome @>
     test <@ config.DashboardConfig.IsSome @>
     test <@ config.ReminderProvider.Value |> isRedisReminder @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addRedisReminderService stores any non-empty connection string`` (connStr: NonEmptyString) =
+    let config = siloConfig { addRedisReminderService connStr.Get }
+
+    match config.ReminderProvider.Value with
+    | RedisReminder s -> s = connStr.Get
+    | _ -> false
+
+[<Property>]
+let ``addRedisReminderService always sets ReminderProvider to Some`` (connStr: NonEmptyString) =
+    let config = siloConfig { addRedisReminderService connStr.Get }
+    config.ReminderProvider.IsSome

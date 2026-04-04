@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.TransactionTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Transactions
 open Orleans.Transactions.Abstractions
 
@@ -151,3 +153,31 @@ let ``TransactionOption cases support structural equality`` () =
     test <@ Join = Join @>
     test <@ Create <> Join @>
     test <@ Supported <> NotAllowed @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``toOrleans mapping is total — all 6 cases are covered`` () =
+    let allCases =
+        [ Create; Join; CreateOrJoin; Supported; NotAllowed; Suppress ]
+
+    allCases
+    |> List.map TransactionOption.toOrleans
+    |> List.length = 6
+
+[<Property>]
+let ``TransactionOption DU has exactly 6 cases`` () =
+    let cases =
+        Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<TransactionOption>)
+
+    cases.Length = 6
+
+[<Property>]
+let ``TransactionalState module has at least 3 public methods`` () =
+    let stateModule =
+        typeof<TransactionOption>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "TransactionalState" && t.IsAbstract && t.IsSealed)
+
+    stateModule.GetMethods().Length >= 3

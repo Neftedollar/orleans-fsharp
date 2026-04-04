@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 /// Dummy type to use for custom placement strategy tests.
@@ -125,3 +127,29 @@ let ``grain CE advanced placement overrides basic placement`` () =
         }
 
     test <@ def.PlacementStrategy = PlacementStrategy.SiloRoleBased "compute" @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``siloRolePlacement stores any non-empty role string`` (role: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            siloRolePlacement role.Get
+        }
+
+    def.PlacementStrategy = PlacementStrategy.SiloRoleBased role.Get
+
+[<Property>]
+let ``advanced placement strategies do not affect DefaultState for any initial int`` (initial: int) =
+    let def =
+        grain {
+            defaultState initial
+            handle (fun state (_msg: string) -> task { return state, box state })
+            activationCountPlacement
+        }
+
+    def.DefaultState = Some initial && def.PlacementStrategy = PlacementStrategy.ActivationCountBased

@@ -1,7 +1,10 @@
 module Orleans.FSharp.Tests.AdditionalPersistenceTests
 
+open System
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Runtime
 
 /// <summary>Helper to check if a StorageProvider is CosmosStorage.</summary>
@@ -119,3 +122,31 @@ let ``siloConfig CE all new persistence providers compose together`` () =
     test <@ config.StorageProviders |> Map.count = 4 @>
     test <@ config.StorageProviders.["Cosmos"] |> isCosmosStorage @>
     test <@ config.StorageProviders.["Dynamo"] |> isDynamoDbStorage @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addCosmosStorage stores any non-whitespace provider name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addCosmosStorage name.Get "AccountEndpoint=..." "Db" }
+        config.StorageProviders |> Map.containsKey name.Get
+        && config.StorageProviders.[name.Get] |> isCosmosStorage)
+
+[<Property>]
+let ``addDynamoDbStorage stores any non-whitespace provider name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addDynamoDbStorage name.Get "us-east-1" }
+        config.StorageProviders |> Map.containsKey name.Get
+        && config.StorageProviders.[name.Get] |> isDynamoDbStorage)
+
+[<Property>]
+let ``CosmosStorage carries the endpoint and database name`` (endpoint: NonNull<string>) (db: NonNull<string>) =
+    String.IsNullOrWhiteSpace endpoint.Get
+    || String.IsNullOrWhiteSpace db.Get
+    || (let config = siloConfig { addCosmosStorage "Provider" endpoint.Get db.Get }
+
+        match config.StorageProviders.["Provider"] with
+        | CosmosStorage(ep, dbName) -> ep = endpoint.Get && dbName = db.Get
+        | _ -> false)
