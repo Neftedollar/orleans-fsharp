@@ -114,11 +114,18 @@ public interface IUniversalGrainHandler
     /// The grain factory for the calling grain instance. Passed to context-aware handlers
     /// so they can make grain-to-grain calls.
     /// </param>
+    /// <param name="grainBase">
+    /// The grain instance that is handling the message. Used to wire
+    /// <c>DeactivateOnIdle</c> and <c>DelayDeactivation</c> into the
+    /// <c>GrainContext</c> so that context-aware handlers can request deactivation.
+    /// Pass <c>null</c> in unit-test contexts where no live grain instance exists.
+    /// </param>
     Task<GrainDispatchResult> Handle(
         object? currentState,
         object message,
         IServiceProvider serviceProvider,
-        IGrainFactory grainFactory);
+        IGrainFactory grainFactory,
+        IGrainBase? grainBase);
 }
 
 /// <summary>
@@ -151,7 +158,7 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
     public async Task<object> HandleMessage(object message)
     {
         _currentState ??= _handler.GetDefaultState(message.GetType());
-        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory);
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
     }
@@ -185,7 +192,7 @@ public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
     public async Task<object> HandleMessage(object message)
     {
         _currentState ??= _handler.GetDefaultState(message.GetType());
-        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory);
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
     }
@@ -219,7 +226,7 @@ public sealed class FSharpGrainIntImpl : Grain, IFSharpGrainWithIntKey
     public async Task<object> HandleMessage(object message)
     {
         _currentState ??= _handler.GetDefaultState(message.GetType());
-        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory);
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
     }

@@ -148,8 +148,8 @@ let ``IUniversalGrainHandler.Handle takes nullable object and object`` () =
     let m = typeof<IUniversalGrainHandler>.GetMethod("Handle")
     test <@ m <> null @>
     let ps = m.GetParameters()
-    // Handle(currentState, message, serviceProvider, grainFactory)
-    test <@ ps.Length = 4 @>
+    // Handle(currentState, message, serviceProvider, grainFactory, grainBase)
+    test <@ ps.Length = 5 @>
 
 // ── UniversalGrainHandlerRegistry — dispatch ─────────────────────────────────
 
@@ -171,7 +171,7 @@ let ``Registry dispatches handler and returns updated state`` () =
         registry.Register<CountState, CountMsg>(def)
 
         let handler = registry :> IUniversalGrainHandler
-        let! result = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
+        let! result = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
         let ns = result.NewState :?> CountState
         test <@ ns.N = 1 @>
     }
@@ -189,7 +189,7 @@ let ``Registry uses default state on first call (null current)`` () =
         registry.Register<CountState, CountMsg>(def)
 
         let handler = registry :> IUniversalGrainHandler
-        let! result = handler.Handle(null, box GetN, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
+        let! result = handler.Handle(null, box GetN, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
         let ns = result.NewState :?> CountState
         test <@ ns.N = 10 @>
     }
@@ -212,7 +212,7 @@ let ``Registry passes current state when non-null`` () =
 
         let handler = registry :> IUniversalGrainHandler
         let existingState = box { N = 5 }
-        let! result = handler.Handle(existingState, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
+        let! result = handler.Handle(existingState, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
         let ns = result.NewState :?> CountState
         test <@ ns.N = 6 @>
     }
@@ -245,7 +245,7 @@ let ``Registry throws InvalidOperationException for unregistered message type`` 
         let handler = registry :> IUniversalGrainHandler
 
         let! ex = Assert.ThrowsAsync<InvalidOperationException>(fun () ->
-            handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>) :> Task)
+            handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>) :> Task)
         test <@ ex.Message.Contains("CountMsg") @>
     }
 
@@ -294,8 +294,8 @@ let ``Registry supports multiple distinct (State, Message) pairs`` () =
         registry.Register<StringState, StringMsg>(stringDef)
 
         let handler = registry :> IUniversalGrainHandler
-        let! r1 = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
-        let! r2 = handler.Handle(null, box (Append "hello"), Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
+        let! r1 = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
+        let! r2 = handler.Handle(null, box (Append "hello"), Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
 
         test <@ (r1.NewState :?> CountState).N = 1 @>
         test <@ (r2.NewState :?> StringState).Text = "hello" @>
@@ -319,11 +319,11 @@ let ``Registry state is accumulated across multiple Handle calls`` () =
         registry.Register<CountState, CountMsg>(def)
         let handler = registry :> IUniversalGrainHandler
 
-        let! r1 = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
-        let! r2 = handler.Handle(r1.NewState, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
-        let! r3 = handler.Handle(r2.NewState, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
-        let! r4 = handler.Handle(r3.NewState, box Dec, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
-        let! r5 = handler.Handle(r4.NewState, box GetN, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
+        let! r1 = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
+        let! r2 = handler.Handle(r1.NewState, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
+        let! r3 = handler.Handle(r2.NewState, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
+        let! r4 = handler.Handle(r3.NewState, box Dec, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
+        let! r5 = handler.Handle(r4.NewState, box GetN, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
 
         test <@ (r5.NewState :?> CountState).N = 2 @>
     }
@@ -348,8 +348,8 @@ let ``Registry dispatch is deterministic for same (state, message) inputs`` () =
 
         let handler = registry :> IUniversalGrainHandler
         let state = box { N = 7 }
-        let! r1 = handler.Handle(state, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
-        let! r2 = handler.Handle(state, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
+        let! r1 = handler.Handle(state, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
+        let! r2 = handler.Handle(state, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
 
         test <@ (r1.NewState :?> CountState).N = (r2.NewState :?> CountState).N @>
     }
@@ -378,7 +378,7 @@ let ``Repeated Inc operations produce monotonically increasing N`` (n: PositiveI
     let handler = registry :> IUniversalGrainHandler
     let mutable st: obj = null
     for _ in 1..count do
-        let r = handler.Handle(st, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>).GetAwaiter().GetResult()
+        let r = handler.Handle(st, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>).GetAwaiter().GetResult()
         st <- r.NewState
 
     let final = (st :?> CountState).N
@@ -417,7 +417,7 @@ let ``Registry propagates exceptions thrown by the handler`` () =
         let handler = registry :> IUniversalGrainHandler
 
         let! ex = Assert.ThrowsAnyAsync<exn>(fun () ->
-            handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>) :> System.Threading.Tasks.Task)
+            handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>) :> System.Threading.Tasks.Task)
         test <@ ex.Message.Contains("intentional handler error") @>
     }
 
@@ -438,7 +438,7 @@ let ``Registry propagates exceptions without swallowing cause`` () =
         let handler = registry :> IUniversalGrainHandler
 
         let! ex = Assert.ThrowsAsync<System.ArgumentOutOfRangeException>(fun () ->
-            handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>) :> System.Threading.Tasks.Task)
+            handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>) :> System.Threading.Tasks.Task)
         test <@ ex.ParamName = "N" @>
     }
 
@@ -481,11 +481,11 @@ let ``Inc/Dec sequences maintain correct net count`` (ops: PositiveInt * Positiv
     let mutable st: obj = null
 
     for _ in 1..incCount do
-        let r = handler.Handle(st, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>).GetAwaiter().GetResult()
+        let r = handler.Handle(st, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>).GetAwaiter().GetResult()
         st <- r.NewState
 
     for _ in 1..decCount do
-        let r = handler.Handle(st, box Dec, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>).GetAwaiter().GetResult()
+        let r = handler.Handle(st, box Dec, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>).GetAwaiter().GetResult()
         st <- r.NewState
 
     let final = (st :?> CountState).N

@@ -358,7 +358,7 @@ module SiloBuilderExtensions =
     type UniversalGrainHandlerRegistry() =
         // Keyed by message type full name (Type.FullName of the 'Message type parameter).
         // Handler signature includes IServiceProvider and IGrainFactory for context-aware dispatch.
-        let mutable handlers: Map<string, obj option -> obj -> IServiceProvider -> IGrainFactory -> Task<GrainDispatchResult>> =
+        let mutable handlers: Map<string, obj option -> obj -> IServiceProvider -> IGrainFactory -> Orleans.IGrainBase -> Task<GrainDispatchResult>> =
             Map.empty
 
         let mutable defaults: Map<string, obj> = Map.empty
@@ -402,6 +402,7 @@ Use distinct command/message types for each grain."
                 (msg: obj)
                 (serviceProvider: IServiceProvider)
                 (grainFactory: IGrainFactory)
+                (grainBase: Orleans.IGrainBase)
                 : Task<GrainDispatchResult> =
                 task {
                     let typedState =
@@ -414,14 +415,21 @@ Use distinct command/message types for each grain."
                         | Some s -> s :?> 'State
 
                     // Build a GrainContext so context-aware handlers (handleWithContext etc.)
-                    // can access DI services and make grain-to-grain calls.
+                    // can access DI services, make grain-to-grain calls, and request deactivation.
+                    // grainBase is null in unit-test contexts (AddFSharpGrainTests) where no live
+                    // grain instance exists; DeactivateOnIdle/DelayDeactivation are wired only when
+                    // grainBase is non-null.
                     let ctx: GrainContext =
                         {
                             GrainFactory    = grainFactory
                             ServiceProvider = serviceProvider
                             States          = Map.empty
-                            DeactivateOnIdle   = None
-                            DelayDeactivation  = None
+                            DeactivateOnIdle =
+                                if isNull grainBase then None
+                                else Some(fun () -> grainBase.DeactivateOnIdle())
+                            // DelayDeactivation is a protected Grain method, not on IGrainBase.
+                            // It is available via the typed FSharpGrain<'S,'M> path.
+                            DelayDeactivation = None
                             GrainId            = None
                             PrimaryKey         = None
                         }
@@ -459,7 +467,7 @@ Use distinct command/message types for each grain."
                 defaults |> Map.tryFind messageType.FullName |> Option.defaultValue null
 
             /// <inheritdoc/>
-            member _.Handle(currentState: obj, message: obj, serviceProvider: IServiceProvider, grainFactory: IGrainFactory) : Task<GrainDispatchResult> =
+            member _.Handle(currentState: obj, message: obj, serviceProvider: IServiceProvider, grainFactory: IGrainFactory, grainBase: Orleans.IGrainBase) : Task<GrainDispatchResult> =
                 let key = message.GetType().FullName
 
                 match handlers |> Map.tryFind key with
@@ -472,7 +480,7 @@ Use distinct command/message types for each grain."
                     )
                 | Some h ->
                     let state = if isNull currentState then None else Some currentState
-                    h state message serviceProvider grainFactory
+                    h state message serviceProvider grainFactory grainBase
 
     type IServiceCollection with
 

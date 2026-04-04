@@ -39,6 +39,7 @@
     <Compile Include="SerializationModeIntegrationTests.fs" />
     <Compile Include="FSharpBinaryCodecIntegrationTests.fs" />
     <Compile Include="TemplateTests.fs" />
+    <Compile Include="RedisIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -53,6 +54,8 @@
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.Persistence.Redis" Version="10.*" />
+    <PackageReference Include="StackExchange.Redis" Version="2.*" />
   </ItemGroup>
 
   <ItemGroup>
