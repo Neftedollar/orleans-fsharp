@@ -424,13 +424,62 @@ Use distinct command/message types for each grain."
                         grainBaseOpt
                         |> Option.map (fun gb -> gb.GrainContext.GrainId)
 
-                    // Universal grains (FSharpGrainImpl) are always IGrainWithStringKey, so the
-                    // primary key is always a string — no Guid/int64 heuristic is needed.
+                    // Extract the primary key using the grain's *interface type* to determine
+                    // the correct encoding.  Orleans internally converts GUID-looking string keys
+                    // to 16-byte binary (so TryGetGuidKey returns true for IGrainWithStringKey
+                    // grains whose key is a GUID-formatted string).  By branching on the
+                    // implemented interface we can recover the correct semantic type:
+                    //   • IGrainWithStringKey  → always return string (using "N" format for any
+                    //                            Guid that Orleans encoded from a GUID-looking key)
+                    //   • IGrainWithGuidKey    → return Guid
+                    //   • IGrainWithIntegerKey → return int64
+                    //   • other               → heuristic (Guid > int64 > string)
                     let primaryKeyOpt =
-                        grainIdOpt
-                        |> Option.bind (fun gid ->
-                            try Some(box (gid.Key.ToString()))
-                            with _ -> None)
+                        match grainBaseOpt, grainIdOpt with
+                        | None, _ | _, None -> None
+                        | Some gb, Some gid ->
+                            let grainImplType = gb.GetType()
+                            try
+                                if typeof<IGrainWithStringKey>.IsAssignableFrom(grainImplType) then
+                                    // String-keyed grain.  Orleans may have encoded a GUID-looking
+                                    // or int-looking key as binary; reconstruct the string.
+                                    let mutable guidKey = System.Guid.Empty
+                                    let mutable guidExt: string = null
+                                    let mutable intKey = 0L
+                                    let mutable intExt: string = null
+                                    if GrainIdKeyExtensions.TryGetGuidKey(gid, &guidKey, &guidExt) then
+                                        // Restore as lowercase "N" hex — the canonical round-trip
+                                        // format for GUID-style string keys.
+                                        Some(box (guidKey.ToString("N")))
+                                    elif GrainIdKeyExtensions.TryGetIntegerKey(gid, &intKey, &intExt) then
+                                        Some(box (intKey.ToString()))
+                                    else
+                                        Some(box (gid.Key.ToString()))
+                                elif typeof<IGrainWithGuidKey>.IsAssignableFrom(grainImplType) then
+                                    let mutable guidKey = System.Guid.Empty
+                                    let mutable guidExt: string = null
+                                    if GrainIdKeyExtensions.TryGetGuidKey(gid, &guidKey, &guidExt) then
+                                        Some(box guidKey)
+                                    else None
+                                elif typeof<IGrainWithIntegerKey>.IsAssignableFrom(grainImplType) then
+                                    let mutable intKey = 0L
+                                    let mutable intExt: string = null
+                                    if GrainIdKeyExtensions.TryGetIntegerKey(gid, &intKey, &intExt) then
+                                        Some(box intKey)
+                                    else None
+                                else
+                                    // Unknown grain type — fall back to heuristic
+                                    let mutable guidKey = System.Guid.Empty
+                                    let mutable guidExt: string = null
+                                    let mutable intKey = 0L
+                                    let mutable intExt: string = null
+                                    if GrainIdKeyExtensions.TryGetGuidKey(gid, &guidKey, &guidExt) then
+                                        Some(box guidKey)
+                                    elif GrainIdKeyExtensions.TryGetIntegerKey(gid, &intKey, &intExt) then
+                                        Some(box intKey)
+                                    else
+                                        Some(box (gid.Key.ToString()))
+                            with _ -> None
 
                     let ctx: GrainContext =
                         {
