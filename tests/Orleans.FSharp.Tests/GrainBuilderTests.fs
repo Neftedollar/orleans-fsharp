@@ -489,9 +489,13 @@ let ``forCSharp: States map has same count as unique keys`` (pairs: (string * in
     let ctx = GrainContext.forCSharp null null kvps (GrainId.Create("test/grain", "k"))
     ctx.States |> Map.count = uniquePairs.Length
 
+/// Make a safe grain key: append a suffix so whitespace-only strings become non-whitespace.
+let private safeKey (raw: NonEmptyString) = raw.Get.Trim() + "k"
+
 [<Property>]
 let ``forCSharp: GrainId is populated from the supplied value`` (key: NonEmptyString) =
-    let grainId = GrainId.Create("test/grain", key.Get)
+    let k = safeKey key
+    let grainId = GrainId.Create("test/grain", k)
     let ctx = GrainContext.forCSharp null null [] grainId
     ctx.GrainId = Some grainId
 
@@ -502,12 +506,12 @@ let ``forCSharp: empty states yields an empty States map`` () =
 
 [<Property>]
 let ``forCSharp: DeactivateOnIdle is always None`` (key: NonEmptyString) =
-    let ctx = GrainContext.forCSharp null null [] (GrainId.Create("test/grain", key.Get))
+    let ctx = GrainContext.forCSharp null null [] (GrainId.Create("test/grain", safeKey key))
     ctx.DeactivateOnIdle.IsNone
 
 [<Property>]
 let ``forCSharp: PrimaryKey is always None`` (key: NonEmptyString) =
-    let ctx = GrainContext.forCSharp null null [] (GrainId.Create("test/grain", key.Get))
+    let ctx = GrainContext.forCSharp null null [] (GrainId.Create("test/grain", safeKey key))
     ctx.PrimaryKey.IsNone
 
 [<Property>]

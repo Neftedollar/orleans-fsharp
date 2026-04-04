@@ -280,6 +280,20 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Build reusable Polly pipeline |
 | `GrainResilience.circuitBreaker` | `int -> TimeSpan -> ResiliencePipeline` | Shared circuit breaker (non-generic, long-lived) |
 
+#### `GrainBatch` — concurrent fan-out
+
+| Function | Signature | Description |
+|---|---|---|
+| `GrainBatch.map<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list>` | Fan-out; fails if any call throws |
+| `GrainBatch.tryMap<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<Result<'TR, exn> list>` | Fan-out; captures individual failures |
+| `GrainBatch.aggregate<'TG,'TR,'TA>` | `'TG seq -> ('TG -> Task<'TR>) -> ('TR list -> 'TA) -> Task<'TA>` | Fan-out then reduce |
+| `GrainBatch.iter<'TG>` | `'TG seq -> ('TG -> Task) -> Task` | Concurrent fire-and-forget; fails if any throws |
+| `GrainBatch.tryIter<'TG>` | `'TG seq -> ('TG -> Task) -> Task<Result<unit, exn> list>` | Concurrent fire-and-forget; captures failures |
+| `GrainBatch.choose<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR option>) -> Task<'TR list>` | Fan-out; filters out None results |
+| `GrainBatch.partition<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list * exn list>` | Fan-out; separates successes from failures |
+
+> **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and compiles to the same `Task.WhenAll` pattern. Use `GrainBatch` when the number of grains is dynamic.
+
 #### Other modules
 
 | Module | Key Function | Description |

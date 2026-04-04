@@ -572,6 +572,77 @@ GrainServices.addGrainService<MyBackgroundService> siloBuilder |> ignore
 
 ---
 
+## Parallel Grain Calls
+
+Orleans grains are independent actors — many queries can be issued concurrently. Orleans.FSharp provides two complementary approaches.
+
+### `and!` — fixed parallel bindings (F# applicative CE syntax)
+
+For a **small, fixed set** of concurrent grain calls use the `and!` keyword inside a `task {}` expression. All bound tasks start simultaneously and the CE collects their results:
+
+```fsharp
+task {
+    let! balance1 = account1.GetBalance()
+    and! balance2 = account2.GetBalance()
+    and! balance3 = account3.GetBalance()
+    // All three calls ran in parallel
+    return balance1 + balance2 + balance3
+}
+```
+
+`and!` compiles to `Task.WhenAll` under the hood and is the idiomatic F# way to express parallel fan-out for a known set of grain references.
+
+### `GrainBatch` — dynamic collections of grains
+
+When the number of grains is determined at runtime (e.g., retrieved from a roster or config), use `GrainBatch`:
+
+```fsharp
+open Orleans.FSharp
+
+// Collect balances from N account grains
+let keys = ["alice"; "bob"; "carol"; "dave"]
+let accounts = keys |> List.map (fun k -> factory.GetGrain<IAccountGrain>(k))
+
+// Fan-out: all calls run concurrently
+let! balances = GrainBatch.map accounts (fun a -> a.GetBalance())
+// balances: decimal list — same order as accounts
+
+// Aggregate
+let! total = GrainBatch.aggregate accounts (fun a -> a.GetBalance()) List.sum
+
+// Fault-tolerant: capture individual failures instead of failing the whole batch
+let! results = GrainBatch.tryMap accounts (fun a -> a.GetBalance())
+// results: Result<decimal, exn> list
+
+// Partition into successes and failures
+let! (ok, failed) = GrainBatch.partition accounts (fun a -> a.GetBalance())
+// ok: decimal list, failed: exn list
+
+// Filter: only accounts that opted in to notifications
+let! opted = GrainBatch.choose accounts (fun a -> a.GetOptInPreference())
+// opted: SomeType list — None results are removed
+
+// Fire-and-forget on all grains
+do! GrainBatch.iter accounts (fun a -> a.Deposit(0.01m))
+
+// Fire-and-forget with per-grain error capture
+let! statuses = GrainBatch.tryIter accounts (fun a -> a.Deposit(0.01m))
+// statuses: Result<unit, exn> list
+```
+
+### When to use which
+
+| Scenario | Recommendation |
+|---|---|
+| 2–4 specific grain calls | `and!` — cleaner syntax, no list overhead |
+| N grains from a collection | `GrainBatch.map` / `GrainBatch.aggregate` |
+| Tolerating individual failures | `GrainBatch.tryMap` / `GrainBatch.partition` |
+| Fire-and-forget all | `GrainBatch.iter` |
+| Fire-and-forget, capture errors | `GrainBatch.tryIter` |
+| Filter grain responses | `GrainBatch.choose` |
+
+---
+
 ## TaskHelpers
 
 Utility functions for composing Task-based operations with Result:
