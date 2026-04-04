@@ -88,6 +88,27 @@ let runSample () : Task =
         let! s3 = uHandle |> FSharpGrain.send GetValue
         printfn "Universal counter after Decrement: %A" s3
 
+        // ask demo — returns typed result ('R), not the full state ('S)
+        // The counter handler returns box<int> for all commands, so ask<_, _, int> extracts the int directly.
+        printfn ""
+        printfn "--- ask Demo (typed result, not full state) ---"
+
+        let askHandle = FSharpGrain.ref<CounterState, CounterCommand> factory "ask-demo-counter"
+
+        // ask<'State, 'Command, 'Result> — result type is int here (not CounterState)
+        let! count1 = askHandle |> FSharpGrain.ask<CounterState, CounterCommand, int> Increment
+        printfn "After Increment (ask → int): %d" count1
+
+        let! count2 = askHandle |> FSharpGrain.ask<CounterState, CounterCommand, int> Increment
+        printfn "After Increment (ask → int): %d" count2
+
+        let! value = askHandle |> FSharpGrain.ask<CounterState, CounterCommand, int> GetValue
+        printfn "GetValue via ask: %d" value
+
+        // Compare: send returns the full CounterState record
+        let! fullState = askHandle |> FSharpGrain.send GetValue
+        printfn "GetValue via send (full state): %A" fullState
+
         printfn ""
         printfn "Sample complete. Shutting down..."
         do! host.StopAsync()
