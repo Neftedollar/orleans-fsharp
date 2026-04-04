@@ -1,9 +1,38 @@
 namespace Orleans.FSharp.EventSourcing
 
 /// <summary>
+/// Controls when state snapshots are written alongside the event log.
+/// Snapshots allow a future hybrid log-consistency provider to load the latest
+/// checkpoint and only replay events after it, avoiding full event-history replay
+/// on every grain activation.
+/// </summary>
+/// <remarks>
+/// With the built-in <c>LogStorageBasedLogConsistencyProvider</c>, all events are
+/// always replayed on activation — this type declares <em>intent</em> for providers
+/// that support hybrid snapshot+tail-event storage (e.g. a future Marten provider).
+/// Use <c>Never</c> to disable snapshots entirely (default).
+/// </remarks>
+/// <typeparam name="'State">The grain state type that will be snapshotted.</typeparam>
+[<NoEquality; NoComparison>]
+type SnapshotStrategy<'State> =
+    /// <summary>Never write snapshots. All events are replayed on every activation.</summary>
+    | Never
+    /// <summary>
+    /// Write a snapshot every <paramref name="everyN"/> confirmed events (based on grain Version).
+    /// Version is checked after each successful command; the snapshot fires when
+    /// <c>Version % everyN = 0</c>.
+    /// </summary>
+    | Every of everyN: int
+    /// <summary>
+    /// Write a snapshot whenever the predicate returns <c>true</c>.
+    /// The predicate receives the current confirmed version and the current state.
+    /// </summary>
+    | Condition of predicate: (int -> 'State -> bool)
+
+/// <summary>
 /// Defines the complete specification for an event-sourced F# grain.
 /// Captures the initial state, event application function, command handler,
-/// and optional log consistency provider configuration.
+/// log consistency provider configuration, and optional snapshot strategy.
 /// </summary>
 /// <typeparam name="'State">The type of the grain's state, rebuilt by folding events.</typeparam>
 /// <typeparam name="'Event">The type of events that modify state.</typeparam>
@@ -27,6 +56,12 @@ type EventSourcedGrainDefinition<'State, 'Event, 'Command> =
         /// When None, the default provider configured on the silo is used.
         /// </summary>
         ConsistencyProvider: string option
+        /// <summary>
+        /// Controls when state snapshots are written.
+        /// Defaults to <c>Never</c>. Requires a snapshot-capable log-consistency provider
+        /// (e.g. a future Marten hybrid provider) to have an effect at runtime.
+        /// </summary>
+        SnapshotStrategy: SnapshotStrategy<'State>
     }
 
 /// <summary>
@@ -78,6 +113,7 @@ module EventSourcedGrainDefinition =
 ///     apply (fun state event -> match event with Deposited a -> { state with Balance = state.Balance + a })
 ///     handle (fun state cmd -> match cmd with Credit a -> [ Deposited a ])
 ///     logConsistencyProvider "LogStorage"
+///     snapshot (Every 100)
 /// }
 /// </code>
 /// </example>
@@ -90,6 +126,7 @@ type EventSourcedGrainBuilder() =
             Apply = fun state _event -> state
             Handle = fun _state _command -> []
             ConsistencyProvider = None
+            SnapshotStrategy = Never
         }
 
     /// <summary>
@@ -149,6 +186,22 @@ type EventSourcedGrainBuilder() =
             ConsistencyProvider = Some name
         }
 
+    /// <summary>
+    /// Sets the snapshot strategy for the grain.
+    /// Controls when state is persisted as a checkpoint alongside the event log.
+    /// Requires a snapshot-capable log-consistency provider to have a runtime effect.
+    /// </summary>
+    /// <param name="definition">The current definition being built.</param>
+    /// <param name="strategy">The snapshot strategy to use.</param>
+    /// <returns>The updated definition with the snapshot strategy set.</returns>
+    [<CustomOperation("snapshot")>]
+    member _.Snapshot
+        (
+            definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>,
+            strategy: SnapshotStrategy<'State>
+        ) =
+        { definition with SnapshotStrategy = strategy }
+
     /// <summary>Returns the completed event-sourced grain definition. Validates that defaultState was set.</summary>
     /// <exception cref="System.InvalidOperationException">Thrown when defaultState was not set for reference types.</exception>
     member _.Run(definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>) =
@@ -165,6 +218,6 @@ type EventSourcedGrainBuilder() =
 module EventSourcedGrainBuilderInstance =
     /// <summary>
     /// Computation expression for defining event-sourced grain behavior.
-    /// Supports custom operations: defaultState, apply, handle, logConsistencyProvider.
+    /// Supports custom operations: defaultState, apply, handle, logConsistencyProvider, snapshot.
     /// </summary>
     let eventSourcedGrain = EventSourcedGrainBuilder()

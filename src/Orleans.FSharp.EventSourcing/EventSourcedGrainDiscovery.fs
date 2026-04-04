@@ -46,6 +46,9 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
     /// <summary>Internal bridge for protected State property, callable from closures.</summary>
     member internal this.InternalState = this.State
 
+    /// <summary>Internal bridge for protected Version property, callable from closures.</summary>
+    member internal this.InternalVersion = this.Version
+
     /// <summary>Internal bridge for protected RaiseEvent method, callable from closures.</summary>
     member internal this.InternalRaiseEvent(event: 'Event) = this.RaiseEvent(event)
 
@@ -85,6 +88,21 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
 
             if not events.IsEmpty then
                 do! confirmEvents ()
+
+                // Evaluate snapshot strategy after confirming events.
+                // With built-in log-consistency providers (e.g. LogStorageBasedLogConsistencyProvider)
+                // there is no snapshot storage mechanism, so we log the intent for diagnostic purposes.
+                // A future custom provider (e.g. Marten hybrid) can honour this by reading
+                // EventStore.shouldSnapshot and writing the state checkpoint.
+                if EventStore.shouldSnapshot definition this.InternalVersion this.InternalState then
+                    Log.logDebug
+                        logger
+                        "FSharpEventSourcedGrain {GrainType} snapshot strategy triggered at version {Version} for {GrainId}"
+                        [|
+                            box (grainId.Type.ToString())
+                            box this.InternalVersion
+                            box (grainId.ToString())
+                        |]
 
             Log.logDebug
                 logger

@@ -369,3 +369,133 @@ let ``processCommand then replayEvents produces state consistent with manual fol
     let resultViaReplay = EventStore.replayEvents bankAccountDef state events
     let resultViaFold = events |> List.fold (fun s e -> EventStore.applyEvent bankAccountDef s e) state
     resultViaReplay = resultViaFold
+
+// ---------------------------------------------------------------------------
+// SnapshotStrategy type — construction and CE keyword
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``eventSourcedGrain CE defaults to SnapshotStrategy.Never`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+        }
+
+    match def.SnapshotStrategy with
+    | Never -> ()
+    | other -> failwithf "Expected Never, got %A" other
+
+[<Fact>]
+let ``eventSourcedGrain CE sets snapshot Every`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            snapshot (Every 100)
+        }
+
+    match def.SnapshotStrategy with
+    | Every n -> test <@ n = 100 @>
+    | other -> failwithf "Expected Every 100, got %A" other
+
+[<Fact>]
+let ``eventSourcedGrain CE sets snapshot Condition`` () =
+    let predicate = fun version _state -> version % 50 = 0
+
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            snapshot (Condition predicate)
+        }
+
+    match def.SnapshotStrategy with
+    | Condition f ->
+        test <@ f 50 { Balance = 0m } = true @>
+        test <@ f 51 { Balance = 0m } = false @>
+    | other -> failwithf "Expected Condition, got %A" other
+
+[<Fact>]
+let ``eventSourcedGrain CE allows snapshot Never explicitly`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            snapshot Never
+        }
+
+    match def.SnapshotStrategy with
+    | Never -> ()
+    | other -> failwithf "Expected Never, got %A" other
+
+// ---------------------------------------------------------------------------
+// EventStore.shouldSnapshot — unit tests for each strategy branch
+// ---------------------------------------------------------------------------
+
+let private defNever =
+    eventSourcedGrain {
+        defaultState { Balance = 0m }
+        apply applyEvent
+        handle handleCommand
+        snapshot Never
+    }
+
+let private defEvery5 =
+    eventSourcedGrain {
+        defaultState { Balance = 0m }
+        apply applyEvent
+        handle handleCommand
+        snapshot (Every 5)
+    }
+
+let private defCondition =
+    eventSourcedGrain {
+        defaultState { Balance = 0m }
+        apply applyEvent
+        handle handleCommand
+        snapshot (Condition(fun version state -> version > 0 && state.Balance > 1000m))
+    }
+
+[<Fact>]
+let ``shouldSnapshot Never always returns false`` () =
+    test <@ EventStore.shouldSnapshot defNever 0 { Balance = 0m } = false @>
+    test <@ EventStore.shouldSnapshot defNever 5 { Balance = 100m } = false @>
+    test <@ EventStore.shouldSnapshot defNever 100 { Balance = 9999m } = false @>
+
+[<Fact>]
+let ``shouldSnapshot Every 5 returns true at multiples of 5`` () =
+    test <@ EventStore.shouldSnapshot defEvery5 5 { Balance = 0m } = true @>
+    test <@ EventStore.shouldSnapshot defEvery5 10 { Balance = 0m } = true @>
+    test <@ EventStore.shouldSnapshot defEvery5 100 { Balance = 0m } = true @>
+
+[<Fact>]
+let ``shouldSnapshot Every 5 returns false at non-multiples`` () =
+    test <@ EventStore.shouldSnapshot defEvery5 1 { Balance = 0m } = false @>
+    test <@ EventStore.shouldSnapshot defEvery5 3 { Balance = 0m } = false @>
+    test <@ EventStore.shouldSnapshot defEvery5 7 { Balance = 0m } = false @>
+
+[<Fact>]
+let ``shouldSnapshot Every N returns false at version 0`` () =
+    // Version 0 means no events confirmed yet — should not snapshot
+    test <@ EventStore.shouldSnapshot defEvery5 0 { Balance = 0m } = false @>
+
+[<Fact>]
+let ``shouldSnapshot Condition fires based on predicate`` () =
+    test <@ EventStore.shouldSnapshot defCondition 1 { Balance = 1001m } = true @>
+    test <@ EventStore.shouldSnapshot defCondition 1 { Balance = 500m } = false @>
+    test <@ EventStore.shouldSnapshot defCondition 0 { Balance = 9999m } = false @>
+
+[<Property>]
+let ``shouldSnapshot Never is always false regardless of inputs`` (version: int) (balance: decimal) =
+    not (EventStore.shouldSnapshot defNever (abs version) { Balance = abs balance })
+
+[<Property>]
+let ``shouldSnapshot Every N is true iff version > 0 and version mod N = 0`` (version: int) =
+    let v = abs version
+    let expected = v > 0 && v % 5 = 0
+    EventStore.shouldSnapshot defEvery5 v { Balance = 0m } = expected

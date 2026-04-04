@@ -81,3 +81,28 @@ module EventStore =
         (events: 'Event list)
         : 'State =
         events |> List.fold definition.Apply state
+
+    /// <summary>
+    /// Evaluates the definition's snapshot strategy to determine whether a snapshot
+    /// checkpoint should be written at the given version and state.
+    /// </summary>
+    /// <remarks>
+    /// This helper is intended for custom log-consistency providers (or grain
+    /// implementations) that support persisting a state snapshot alongside the event
+    /// log. With the built-in <c>LogStorageBasedLogConsistencyProvider</c> there is no
+    /// snapshot mechanism, so the result of this function has no runtime effect unless
+    /// wired to a provider that can store snapshots.
+    /// </remarks>
+    /// <param name="definition">The event-sourced grain definition.</param>
+    /// <param name="version">The current confirmed event version.</param>
+    /// <param name="state">The current confirmed grain state.</param>
+    /// <returns><c>true</c> if a snapshot should be written at this point.</returns>
+    let shouldSnapshot
+        (definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>)
+        (version: int)
+        (state: 'State)
+        : bool =
+        match definition.SnapshotStrategy with
+        | Never -> false
+        | Every n -> n > 0 && version > 0 && version % n = 0
+        | Condition predicate -> predicate version state
