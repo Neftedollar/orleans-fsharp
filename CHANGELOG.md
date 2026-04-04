@@ -40,11 +40,26 @@ let! ns, _ = handler GrainContext.empty initialState myCmd
 `getCancellableContextHandler` as the universal dispatch fallback, with a complete
 score-tracker FsCheck property test example.
 
+### FsCheck property test expansion
+
+Generative property tests added to cover invariants across multiple modules:
+
+- **StateMigration** (6 properties): `applyMigrations` with empty list, idempotency, `validate` for
+  contiguous chains of any length, determinism, gap detection for any non-adjacent pair, identity
+  migration preserves content
+- **SchemaEvolution** (9 properties): JSON roundtrips for all V2 type variants, serialization
+  determinism, backward-compatible case deserialization across versions
+- **GrainRef** (5 properties): key roundtrip for string and int64, `invoke` dispatch for any key
+  and payload, `unwrap` returns responsive grain
+- **InputValidation** (7 properties): exhaustive whitespace rejection for `persist`, `clusterId`,
+  `addMemoryStorage`; acceptance of any non-whitespace name
+
 ### Test coverage
 
 - 12 new unit tests for `Behavior.run` / `Behavior.runWithContext` (including 2 FsCheck properties)
 - 8 integration tests for the Behavior pattern grain (`TestGrains14`, `WorkflowGrain`)
-- Total: **1440 tests** (1194 unit + 246 integration)
+- 27 new FsCheck property tests across StateMigration, SchemaEvolution, GrainRef, InputValidation
+- Total: **~1500 tests** (unit + integration)
 
 ---
 
