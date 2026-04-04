@@ -5,6 +5,8 @@ open System.Reflection
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // --- GrainDefinition.TimerHandlers field tests ---
@@ -149,3 +151,31 @@ let ``onTimer with zero dueTime stores correctly`` () =
     let (storedDueTime, storedPeriod, _handler) = def.TimerHandlers.["immediate"]
     test <@ storedDueTime = TimeSpan.Zero @>
     test <@ storedPeriod = TimeSpan.FromMinutes 1. @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``onTimer stores correct name for any non-empty timer name`` (name: NonEmptyString) =
+    let due = TimeSpan.FromSeconds 1.
+    let period = TimeSpan.FromSeconds 1.
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            onTimer name.Get due period (fun state -> task { return state })
+        }
+    def.TimerHandlers |> Map.containsKey name.Get
+
+[<Property>]
+let ``onTimer handler increments state correctly for any initial state`` (initial: int) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            onTimer "inc" TimeSpan.Zero (TimeSpan.FromSeconds 1.) (fun state ->
+                task { return state + 1 })
+        }
+    let (_, _, handler) = def.TimerHandlers.["inc"]
+    handler initial |> _.GetAwaiter().GetResult() = initial + 1
