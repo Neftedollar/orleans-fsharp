@@ -29,6 +29,28 @@
 |---|---|---|
 | `grain { }` | `GrainBuilder` | Define grain behavior declaratively |
 
+#### `grain { }` — Key CE Keywords
+
+| Keyword | Handler Signature | Description |
+|---|---|---|
+| `defaultState` | `'State` | Initial state value |
+| `handle` | `'State -> 'Msg -> Task<'State * obj>` | Register handler with manual `box` |
+| `handleState` | `'State -> 'Msg -> Task<'State>` | Handler returning only state (no result value) |
+| `handleTyped` | `'State -> 'Msg -> Task<'State * 'R>` | Handler with typed result — no `box` needed |
+| `handleWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * obj>` | Handler with DI/grain-to-grain access |
+| `handleStateWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State>` | Context + state-only result |
+| `handleTypedWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * 'R>` | Context + typed result |
+| `handleCancellable` | `CancellationToken -> 'State -> 'Msg -> Task<'State * obj>` | Handler with cancellation support |
+| `handleTypedCancellable` | `CancellationToken -> 'State -> 'Msg -> Task<'State * 'R>` | Typed result + cancellation |
+| `persist` | `string` | Name of the storage provider for state |
+| `onActivate` | `GrainContext -> Task<unit>` | Runs on grain activation |
+| `onDeactivate` | `GrainContext -> DeactivationReason -> Task<unit>` | Runs on grain deactivation |
+| `onReminder` | `string -> TickStatus -> Task<unit>` | Named reminder handler |
+| `reentrant` | — | Allow concurrent message processing |
+| `statelessWorker` | — | Allow multiple activations per silo |
+
+See [Grain Definition guide](grain-definition.md) for the full keyword list.
+
 ### Modules
 
 #### `GrainContext`
@@ -468,3 +490,55 @@ services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
 |---|---|---|
 | `create` | `unit -> CapturingLoggerFactory` | Create capturing factory |
 | `captureLogs` | `CapturingLoggerFactory -> CapturedLogEntry list` | Get all entries |
+
+#### `GrainMock` — Universal Pattern Support
+
+| Function | Signature | Description |
+|---|---|---|
+| `withFSharpGrain<'S,'M>` | `GrainDefinition<'S,'M> -> string -> MockGrainFactory -> MockGrainFactory` | Register F# grain definition as mock |
+| `createMockContext` | `GrainDefinition<'S,'M> -> 'S -> MockGrainContext` | Create a mock grain context |
+
+---
+
+## Orleans.FSharp.Analyzers
+
+Compile-time F# analyzer package — install in your grain projects to catch `async {}` misuse at build time.
+
+```bash
+dotnet add package Orleans.FSharp.Analyzers
+```
+
+### Diagnostics
+
+| Code | Severity | Message | Description |
+|---|---|---|---|
+| `OF0001` | Warning | Use `task { }` instead of `async { }` | Detects `async { }` computation expressions in Orleans grain code |
+
+### Types
+
+| Type | Description |
+|---|---|
+| `AllowAsyncAttribute` | Suppresses OF0001 on the annotated binding. Apply when `async { }` is genuinely required (e.g., interop with `Async<'T>` APIs). |
+
+### Usage
+
+```fsharp
+// Triggers OF0001 — use task { } in grain handlers
+let handler state cmd =
+    async { return state, box 0 }  // ⚠️ OF0001
+
+// Suppress when async is genuinely needed
+open Orleans.FSharp.Analyzers.AsyncUsageAnalyzer
+
+[<AllowAsync>]
+let legacyAdapter (url: string) : Async<string> =
+    async { return! fetchLegacy url }  // ✅ suppressed
+```
+
+See [Analyzers guide](analyzers.md) for full documentation.
+
+### Internal API (test use only)
+
+| Module | Function | Signature | Description |
+|---|---|---|---|
+| `AstWalker` | `collectAsyncRanges` | `ParsedInput -> range list` | Walk AST and return all unsuppressed `async { }` ranges |
