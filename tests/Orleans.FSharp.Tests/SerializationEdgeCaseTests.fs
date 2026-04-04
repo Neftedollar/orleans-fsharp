@@ -4,6 +4,8 @@ open System
 open System.Text.Json
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // ===========================================================================
@@ -402,3 +404,27 @@ let ``DateTime MaxValue roundtrips in DU`` () =
     let value = WithDateTime DateTime.MaxValue
     let result = roundTrip value
     test <@ result = value @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``IntCase roundtrips for any int via FSharpJson`` (n: int) =
+    let value = IntCase n
+    roundTrip value = value
+
+[<Property>]
+let ``Label roundtrips for any non-null string via FSharpJson`` (s: NonNull<string>) =
+    let value = Label s.Get
+    roundTrip value = value
+
+[<Property>]
+let ``Wrapped roundtrips for any int via FSharpJson`` (n: int) =
+    let value = Wrapped n
+    roundTrip<SingleDataDU> value = value
+
+[<Property>]
+let ``AllOptionalRecord roundtrips for any int option in field A`` (a: int option) =
+    let value = { A = a; B = None; C = None; D = None }
+    roundTrip value = value

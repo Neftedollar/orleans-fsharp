@@ -4,6 +4,8 @@ open System.Text.Json
 open System.Text.Json.Serialization
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // ---------------------------------------------------------------------------
@@ -119,3 +121,34 @@ let ``Serialization module exists in the assembly`` () =
         |> Array.tryFind (fun t -> t.Name = "Serialization" && t.IsAbstract && t.IsSealed)
 
     test <@ serializationModule.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``withConverters roundtrips any int option value correctly`` (value: int option) =
+    let options = Serialization.withConverters []
+    let json = JsonSerializer.Serialize(value, options)
+    let result = JsonSerializer.Deserialize<int option>(json, options)
+    result = value
+
+[<Property>]
+let ``withConverters roundtrips any string option value correctly`` (value: NonNull<string> option) =
+    let mapped = value |> Option.map (fun v -> v.Get)
+    let options = Serialization.withConverters []
+    let json = JsonSerializer.Serialize(mapped, options)
+    let result = JsonSerializer.Deserialize<string option>(json, options)
+    result = mapped
+
+[<Property>]
+let ``addFSharpConverters is safe to call multiple times on same options instance`` (n: PositiveInt) =
+    let count = min n.Get 5
+    let options = JsonSerializerOptions()
+    let countBefore = options.Converters.Count
+
+    for _ in 1 .. count do
+        Serialization.addFSharpConverters options |> ignore
+
+    // idempotent — count should not grow beyond the first add
+    options.Converters.Count = countBefore + 1

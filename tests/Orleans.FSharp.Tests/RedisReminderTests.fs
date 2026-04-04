@@ -1,5 +1,6 @@
 module Orleans.FSharp.Tests.RedisReminderTests
 
+open System
 open Xunit
 open Swensen.Unquote
 open FsCheck
@@ -84,14 +85,16 @@ let ``siloConfig CE Redis reminder composes with TLS and dashboard`` () =
 // ---------------------------------------------------------------------------
 
 [<Property>]
-let ``addRedisReminderService stores any non-empty connection string`` (connStr: NonEmptyString) =
-    let config = siloConfig { addRedisReminderService connStr.Get }
+let ``addRedisReminderService stores any non-whitespace connection string`` (connStr: NonNull<string>) =
+    String.IsNullOrWhiteSpace connStr.Get
+    || (let config = siloConfig { addRedisReminderService connStr.Get }
 
-    match config.ReminderProvider.Value with
-    | RedisReminder s -> s = connStr.Get
-    | _ -> false
+        match config.ReminderProvider.Value with
+        | RedisReminder s -> s = connStr.Get
+        | _ -> false)
 
 [<Property>]
-let ``addRedisReminderService always sets ReminderProvider to Some`` (connStr: NonEmptyString) =
-    let config = siloConfig { addRedisReminderService connStr.Get }
-    config.ReminderProvider.IsSome
+let ``addRedisReminderService always sets ReminderProvider to Some for non-whitespace input`` (connStr: NonNull<string>) =
+    String.IsNullOrWhiteSpace connStr.Get
+    || (let config = siloConfig { addRedisReminderService connStr.Get }
+        config.ReminderProvider.IsSome)

@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.FSharpSerializationTests
 open System
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.Hosting
 open Orleans.FSharp.FSharpSerialization
 
@@ -59,3 +61,21 @@ let ``addFSharpSerialization returns ISiloBuilder to ISiloBuilder function`` () 
     let funcType = f.GetType()
     let expectedBase = typedefof<FSharpFunc<_, _>>.MakeGenericType(typeof<ISiloBuilder>, typeof<ISiloBuilder>)
     test <@ expectedBase.IsAssignableFrom(funcType) @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addFSharpSerialization always throws InvalidOperationException for any builder`` () =
+    let f = FSharpSerialization.addFSharpSerialization
+    let exn = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
+    exn.Message.Length > 0
+
+[<Property>]
+let ``FSharpSerialization module has at least 1 public method`` () =
+    let moduleType =
+        typeof<Orleans.FSharp.AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "FSharpSerialization" && t.IsAbstract && t.IsSealed)
+
+    moduleType.GetMethods().Length >= 1

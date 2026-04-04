@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.Runtime
 open Orleans.FSharp
 
@@ -65,3 +67,36 @@ let ``GrainDefinition with throwing reminder handler has handler registered`` ()
 
     test <@ def.ReminderHandlers |> Map.containsKey "ThrowingReminder" @>
     test <@ def.ReminderHandlers |> Map.count = 1 @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``reminder handler returning state + delta works for any initial state and delta`` (initial: int) (delta: int) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            onReminder "AddDelta" (fun state _n _status -> task { return state + delta })
+        }
+
+    let handler = def.ReminderHandlers.["AddDelta"]
+    let result = handler initial "AddDelta" (TickStatus()) |> fun t -> t.Result
+    result = initial + delta
+
+[<Property>]
+let ``multiple reminder handlers registered with distinct names all survive`` (n: PositiveInt) =
+    let count = min n.Get 5
+    let names = List.init count (fun i -> $"Reminder{i}")
+
+    let mutable def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+        }
+
+    for name in names do
+        def <- { def with ReminderHandlers = def.ReminderHandlers |> Map.add name (fun s _n _t -> task { return s }) }
+
+    def.ReminderHandlers |> Map.count = count

@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.SerializationModeTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Runtime
 
 // ---------------------------------------------------------------------------
@@ -216,3 +218,33 @@ let ``Clean mode record with None roundtrips through FSharpJson serializer`` () 
     let json = System.Text.Json.JsonSerializer.Serialize(original, options)
     let deserialized = System.Text.Json.JsonSerializer.Deserialize<CleanRecord>(json, options)
     test <@ deserialized = original @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``Clean mode DU SetLevel roundtrips for any int level`` (level: int) =
+    let options = Orleans.FSharp.FSharpJson.serializerOptions
+    let original = SetLevel level
+    let json = System.Text.Json.JsonSerializer.Serialize(original, options)
+    let result = System.Text.Json.JsonSerializer.Deserialize<CleanCommand>(json, options)
+    result = original
+
+[<Property>]
+let ``CleanRecord roundtrips for any int value option`` (value: int option) =
+    let options = Orleans.FSharp.FSharpJson.serializerOptions
+    let original = { Name = "test"; Value = value; Tags = [] }
+    let json = System.Text.Json.JsonSerializer.Serialize(original, options)
+    let result = System.Text.Json.JsonSerializer.Deserialize<CleanRecord>(json, options)
+    result = original
+
+[<Property>]
+let ``useJsonFallbackSerialization is idempotent in silo config`` () =
+    let config =
+        siloConfig {
+            useJsonFallbackSerialization
+            useJsonFallbackSerialization
+        }
+
+    config.UseJsonFallbackSerialization = true
