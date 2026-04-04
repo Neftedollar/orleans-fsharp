@@ -88,8 +88,9 @@ module internal AstWalker =
                 walkExpr suppress e1
                 walkExpr suppress e2
 
-            // LetOrUse: 8 inline fields in F# 10 compiler AST.
-            // Fields: isRecursive, isUse, isFromSource, isBang, bindings, body, range, trivia
+            // LetOrUse (covers both let/use and let!/use! — isBang discriminates).
+            // In FCS 43.10+, LetOrUseBang was merged into LetOrUse; the isBang field (pos 3)
+            // is true for CE let!/use! bindings, so nested async { } in let! RHS is covered here.
             | SynExpr.LetOrUse(_, _, _, _, bindings, body, _, _) ->
                 for b in bindings do walkBinding b
                 walkExpr suppress body
@@ -267,6 +268,11 @@ let private HelpUri =
 /// To suppress this warning for a specific binding, apply <c>[&lt;AllowAsync&gt;]</c>.
 /// </para>
 /// </summary>
+// AllowAsync is required here: FSharp.Analyzers.SDK mandates Async<Message list> as the
+// return type of CliAnalyzer functions. This is exactly the SDK-interop scenario AllowAsync
+// was designed for — the async { } block cannot be replaced with task { } without breaking
+// the SDK contract.
+[<AllowAsync>]
 [<CliAnalyzer(AnalyzerName,
               "Warns when async { } is used where task { } should be preferred.",
               HelpUri)>]

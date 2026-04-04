@@ -8,6 +8,7 @@
     <Compile Include="ClusterFixture.fs" />
     <Compile Include="UniversalGrainPatternTests.fs" />
     <Compile Include="HandleTypedIntegrationTests.fs" />
+    <Compile Include="HandleStateIntegrationTests.fs" />
     <Compile Include="GrainLifecycleTests.fs" />
     <Compile Include="PersistenceRoundtripTests.fs" />
     <Compile Include="SiloConfigTests.fs" />

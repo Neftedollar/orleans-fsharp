@@ -105,7 +105,20 @@ public interface IUniversalGrainHandler
     /// <see cref="GetDefaultState"/> has been applied).
     /// </param>
     /// <param name="message">The boxed command or query to handle.</param>
-    Task<GrainDispatchResult> Handle(object? currentState, object message);
+    /// <param name="serviceProvider">
+    /// The silo-scoped DI service provider for the calling grain instance.
+    /// Passed to <c>handleWithContext</c> / <c>handleStateWithContext</c> / <c>handleTypedWithContext</c>
+    /// handlers so they can resolve DI services inside grain logic.
+    /// </param>
+    /// <param name="grainFactory">
+    /// The grain factory for the calling grain instance. Passed to context-aware handlers
+    /// so they can make grain-to-grain calls.
+    /// </param>
+    Task<GrainDispatchResult> Handle(
+        object? currentState,
+        object message,
+        IServiceProvider serviceProvider,
+        IGrainFactory grainFactory);
 }
 
 /// <summary>
@@ -138,7 +151,7 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
     public async Task<object> HandleMessage(object message)
     {
         _currentState ??= _handler.GetDefaultState(message.GetType());
-        var dispatch = await _handler.Handle(_currentState, message);
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
     }
@@ -172,7 +185,7 @@ public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
     public async Task<object> HandleMessage(object message)
     {
         _currentState ??= _handler.GetDefaultState(message.GetType());
-        var dispatch = await _handler.Handle(_currentState, message);
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
     }
@@ -206,7 +219,7 @@ public sealed class FSharpGrainIntImpl : Grain, IFSharpGrainWithIntKey
     public async Task<object> HandleMessage(object message)
     {
         _currentState ??= _handler.GetDefaultState(message.GetType());
-        var dispatch = await _handler.Handle(_currentState, message);
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
     }

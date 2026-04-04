@@ -153,6 +153,38 @@ module TestGrains3 =
                 })
         }
 
+/// <summary>State for the handleState score accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type ScoreState =
+    { [<Orleans.Id(0u)>] Score: int
+      [<Orleans.Id(1u)>] Moves: int }
+
+/// <summary>Commands for the handleState score accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type ScoreCommand =
+    | [<Orleans.Id(0u)>] AddPoints of int
+    | [<Orleans.Id(1u)>] SubtractPoints of int
+    | [<Orleans.Id(2u)>] ResetScore
+
+module TestGrains4 =
+    /// <summary>
+    /// Score accumulator defined with <c>handleState</c>: every command returns only the
+    /// updated state — no result value, no manual <c>box</c>.
+    /// Used to verify that <c>FSharpGrain.send</c> returns the updated state correctly
+    /// when using the <c>handleState</c> CE variant.
+    /// </summary>
+    let scoreGrain =
+        grain {
+            defaultState { Score = 0; Moves = 0 }
+            handleState (fun state (cmd: ScoreCommand) ->
+                task {
+                    match cmd with
+                    | AddPoints n      -> return { Score = state.Score + n; Moves = state.Moves + 1 }
+                    | SubtractPoints n -> return { Score = state.Score - n; Moves = state.Moves + 1 }
+                    | ResetScore       -> return { Score = 0; Moves = state.Moves + 1 }
+                })
+        }
+
 /// <summary>
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
 /// for grain discovery by Orleans.
@@ -183,6 +215,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<QueryState, QueryCommand>(TestGrains2.queryGrain) |> ignore
             // Register the calculator grain for handleTyped + ask end-to-end tests
             siloBuilder.Services.AddFSharpGrain<CalcState, CalcCommand>(TestGrains3.calcGrain) |> ignore
+            // Register the score grain for handleState end-to-end tests
+            siloBuilder.Services.AddFSharpGrain<ScoreState, ScoreCommand>(TestGrains4.scoreGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

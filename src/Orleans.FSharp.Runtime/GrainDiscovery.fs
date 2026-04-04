@@ -357,7 +357,8 @@ module SiloBuilderExtensions =
     /// </summary>
     type UniversalGrainHandlerRegistry() =
         // Keyed by message type full name (Type.FullName of the 'Message type parameter).
-        let mutable handlers: Map<string, obj option -> obj -> Task<GrainDispatchResult>> =
+        // Handler signature includes IServiceProvider and IGrainFactory for context-aware dispatch.
+        let mutable handlers: Map<string, obj option -> obj -> IServiceProvider -> IGrainFactory -> Task<GrainDispatchResult>> =
             Map.empty
 
         let mutable defaults: Map<string, obj> = Map.empty
@@ -367,10 +368,18 @@ module SiloBuilderExtensions =
         /// Not thread-safe — must be called only during silo startup (single-threaded configuration phase).
         /// </summary>
         /// <remarks>
+        /// Uses the cancellable context-aware handler chain (<c>getCancellableContextHandler</c>),
+        /// which falls back through all handler variants in order:
+        /// CancellableContextHandler → CancellableHandler → ContextHandler → Handler.
+        /// This ensures that grains defined with <c>handleWithContext</c>, <c>handleState</c>,
+        /// <c>handleTyped</c>, or any other CE variant work correctly, with the grain's
+        /// <c>IServiceProvider</c> and <c>IGrainFactory</c> forwarded to context-aware handlers.
+        /// <para>
         /// F# discriminated union cases with fields compile to nested types that inherit from the DU
         /// base type (e.g. <c>StringMsg+Append</c> inherits from <c>StringMsg</c>). The dispatch key
         /// is registered for both the base DU type AND all its directly-nested subtypes so that
         /// field-carrying DU cases are routed to the correct handler.
+        /// </para>
         /// </remarks>
         member _.Register<'State, 'Message>(definition: GrainDefinition<'State, 'Message>) : unit =
             let msgBaseKey = typeof<'Message>.FullName
@@ -384,9 +393,16 @@ module SiloBuilderExtensions =
 Each message type can only be registered with one FSharpGrain definition. \
 Use distinct command/message types for each grain."
 
-            let simpleHandler = GrainDefinition.getHandler definition
+            // Use the full fallback chain so that handleWithContext / handleState / handleTyped
+            // / handleCancellable and all their variants work with the universal pattern.
+            let contextHandler = GrainDefinition.getCancellableContextHandler definition
 
-            let h (state: obj option) (msg: obj) : Task<GrainDispatchResult> =
+            let h
+                (state: obj option)
+                (msg: obj)
+                (serviceProvider: IServiceProvider)
+                (grainFactory: IGrainFactory)
+                : Task<GrainDispatchResult> =
                 task {
                     let typedState =
                         match state with
@@ -397,8 +413,21 @@ Use distinct command/message types for each grain."
                                 Unchecked.defaultof<'State>
                         | Some s -> s :?> 'State
 
+                    // Build a GrainContext so context-aware handlers (handleWithContext etc.)
+                    // can access DI services and make grain-to-grain calls.
+                    let ctx: GrainContext =
+                        {
+                            GrainFactory    = grainFactory
+                            ServiceProvider = serviceProvider
+                            States          = Map.empty
+                            DeactivateOnIdle   = None
+                            DelayDeactivation  = None
+                            GrainId            = None
+                            PrimaryKey         = None
+                        }
+
                     let typedMsg = msg :?> 'Message
-                    let! (newState, result) = simpleHandler typedState typedMsg
+                    let! (newState, result) = contextHandler ctx typedState typedMsg CancellationToken.None
                     return GrainDispatchResult(box newState, result)
                 }
 
@@ -430,7 +459,7 @@ Use distinct command/message types for each grain."
                 defaults |> Map.tryFind messageType.FullName |> Option.defaultValue null
 
             /// <inheritdoc/>
-            member _.Handle(currentState: obj, message: obj) : Task<GrainDispatchResult> =
+            member _.Handle(currentState: obj, message: obj, serviceProvider: IServiceProvider, grainFactory: IGrainFactory) : Task<GrainDispatchResult> =
                 let key = message.GetType().FullName
 
                 match handlers |> Map.tryFind key with
@@ -443,7 +472,7 @@ Use distinct command/message types for each grain."
                     )
                 | Some h ->
                     let state = if isNull currentState then None else Some currentState
-                    h state message
+                    h state message serviceProvider grainFactory
 
     type IServiceCollection with
 

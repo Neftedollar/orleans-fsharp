@@ -175,6 +175,49 @@ let f () =
     test <@ asyncCount src = 2 @>
 
 // ──────────────────────────────────────────────────────────────────────────────
+// CE-specific patterns (let!, use!, and!)
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``detects async nested inside let! binding`` () =
+    let src = """
+module M
+let f () = async {
+    let! x = async { return 1 }
+    return x
+}
+"""
+    // The outer async { } + the nested async { } inside let! = 2
+    test <@ asyncCount src = 2 @>
+
+[<Fact>]
+let ``detects async nested as rhs of let! in outer async`` () =
+    let src = """
+module M
+let f () = async {
+    let! a = async { return 1 }
+    let! b = async { return 2 }
+    return a + b
+}
+"""
+    test <@ asyncCount src = 3 @>
+
+[<Fact>]
+let ``AllowAsync suppresses outer async but inner async in let! is still detected`` () =
+    // AllowAsync only applies to the binding it annotates — not to inner async blocks
+    let src = """
+module M
+open Orleans.FSharp.Analyzers.AsyncUsageAnalyzer
+[<AllowAsync>]
+let f () = async {
+    let! x = async { return 1 }
+    return x
+}
+"""
+    // The outer async is suppressed, but the nested one inside let! is not
+    test <@ asyncCount src = 1 @>
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Nested modules / types
 // ──────────────────────────────────────────────────────────────────────────────
 

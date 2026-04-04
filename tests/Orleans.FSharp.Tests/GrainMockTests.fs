@@ -388,7 +388,7 @@ let ``withFSharpGrainInt creates a working int-keyed mock`` () =
         let handle = FSharpGrain.refInt<MockIntState, MockIntCmd> factory 42L
         let! s1 = handle |> FSharpGrain.sendInt (AddAmount 10L)
         let! s2 = handle |> FSharpGrain.sendInt (AddAmount 5L)
-        let! _ = s1.Total |> ignore |> Task.FromResult
+        test <@ s1.Total = 10L @>
         test <@ s2.Total = 15L @>
     }
 

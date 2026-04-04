@@ -7,6 +7,7 @@ module Orleans.FSharp.Tests.AddFSharpGrainTests
 /// and idempotency guarantees.
 /// </summary>
 
+open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
@@ -204,7 +205,7 @@ let ``AddFSharpGrain wires handler so registry can dispatch Widget messages`` ()
         let registry = handlerSd.ImplementationInstance :?> UniversalGrainHandlerRegistry
         let handler = registry :> IUniversalGrainHandler
 
-        let! result = handler.Handle(null, box Tick)
+        let! result = handler.Handle(null, box Tick, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
         let state = result.NewState :?> WidgetState
         test <@ state.Count = 1 @>
     }
@@ -222,8 +223,8 @@ let ``AddFSharpGrain wires multiple handlers on same registry`` () =
         let registry = handlerSd.ImplementationInstance :?> UniversalGrainHandlerRegistry
         let handler = registry :> IUniversalGrainHandler
 
-        let! widgetResult = handler.Handle(null, box Tick)
-        let! gadgetResult = handler.Handle(null, box Activate)
+        let! widgetResult = handler.Handle(null, box Tick, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
+        let! gadgetResult = handler.Handle(null, box Activate, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
 
         test <@ (widgetResult.NewState :?> WidgetState).Count = 1 @>
         test <@ (gadgetResult.NewState :?> GadgetState).Active = true @>
@@ -239,7 +240,7 @@ let ``AddFSharpGrain SetName command works end-to-end through registry`` () =
             services |> Seq.find (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
 
         let handler = handlerSd.ImplementationInstance :?> UniversalGrainHandlerRegistry :> IUniversalGrainHandler
-        let! result = handler.Handle(null, box (SetName "Orleans"))
+        let! result = handler.Handle(null, box (SetName "Orleans"), Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>)
         let state = result.NewState :?> WidgetState
         test <@ state.Name = "Orleans" @>
     }

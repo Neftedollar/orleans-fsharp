@@ -367,7 +367,7 @@ let ``grain CE: defaultState is always Some for well-formed definitions`` (initi
 
 [<Property>]
 let ``grain CE: persist name is preserved exactly`` (name: string) =
-    let safeName = if System.String.IsNullOrEmpty name then "Default" else name
+    let safeName = if System.String.IsNullOrWhiteSpace name then "Default" else name
     let def =
         grain {
             defaultState 0
