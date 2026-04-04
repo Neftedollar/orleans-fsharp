@@ -243,6 +243,104 @@ type GrainKeyIntegrationTests(fixture: ClusterFixture) =
         }
 
 /// <summary>
+/// Integration tests verifying that <c>GrainContext.primaryKeyGuid</c> returns the
+/// correct value when called from inside a GUID-keyed universal grain handler
+/// (<c>FSharpGrain.refGuid</c> / <c>FSharpGrainGuidImpl</c>).
+///
+/// Before the interface-aware key extraction fix, the primary key type for GUID-keyed
+/// grains could be misclassified and <c>primaryKeyGuid</c> would throw.
+/// </summary>
+[<Collection("ClusterCollection")>]
+type GrainGuidKeyIntegrationTests(fixture: ClusterFixture) =
+
+    [<Fact>]
+    member _.``primaryKeyGuid inside universal grain handler returns the grain guid key`` () =
+        task {
+            let guidKey = System.Guid.NewGuid()
+            let grain =
+                FSharpGrain.refGuid<GrainKeyState, GrainGuidKeyCommand> fixture.GrainFactory guidKey
+
+            let! returnedKey =
+                FSharpGrain.askGuid<GrainKeyState, GrainGuidKeyCommand, System.Guid> GetOwnPrimaryKeyGuid grain
+
+            test <@ returnedKey = guidKey @>
+        }
+
+    [<Fact>]
+    member _.``two grains with different guid keys report different primaryKeyGuid values`` () =
+        task {
+            let guid1 = System.Guid.NewGuid()
+            let guid2 = System.Guid.NewGuid()
+            let g1 = FSharpGrain.refGuid<GrainKeyState, GrainGuidKeyCommand> fixture.GrainFactory guid1
+            let g2 = FSharpGrain.refGuid<GrainKeyState, GrainGuidKeyCommand> fixture.GrainFactory guid2
+
+            let! k1 =
+                FSharpGrain.askGuid<GrainKeyState, GrainGuidKeyCommand, System.Guid> GetOwnPrimaryKeyGuid g1
+
+            let! k2 =
+                FSharpGrain.askGuid<GrainKeyState, GrainGuidKeyCommand, System.Guid> GetOwnPrimaryKeyGuid g2
+
+            test <@ k1 = guid1 @>
+            test <@ k2 = guid2 @>
+            test <@ k1 <> k2 @>
+        }
+
+/// <summary>
+/// Integration tests verifying that <c>GrainContext.primaryKeyInt64</c> returns the
+/// correct value when called from inside an integer-keyed universal grain handler
+/// (<c>FSharpGrain.refInt</c> / <c>FSharpGrainIntImpl</c>).
+/// </summary>
+[<Collection("ClusterCollection")>]
+type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
+
+    [<Fact>]
+    member _.``primaryKeyInt64 inside universal grain handler returns the grain int key`` () =
+        task {
+            // Use a key range (50000+) that does not overlap with UniversalGrainPatternTests
+            // (which uses 1001L–9999L) to avoid shared FSharpGrainIntImpl instance conflicts.
+            let intKey = 50001L
+            let grain =
+                FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory intKey
+
+            let! returnedKey =
+                FSharpGrain.askInt<GrainKeyState, GrainIntKeyCommand, int64> GetOwnPrimaryKeyInt64 grain
+
+            test <@ returnedKey = intKey @>
+        }
+
+    [<Fact>]
+    member _.``two grains with different int keys report different primaryKeyInt64 values`` () =
+        task {
+            let key1 = 50002L
+            let key2 = 50003L
+            let g1 = FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory key1
+            let g2 = FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory key2
+
+            let! k1 =
+                FSharpGrain.askInt<GrainKeyState, GrainIntKeyCommand, int64> GetOwnPrimaryKeyInt64 g1
+
+            let! k2 =
+                FSharpGrain.askInt<GrainKeyState, GrainIntKeyCommand, int64> GetOwnPrimaryKeyInt64 g2
+
+            test <@ k1 = key1 @>
+            test <@ k2 = key2 @>
+            test <@ k1 <> k2 @>
+        }
+
+    [<Fact>]
+    member _.``negative int key is preserved by primaryKeyInt64`` () =
+        task {
+            let negKey = -50001L
+            let grain =
+                FSharpGrain.refInt<GrainKeyState, GrainIntKeyCommand> fixture.GrainFactory negKey
+
+            let! returnedKey =
+                FSharpGrain.askInt<GrainKeyState, GrainIntKeyCommand, int64> GetOwnPrimaryKeyInt64 grain
+
+            test <@ returnedKey = negKey @>
+        }
+
+/// <summary>
 /// Tests for duplicate grain registration detection.
 /// </summary>
 type DuplicateRegistrationTests() =

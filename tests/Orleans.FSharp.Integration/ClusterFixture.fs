@@ -715,6 +715,64 @@ module TestGrains17 =
                 })
         }
 
+// ── GrainGuidKey grain — verifies GrainContext.primaryKeyGuid in universal path ──────
+
+/// <summary>Commands for the GUID-keyed grain-key test grain.</summary>
+[<Orleans.GenerateSerializer>]
+type GrainGuidKeyCommand =
+    /// <summary>
+    /// Returns the grain's own GUID primary key via <c>GrainContext.primaryKeyGuid ctx</c>.
+    /// </summary>
+    | [<Orleans.Id(0u)>] GetOwnPrimaryKeyGuid
+
+module TestGrains18 =
+    /// <summary>
+    /// Grain that returns its own GUID primary key from the handler context.
+    /// Exercises <c>GrainContext.primaryKeyGuid ctx</c> in the GUID-keyed universal grain path
+    /// via <c>FSharpGrain.refGuid</c> and <c>FSharpGrainGuidImpl</c>.
+    /// Before the interface-aware key extraction fix, <c>primaryKeyGuid</c> would receive
+    /// a string instead of a Guid and throw <c>InvalidOperationException</c>.
+    /// </summary>
+    let grainGuidKeyGrain =
+        grain {
+            defaultState { Placeholder = 0 }
+            handleTypedWithContext (fun ctx state (cmd: GrainGuidKeyCommand) ->
+                task {
+                    match cmd with
+                    | GetOwnPrimaryKeyGuid ->
+                        let key = GrainContext.primaryKeyGuid ctx
+                        return state, key
+                })
+        }
+
+// ── GrainIntKey grain — verifies GrainContext.primaryKeyInt64 in universal path ─────
+
+/// <summary>Commands for the integer-keyed grain-key test grain.</summary>
+[<Orleans.GenerateSerializer>]
+type GrainIntKeyCommand =
+    /// <summary>
+    /// Returns the grain's own int64 primary key via <c>GrainContext.primaryKeyInt64 ctx</c>.
+    /// </summary>
+    | [<Orleans.Id(0u)>] GetOwnPrimaryKeyInt64
+
+module TestGrains19 =
+    /// <summary>
+    /// Grain that returns its own int64 primary key from the handler context.
+    /// Exercises <c>GrainContext.primaryKeyInt64 ctx</c> in the integer-keyed universal grain path
+    /// via <c>FSharpGrain.refInt</c> and <c>FSharpGrainIntImpl</c>.
+    /// </summary>
+    let grainIntKeyGrain =
+        grain {
+            defaultState { Placeholder = 0 }
+            handleTypedWithContext (fun ctx state (cmd: GrainIntKeyCommand) ->
+                task {
+                    match cmd with
+                    | GetOwnPrimaryKeyInt64 ->
+                        let key = GrainContext.primaryKeyInt64 ctx
+                        return state, key
+                })
+        }
+
 module TestGrains15 =
     /// <summary>
     /// Flaky grain: fails the first <c>FailUntilCall</c> times, then succeeds.
@@ -799,6 +857,10 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<DeactivationCtrlState, DeactivationCtrlCommand>(TestGrains16.deactivationCtrlGrain) |> ignore
             // Register the grain-key grain for primaryKeyString wiring tests
             siloBuilder.Services.AddFSharpGrain<GrainKeyState, GrainKeyCommand>(TestGrains17.grainKeyGrain) |> ignore
+            // Register the GUID-keyed grain-key grain for primaryKeyGuid wiring tests
+            siloBuilder.Services.AddFSharpGrain<GrainKeyState, GrainGuidKeyCommand>(TestGrains18.grainGuidKeyGrain) |> ignore
+            // Register the int-keyed grain-key grain for primaryKeyInt64 wiring tests
+            siloBuilder.Services.AddFSharpGrain<GrainKeyState, GrainIntKeyCommand>(TestGrains19.grainIntKeyGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side
