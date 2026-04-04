@@ -185,6 +185,50 @@ module TestGrains4 =
                 })
         }
 
+// ── handleWithContext test grain ──────────────────────────────────────────────
+
+/// <summary>
+/// State for the relay grain that uses <c>handleWithContext</c> to call another grain
+/// via <c>ctx.GrainFactory</c> — the core test for context-aware grain handlers.
+/// </summary>
+[<Orleans.GenerateSerializer>]
+type RelayState =
+    { [<Orleans.Id(0u)>] PingsSent: int
+      [<Orleans.Id(1u)>] LastPeerCount: int }
+
+/// <summary>Commands for the relay grain.</summary>
+[<Orleans.GenerateSerializer>]
+type RelayCommand =
+    /// <summary>Calls a peer PingGrain by key via grain-factory, sends Ping, records the result.</summary>
+    | [<Orleans.Id(0u)>] ForwardPing of peerKey: string
+    /// <summary>Returns the relay grain's current state snapshot.</summary>
+    | [<Orleans.Id(1u)>] GetRelayState
+
+module TestGrains5 =
+    /// <summary>
+    /// Relay grain defined with <c>handleWithContext</c>.  On <c>ForwardPing peerKey</c>,
+    /// it resolves a peer <c>PingGrain</c> via <c>ctx.GrainFactory</c>, sends it a
+    /// <c>Ping</c> command, and stores the returned peer count in its own state.
+    /// This verifies that <c>GrainContext.GrainFactory</c> is correctly threaded through
+    /// the universal-handler dispatch chain.
+    /// </summary>
+    let relayGrain =
+        grain {
+            defaultState { PingsSent = 0; LastPeerCount = 0 }
+            handleWithContext (fun ctx state (cmd: RelayCommand) ->
+                task {
+                    match cmd with
+                    | ForwardPing peerKey ->
+                        let peer =
+                            FSharpGrain.ref<PingState, PingCommand> ctx.GrainFactory peerKey
+                        let! peerState = FSharpGrain.send Ping peer
+                        let ns = { PingsSent = state.PingsSent + 1; LastPeerCount = peerState.Count }
+                        return ns, box ns
+                    | GetRelayState ->
+                        return state, box state
+                })
+        }
+
 /// <summary>
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
 /// for grain discovery by Orleans.
@@ -217,6 +261,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<CalcState, CalcCommand>(TestGrains3.calcGrain) |> ignore
             // Register the score grain for handleState end-to-end tests
             siloBuilder.Services.AddFSharpGrain<ScoreState, ScoreCommand>(TestGrains4.scoreGrain) |> ignore
+            // Register the relay grain for handleWithContext (grain-to-grain) tests
+            siloBuilder.Services.AddFSharpGrain<RelayState, RelayCommand>(TestGrains5.relayGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side
