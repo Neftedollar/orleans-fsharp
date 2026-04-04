@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.VersioningTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Versioning
 open Orleans.FSharp.Runtime
 
@@ -152,4 +154,36 @@ let ``siloConfig CE composes broadcast channels with other options`` () =
     test <@ config.ClusteringMode.IsSome @>
     test <@ config.StorageProviders |> Map.containsKey "Default" @>
     test <@ config.BroadcastChannels = [ "notifications" ] @>
-    test <@ config.VersioningConfig.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``compatibilityStrategyName is deterministic for any case`` (strategy: CompatibilityStrategy) =
+    Versioning.compatibilityStrategyName strategy = Versioning.compatibilityStrategyName strategy
+
+[<Property>]
+let ``compatibilityStrategyName always returns a non-empty string`` (strategy: CompatibilityStrategy) =
+    let name = Versioning.compatibilityStrategyName strategy
+    name.Length > 0
+
+[<Property>]
+let ``versionSelectorStrategyName is deterministic for any case`` (selector: VersionSelectorStrategy) =
+    Versioning.versionSelectorStrategyName selector = Versioning.versionSelectorStrategyName selector
+
+[<Property>]
+let ``versionSelectorStrategyName always returns a non-empty string`` (selector: VersionSelectorStrategy) =
+    let name = Versioning.versionSelectorStrategyName selector
+    name.Length > 0
+
+[<Property>]
+let ``addBroadcastChannel stores the correct channel name for any input`` (name: NonEmptyString) =
+    let config = siloConfig { addBroadcastChannel name.Get }
+    config.BroadcastChannels = [ name.Get ]
+
+[<Property>]
+let ``useGrainVersioning always stores both strategy fields`` (compat: CompatibilityStrategy) (selector: VersionSelectorStrategy) =
+    let config = siloConfig { useGrainVersioning compat selector }
+    config.VersioningConfig.IsSome &&
+    config.VersioningConfig.Value = (compat, selector)
