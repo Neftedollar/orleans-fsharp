@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.Runtime
 open Orleans.Streams
 open Orleans.FSharp
@@ -94,3 +96,34 @@ let ``StreamSubscription Handle is StreamSubscriptionHandle<'T>`` () =
         |> Array.find (fun p -> p.Name = "Handle")
 
     test <@ handleProp.PropertyType = typeof<StreamSubscriptionHandle<int>> @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+let private fakeProvider = FakeStreamProvider() :> IStreamProvider
+
+[<Property>]
+let ``getStream stores correct StreamId for any namespace and key`` (ns: NonNull<string>) (key: NonNull<string>) =
+    let ref = Stream.getStream<int> fakeProvider ns.Get key.Get
+    let expected = StreamId.Create(ns.Get, key.Get)
+    ref.StreamId = expected
+
+[<Property>]
+let ``getStream preserves provider reference for any inputs`` (ns: NonNull<string>) (key: NonNull<string>) =
+    let ref = Stream.getStream<string> fakeProvider ns.Get key.Get
+    obj.ReferenceEquals(ref.Provider, fakeProvider)
+
+[<Property>]
+let ``getStream with same namespace and key produces equal StreamId for any inputs`` (ns: NonNull<string>) (key: NonNull<string>) =
+    let ref1 = Stream.getStream<int> fakeProvider ns.Get key.Get
+    let ref2 = Stream.getStream<int> fakeProvider ns.Get key.Get
+    ref1.StreamId = ref2.StreamId
+
+[<Property>]
+let ``getStream with different keys produces different StreamIds`` (ns: NonNull<string>) (key1: NonNull<string>) (key2: NonNull<string>) =
+    // Skip degenerate case where keys happen to be equal
+    key1.Get = key2.Get ||
+        (let ref1 = Stream.getStream<int> fakeProvider ns.Get key1.Get
+         let ref2 = Stream.getStream<int> fakeProvider ns.Get key2.Get
+         ref1.StreamId <> ref2.StreamId)
