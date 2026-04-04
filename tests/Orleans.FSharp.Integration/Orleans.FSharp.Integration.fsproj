@@ -40,6 +40,7 @@
     <Compile Include="FSharpBinaryCodecIntegrationTests.fs" />
     <Compile Include="TemplateTests.fs" />
     <Compile Include="RedisIntegrationTests.fs" />
+    <Compile Include="GrainResilienceIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

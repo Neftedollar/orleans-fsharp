@@ -594,6 +594,58 @@ module TestGrains7 =
                 })
         }
 
+// ── Flaky grain for GrainResilience integration tests ───────────────────────
+
+/// <summary>
+/// State for the flaky grain used to test <c>GrainResilience.retry</c>.
+/// The grain fails the first <see cref="FailUntilCall"/> attempts, then succeeds.
+/// </summary>
+[<Orleans.GenerateSerializer>]
+type FlakyState =
+    { /// <summary>Number of attempts the grain has seen.</summary>
+      [<Orleans.Id(0u)>] CallCount: int
+      /// <summary>The grain fails while <c>CallCount &lt;= FailUntilCall</c>.</summary>
+      [<Orleans.Id(1u)>] FailUntilCall: int }
+
+/// <summary>Commands for the flaky grain.</summary>
+[<Orleans.GenerateSerializer>]
+type FlakyCommand =
+    /// <summary>Sets how many initial calls should fail before succeeding.</summary>
+    | [<Orleans.Id(0u)>] SetFailCount of int
+    /// <summary>
+    /// Increments the call counter.  Throws if <c>CallCount &lt;= FailUntilCall</c>
+    /// (simulating a transient silo-side error), otherwise returns the final call count.
+    /// </summary>
+    | [<Orleans.Id(1u)>] TryCall
+    /// <summary>Returns the current call count without any side-effects.</summary>
+    | [<Orleans.Id(2u)>] GetCallCount
+
+module TestGrains15 =
+    /// <summary>
+    /// Flaky grain: fails the first <c>FailUntilCall</c> times, then succeeds.
+    /// Used by GrainResilience integration tests to verify that <c>GrainResilience.retry</c>
+    /// transparently retries transient failures and eventually returns the correct result.
+    /// </summary>
+    let flakyGrain =
+        grain {
+            defaultState { CallCount = 0; FailUntilCall = 0 }
+            handle (fun state cmd ->
+                task {
+                    match cmd with
+                    | SetFailCount n ->
+                        let ns = { state with FailUntilCall = n }
+                        return ns, box ns
+                    | TryCall ->
+                        let count = state.CallCount + 1
+                        let ns = { state with CallCount = count }
+                        if count <= state.FailUntilCall then
+                            failwith $"Simulated transient failure on attempt {count}"
+                        return ns, box count
+                    | GetCallCount ->
+                        return state, box state.CallCount
+                })
+        }
+
 /// <summary>
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
 /// for grain discovery by Orleans.
@@ -646,6 +698,8 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<CtxCancAccState, CtxCancAccCommand>(TestGrains7.ctxCancAccGrain) |> ignore
             // Register the behavior-pattern workflow grain for Behavior.run integration tests
             siloBuilder.Services.AddFSharpGrain<WorkflowState, WorkflowCommand>(TestGrains14.workflowGrain) |> ignore
+            // Register the flaky grain for GrainResilience retry integration tests
+            siloBuilder.Services.AddFSharpGrain<FlakyState, FlakyCommand>(TestGrains15.flakyGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

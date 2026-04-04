@@ -227,6 +227,7 @@ dotnet new orleans-fsharp -n MyApp
 | [Analyzers](docs/analyzers.md) | OF0001: async {} detection, AllowAsync opt-out |
 | [Security](docs/security.md) | TLS, mTLS, filters, secrets |
 | [Advanced](docs/advanced.md) | Transactions, telemetry, shutdown, migration |
+| [Resilience](docs/resilience.md) | Polly v8 retry, circuit-breaker, and timeout patterns |
 | [Redis Example](docs/redis-example.md) | End-to-end shopping cart with Redis storage/clustering |
 | [API Reference](docs/api-reference.md) | All public modules, types, functions |
 
