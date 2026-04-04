@@ -20,6 +20,7 @@ using Orleans.EventSourcing;
 using Orleans.Providers;
 using Orleans.Runtime;
 using Orleans.FSharp;
+using Orleans.FSharp.Runtime;
 using Orleans.FSharp.Sample;
 using Orleans.FSharp.EventSourcing;
 
@@ -306,6 +307,77 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     public async Task<object> HandleMessage(LifecycleTestCommand cmd)
     {
         var (next, result) = await GrainDefinition.invokeHandler(_def, _current, cmd);
+        _current = next;
+        _state.State = _current;
+        await _state.WriteStateAsync();
+        return result;
+    }
+}
+
+// ─── AdditionalState ────────────────────────────────────────────────────────
+
+/// <summary>
+/// Concrete grain that exercises the <c>additionalState</c> CE keyword end-to-end.
+///
+/// Holds a primary counter (<see cref="AdditionalState"/>) persisted via <c>IPersistentState</c>
+/// and a secondary audit counter (<see cref="AuditState"/>) initialised by
+/// <see cref="Orleans.FSharp.Runtime.GrainDefinition.initAdditionalStates{TState,TMessage}"/>.
+/// The context-aware F# handler accesses the audit state via
+/// <c>GrainContext.getState</c>.
+///
+/// The grain is intentionally wired via a per-grain C# stub (not <c>FSharpGrainImpl</c>) so that
+/// additional-state initialisation in <c>OnActivateAsync</c> can be tested in isolation without
+/// interfering with the universal <see cref="Orleans.FSharp.IFSharpGrain"/> dispatch table.
+/// </summary>
+public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
+{
+    private readonly GrainDefinition<AdditionalState, AdditionalStateCommand> _def;
+    private readonly IPersistentState<AdditionalState> _state;
+    private AdditionalState _current;
+
+    // Holds the additional state wrappers after OnActivateAsync, keyed by declared name.
+    private System.Collections.Generic.Dictionary<string, object> _additionalStates = new();
+
+    /// <summary>
+    /// Initialises the grain from DI.
+    /// The <c>GrainDefinition</c> singleton is registered with <c>AddSingleton</c> in the test
+    /// fixture (NOT via <c>AddFSharpGrain</c>) to avoid adding the message type to the universal
+    /// handler registry, which would cause <c>IFSharpGrain</c> ambiguity.
+    /// </summary>
+    public AdditionalStateTestGrainImpl(
+        GrainDefinition<AdditionalState, AdditionalStateCommand> definition,
+        [PersistentState("state", "Default")] IPersistentState<AdditionalState> state)
+    {
+        _def = definition;
+        _state = state;
+        _current = definition.DefaultState.Value;
+    }
+
+    /// <summary>
+    /// Restores the primary state from storage, then initialises all named additional states
+    /// declared in the grain definition via
+    /// <see cref="Orleans.FSharp.Runtime.GrainDefinition.initAdditionalStates{TState,TMessage}"/>.
+    /// </summary>
+    public override async Task OnActivateAsync(CancellationToken ct)
+    {
+        if (_state.RecordExists)
+            _current = _state.State;
+
+        _additionalStates = await Orleans.FSharp.Runtime.GrainDefinition.initAdditionalStates(
+            _def, ServiceProvider, this.GrainContext.GrainId);
+    }
+
+    /// <summary>
+    /// Builds a <see cref="Orleans.FSharp.GrainContext"/> from the initialised additional states
+    /// and dispatches the command to the F# context-aware handler.
+    /// Both primary and additional states are persisted on mutating commands.
+    /// </summary>
+    public async Task<object> HandleMessage(AdditionalStateCommand cmd)
+    {
+        // GrainContext module compiles as GrainContextModule in C# (F# appends "Module" suffix
+        // when a module shares the same name as a type in the same namespace).
+        var ctx = Orleans.FSharp.GrainContextModule.forCSharp(GrainFactory, ServiceProvider, _additionalStates, this.GrainContext.GrainId);
+        var (next, result) = await GrainDefinition.invokeContextHandler(_def, ctx, _current, cmd);
         _current = next;
         _state.State = _current;
         await _state.WriteStateAsync();

@@ -258,6 +258,35 @@ module GrainContext =
             PrimaryKey = None
         }
 
+    /// <summary>
+    /// Creates a <see cref="GrainContext"/> suitable for use in C# grain implementations.
+    /// Accepts an <see cref="System.Collections.Generic.IEnumerable{T}"/> of name/wrapper pairs for
+    /// named additional states (populated by <c>GrainDefinition.initAdditionalStates</c> in
+    /// <c>Orleans.FSharp.Runtime</c>) and converts them to the F# <c>Map&lt;string, obj&gt;</c>
+    /// expected by the context-aware handler chain.
+    /// </summary>
+    /// <param name="grainFactory">The grain factory for grain-to-grain calls.</param>
+    /// <param name="serviceProvider">The DI service provider scoped to the silo.</param>
+    /// <param name="states">Name-to-wrapper pairs for named additional persistent states.</param>
+    /// <param name="grainId">The grain's <c>GrainId</c> for key extraction.</param>
+    /// <returns>A fully initialised <see cref="GrainContext"/> ready for handler dispatch.</returns>
+    let forCSharp
+        (grainFactory: IGrainFactory)
+        (serviceProvider: IServiceProvider)
+        (states: System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, obj>>)
+        (grainId: Orleans.Runtime.GrainId)
+        : GrainContext =
+        let statesMap = states |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq
+        {
+            GrainFactory = grainFactory
+            ServiceProvider = serviceProvider
+            States = statesMap
+            DeactivateOnIdle = None
+            DelayDeactivation = None
+            GrainId = Some grainId
+            PrimaryKey = None
+        }
+
 /// <summary>
 /// Defines the complete specification for an F# grain, including its initial state,
 /// message handler, persistence configuration, and lifecycle hooks.

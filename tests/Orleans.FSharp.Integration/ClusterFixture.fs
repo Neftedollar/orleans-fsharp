@@ -868,6 +868,11 @@ type TestSiloConfigurator() =
             // handler registry which causes Orleans to list LifecycleTestGrainImpl as a candidate for IFSharpGrain
             // and break all FSharpGrain.ref<> calls with an ambiguity error.
             siloBuilder.Services.AddSingleton<GrainDefinition<Orleans.FSharp.Sample.LifecycleState, Orleans.FSharp.Sample.LifecycleTestCommand>>(Orleans.FSharp.Sample.LifecycleGrainDef.lifecycleGrain) |> ignore
+            // Register the additional-state test grain definition as a plain singleton — NOT via AddFSharpGrain.
+            // Same reasoning as LifecycleTestGrainImpl: AdditionalStateTestGrainImpl uses the typed
+            // FSharpGrain<S,M> pattern and must not register AdditionalStateCommand in the universal
+            // handler registry (which would cause IFSharpGrain ambiguity).
+            siloBuilder.Services.AddSingleton<GrainDefinition<Orleans.FSharp.Sample.AdditionalState, Orleans.FSharp.Sample.AdditionalStateCommand>>(Orleans.FSharp.Sample.AdditionalStateGrainDef.additionalStateGrain) |> ignore
 
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side

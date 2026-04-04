@@ -17,6 +17,7 @@
     <Compile Include="BankAccountGrain.fs" />
     <Compile Include="LeaderboardGrain.fs" />
     <Compile Include="LifecycleTestGrain.fs" />
+    <Compile Include="AdditionalStateGrain.fs" />
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

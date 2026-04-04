@@ -321,6 +321,67 @@ type FSharpGrain<'State, 'Message>
             }
 
 /// <summary>
+/// C# interop helpers for initialising named additional persistent states declared
+/// via the <c>additionalState</c> CE keyword.  These are separate from
+/// <c>GrainDefinition.invokeOnActivate</c> et al. because they require
+/// <see cref="NamedPersistentState{T}"/>, which lives in this assembly
+/// (<c>Orleans.FSharp.Runtime</c>).
+/// </summary>
+module GrainDefinition =
+
+    /// <summary>
+    /// Initialises all named additional persistent states declared in a
+    /// <see cref="Orleans.FSharp.GrainDefinition{TState,TMessage}"/> and returns them as a
+    /// <see cref="System.Collections.Generic.Dictionary{TKey,TValue}"/> of name → wrapper pairs.
+    /// The dictionary values are <see cref="Orleans.IPersistentState{TState}"/> instances and can
+    /// be passed to <c>GrainContext.forCSharp</c> to build the context for a context-aware handler.
+    ///
+    /// Call from the <c>OnActivateAsync</c> override of a per-grain C# stub that uses
+    /// <c>handleWithContext</c> and needs access to additional named states at handler time.
+    /// </summary>
+    /// <param name="definition">The grain definition whose <c>AdditionalStates</c> map to initialise.</param>
+    /// <param name="serviceProvider">The silo's DI service provider (from <c>this.ServiceProvider</c>).</param>
+    /// <param name="grainId">The grain's <c>GrainId</c> (from <c>this.GetGrainId()</c>).</param>
+    /// <returns>
+    /// A task that resolves to a dictionary mapping each declared state name to the corresponding
+    /// <see cref="NamedPersistentState{T}"/> wrapper (already read from storage).
+    /// Returns an empty dictionary when the definition declares no additional states.
+    /// </returns>
+    let initAdditionalStates<'State, 'Message>
+        (definition: GrainDefinition<'State, 'Message>)
+        (serviceProvider: IServiceProvider)
+        (grainId: GrainId)
+        : Task<System.Collections.Generic.Dictionary<string, obj>> =
+        task {
+            let result = System.Collections.Generic.Dictionary<string, obj>()
+
+            if not definition.AdditionalStates.IsEmpty then
+                for kvp in definition.AdditionalStates do
+                    let name = kvp.Key
+                    let spec = kvp.Value
+
+                    let storage =
+                        serviceProvider.GetKeyedService<Orleans.Storage.IGrainStorage>(spec.StorageName)
+
+                    if isNull (box storage) then
+                        invalidOp
+                            $"Storage provider '{spec.StorageName}' not found for additional state '{name}'. Ensure it is registered in the silo configuration."
+
+                    let wrapperType =
+                        typedefof<NamedPersistentState<_>>.MakeGenericType(spec.StateType)
+
+                    let wrapper =
+                        Activator.CreateInstance(wrapperType, storage, grainId, name, spec.DefaultValue)
+
+                    let readMethod = wrapperType.GetMethod("ReadStateAsync")
+                    do! (readMethod.Invoke(wrapper, [||]) :?> Task)
+
+                    result.[name] <- wrapper
+
+            return result
+        }
+
+/// <summary>
 /// Extension methods for ISiloBuilder to register F# grain definitions with the Orleans runtime.
 /// </summary>
 [<AutoOpen>]
