@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans
 open Orleans.FSharp
 
@@ -190,3 +192,61 @@ let ``Multiple GrainRefs to same key return independent references`` () =
 [<Fact>]
 let ``GrainRef is a struct type`` () =
     test <@ typeof<GrainRef<IStringGrain, string>>.IsValueType @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``GrainRef.key round-trips any string key`` (key: NonNull<string>) =
+    let ref: GrainRef<IStringGrain, string> =
+        {
+            Factory = Unchecked.defaultof<IGrainFactory>
+            Key = key.Get
+            Grain = FakeStringGrain(key.Get)
+        }
+    GrainRef.key ref = key.Get
+
+[<Property>]
+let ``GrainRef.key round-trips any int64 key`` (key: int64) =
+    let ref: GrainRef<IInt64Grain, int64> =
+        {
+            Factory = Unchecked.defaultof<IGrainFactory>
+            Key = key
+            Grain = FakeInt64Grain(key)
+        }
+    GrainRef.key ref = key
+
+[<Property>]
+let ``GrainRef.invoke passes message through for any string key and payload`` (key: NonNull<string>) (msg: NonNull<string>) =
+    let ref: GrainRef<IStringGrain, string> =
+        {
+            Factory = Unchecked.defaultof<IGrainFactory>
+            Key = key.Get
+            Grain = FakeStringGrain(key.Get)
+        }
+    let result = (GrainRef.invoke ref (fun g -> g.Echo(msg.Get))).GetAwaiter().GetResult()
+    result = $"{key.Get}:{msg.Get}"
+
+[<Property>]
+let ``GrainRef.invoke add is correct for any key and delta`` (key: int64) (delta: int) =
+    let ref: GrainRef<IInt64Grain, int64> =
+        {
+            Factory = Unchecked.defaultof<IGrainFactory>
+            Key = key
+            Grain = FakeInt64Grain(key)
+        }
+    let result = (GrainRef.invoke ref (fun g -> g.Add(delta))).GetAwaiter().GetResult()
+    result = int key + delta
+
+[<Property>]
+let ``GrainRef.unwrap returns grain that responds to calls for any string key`` (key: NonNull<string>) =
+    let ref: GrainRef<IStringGrain, string> =
+        {
+            Factory = Unchecked.defaultof<IGrainFactory>
+            Key = key.Get
+            Grain = FakeStringGrain(key.Get)
+        }
+    let grain = GrainRef.unwrap ref
+    let result = grain.Echo("probe").GetAwaiter().GetResult()
+    result = $"{key.Get}:probe"
