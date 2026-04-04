@@ -86,6 +86,7 @@
     <Compile Include="HandlerCompositionProperties.fs" />
     <Compile Include="GrainHandlerStateMachineProperties.fs" />
     <Compile Include="SiloIdentityTests.fs" />
+    <Compile Include="ClientConfigIdentityTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 
