@@ -4,6 +4,8 @@ open System
 open System.Text.Json
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // ===========================================================================
@@ -300,3 +302,70 @@ let ``Nested record evolution - NoAddress shared case works`` () =
     let json = toJson<CustomerV1> CustomerV1.NoAddress
     let result = fromJson<CustomerV2> json
     test <@ result = CustomerV2.NoAddress @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``StatusV2 roundtrips through JSON for any generated case`` (status: StatusV2) =
+    let json = toJson status
+    let result = fromJson<StatusV2> json
+    result = status
+
+[<Property>]
+let ``CommandV2 roundtrips through JSON for any generated case`` (cmd: CommandV2) =
+    let json = toJson cmd
+    let result = fromJson<CommandV2> json
+    result = cmd
+
+[<Property>]
+let ``ModeV2 roundtrips through JSON for any generated case`` (mode: ModeV2) =
+    let json = toJson mode
+    let result = fromJson<ModeV2> json
+    result = mode
+
+[<Property>]
+let ``ColorV2 roundtrips through JSON for any generated case`` (color: ColorV2) =
+    let json = toJson color
+    let result = fromJson<ColorV2> json
+    result = color
+
+[<Property>]
+let ``PersonV2 with all fields roundtrips through JSON`` (name: NonNull<string>) (age: int) (emailOpt: Option<NonNull<string>>) =
+    let person =
+        { PersonV2.Name = name.Get
+          Age = age
+          Email = emailOpt |> Option.map (fun e -> e.Get) }
+    let json = toJson person
+    let result = fromJson<PersonV2> json
+    result = person
+
+[<Property>]
+let ``JSON serialization is deterministic - same value always produces same JSON`` (status: StatusV2) =
+    let json1 = toJson status
+    let json2 = toJson status
+    json1 = json2
+
+[<Property>]
+let ``StatusV1 values always deserialize successfully as StatusV2 - both cases are compatible`` (status: StatusV1) =
+    // All StatusV1 cases (Active, Inactive) exist in StatusV2, so deserialization must not throw
+    let json = toJson status
+    let recovered =
+        try Some (fromJson<StatusV2> json)
+        with _ -> None
+    recovered.IsSome
+
+[<Property>]
+let ``EventV2 Deleted case roundtrips for any generated EventV2 Deleted`` () =
+    // Deleted is a fieldless case shared between EventV1 and EventV2 — must always roundtrip
+    let json = toJson EventV2.Deleted
+    let result = fromJson<EventV2> json
+    result = EventV2.Deleted
+
+[<Property>]
+let ``EventV2 Created roundtrips with any name and timestamp`` (name: NonNull<string>) (ts: NonNull<string>) =
+    let evt = EventV2.Created(name.Get, ts.Get)
+    let json = toJson evt
+    let result = fromJson<EventV2> json
+    result = evt
