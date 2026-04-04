@@ -201,12 +201,19 @@ let v2ToV3 =
 ```fsharp
 let migrations = [ v1ToV2; v2ToV3 ]
 
-// Upgrade from v1 to latest
+// Upgrade from v1 to latest (throws if chain is invalid)
 let currentState : CounterStateV3 =
     StateMigration.applyMigrations<CounterStateV3> migrations 1 (box oldV1State)
+
+// Safe version — validate and apply in one call, returns Result
+match StateMigration.tryApplyMigrations<CounterStateV3> migrations 1 (box oldV1State) with
+| Ok newState -> // use newState
+| Error errs  -> for e in errs do log.LogError("Migration error: {Error}", e)
 ```
 
 Migrations are sorted by `FromVersion` and applied sequentially.
+`tryApplyMigrations` runs `validate` first; if the chain has gaps or duplicates it returns
+`Error (string list)` without touching the state.
 
 ### Validate migration chain
 

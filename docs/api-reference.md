@@ -210,8 +210,9 @@ Helpers for the behavior pattern — grains whose state includes a phase discrim
 | Function | Signature | Description |
 |---|---|---|
 | `migration<'TOld, 'TNew>` | `int -> int -> ('TOld -> 'TNew) -> Migration<obj, obj>` | Define a migration |
-| `applyMigrations<'T>` | `Migration list -> int -> obj -> 'T` | Apply migration chain |
-| `validate` | `Migration list -> string list` | Validate migration chain |
+| `applyMigrations<'T>` | `Migration list -> int -> obj -> 'T` | Apply migration chain (throws on invalid chain) |
+| `tryApplyMigrations<'T>` | `Migration list -> int -> obj -> Result<'T, string list>` | Validate and apply; returns `Ok` or `Error` with messages |
+| `validate` | `Migration list -> string list` | Validate migration chain; empty list means valid |
 
 #### `Serialization`
 
