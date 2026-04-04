@@ -414,6 +414,17 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `ReminderProvider` | MemoryReminder, RedisReminder, CustomReminder |
 | `TlsConfig` | TlsSubject, TlsCertificate, MutualTlsSubject, MutualTlsCertificate |
 | `DashboardConfig` | DashboardDefaults, DashboardWithOptions |
+| `TransactionalGrainDefinition<'State>` | Record of pure functions describing transactional grain behaviour (Deposit, Withdraw, GetBalance, CopyState) |
+| `AtmGrainDefinition<'TAccountGrain>` | Record containing a Transfer function for orchestrating cross-grain atomic transfers |
+| `FSharpTransactionalGrain<'State>` | Generic base class that bridges a `TransactionalGrainDefinition` to Orleans ACID transactions |
+| `FSharpAtmGrain<'TAccountGrain>` | Generic base class for ATM grains that create and coordinate transactions across multiple account grains |
+
+### Transactional Grain Extension Methods
+
+| Method | Signature | Description |
+|---|---|---|
+| `AddFSharpTransactionalGrain<'State>` | `IServiceCollection -> TransactionalGrainDefinition<'State> -> IServiceCollection` | Register a transactional grain definition as a singleton |
+| `AddFSharpAtmGrain<'TAccountGrain>` | `IServiceCollection -> AtmGrainDefinition<'TAccountGrain> -> IServiceCollection` | Register an ATM grain definition as a singleton |
 
 ### Computation Expressions
 
