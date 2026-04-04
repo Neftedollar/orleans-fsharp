@@ -41,6 +41,8 @@ parallel via `Task.WhenAll`, sorts by score, and caches the snapshot.
 
 - 7 integration tests for `handleWithContext` (relay grain, grain-to-grain forwarding, isolation)
 - 7 integration tests for `handleStateCancellable` (cancellable accumulator grain)
+- 7 integration tests for `handleCancellable` (raw cancellable handler with manual box)
+- 8 integration tests for `handleTypedCancellable` (typed result + CancellationToken, uses `ask`)
 - 10 integration tests for `handleWithContextCancellable` (CtxCancAcc grain — mixed pure accumulation + grain-to-grain via ctx.GrainFactory)
 - 9 integration tests for `handleState` (score accumulator grain)
 - `HandlerCompositionProperties.fs` — 14 FsCheck property tests for handler invariants
@@ -133,7 +135,7 @@ calculator without any manual `box` calls. 8 integration tests cover `AddValues`
 - 6 FsCheck property tests for `handleState`/`handleTyped` CE variants in `GrainBuilderTests`
 - 8 `ask`/`askGuid`/`askInt` integration tests with `QueryGrain`
 - 8 `handleTyped` integration tests with `CalcGrain`
-- Total: **1149 unit + 192 integration = 1341 tests**
+- Total: **1149 unit + 207 integration = 1356 tests**
 
 ### Documentation
 - Rewrote `docs/getting-started.md` to lead with the universal grain pattern (no attributes, no C# stubs)

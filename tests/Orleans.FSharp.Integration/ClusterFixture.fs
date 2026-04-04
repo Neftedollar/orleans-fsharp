@@ -261,6 +261,81 @@ module TestGrains6 =
                 })
         }
 
+// ── handleCancellable (raw) test grain ───────────────────────────────────────
+
+/// <summary>State for the raw cancellable accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type RawCancState =
+    { [<Orleans.Id(0u)>] RawSum: int
+      [<Orleans.Id(1u)>] RawSteps: int }
+
+/// <summary>Commands for the raw cancellable accumulator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type RawCancCommand =
+    | [<Orleans.Id(0u)>] RawCancAdd of int
+    | [<Orleans.Id(1u)>] GetRawCancState
+
+module TestGrains8 =
+    /// <summary>
+    /// Raw cancellable accumulator defined with <c>handleCancellable</c>.
+    /// Unlike <c>handleStateCancellable</c>, this variant requires manual <c>box</c>.
+    /// Verifies that the base <c>CancellableHandler</c> slot is dispatched correctly.
+    /// </summary>
+    let rawCancGrain =
+        grain {
+            defaultState { RawSum = 0; RawSteps = 0 }
+            handleCancellable (fun state (cmd: RawCancCommand) _ct ->
+                task {
+                    match cmd with
+                    | RawCancAdd n ->
+                        let ns = { RawSum = state.RawSum + n; RawSteps = state.RawSteps + 1 }
+                        return ns, box ns
+                    | GetRawCancState ->
+                        return state, box state
+                })
+        }
+
+// ── handleTypedCancellable test grain ────────────────────────────────────────
+
+/// <summary>State for the typed-cancellable calculator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type TypedCancState =
+    { [<Orleans.Id(0u)>] TypedLastResult: int
+      [<Orleans.Id(1u)>] TypedOps: int }
+
+/// <summary>Commands for the typed-cancellable calculator grain.</summary>
+[<Orleans.GenerateSerializer>]
+type TypedCancCommand =
+    | [<Orleans.Id(0u)>] TypedCancAdd of int * int
+    | [<Orleans.Id(1u)>] TypedCancMul of int * int
+    | [<Orleans.Id(2u)>] GetTypedCancLastResult
+    | [<Orleans.Id(3u)>] GetTypedCancOps
+
+module TestGrains9 =
+    /// <summary>
+    /// Typed-cancellable calculator defined with <c>handleTypedCancellable</c>.
+    /// Returns a typed <c>int</c> result without manual <c>box</c>, combining the
+    /// convenience of <c>handleTyped</c> with CancellationToken support.
+    /// </summary>
+    let typedCancGrain =
+        grain {
+            defaultState { TypedLastResult = 0; TypedOps = 0 }
+            handleTypedCancellable (fun state (cmd: TypedCancCommand) _ct ->
+                task {
+                    match cmd with
+                    | TypedCancAdd(a, b) ->
+                        let r = a + b
+                        return { TypedLastResult = r; TypedOps = state.TypedOps + 1 }, r
+                    | TypedCancMul(a, b) ->
+                        let r = a * b
+                        return { TypedLastResult = r; TypedOps = state.TypedOps + 1 }, r
+                    | GetTypedCancLastResult ->
+                        return state, state.TypedLastResult
+                    | GetTypedCancOps ->
+                        return state, state.TypedOps
+                })
+        }
+
 // ── handleWithContextCancellable test grain ──────────────────────────────────
 
 /// <summary>State for the context-cancellable accumulator grain.</summary>
@@ -342,6 +417,10 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<RelayState, RelayCommand>(TestGrains5.relayGrain) |> ignore
             // Register the cancellable accumulator for handleStateCancellable tests
             siloBuilder.Services.AddFSharpGrain<CancellableAccState, CancellableAccCommand>(TestGrains6.cancellableAccGrain) |> ignore
+            // Register the raw cancellable accumulator for handleCancellable tests
+            siloBuilder.Services.AddFSharpGrain<RawCancState, RawCancCommand>(TestGrains8.rawCancGrain) |> ignore
+            // Register the typed-cancellable calculator for handleTypedCancellable tests
+            siloBuilder.Services.AddFSharpGrain<TypedCancState, TypedCancCommand>(TestGrains9.typedCancGrain) |> ignore
             // Register the context-cancellable accumulator for handleWithContextCancellable tests
             siloBuilder.Services.AddFSharpGrain<CtxCancAccState, CtxCancAccCommand>(TestGrains7.ctxCancAccGrain) |> ignore
 
