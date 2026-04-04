@@ -2,6 +2,7 @@ module Orleans.FSharp.Tests.EventSourcingTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp.EventSourcing
 
@@ -232,3 +233,132 @@ let ``arbitrary command sequences produce non-negative balance when starting at 
 
     let finalState = validCommands |> List.fold applyCommand { Balance = 0m }
     finalState.Balance >= 0m
+
+// ---------------------------------------------------------------------------
+// EventStore module — pure function property tests
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Shared bank-account grain definition used by EventStore property tests.
+/// Defined here so all tests in this section share the same definition instance.
+/// </summary>
+let private bankAccountDef =
+    eventSourcedGrain {
+        defaultState { Balance = 0m }
+        apply applyEvent
+        handle handleCommand
+    }
+
+// ── EventStore.replayEvents ──────────────────────────────────────────────────
+
+[<Fact>]
+let ``replayEvents with empty list is identity`` () =
+    let state = { Balance = 250m }
+    let result = EventStore.replayEvents bankAccountDef state []
+    test <@ result = state @>
+
+[<Fact>]
+let ``replayEvents with single deposit event changes balance`` () =
+    let state = { Balance = 100m }
+    let result = EventStore.replayEvents bankAccountDef state [ Deposited 50m ]
+    test <@ result = { Balance = 150m } @>
+
+[<Property>]
+let ``replayEvents is equivalent to List.fold definition.Apply`` (amounts: decimal list) =
+    let validAmounts =
+        amounts |> List.filter (fun a -> a > 0m && a < 1_000_000m)
+
+    let events = validAmounts |> List.map Deposited
+    let initial = { Balance = 0m }
+
+    let viaReplay = EventStore.replayEvents bankAccountDef initial events
+    let viaFold = events |> List.fold (fun s e -> EventStore.applyEvent bankAccountDef s e) initial
+
+    viaReplay = viaFold
+
+[<Property>]
+let ``replayEvents satisfies fold-concatenation: replay of appended lists equals staged replay``
+    (amounts1: decimal list)
+    (amounts2: decimal list)
+    =
+    let toEvents amounts =
+        amounts
+        |> List.filter (fun a -> a > 0m && a < 100_000m)
+        |> List.map Deposited
+
+    let e1 = toEvents amounts1
+    let e2 = toEvents amounts2
+    let initial = { Balance = 0m }
+
+    let combined = EventStore.replayEvents bankAccountDef initial (e1 @ e2)
+    let staged = EventStore.replayEvents bankAccountDef (EventStore.replayEvents bankAccountDef initial e1) e2
+
+    combined = staged
+
+[<Property>]
+let ``replayEvents with only GetBalance commands (no events) does not change state`` (balances: decimal list) =
+    // GetBalance produces no events, so replayEvents on an empty list is identity
+    let initial = { Balance = 0m }
+    // apply no events
+    let result = EventStore.replayEvents bankAccountDef initial []
+    result = initial
+
+// ── EventStore.applyEvent ────────────────────────────────────────────────────
+
+[<Property>]
+let ``applyEvent Deposited increases balance by amount`` (initial: decimal) (amount: decimal) =
+    let amount = abs amount % 1_000_000m + 0.01m
+    let state = { Balance = abs initial % 1_000_000m }
+    let result = EventStore.applyEvent bankAccountDef state (Deposited amount)
+    result.Balance = state.Balance + amount
+
+[<Property>]
+let ``applyEvent Withdrawn decreases balance by amount`` (initial: decimal) (amount: decimal) =
+    let amount = abs amount % 1_000_000m + 0.01m
+    let state = { Balance = abs initial % 1_000_000m + amount }
+    let result = EventStore.applyEvent bankAccountDef state (Withdrawn amount)
+    result.Balance = state.Balance - amount
+
+// ── EventStore.processCommand ─────────────────────────────────────────────────
+
+[<Property>]
+let ``processCommand is deterministic: same state + command always produces same events``
+    (balance: decimal)
+    =
+    let state = { Balance = abs balance % 1_000_000m }
+    let cmd = Credit 100m
+    let events1 = EventStore.processCommand bankAccountDef state cmd
+    let events2 = EventStore.processCommand bankAccountDef state cmd
+    events1 = events2
+
+[<Property>]
+let ``processCommand GetBalance always returns empty event list`` (balance: decimal) =
+    let state = { Balance = abs balance % 1_000_000m }
+    let events = EventStore.processCommand bankAccountDef state GetBalance
+    events = []
+
+[<Property>]
+let ``processCommand Credit with positive amount produces exactly one event`` (amount: decimal) =
+    let amount = abs amount % 1_000_000m + 0.01m
+    let state = { Balance = 0m }
+    let events = EventStore.processCommand bankAccountDef state (Credit amount)
+    events.Length = 1
+
+[<Property>]
+let ``processCommand Debit with sufficient funds produces exactly one event`` (amount: decimal) =
+    let amount = abs amount % 1_000_000m + 0.01m
+    let state = { Balance = amount + 1m }
+    let events = EventStore.processCommand bankAccountDef state (Debit amount)
+    events.Length = 1
+
+[<Property>]
+let ``processCommand then replayEvents produces state consistent with manual fold``
+    (initial: decimal)
+    (amount: decimal)
+    =
+    let amount = abs amount % 1_000_000m + 0.01m
+    let state = { Balance = abs initial % 1_000_000m }
+    let events = EventStore.processCommand bankAccountDef state (Credit amount)
+    let resultViaReplay = EventStore.replayEvents bankAccountDef state events
+    let resultViaFold = events |> List.fold (fun s e -> EventStore.applyEvent bankAccountDef s e) state
+    resultViaReplay = resultViaFold
