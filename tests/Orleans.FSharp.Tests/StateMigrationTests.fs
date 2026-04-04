@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.StateMigrationTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // ---------------------------------------------------------------------------
@@ -186,3 +188,74 @@ let ``StateMigration module exists in the assembly`` () =
         |> Array.tryFind (fun t -> t.Name = "StateMigration" && t.IsAbstract && t.IsSealed)
 
     test <@ moduleType.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+/// Identity migration from version N to N+1 that just passes the string through.
+let identityMigration (fromVer: int) =
+    StateMigration.migration<string, string> fromVer (fromVer + 1) id
+
+[<Property>]
+let ``applyMigrations with empty list returns state unchanged for any version`` (name: string) (ver: PositiveInt) =
+    let input = box name
+    let result = StateMigration.applyMigrations<string> [] ver.Get input
+    result = name
+
+[<Property>]
+let ``applyMigrations is idempotent when version is already current`` (name: string) (currentVer: PositiveInt) =
+    // Single migration from 1 to 2 — starting at version 2 means no migration applies
+    let migrations = [
+        StateMigration.migration<StateV1, StateV2> 1 2 (fun v1 -> { Name = v1.Name; Email = "migrated" })
+    ]
+    // Input is at version 2 (already past the only migration), so state is returned unchanged
+    let input = { Name = name; Email = "original" }
+    let result = StateMigration.applyMigrations<StateV2> migrations 2 (box input)
+    result = input
+
+[<Property>]
+let ``validate returns empty for contiguous chain of any positive length`` (startVer: NonNegativeInt) (chainLen: PositiveInt) =
+    // Build a chain of identity migrations: start → start+1 → ... → start+chainLen
+    let start = startVer.Get + 1  // ensure starting version is positive
+    let migrations =
+        [ for i in 0 .. chainLen.Get - 1 ->
+            identityMigration (start + i) ]
+
+    let errors = StateMigration.validate migrations
+    errors = []
+
+[<Property>]
+let ``validate is deterministic — same input always gives same output`` (startVer: NonNegativeInt) =
+    let start = startVer.Get + 1
+    let migrations = [
+        identityMigration start
+        identityMigration (start + 1)
+    ]
+    let errors1 = StateMigration.validate migrations
+    let errors2 = StateMigration.validate migrations
+    errors1 = errors2
+
+[<Property>]
+let ``validate detects gap for any non-adjacent pair`` (a: NonNegativeInt) (gap: PositiveInt) =
+    // gap >= 2 creates a gap between version a+1 and a+1+gap+1 (skip at least one version)
+    let v1 = a.Get + 1
+    let v2 = v1 + gap.Get + 1  // ensure there is a gap of at least 1
+    let migrations = [
+        identityMigration v1   // v1 → v1+1
+        StateMigration.migration<string, string> v2 (v2 + 1) id  // v2 → v2+1
+    ]
+    let errors = StateMigration.validate migrations
+    // Should detect the gap between v1+1 and v2
+    errors.Length > 0
+
+[<Property>]
+let ``applying identity migrations preserves string content`` (name: NonEmptyString) (start: NonNegativeInt) =
+    let v = start.Get + 1
+    // Two-step chain: v → v+1 → v+2, all identity
+    let migrations = [
+        identityMigration v
+        identityMigration (v + 1)
+    ]
+    let result = StateMigration.applyMigrations<string> migrations v (box name.Get)
+    result = name.Get
