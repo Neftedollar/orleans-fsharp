@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.DashboardConfigTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp.Runtime
 
 /// <summary>Helper to check if a DashboardConfig is DashboardDefaults.</summary>
@@ -78,3 +80,36 @@ let ``siloConfig CE dashboard composes with TLS`` () =
 
     test <@ config.TlsConfig.IsSome @>
     test <@ config.DashboardConfig.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addDashboardWithOptions stores any positive intervalMs and historyLen`` (intervalMs: PositiveInt) (historyLen: PositiveInt) =
+    let config =
+        siloConfig {
+            addDashboardWithOptions intervalMs.Get historyLen.Get false
+        }
+
+    match config.DashboardConfig.Value with
+    | DashboardWithOptions(i, h, _) -> i = intervalMs.Get && h = historyLen.Get
+    | _ -> false
+
+[<Property>]
+let ``addDashboardWithOptions hideTrace flag is preserved`` (hide: bool) =
+    let config = siloConfig { addDashboardWithOptions 1000 100 hide }
+
+    match config.DashboardConfig.Value with
+    | DashboardWithOptions(_, _, h) -> h = hide
+    | _ -> false
+
+[<Property>]
+let ``addDashboard and addDashboardWithOptions always set DashboardConfig to Some`` (useDefaults: bool) =
+    let config =
+        if useDefaults then
+            siloConfig { addDashboard }
+        else
+            siloConfig { addDashboardWithOptions 1000 100 false }
+
+    config.DashboardConfig.IsSome

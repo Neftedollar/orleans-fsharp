@@ -1,8 +1,11 @@
 module Orleans.FSharp.Tests.SiloConfigTests
 
+open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans
 open Orleans.FSharp
@@ -248,3 +251,32 @@ let ``siloConfig CE composes filters with other options`` () =
     test <@ config.ClusteringMode.IsSome @>
     test <@ config.StorageProviders |> Map.containsKey "Default" @>
     test <@ config.IncomingFilters.Length = 1 @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``addMemoryStorage stores correct name for any non-whitespace name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addMemoryStorage name.Get }
+        config.StorageProviders |> Map.containsKey name.Get
+        && config.StorageProviders.[name.Get] |> isMemory)
+
+[<Property>]
+let ``addMemoryStreams stores correct name for any non-whitespace name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addMemoryStreams name.Get }
+        config.StreamProviders |> Map.containsKey name.Get
+        && config.StreamProviders.[name.Get] |> isMemoryStream)
+
+[<Property>]
+let ``SiloConfig.validate with missing clustering always returns error list`` () =
+    let config = siloConfig { () }
+    let errors = SiloConfig.validate config
+    errors |> List.exists (fun e -> e.Length > 0)
+
+[<Property>]
+let ``SiloConfig.validate returns empty list when clustering is set`` () =
+    let config = siloConfig { useLocalhostClustering }
+    SiloConfig.validate config = []

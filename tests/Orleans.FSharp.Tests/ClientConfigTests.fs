@@ -1,7 +1,10 @@
 module Orleans.FSharp.Tests.ClientConfigTests
 
+open System
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp.Runtime
 
@@ -132,3 +135,34 @@ let ``ClientConfig.validate passes with clustering set`` () =
 
     let errors = ClientConfig.validate config
     test <@ errors = [] @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``useStaticClustering preserves any list of n endpoints`` (n: PositiveInt) =
+    let count = min n.Get 10
+    let endpoints = List.init count (fun i -> $"10.0.0.{i}:30000")
+    let config = clientConfig { useStaticClustering endpoints }
+    match config.ClusteringMode.Value with
+    | StaticGateway eps -> eps.Length = count
+    | _ -> false
+
+[<Property>]
+let ``addMemoryStreams stores correct name for any non-whitespace name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = clientConfig { addMemoryStreams name.Get }
+        config.StreamProviders |> Map.containsKey name.Get)
+
+[<Property>]
+let ``ClientConfig.validate returns empty list when clustering is set`` () =
+    let config = clientConfig { useLocalhostClustering }
+    ClientConfig.validate config = []
+
+[<Property>]
+let ``ClientConfig.validate detects missing clustering for any stream provider name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = clientConfig { addMemoryStreams name.Get }
+        let errors = ClientConfig.validate config
+        errors |> List.exists (fun e -> e.Contains("clustering")))

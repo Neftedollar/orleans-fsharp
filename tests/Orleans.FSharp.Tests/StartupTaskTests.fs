@@ -5,6 +5,8 @@ open System.Threading
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp.Runtime
 
@@ -117,3 +119,25 @@ let ``siloConfig CE startup tasks execute in order`` () =
 
         test <@ order = [ "first"; "second" ] @>
     }
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``n addStartupTask calls accumulate n tasks for any positive n`` (n: PositiveInt) =
+    let count = min n.Get 10
+    let mutable cfg = SiloConfig.Default
+    let builder = SiloConfigBuilder()
+    for _ in 1 .. count do
+        cfg <- builder.AddStartupTask(cfg, fun _sp _ct -> Task.CompletedTask)
+    cfg.StartupTasks.Length = count
+
+[<Property>]
+let ``startup tasks compose with clustering for any positive count`` (n: PositiveInt) =
+    let count = min n.Get 5
+    let builder = SiloConfigBuilder()
+    let mutable cfg = builder.UseLocalhostClustering(SiloConfig.Default)
+    for _ in 1 .. count do
+        cfg <- builder.AddStartupTask(cfg, fun _sp _ct -> Task.CompletedTask)
+    cfg.ClusteringMode.IsSome && cfg.StartupTasks.Length = count
