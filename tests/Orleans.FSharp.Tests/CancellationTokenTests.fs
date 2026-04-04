@@ -5,6 +5,8 @@ open System.Threading
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // --- handleCancellable CE keyword tests ---
@@ -312,3 +314,64 @@ let ``GrainDefinition has CancellableContextHandler field`` () =
         |> Array.tryFind (fun p -> p.Name = "CancellableContextHandler")
 
     test <@ field.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+/// Shared empty GrainContext for unit tests.
+let private emptyCtx = GrainContext.empty
+
+[<Property>]
+let ``handleCancellable: new state equals initial + delta for any inputs`` (initial: int) (delta: int) =
+    let def =
+        grain {
+            defaultState 0
+            handleCancellable (fun state (msg: int) _ct ->
+                task { return state + msg, box (state + msg) })
+        }
+    let handler = def.CancellableHandler.Value
+    let (newState, _) = handler initial delta CancellationToken.None |> Async.AwaitTask |> Async.RunSynchronously
+    newState = initial + delta
+
+[<Property>]
+let ``getHandler fallback from CancellableHandler: result matches direct computation for any inputs`` (initial: int) (delta: int) =
+    let def =
+        grain {
+            defaultState 0
+            handleCancellable (fun state (msg: int) _ct ->
+                task { return state + msg, box (state + msg) })
+        }
+    let handler = GrainDefinition.getHandler def
+    let (newState, result) = handler initial delta |> Async.AwaitTask |> Async.RunSynchronously
+    newState = initial + delta && unbox<int> result = initial + delta
+
+[<Property>]
+let ``getCancellableContextHandler: result matches computation for any inputs`` (initial: int) (delta: int) =
+    let def =
+        grain {
+            defaultState 0
+            handleCancellable (fun state (msg: int) _ct ->
+                task { return state + msg, box (state + msg) })
+        }
+    let handler = GrainDefinition.getCancellableContextHandler def
+    let (newState, _) =
+        handler emptyCtx initial delta CancellationToken.None
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+    newState = initial + delta
+
+[<Property>]
+let ``handleWithContextCancellable: result correct for any initial and delta`` (initial: int) (delta: int) =
+    let def =
+        grain {
+            defaultState 0
+            handleWithContextCancellable (fun _ctx state (msg: int) _ct ->
+                task { return state + msg, box (state + msg) })
+        }
+    let handler = def.CancellableContextHandler.Value
+    let (newState, _) =
+        handler emptyCtx initial delta CancellationToken.None
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+    newState = initial + delta
