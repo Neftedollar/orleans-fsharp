@@ -61,6 +61,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.Transactions" Version="10.*" />
     <PackageReference Include="Polly" Version="8.*" />
+    <PackageReference Include="TypeShape" Version="10.0.0" />
   </ItemGroup>
 
 </Project>

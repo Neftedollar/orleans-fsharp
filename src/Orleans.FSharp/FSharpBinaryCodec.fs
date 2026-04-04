@@ -4,6 +4,8 @@ open System
 open System.Collections.Concurrent
 open System.IO
 open Microsoft.FSharp.Reflection
+open TypeShape.Core
+open TypeShape.Core.Core
 open Orleans.Serialization
 open Orleans.Serialization.Buffers
 open Orleans.Serialization.Cloning
@@ -12,584 +14,507 @@ open Orleans.Serialization.Serializers
 open Orleans.Serialization.WireProtocol
 
 /// <summary>
-/// Binary serialization helpers for F# types using FSharp.Reflection.
-/// Provides recursive encoding/decoding of DUs, records, options, lists, maps, sets,
-/// arrays, and tuples into a compact binary format via BinaryWriter/BinaryReader.
+/// Binary serialization for F# and POCO types using TypeShape for codec dispatch.
+/// Builds a per-type <c>TypeCodec</c> record (Write + Read pair) on first use and
+/// caches it. Supports: DU, record, option, list, map, set, array, tuple, POCO classes,
+/// and all common primitive types. No [GenerateSerializer] or [Id] attributes required.
 /// </summary>
 [<RequireQualifiedAccess>]
 module internal FSharpBinaryFormat =
 
-    /// <summary>
-    /// Type tags used as discriminators in the binary stream.
-    /// Each F# type category has a unique byte tag.
-    /// </summary>
-    [<RequireQualifiedAccess>]
-    module TypeTag =
-        /// <summary>Null reference marker.</summary>
-        [<Literal>]
-        let Null: byte = 0uy
+    // ── Binary format description ───────────────────────────────────────────
+    // Each codec owns its whole serialized representation — no outer TypeTag byte.
+    //
+    //   Unit        :  (nothing — 0 bytes)
+    //   Bool/Byte…  :  raw value bytes
+    //   String      :  [bool has_value] [utf8 string if true]
+    //   Option None :  [0x00]
+    //   Option Some :  [0x01] [inner value]
+    //   List/Set    :  [int32 count] [elements…]
+    //   Map         :  [int32 count] [key value pairs…]
+    //   Array       :  [int32 count] [elements…]
+    //   Tuple       :  [elements…] (count implicit from type)
+    //   Record      :  [int32 field-count] [fields…]
+    //   DU          :  [int32 case-tag] [int32 field-count] [fields…]
+    //   POCO/Null   :  [byte: 0=null,1=present] [int32 prop-count] [props…]
+    //   top-level null (serialize null typeof<_>) :  handled by String/POCO codecs
+    //
+    // ───────────────────────────────────────────────────────────────────────
 
-        /// <summary>F# discriminated union value.</summary>
-        [<Literal>]
-        let DU: byte = 1uy
+    /// <summary>A matched pair of write/read functions for one concrete type.</summary>
+    type TypeCodec = {
+        Write: BinaryWriter -> obj -> unit
+        Read:  BinaryReader -> obj
+    }
 
-        /// <summary>F# record value.</summary>
-        [<Literal>]
-        let Record: byte = 2uy
+    // ── Cache ───────────────────────────────────────────────────────────────
+    // Two-level cache for thread-safety and recursive-type support:
+    //   codecRefs   – mutable ref cells, one per type, installed BEFORE building
+    //                 so that self-referential types (e.g. Tree = Leaf | Branch of Tree*Tree)
+    //                 find a forwarding codec instead of looping infinitely.
+    //   builtCodecs – immutable map of fully-built codecs for fast lookup.
 
-        /// <summary>F# Option.Some value.</summary>
-        [<Literal>]
-        let OptionSome: byte = 3uy
-
-        /// <summary>F# Option.None value.</summary>
-        [<Literal>]
-        let OptionNone: byte = 4uy
-
-        /// <summary>F# list value.</summary>
-        [<Literal>]
-        let FSharpList: byte = 5uy
-
-        /// <summary>F# Map value.</summary>
-        [<Literal>]
-        let FSharpMap: byte = 6uy
-
-        /// <summary>F# Set value.</summary>
-        [<Literal>]
-        let FSharpSet: byte = 7uy
-
-        /// <summary>CLR array value.</summary>
-        [<Literal>]
-        let Array: byte = 8uy
-
-        /// <summary>Tuple value.</summary>
-        [<Literal>]
-        let Tuple: byte = 9uy
-
-        /// <summary>Primitive value (int, string, float, etc.).</summary>
-        [<Literal>]
-        let Primitive: byte = 10uy
+    let private codecRefs  = ConcurrentDictionary<Type, TypeCodec option ref>()
+    let private builtCodecs = ConcurrentDictionary<Type, TypeCodec>()
 
     /// <summary>
-    /// Primitive type discriminators used within a Primitive-tagged block.
+    /// Returns the codec for <paramref name="t"/>, building it on first access.
+    /// Self-referential types are handled via a forwarding ref that is populated
+    /// after the real codec is built.
     /// </summary>
-    [<RequireQualifiedAccess>]
-    module PrimitiveTag =
-        [<Literal>]
-        let Int32: byte = 0uy
-
-        [<Literal>]
-        let Int64: byte = 1uy
-
-        [<Literal>]
-        let String: byte = 2uy
-
-        [<Literal>]
-        let Bool: byte = 3uy
-
-        [<Literal>]
-        let Float: byte = 4uy
-
-        [<Literal>]
-        let Float32: byte = 5uy
-
-        [<Literal>]
-        let Byte: byte = 6uy
-
-        [<Literal>]
-        let Int16: byte = 7uy
-
-        [<Literal>]
-        let Decimal: byte = 8uy
-
-        [<Literal>]
-        let Guid: byte = 9uy
-
-        [<Literal>]
-        let DateTime: byte = 10uy
-
-        [<Literal>]
-        let DateTimeOffset: byte = 11uy
-
-        [<Literal>]
-        let TimeSpan: byte = 12uy
-
-        [<Literal>]
-        let Char: byte = 13uy
-
-        [<Literal>]
-        let UInt32: byte = 14uy
-
-        [<Literal>]
-        let UInt64: byte = 15uy
-
-        [<Literal>]
-        let UInt16: byte = 16uy
-
-        [<Literal>]
-        let SByte: byte = 17uy
-
-        [<Literal>]
-        let ByteArray: byte = 18uy
-
-        [<Literal>]
-        let Unit: byte = 19uy
-
-    /// <summary>
-    /// Cache for FSharp.Reflection metadata to avoid repeated reflection lookups.
-    /// </summary>
-    let private unionCaseCache = ConcurrentDictionary<Type, UnionCaseInfo array>()
-    let private recordFieldCache = ConcurrentDictionary<Type, Reflection.PropertyInfo array>()
-    let private tupleElementCache = ConcurrentDictionary<Type, Type array>()
-
-    let private getUnionCases (t: Type) =
-        unionCaseCache.GetOrAdd(t, fun t -> FSharpType.GetUnionCases(t, true))
-
-    let private getRecordFields (t: Type) =
-        recordFieldCache.GetOrAdd(t, fun t -> FSharpType.GetRecordFields(t, true))
-
-    let private getTupleElements (t: Type) =
-        tupleElementCache.GetOrAdd(t, FSharpType.GetTupleElements)
-
-    /// <summary>
-    /// Returns true if the given type is an F# option type (Option&lt;T&gt;).
-    /// </summary>
-    let private isOptionType (t: Type) =
-        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>
-
-    /// <summary>
-    /// Returns true if the given type is an F# list type.
-    /// </summary>
-    let private isFSharpListType (t: Type) =
-        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<list<_>>
-
-    /// <summary>
-    /// Returns true if the given type is an F# map type.
-    /// </summary>
-    let private isFSharpMapType (t: Type) =
-        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<Map<_, _>>
-
-    /// <summary>
-    /// Returns true if the given type is an F# set type.
-    /// </summary>
-    let private isFSharpSetType (t: Type) =
-        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<Set<_>>
-
-    /// <summary>
-    /// Writes a primitive value to the BinaryWriter, preceded by its primitive tag.
-    /// </summary>
-    let rec private writePrimitive (bw: BinaryWriter) (value: obj) (t: Type) =
-        bw.Write(TypeTag.Primitive)
-
-        match value with
-        | :? int as v ->
-            bw.Write(PrimitiveTag.Int32)
-            bw.Write(v)
-        | :? int64 as v ->
-            bw.Write(PrimitiveTag.Int64)
-            bw.Write(v)
-        | :? string as v ->
-            bw.Write(PrimitiveTag.String)
-            bw.Write(v)
-        | :? bool as v ->
-            bw.Write(PrimitiveTag.Bool)
-            bw.Write(v)
-        | :? float as v ->
-            bw.Write(PrimitiveTag.Float)
-            bw.Write(v)
-        | :? float32 as v ->
-            bw.Write(PrimitiveTag.Float32)
-            bw.Write(v)
-        | :? byte as v ->
-            bw.Write(PrimitiveTag.Byte)
-            bw.Write(v)
-        | :? int16 as v ->
-            bw.Write(PrimitiveTag.Int16)
-            bw.Write(v)
-        | :? decimal as v ->
-            bw.Write(PrimitiveTag.Decimal)
-            bw.Write(v)
-        | :? Guid as v ->
-            bw.Write(PrimitiveTag.Guid)
-            bw.Write(v.ToByteArray())
-        | :? DateTime as v ->
-            bw.Write(PrimitiveTag.DateTime)
-            bw.Write(v.Ticks)
-            bw.Write(int v.Kind)
-        | :? DateTimeOffset as v ->
-            bw.Write(PrimitiveTag.DateTimeOffset)
-            bw.Write(v.Ticks)
-            bw.Write(v.Offset.Ticks)
-        | :? TimeSpan as v ->
-            bw.Write(PrimitiveTag.TimeSpan)
-            bw.Write(v.Ticks)
-        | :? char as v ->
-            bw.Write(PrimitiveTag.Char)
-            bw.Write(v)
-        | :? uint32 as v ->
-            bw.Write(PrimitiveTag.UInt32)
-            bw.Write(v)
-        | :? uint64 as v ->
-            bw.Write(PrimitiveTag.UInt64)
-            bw.Write(v)
-        | :? uint16 as v ->
-            bw.Write(PrimitiveTag.UInt16)
-            bw.Write(v)
-        | :? sbyte as v ->
-            bw.Write(PrimitiveTag.SByte)
-            bw.Write(v)
-        | :? (byte array) as v ->
-            bw.Write(PrimitiveTag.ByteArray)
-            bw.Write(v.Length)
-            bw.Write(v)
-        | _ when t = typeof<unit> ->
-            bw.Write(PrimitiveTag.Unit)
+    let rec getCodec (t: Type) : TypeCodec =
+        // Fast path: fully built
+        match builtCodecs.TryGetValue(t) with
+        | true, c -> c
         | _ ->
-            invalidOp $"Unsupported primitive type: {t.FullName}"
+            let r = codecRefs.GetOrAdd(t, fun _ -> ref None)
+            match r.Value with
+            | Some c -> c  // forwarding (during recursive build) or real (concurrent thread)
+            | None ->
+                // Install a forwarding codec BEFORE building so any re-entrant call
+                // for the same type returns this forwarding instead of looping.
+                let fwd = {
+                    Write = fun bw v -> r.Value.Value.Write bw v
+                    Read  = fun br  -> r.Value.Value.Read br
+                }
+                r.Value <- Some fwd
+                let shape = TypeShape.Create(t)
+                let realCodec =
+                    shape.Accept { new ITypeVisitor<TypeCodec> with
+                        member _.Visit<'T>() = buildCodecFor<'T>() }
+                // Populate the forwarding ref and add to fast cache
+                r.Value <- Some realCodec
+                builtCodecs.TryAdd(t, realCodec) |> ignore
+                realCodec
+
+    and private buildCodecFor<'T>() : TypeCodec =
+        let shape = TypeShape.Create<'T>() :> TypeShape
+
+        match shape with
+        // ── unit ──────────────────────────────────────────────────────────
+        | Shape.Unit ->
+            { Write = fun _  _  -> ()
+              Read  = fun _  -> () :> obj }
+
+        // ── bool ──────────────────────────────────────────────────────────
+        | Shape.Bool ->
+            { Write = fun bw v -> bw.Write(v :?> bool)
+              Read  = fun br  -> br.ReadBoolean() :> obj }
+
+        // ── byte / sbyte ──────────────────────────────────────────────────
+        | Shape.Byte ->
+            { Write = fun bw v -> bw.Write(v :?> byte)
+              Read  = fun br  -> br.ReadByte() :> obj }
+
+        | Shape.SByte ->
+            { Write = fun bw v -> bw.Write(v :?> sbyte)
+              Read  = fun br  -> br.ReadSByte() :> obj }
+
+        // ── int16 / uint16 ────────────────────────────────────────────────
+        | Shape.Int16 ->
+            { Write = fun bw v -> bw.Write(v :?> int16)
+              Read  = fun br  -> br.ReadInt16() :> obj }
+
+        | Shape.UInt16 ->
+            { Write = fun bw v -> bw.Write(v :?> uint16)
+              Read  = fun br  -> br.ReadUInt16() :> obj }
+
+        // ── int32 / uint32 ────────────────────────────────────────────────
+        | Shape.Int32 ->
+            { Write = fun bw v -> bw.Write(v :?> int)
+              Read  = fun br  -> br.ReadInt32() :> obj }
+
+        | Shape.UInt32 ->
+            { Write = fun bw v -> bw.Write(v :?> uint32)
+              Read  = fun br  -> br.ReadUInt32() :> obj }
+
+        // ── int64 / uint64 ────────────────────────────────────────────────
+        | Shape.Int64 ->
+            { Write = fun bw v -> bw.Write(v :?> int64)
+              Read  = fun br  -> br.ReadInt64() :> obj }
+
+        | Shape.UInt64 ->
+            { Write = fun bw v -> bw.Write(v :?> uint64)
+              Read  = fun br  -> br.ReadUInt64() :> obj }
+
+        // ── float / float32 ───────────────────────────────────────────────
+        | Shape.Double ->
+            { Write = fun bw v -> bw.Write(v :?> float)
+              Read  = fun br  -> br.ReadDouble() :> obj }
+
+        | Shape.Single ->
+            { Write = fun bw v -> bw.Write(v :?> float32)
+              Read  = fun br  -> br.ReadSingle() :> obj }
+
+        // ── decimal ───────────────────────────────────────────────────────
+        | Shape.Decimal ->
+            { Write = fun bw v -> bw.Write(v :?> decimal)
+              Read  = fun br  -> br.ReadDecimal() :> obj }
+
+        // ── char ──────────────────────────────────────────────────────────
+        | Shape.Char ->
+            { Write = fun bw v -> bw.Write(v :?> char)
+              Read  = fun br  -> br.ReadChar() :> obj }
+
+        // ── string (nullable) ─────────────────────────────────────────────
+        | Shape.String ->
+            { Write = fun bw v ->
+                let s = v :?> string
+                if isNull s then
+                    bw.Write(false)
+                else
+                    bw.Write(true)
+                    bw.Write(s)
+              Read = fun br ->
+                if br.ReadBoolean() then br.ReadString() :> obj
+                else null }
+
+        // ── Guid ──────────────────────────────────────────────────────────
+        | Shape.Guid ->
+            { Write = fun bw v -> bw.Write((v :?> Guid).ToByteArray())
+              Read  = fun br  -> Guid(br.ReadBytes(16)) :> obj }
+
+        // ── DateTime ──────────────────────────────────────────────────────
+        | Shape.DateTime ->
+            { Write = fun bw v ->
+                let dt = v :?> DateTime
+                bw.Write(dt.Ticks)
+                bw.Write(int dt.Kind)
+              Read = fun br ->
+                let ticks = br.ReadInt64()
+                let kind  = br.ReadInt32() |> enum<DateTimeKind>
+                DateTime(ticks, kind) :> obj }
+
+        // ── DateTimeOffset ────────────────────────────────────────────────
+        | Shape.DateTimeOffset ->
+            { Write = fun bw v ->
+                let dto = v :?> DateTimeOffset
+                bw.Write(dto.Ticks)
+                bw.Write(dto.Offset.Ticks)
+              Read = fun br ->
+                let ticks  = br.ReadInt64()
+                let offset = br.ReadInt64()
+                DateTimeOffset(ticks, TimeSpan(offset)) :> obj }
+
+        // ── TimeSpan ──────────────────────────────────────────────────────
+        | Shape.TimeSpan ->
+            { Write = fun bw v -> bw.Write((v :?> TimeSpan).Ticks)
+              Read  = fun br  -> TimeSpan(br.ReadInt64()) :> obj }
+
+        // ── byte array ────────────────────────────────────────────────────
+        | Shape.ByteArray ->
+            { Write = fun bw v ->
+                let arr = v :?> byte array
+                bw.Write(arr.Length)
+                bw.Write(arr)
+              Read = fun br ->
+                let len = br.ReadInt32()
+                br.ReadBytes(len) :> obj }
+
+        // ── F# Option ─────────────────────────────────────────────────────
+        | Shape.FSharpOption optShape ->
+            let innerType  = optShape.Element.Type
+            let innerCodec = getCodec innerType
+            let cases     = FSharpType.GetUnionCases(typeof<'T>, true)
+            let noneCase  = cases |> Array.find (fun c -> c.Name = "None")
+            let someCase  = cases |> Array.find (fun c -> c.Name = "Some")
+            { Write = fun bw value ->
+                let case, fields = FSharpValue.GetUnionFields(value, typeof<'T>, true)
+                if case.Name = "None" then
+                    bw.Write(0uy)
+                else
+                    bw.Write(1uy)
+                    innerCodec.Write bw fields.[0]
+              Read = fun br ->
+                let tag = br.ReadByte()
+                if tag = 0uy then
+                    FSharpValue.MakeUnion(noneCase, [||], true)
+                else
+                    let inner = innerCodec.Read br
+                    FSharpValue.MakeUnion(someCase, [| inner |], true) }
+
+        // ── F# list ───────────────────────────────────────────────────────
+        | Shape.FSharpList lstShape ->
+            let elemType  = lstShape.Element.Type
+            let elemCodec = getCodec elemType
+            { Write = fun bw value ->
+                let items =
+                    (value :?> System.Collections.IEnumerable)
+                    |> Seq.cast<obj>
+                    |> Array.ofSeq
+                bw.Write(items.Length)
+                for item in items do elemCodec.Write bw item
+              Read = fun br ->
+                let count   = br.ReadInt32()
+                let items   = Array.init count (fun _ -> elemCodec.Read br)
+                let typedArr = Array.CreateInstance(elemType, count)
+                for i in 0 .. count - 1 do typedArr.SetValue(items.[i], i)
+                let listModule = typeof<list<int>>.Assembly.GetType("Microsoft.FSharp.Collections.ListModule")
+                let ofArray    = listModule.GetMethod("OfArray").MakeGenericMethod(elemType)
+                ofArray.Invoke(null, [| typedArr |]) }
+
+        // ── F# Map ────────────────────────────────────────────────────────
+        | Shape.FSharpMap mapShape ->
+            let keyType   = mapShape.Key.Type
+            let valType   = mapShape.Value.Type
+            let keyCodec  = getCodec keyType
+            let valCodec  = getCodec valType
+            let kvpType   = typedefof<Collections.Generic.KeyValuePair<_,_>>.MakeGenericType(keyType, valType)
+            let keyProp   = kvpType.GetProperty("Key")
+            let valProp   = kvpType.GetProperty("Value")
+            let tupleType = FSharpType.MakeTupleType([| keyType; valType |])
+            { Write = fun bw value ->
+                let items =
+                    (value :?> System.Collections.IEnumerable)
+                    |> Seq.cast<obj>
+                    |> Array.ofSeq
+                bw.Write(items.Length)
+                for kvp in items do
+                    keyCodec.Write bw (keyProp.GetValue(kvp))
+                    valCodec.Write bw (valProp.GetValue(kvp))
+              Read = fun br ->
+                let count = br.ReadInt32()
+                let pairs = Array.init count (fun _ ->
+                    let k = keyCodec.Read br
+                    let v = valCodec.Read br
+                    FSharpValue.MakeTuple([| k; v |], tupleType))
+                let typedArr = Array.CreateInstance(tupleType, count)
+                for i in 0 .. count - 1 do typedArr.SetValue(pairs.[i], i)
+                let mapModule = typeof<Map<int,int>>.Assembly.GetType("Microsoft.FSharp.Collections.MapModule")
+                let ofArray   = mapModule.GetMethod("OfArray").MakeGenericMethod(keyType, valType)
+                ofArray.Invoke(null, [| typedArr |]) }
+
+        // ── F# Set ────────────────────────────────────────────────────────
+        | Shape.FSharpSet setShape ->
+            let elemType  = setShape.Element.Type
+            let elemCodec = getCodec elemType
+            { Write = fun bw value ->
+                let items =
+                    (value :?> System.Collections.IEnumerable)
+                    |> Seq.cast<obj>
+                    |> Array.ofSeq
+                bw.Write(items.Length)
+                for item in items do elemCodec.Write bw item
+              Read = fun br ->
+                let count   = br.ReadInt32()
+                let items   = Array.init count (fun _ -> elemCodec.Read br)
+                let typedArr = Array.CreateInstance(elemType, count)
+                for i in 0 .. count - 1 do typedArr.SetValue(items.[i], i)
+                let setModule = typeof<Set<int>>.Assembly.GetType("Microsoft.FSharp.Collections.SetModule")
+                let ofArray   = setModule.GetMethod("OfArray").MakeGenericMethod(elemType)
+                ofArray.Invoke(null, [| typedArr |]) }
+
+        // ── CLR array ─────────────────────────────────────────────────────
+        | Shape.Array arrShape when arrShape.Rank = 1 ->
+            let elemType  = arrShape.Element.Type
+            let elemCodec = getCodec elemType
+            { Write = fun bw value ->
+                let arr = value :?> Array
+                bw.Write(arr.Length)
+                for i in 0 .. arr.Length - 1 do elemCodec.Write bw (arr.GetValue(i))
+              Read = fun br ->
+                let count = br.ReadInt32()
+                let arr   = Array.CreateInstance(elemType, count)
+                for i in 0 .. count - 1 do arr.SetValue(elemCodec.Read br, i)
+                arr :> obj }
+
+        // ── Tuple ─────────────────────────────────────────────────────────
+        | Shape.Tuple (:? ShapeTuple<'T> as tupleShape) ->
+            let elemPairs = tupleShape.Elements |> Array.map (fun elem ->
+                elem.Accept { new IReadOnlyMemberVisitor<'T, ('T -> obj) * TypeCodec> with
+                    member _.Visit<'F>(m: ReadOnlyMember<'T,'F>) =
+                        let getter: 'T -> obj = fun v -> m.Get(v) :> obj
+                        getter, getCodec typeof<'F>
+                })
+            { Write = fun bw value ->
+                let v = value :?> 'T
+                for getter, fc in elemPairs do fc.Write bw (getter v)
+              Read = fun br ->
+                let values = elemPairs |> Array.map (fun (_, fc) -> fc.Read br)
+                FSharpValue.MakeTuple(values, typeof<'T>) }
+
+        // ── F# Record ─────────────────────────────────────────────────────
+        | Shape.FSharpRecord (:? ShapeFSharpRecord<'T> as recordShape) ->
+            let fieldPairs = recordShape.Fields |> Array.map (fun field ->
+                field.Accept { new IReadOnlyMemberVisitor<'T, ('T -> obj) * TypeCodec> with
+                    member _.Visit<'F>(m: ReadOnlyMember<'T,'F>) =
+                        let getter: 'T -> obj = fun v -> m.Get(v) :> obj
+                        getter, getCodec typeof<'F>
+                })
+            { Write = fun bw value ->
+                let v = value :?> 'T
+                bw.Write(fieldPairs.Length)
+                for getter, fc in fieldPairs do fc.Write bw (getter v)
+              Read = fun br ->
+                let count  = br.ReadInt32()
+                let values = Array.init count (fun i -> snd fieldPairs.[i] |> fun fc -> fc.Read br)
+                FSharpValue.MakeRecord(typeof<'T>, values, true) }
+
+        // ── F# Discriminated Union ─────────────────────────────────────────
+        | Shape.FSharpUnion (:? ShapeFSharpUnion<'T> as unionShape) ->
+            let caseFieldPairs = unionShape.UnionCases |> Array.map (fun ucase ->
+                ucase.Fields |> Array.map (fun field ->
+                    field.Accept { new IReadOnlyMemberVisitor<'T, ('T -> obj) * TypeCodec> with
+                        member _.Visit<'F>(m: ReadOnlyMember<'T,'F>) =
+                            let getter: 'T -> obj = fun v -> m.Get(v) :> obj
+                            getter, getCodec typeof<'F>
+                    }
+                )
+            )
+            let reflCases = FSharpType.GetUnionCases(typeof<'T>, true)
+            { Write = fun bw value ->
+                let v = value :?> 'T
+                let case, _ = FSharpValue.GetUnionFields(v, typeof<'T>, true)
+                bw.Write(case.Tag)
+                let pairs = caseFieldPairs.[case.Tag]
+                bw.Write(pairs.Length)
+                for getter, fc in pairs do fc.Write bw (getter v)
+              Read = fun br ->
+                let caseTag   = br.ReadInt32()
+                let unionCase = reflCases |> Array.find (fun c -> c.Tag = caseTag)
+                let count     = br.ReadInt32()
+                let pairs     = caseFieldPairs.[caseTag]
+                let fields    = Array.init count (fun i -> snd pairs.[i] |> fun fc -> fc.Read br)
+                FSharpValue.MakeUnion(unionCase, fields, true) }
+
+        // ── POCO class (mutable properties) ───────────────────────────────
+        | Shape.Poco (:? ShapePoco<'T> as pocoShape) ->
+            // Properties: public readable (use for write)
+            // Fields: backing fields, in same order as Properties (use for read/set)
+            let propGetters = pocoShape.Properties |> Array.map (fun prop ->
+                prop.Accept { new IReadOnlyMemberVisitor<'T, ('T -> obj) * TypeCodec> with
+                    member _.Visit<'F>(m: ReadOnlyMember<'T,'F>) =
+                        let getter: 'T -> obj = fun v -> m.Get(v) :> obj
+                        getter, getCodec typeof<'F>
+                })
+            let fieldSetters = pocoShape.Fields |> Array.map (fun field ->
+                field.Accept { new IMemberVisitor<'T, 'T -> obj -> 'T> with
+                    member _.Visit<'F>(m: ShapeMember<'T,'F>) =
+                        fun (target: 'T) (value: obj) -> m.Set target (value :?> 'F)
+                })
+            { Write = fun bw value ->
+                if isNull value then
+                    bw.Write(0uy)
+                else
+                    bw.Write(1uy)
+                    let v = value :?> 'T
+                    bw.Write(propGetters.Length)
+                    for getter, fc in propGetters do fc.Write bw (getter v)
+              Read = fun br ->
+                let tag = br.ReadByte()
+                if tag = 0uy then null
+                else
+                    let count = br.ReadInt32()
+                    let mutable inst = pocoShape.CreateUninitialized()
+                    for i in 0 .. count - 1 do
+                        let value = snd propGetters.[i] |> fun fc -> fc.Read br
+                        inst <- fieldSetters.[i] inst value
+                    inst :> obj }
+
+        // ── CliMutable (F# record with [<CLIMutable>]) ─────────────────────
+        | Shape.CliMutable (:? ShapeCliMutable<'T> as cliShape) ->
+            let propPairs = cliShape.Properties |> Array.map (fun prop ->
+                prop.Accept { new IReadOnlyMemberVisitor<'T, ('T -> obj) * TypeCodec> with
+                    member _.Visit<'F>(m: ReadOnlyMember<'T,'F>) =
+                        let getter: 'T -> obj = fun v -> m.Get(v) :> obj
+                        getter, getCodec typeof<'F>
+                })
+            let setterFns = cliShape.Properties |> Array.map (fun prop ->
+                prop.Accept { new IMemberVisitor<'T, 'T -> obj -> 'T> with
+                    member _.Visit<'F>(m: ShapeMember<'T,'F>) =
+                        fun (target: 'T) (value: obj) -> m.Set target (value :?> 'F)
+                })
+            { Write = fun bw value ->
+                let v = value :?> 'T
+                bw.Write(propPairs.Length)
+                for getter, fc in propPairs do fc.Write bw (getter v)
+              Read = fun br ->
+                let count = br.ReadInt32()
+                let mutable inst = cliShape.CreateUninitialized()
+                for i in 0 .. count - 1 do
+                    let value = snd propPairs.[i] |> fun fc -> fc.Read br
+                    inst <- setterFns.[i] inst value
+                inst :> obj }
+
+        | _ ->
+            invalidOp $"FSharpBinaryCodec: unsupported type '{typeof<'T>.FullName}'"
 
     /// <summary>
-    /// Writes a value of any supported F# type to the BinaryWriter.
+    /// Returns true if the given type is a supported F# composite type or user-defined POCO class.
+    /// Primitives and primitive-like system types (int, string, bool, Guid, DateTime, etc.)
+    /// are handled by Orleans' built-in codecs and are excluded here.
+    /// Note: TypeShape.Shape.Poco also matches some system classes like string, so we
+    /// explicitly exclude those first.
     /// </summary>
-    and writeValue (bw: BinaryWriter) (value: obj) (valueType: Type) : unit =
-        if isNull value then
-            bw.Write(TypeTag.Null)
-        elif isOptionType valueType then
-            writeOptionValue bw value valueType
-        elif isFSharpListType valueType then
-            writeListValue bw value valueType
-        elif isFSharpMapType valueType then
-            writeMapValue bw value valueType
-        elif isFSharpSetType valueType then
-            writeSetValue bw value valueType
-        elif valueType.IsArray then
-            writeArrayValue bw value valueType
-        elif FSharpType.IsTuple(valueType) then
-            writeTupleValue bw value valueType
-        elif FSharpType.IsUnion(valueType, true) then
-            writeUnionValue bw value valueType
-        elif FSharpType.IsRecord(valueType, true) then
-            writeRecordValue bw value valueType
+    let isSupportedType (t: Type) : bool =
+        if isNull t then false
         else
-            writePrimitive bw value valueType
+            let shape = TypeShape.Create(t)
+            match shape with
+            // Primitive-like classes that TypeShape also classifies as Poco — exclude them.
+            | Shape.String
+            | Shape.Guid
+            | Shape.DateTime
+            | Shape.DateTimeOffset
+            | Shape.TimeSpan
+            | Shape.ByteArray -> false
+            // F# composite types
+            | Shape.FSharpOption _
+            | Shape.FSharpList _
+            | Shape.FSharpMap _
+            | Shape.FSharpSet _
+            | Shape.Array _
+            | Shape.Tuple _
+            | Shape.FSharpRecord _
+            | Shape.FSharpUnion _
+            | Shape.Poco _
+            | Shape.CliMutable _ -> true
+            | _ -> false
 
-    and private writeOptionValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        let cases = getUnionCases valueType
-        let case, fields = FSharpValue.GetUnionFields(value, valueType, true)
-
-        if case.Name = "None" then
-            bw.Write(TypeTag.OptionNone)
-        else
-            bw.Write(TypeTag.OptionSome)
-            let innerType = valueType.GetGenericArguments().[0]
-            writeValue bw fields.[0] innerType
-
-    and private writeListValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        bw.Write(TypeTag.FSharpList)
-        let elementType = valueType.GetGenericArguments().[0]
-        let items = value :?> System.Collections.IEnumerable |> Seq.cast<obj> |> Array.ofSeq
-        bw.Write(items.Length)
-
-        for item in items do
-            writeValue bw item elementType
-
-    and private writeMapValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        bw.Write(TypeTag.FSharpMap)
-        let genArgs = valueType.GetGenericArguments()
-        let keyType = genArgs.[0]
-        let valType = genArgs.[1]
-        let kvpType = typedefof<System.Collections.Generic.KeyValuePair<_, _>>.MakeGenericType(genArgs)
-        let keyProp = kvpType.GetProperty("Key")
-        let valueProp = kvpType.GetProperty("Value")
-        let items = value :?> System.Collections.IEnumerable |> Seq.cast<obj> |> Array.ofSeq
-        bw.Write(items.Length)
-
-        for kvp in items do
-            writeValue bw (keyProp.GetValue(kvp)) keyType
-            writeValue bw (valueProp.GetValue(kvp)) valType
-
-    and private writeSetValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        bw.Write(TypeTag.FSharpSet)
-        let elementType = valueType.GetGenericArguments().[0]
-        let items = value :?> System.Collections.IEnumerable |> Seq.cast<obj> |> Array.ofSeq
-        bw.Write(items.Length)
-
-        for item in items do
-            writeValue bw item elementType
-
-    and private writeArrayValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        bw.Write(TypeTag.Array)
-        let elementType = valueType.GetElementType()
-        let arr = value :?> System.Array
-        bw.Write(arr.Length)
-
-        for i in 0 .. arr.Length - 1 do
-            writeValue bw (arr.GetValue(i)) elementType
-
-    and private writeTupleValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        bw.Write(TypeTag.Tuple)
-        let elements = FSharpValue.GetTupleFields(value)
-        let elementTypes = getTupleElements valueType
-        bw.Write(elements.Length)
-
-        for i in 0 .. elements.Length - 1 do
-            writeValue bw elements.[i] elementTypes.[i]
-
-    and private writeUnionValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        bw.Write(TypeTag.DU)
-        let case, fields = FSharpValue.GetUnionFields(value, valueType, true)
-        bw.Write(case.Tag)
-        let fieldInfos = case.GetFields()
-        bw.Write(fields.Length)
-
-        for i in 0 .. fields.Length - 1 do
-            writeValue bw fields.[i] fieldInfos.[i].PropertyType
-
-    and private writeRecordValue (bw: BinaryWriter) (value: obj) (valueType: Type) =
-        bw.Write(TypeTag.Record)
-        let fields = getRecordFields valueType
-        bw.Write(fields.Length)
-
-        for field in fields do
-            writeValue bw (field.GetValue(value)) field.PropertyType
-
-    /// <summary>
-    /// Reads a primitive value from the BinaryReader based on the primitive tag.
-    /// </summary>
-    let rec private readPrimitive (br: BinaryReader) : obj =
-        let tag = br.ReadByte()
-
-        match tag with
-        | t when t = PrimitiveTag.Int32 -> br.ReadInt32() :> obj
-        | t when t = PrimitiveTag.Int64 -> br.ReadInt64() :> obj
-        | t when t = PrimitiveTag.String -> br.ReadString() :> obj
-        | t when t = PrimitiveTag.Bool -> br.ReadBoolean() :> obj
-        | t when t = PrimitiveTag.Float -> br.ReadDouble() :> obj
-        | t when t = PrimitiveTag.Float32 -> br.ReadSingle() :> obj
-        | t when t = PrimitiveTag.Byte -> br.ReadByte() :> obj
-        | t when t = PrimitiveTag.Int16 -> br.ReadInt16() :> obj
-        | t when t = PrimitiveTag.Decimal -> br.ReadDecimal() :> obj
-        | t when t = PrimitiveTag.Guid ->
-            let bytes = br.ReadBytes(16)
-            Guid(bytes) :> obj
-        | t when t = PrimitiveTag.DateTime ->
-            let ticks = br.ReadInt64()
-            let kind = br.ReadInt32() |> enum<DateTimeKind>
-            DateTime(ticks, kind) :> obj
-        | t when t = PrimitiveTag.DateTimeOffset ->
-            let ticks = br.ReadInt64()
-            let offsetTicks = br.ReadInt64()
-            DateTimeOffset(ticks, TimeSpan(offsetTicks)) :> obj
-        | t when t = PrimitiveTag.TimeSpan ->
-            TimeSpan(br.ReadInt64()) :> obj
-        | t when t = PrimitiveTag.Char -> br.ReadChar() :> obj
-        | t when t = PrimitiveTag.UInt32 -> br.ReadUInt32() :> obj
-        | t when t = PrimitiveTag.UInt64 -> br.ReadUInt64() :> obj
-        | t when t = PrimitiveTag.UInt16 -> br.ReadUInt16() :> obj
-        | t when t = PrimitiveTag.SByte -> br.ReadSByte() :> obj
-        | t when t = PrimitiveTag.ByteArray ->
-            let len = br.ReadInt32()
-            br.ReadBytes(len) :> obj
-        | t when t = PrimitiveTag.Unit -> () :> obj
-        | _ -> invalidOp $"Unknown primitive tag: {tag}"
-
-    /// <summary>
-    /// Reads a value of any supported F# type from the BinaryReader.
-    /// </summary>
-    and readValue (br: BinaryReader) (expectedType: Type) : obj =
-        let tag = br.ReadByte()
-
-        match tag with
-        | t when t = TypeTag.Null -> null
-        | t when t = TypeTag.OptionNone -> readOptionNone expectedType
-        | t when t = TypeTag.OptionSome -> readOptionSome br expectedType
-        | t when t = TypeTag.FSharpList -> readListValue br expectedType
-        | t when t = TypeTag.FSharpMap -> readMapValue br expectedType
-        | t when t = TypeTag.FSharpSet -> readSetValue br expectedType
-        | t when t = TypeTag.Array -> readArrayValue br expectedType
-        | t when t = TypeTag.Tuple -> readTupleValue br expectedType
-        | t when t = TypeTag.DU -> readUnionValue br expectedType
-        | t when t = TypeTag.Record -> readRecordValue br expectedType
-        | t when t = TypeTag.Primitive -> readPrimitive br
-        | _ -> invalidOp $"Unknown type tag: {tag}"
-
-    and private readOptionNone (expectedType: Type) : obj =
-        let cases = getUnionCases expectedType
-        let noneCase = cases |> Array.find (fun c -> c.Name = "None")
-        FSharpValue.MakeUnion(noneCase, [||], true)
-
-    and private readOptionSome (br: BinaryReader) (expectedType: Type) : obj =
-        let cases = getUnionCases expectedType
-        let someCase = cases |> Array.find (fun c -> c.Name = "Some")
-        let innerType = expectedType.GetGenericArguments().[0]
-        let innerValue = readValue br innerType
-        FSharpValue.MakeUnion(someCase, [| innerValue |], true)
-
-    /// <summary>
-    /// Creates a typed array from an obj array by copying values into Array.CreateInstance.
-    /// Required because reflection-based methods like List.ofArray expect T[] not obj[].
-    /// </summary>
-    and private toTypedArray (elementType: Type) (objArray: obj array) : obj =
-        let typedArr = System.Array.CreateInstance(elementType, objArray.Length)
-
-        for i in 0 .. objArray.Length - 1 do
-            typedArr.SetValue(objArray.[i], i)
-
-        typedArr :> obj
-
-    and private readListValue (br: BinaryReader) (expectedType: Type) : obj =
-        let elementType = expectedType.GetGenericArguments().[0]
-        let count = br.ReadInt32()
-        let items = Array.init count (fun _ -> readValue br elementType)
-        let typedArr = toTypedArray elementType items
-        let listModule = typeof<list<int>>.Assembly.GetType("Microsoft.FSharp.Collections.ListModule")
-        let ofArray = listModule.GetMethod("OfArray").MakeGenericMethod(elementType)
-        ofArray.Invoke(null, [| typedArr |])
-
-    and private readMapValue (br: BinaryReader) (expectedType: Type) : obj =
-        let genArgs = expectedType.GetGenericArguments()
-        let keyType = genArgs.[0]
-        let valType = genArgs.[1]
-        let count = br.ReadInt32()
-        let tupleType = FSharpType.MakeTupleType([| keyType; valType |])
-        let pairs = Array.init count (fun _ ->
-            let k = readValue br keyType
-            let v = readValue br valType
-            FSharpValue.MakeTuple([| k; v |], tupleType))
-        let typedArr = toTypedArray tupleType pairs
-        let mapModule = typeof<Map<int, int>>.Assembly.GetType("Microsoft.FSharp.Collections.MapModule")
-        let ofArray = mapModule.GetMethod("OfArray").MakeGenericMethod(keyType, valType)
-        ofArray.Invoke(null, [| typedArr |])
-
-    and private readSetValue (br: BinaryReader) (expectedType: Type) : obj =
-        let elementType = expectedType.GetGenericArguments().[0]
-        let count = br.ReadInt32()
-        let items = Array.init count (fun _ -> readValue br elementType)
-        let typedArr = toTypedArray elementType items
-        let setModule = typeof<Set<int>>.Assembly.GetType("Microsoft.FSharp.Collections.SetModule")
-        let ofArray = setModule.GetMethod("OfArray").MakeGenericMethod(elementType)
-        ofArray.Invoke(null, [| typedArr |])
-
-    and private readArrayValue (br: BinaryReader) (expectedType: Type) : obj =
-        let elementType = expectedType.GetElementType()
-        let count = br.ReadInt32()
-        let arr = System.Array.CreateInstance(elementType, count)
-
-        for i in 0 .. count - 1 do
-            arr.SetValue(readValue br elementType, i)
-
-        arr :> obj
-
-    and private readTupleValue (br: BinaryReader) (expectedType: Type) : obj =
-        let count = br.ReadInt32()
-        let elementTypes = getTupleElements expectedType
-        let elements = Array.init count (fun i -> readValue br elementTypes.[i])
-        FSharpValue.MakeTuple(elements, expectedType)
-
-    and private readUnionValue (br: BinaryReader) (expectedType: Type) : obj =
-        let caseTag = br.ReadInt32()
-        let cases = getUnionCases expectedType
-        let unionCase = cases |> Array.find (fun c -> c.Tag = caseTag)
-        let fieldCount = br.ReadInt32()
-        let fieldInfos = unionCase.GetFields()
-        let fields = Array.init fieldCount (fun i -> readValue br fieldInfos.[i].PropertyType)
-        FSharpValue.MakeUnion(unionCase, fields, true)
-
-    and private readRecordValue (br: BinaryReader) (expectedType: Type) : obj =
-        let fieldCount = br.ReadInt32()
-        let fields = getRecordFields expectedType
-        let values = Array.init fieldCount (fun i -> readValue br fields.[i].PropertyType)
-        FSharpValue.MakeRecord(expectedType, values, true)
-
-    /// <summary>
-    /// Serializes a value to a byte array using the F# binary format.
-    /// </summary>
-    /// <param name="value">The value to serialize.</param>
-    /// <param name="valueType">The runtime type of the value.</param>
-    /// <returns>A byte array containing the binary representation.</returns>
+    /// <summary>Serializes a value to a byte array using the F# binary format.</summary>
     let serialize (value: obj) (valueType: Type) : byte array =
         use ms = new MemoryStream()
         use bw = new BinaryWriter(ms, Text.Encoding.UTF8, true)
-        writeValue bw value valueType
+        let codec = getCodec valueType
+        codec.Write bw value
         bw.Flush()
         ms.ToArray()
 
-    /// <summary>
-    /// Deserializes a value from a byte array using the F# binary format.
-    /// </summary>
-    /// <param name="data">The byte array to deserialize from.</param>
-    /// <param name="expectedType">The expected type of the deserialized value.</param>
-    /// <returns>The deserialized value.</returns>
+    /// <summary>Deserializes a value from a byte array using the F# binary format.</summary>
     let deserialize (data: byte array) (expectedType: Type) : obj =
         use ms = new MemoryStream(data)
         use br = new BinaryReader(ms, Text.Encoding.UTF8, true)
-        readValue br expectedType
-
-    /// <summary>
-    /// Returns true if the given type is a supported F# type for binary serialization.
-    /// Supports: DU, record, option, list, map, set, array, tuple, and primitive types.
-    /// </summary>
-    /// <param name="t">The type to check.</param>
-    /// <returns>True if the type is supported for F# binary serialization.</returns>
-    let isSupportedType (t: Type) : bool =
-        if isNull t then
-            false
-        elif isOptionType t then
-            true
-        elif isFSharpListType t then
-            true
-        elif isFSharpMapType t then
-            true
-        elif isFSharpSetType t then
-            true
-        elif t.IsArray then
-            true
-        elif FSharpType.IsTuple(t) then
-            true
-        elif FSharpType.IsUnion(t, true) then
-            true
-        elif FSharpType.IsRecord(t, true) then
-            true
-        else
-            false
+        let codec = getCodec expectedType
+        codec.Read br
 
 /// <summary>
-/// Orleans generalized codec that serializes F# types (discriminated unions, records,
-/// options, lists, maps, sets, arrays, tuples) in binary format without requiring
-/// [GenerateSerializer] or [Id] attributes.
-/// Implements IGeneralizedCodec, IGeneralizedCopier, and ITypeFilter for full
-/// Orleans serialization pipeline integration.
+/// Orleans generalized codec that serializes F# types and POCO classes in binary format
+/// without requiring [GenerateSerializer] or [Id] attributes.
 /// </summary>
 type FSharpBinaryCodec() =
 
     interface IGeneralizedCodec with
-        /// <summary>
-        /// Returns true if the given type is a supported F# type for binary serialization.
-        /// </summary>
         member _.IsSupportedType(``type``: Type) =
             FSharpBinaryFormat.isSupportedType ``type``
 
     interface IFieldCodec with
-        /// <summary>
-        /// Writes an F# value as a length-prefixed binary blob in the Orleans wire format.
-        /// </summary>
         member _.WriteField<'TBufferWriter when 'TBufferWriter :> System.Buffers.IBufferWriter<byte>>
             (writer: byref<Writer<'TBufferWriter>>, fieldIdDelta: uint32, expectedType: Type, value: obj) =
             if ReferenceCodec.TryWriteReferenceField(&writer, fieldIdDelta, expectedType, value) then
                 ()
             else
-                let bytes = FSharpBinaryFormat.serialize value (if isNull value then expectedType else value.GetType())
-                writer.WriteFieldHeader(fieldIdDelta, expectedType, (if isNull value then expectedType else value.GetType()), WireType.LengthPrefixed)
+                let actualType = if isNull value then expectedType else value.GetType()
+                let bytes = FSharpBinaryFormat.serialize value actualType
+                writer.WriteFieldHeader(fieldIdDelta, expectedType, actualType, WireType.LengthPrefixed)
                 writer.WriteVarUInt32(uint32 bytes.Length)
                 writer.Write(ReadOnlySpan<byte>(bytes))
 
-        /// <summary>
-        /// Reads an F# value from a length-prefixed binary blob in the Orleans wire format.
-        /// </summary>
         member _.ReadValue<'TInput>(reader: byref<Reader<'TInput>>, field: Field) : obj =
             if field.IsReference then
                 ReferenceCodec.ReadReference<obj, 'TInput>(&reader, field)
             else
                 let length = reader.ReadVarUInt32()
-                let bytes = reader.ReadBytes(length)
+                let bytes  = reader.ReadBytes(length)
                 let fieldType = field.FieldType
 
                 if isNull fieldType then
@@ -598,28 +523,26 @@ type FSharpBinaryCodec() =
                 FSharpBinaryFormat.deserialize bytes fieldType
 
     interface IGeneralizedCopier with
-        /// <summary>
-        /// Returns true if the given type is a supported F# type for deep copying.
-        /// </summary>
         member _.IsSupportedType(``type``: Type) =
             FSharpBinaryFormat.isSupportedType ``type``
 
     interface IDeepCopier with
-        /// <summary>
-        /// Deep copies an F# value by serializing and deserializing through the binary format.
-        /// Immutable F# types (DU, record, option, list, map, set, tuple) are returned as-is
-        /// since they are already immutable.
-        /// </summary>
         member _.DeepCopy(input: obj, _context: CopyContext) : obj =
-            // F# DUs, records, options, lists, maps, sets, and tuples are immutable.
-            // No need to copy them — return the original reference.
-            input
+            if isNull input then null
+            else
+                let t = input.GetType()
+                if t.IsClass
+                   && not (FSharpType.IsUnion(t, true))
+                   && not (FSharpType.IsRecord(t, true))
+                   && not (t.IsGenericType
+                           && (t.GetGenericTypeDefinition() = typedefof<option<_>>
+                               || t.GetGenericTypeDefinition() = typedefof<list<_>>)) then
+                    // POCO — deep copy via round-trip serialization
+                    FSharpBinaryFormat.deserialize (FSharpBinaryFormat.serialize input t) t
+                else
+                    input // immutable F# types — return as-is
 
     interface ITypeFilter with
-        /// <summary>
-        /// Allows F# types supported by this codec through the Orleans type filter.
-        /// Returns null for unsupported types, letting other filters handle them.
-        /// </summary>
         member _.IsTypeAllowed(``type``: Type) : Nullable<bool> =
             if FSharpBinaryFormat.isSupportedType ``type`` then
                 Nullable<bool>(true)
@@ -627,7 +550,7 @@ type FSharpBinaryCodec() =
                 Nullable<bool>()
 
 /// <summary>
-/// Functions for registering the FSharpBinaryCodec with the Orleans serializer.
+/// Registration helpers for FSharpBinaryCodec.
 /// </summary>
 [<RequireQualifiedAccess>]
 module FSharpBinaryCodecRegistration =
@@ -638,8 +561,6 @@ module FSharpBinaryCodecRegistration =
     /// Registers the FSharpBinaryCodec as a generalized codec, copier, and type filter
     /// with the Orleans serializer builder.
     /// </summary>
-    /// <param name="builder">The Orleans serializer builder.</param>
-    /// <returns>The serializer builder for chaining.</returns>
     let addToSerializerBuilder (builder: ISerializerBuilder) : ISerializerBuilder =
         builder.Services.AddSingleton<FSharpBinaryCodec>() |> ignore
 
