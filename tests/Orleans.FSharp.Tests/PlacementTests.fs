@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.PlacementTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 [<Fact>]
@@ -76,3 +78,29 @@ let ``grain CE last placement strategy wins`` () =
         }
 
     test <@ def.PlacementStrategy = PlacementStrategy.Random @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``preferLocalPlacement does not affect DefaultState for any initial state`` (initial: int) =
+    let def =
+        grain {
+            defaultState initial
+            handle (fun state (_msg: string) -> task { return state, box state })
+            preferLocalPlacement
+        }
+    def.DefaultState = Some initial
+    && def.PlacementStrategy = PlacementStrategy.PreferLocal
+
+[<Property>]
+let ``randomPlacement does not affect Handler registration for any state`` (initial: int) =
+    let def =
+        grain {
+            defaultState initial
+            handle (fun state (_msg: string) -> task { return state, box state })
+            randomPlacement
+        }
+    def.Handler |> Option.isSome
+    && def.PlacementStrategy = PlacementStrategy.Random

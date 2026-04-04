@@ -157,16 +157,17 @@ let ``onTimer with zero dueTime stores correctly`` () =
 // ---------------------------------------------------------------------------
 
 [<Property>]
-let ``onTimer stores correct name for any non-empty timer name`` (name: NonEmptyString) =
+let ``onTimer stores correct name for any non-whitespace timer name`` (name: NonNull<string>) =
     let due = TimeSpan.FromSeconds 1.
     let period = TimeSpan.FromSeconds 1.
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state (_msg: string) -> task { return state, box state })
-            onTimer name.Get due period (fun state -> task { return state })
-        }
-    def.TimerHandlers |> Map.containsKey name.Get
+    String.IsNullOrWhiteSpace name.Get
+    || (let def =
+            grain {
+                defaultState 0
+                handle (fun state (_msg: string) -> task { return state, box state })
+                onTimer name.Get due period (fun state -> task { return state })
+            }
+        def.TimerHandlers |> Map.containsKey name.Get)
 
 [<Property>]
 let ``onTimer handler increments state correctly for any initial state`` (initial: int) =

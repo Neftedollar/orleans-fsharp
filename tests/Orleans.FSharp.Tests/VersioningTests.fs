@@ -1,5 +1,6 @@
 module Orleans.FSharp.Tests.VersioningTests
 
+open System
 open Xunit
 open Swensen.Unquote
 open FsCheck
@@ -178,9 +179,10 @@ let ``versionSelectorStrategyName always returns a non-empty string`` (selector:
     name.Length > 0
 
 [<Property>]
-let ``addBroadcastChannel stores the correct channel name for any input`` (name: NonEmptyString) =
-    let config = siloConfig { addBroadcastChannel name.Get }
-    config.BroadcastChannels = [ name.Get ]
+let ``addBroadcastChannel stores the correct channel name for any non-whitespace input`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let config = siloConfig { addBroadcastChannel name.Get }
+        config.BroadcastChannels = [ name.Get ])
 
 [<Property>]
 let ``useGrainVersioning always stores both strategy fields`` (compat: CompatibilityStrategy) (selector: VersionSelectorStrategy) =

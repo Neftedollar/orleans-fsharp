@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.TelemetryTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 /// <summary>Tests for Telemetry.fs — constant values and function signatures.</summary>
@@ -111,3 +113,22 @@ let ``meterName is a literal`` () =
 
     test <@ field <> null @>
     test <@ field.IsLiteral @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``activitySourceNames contains no empty strings`` () =
+    Telemetry.activitySourceNames |> List.forall (fun s -> s.Length > 0)
+
+[<Property>]
+let ``activitySourceNames has all distinct elements`` () =
+    let names = Telemetry.activitySourceNames
+    names |> List.distinct |> List.length = names.Length
+
+[<Property>]
+let ``all telemetry constant strings are non-empty`` () =
+    Telemetry.runtimeActivitySourceName.Length > 0
+    && Telemetry.applicationActivitySourceName.Length > 0
+    && Telemetry.meterName.Length > 0

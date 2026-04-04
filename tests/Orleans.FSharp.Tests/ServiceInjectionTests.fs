@@ -5,6 +5,8 @@ open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 [<Fact>]
@@ -113,3 +115,30 @@ let ``grain CE handleWithServices handler receives working ServiceProvider`` () 
         test <@ newState = 15 @>
         test <@ unbox<int> result = 15 @>
     }
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``handleWithServices produces ContextHandler for any int state and message`` (state: int) (msg: int) =
+    let def =
+        grain {
+            defaultState 0
+            handleWithServices (fun _ctx s (m: int) ->
+                task { return s + m, box (s + m) })
+        }
+    let handler = GrainDefinition.getContextHandler def
+    let ctx = GrainContext.empty
+    let (newState, _) = handler ctx state msg |> _.GetAwaiter().GetResult()
+    newState = state + msg
+
+[<Property>]
+let ``handleWithServices ContextHandler is Some after registration`` () =
+    let def =
+        grain {
+            defaultState 0
+            handleWithServices (fun _ctx s (_m: string) ->
+                task { return s, box s })
+        }
+    def.ContextHandler |> Option.isSome

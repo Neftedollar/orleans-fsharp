@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 [<Fact>]
@@ -99,3 +101,27 @@ let ``grain CE statelessWorker and reentrant can coexist`` () =
 
     test <@ def.IsStatelessWorker = true @>
     test <@ def.IsReentrant = true @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``maxActivations stores correct value for any positive count`` (n: PositiveInt) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            maxActivations n.Get
+        }
+    def.MaxLocalWorkers = Some n.Get
+
+[<Property>]
+let ``statelessWorker does not affect DefaultState for any initial state`` (initial: int) =
+    let def =
+        grain {
+            defaultState initial
+            handle (fun state (_msg: string) -> task { return state, box state })
+            statelessWorker
+        }
+    def.DefaultState = Some initial && def.IsStatelessWorker

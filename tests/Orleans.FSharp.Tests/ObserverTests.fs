@@ -4,6 +4,8 @@ open System
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans
 open Orleans.FSharp
 
@@ -183,3 +185,30 @@ let ``FSharpObserverManager constructor takes TimeSpan expiryDuration`` () =
             ps.Length >= 1 && ps.[0].ParameterType = typeof<TimeSpan>)
 
     test <@ hasTimeSpanCtor @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``Observer module methods all have non-empty names`` () =
+    let observerModule =
+        typeof<AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "Observer" && t.IsAbstract && t.IsSealed)
+    observerModule.GetMethods()
+    |> Array.forall (fun m -> m.Name.Length > 0)
+
+[<Property>]
+let ``Observer module exposes at least 3 public methods`` () =
+    let observerModule =
+        typeof<AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "Observer" && t.IsAbstract && t.IsSealed)
+    observerModule.GetMethods() |> Array.length >= 3
+
+[<Property>]
+let ``FSharpObserverManager methods all have non-empty names`` () =
+    let managerType =
+        typeof<AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name.StartsWith("FSharpObserverManager"))
+    managerType.GetMethods()
+    |> Array.forall (fun m -> m.Name.Length > 0)

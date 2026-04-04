@@ -7,6 +7,8 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // ---------------------------------------------------------------------------
@@ -150,3 +152,24 @@ let ``onShutdown method exists`` () =
         |> Array.tryFind (fun m -> m.Name = "onShutdown")
 
     test <@ method.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``configureGracefulShutdown stores any positive seconds timeout`` (seconds: PositiveInt) =
+    let timeout = TimeSpan.FromSeconds(float seconds.Get)
+    let builder = HostBuilder() |> Shutdown.configureGracefulShutdown timeout
+    let host = builder.Build()
+    use _ = host
+    let options = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<HostOptions>>()
+    options.Value.ShutdownTimeout = timeout
+
+[<Property>]
+let ``Shutdown module methods all have non-empty names`` () =
+    let shutdownModule =
+        typeof<AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "Shutdown" && t.IsAbstract && t.IsSealed)
+    shutdownModule.GetMethods()
+    |> Array.forall (fun m -> m.Name.Length > 0)

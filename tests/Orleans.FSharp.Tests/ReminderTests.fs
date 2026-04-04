@@ -5,6 +5,8 @@ open System.Reflection
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans
 open Orleans.Runtime
 open Orleans.FSharp
@@ -163,3 +165,42 @@ let ``Reminder module functions do not return FSharpAsync`` () =
             || ret.FullName = "Microsoft.FSharp.Control.FSharpAsync")
 
     test <@ asyncMethods = Array.empty @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``onReminder stores correct name for any non-whitespace reminder name`` (name: NonNull<string>) =
+    String.IsNullOrWhiteSpace name.Get
+    || (let def =
+            grain {
+                defaultState 0
+                handle (fun state (_msg: string) -> task { return state, box state })
+                onReminder name.Get (fun state _n _tick -> task { return state + 1 })
+            }
+        def.ReminderHandlers |> Map.containsKey name.Get)
+
+[<Property>]
+let ``onReminder handler increments state correctly for any initial int state`` (initial: int) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            onReminder "inc" (fun state _n _tick -> task { return state + 1 })
+        }
+    let handler = def.ReminderHandlers.["inc"]
+    handler initial "inc" (TickStatus()) |> _.GetAwaiter().GetResult() = initial + 1
+
+[<Property>]
+let ``onReminder later registration with same name replaces earlier`` (first: int) (second: int) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            onReminder "dup" (fun _state _n _tick -> task { return first })
+            onReminder "dup" (fun _state _n _tick -> task { return second })
+        }
+    let handler = def.ReminderHandlers.["dup"]
+    def.ReminderHandlers |> Map.count = 1
+    && handler 0 "dup" (TickStatus()) |> _.GetAwaiter().GetResult() = second

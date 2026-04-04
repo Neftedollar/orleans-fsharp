@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.OneWayTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans
 open Orleans.FSharp
 
@@ -155,3 +157,28 @@ let ``GrainRef.invokeOneWay works independently of invoke`` () =
         do! GrainRef.invokeOneWay ref (fun g -> g.FireAndForget("modified"))
         test <@ value.Value = "modified" @>
     }
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``oneWay stores correct method name for any non-empty string`` (name: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            oneWay name.Get
+        }
+    def.OneWayMethods |> Set.contains name.Get
+
+[<Property>]
+let ``oneWay is idempotent: registering same name twice results in set of 1`` (name: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            oneWay name.Get
+            oneWay name.Get
+        }
+    def.OneWayMethods |> Set.count = 1

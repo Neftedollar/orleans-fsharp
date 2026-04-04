@@ -4,6 +4,8 @@ open System.Threading
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 open Orleans.Runtime
 
@@ -158,3 +160,37 @@ let ``grain CE lifecycle hook with custom stage value`` () =
         }
 
     test <@ def.LifecycleHooks |> Map.containsKey customStage @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``onLifecycleStage stores any positive int stage`` (stage: PositiveInt) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            onLifecycleStage stage.Get (fun _ct -> task { return () })
+        }
+    def.LifecycleHooks |> Map.containsKey stage.Get
+
+[<Property>]
+let ``two hooks at same stage produce list of length 2 for any stage`` (stage: PositiveInt) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            onLifecycleStage stage.Get (fun _ct -> task { return () })
+            onLifecycleStage stage.Get (fun _ct -> task { return () })
+        }
+    def.LifecycleHooks.[stage.Get] |> List.length = 2
+
+[<Property>]
+let ``lifecycle hooks default to empty map for any grain definition`` (initial: int) =
+    let def =
+        grain {
+            defaultState initial
+            handle (fun state (_msg: string) -> task { return state, box state })
+        }
+    def.LifecycleHooks |> Map.isEmpty

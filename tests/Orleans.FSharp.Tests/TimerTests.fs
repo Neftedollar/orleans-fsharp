@@ -5,6 +5,8 @@ open System.Reflection
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 // --- Timers module type signature tests ---
@@ -70,3 +72,22 @@ let ``Timers module functions do not return FSharpAsync`` () =
             || ret.FullName = "Microsoft.FSharp.Control.FSharpAsync")
 
     test <@ asyncMethods = Array.empty @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``Timers module methods all have non-empty names`` () =
+    let timersModule =
+        typeof<AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "Timers" && t.IsAbstract && t.IsSealed)
+    timersModule.GetMethods()
+    |> Array.forall (fun m -> m.Name.Length > 0)
+
+[<Property>]
+let ``Timers module exposes at least 2 public methods`` () =
+    let timersModule =
+        typeof<AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "Timers" && t.IsAbstract && t.IsSealed)
+    timersModule.GetMethods() |> Array.length >= 2
