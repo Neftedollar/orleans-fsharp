@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.GrainDirectoryTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.Hosting
 open Orleans.FSharp.GrainDirectory
 
@@ -191,3 +193,30 @@ let ``GrainDirectoryProvider has NoComparison attribute`` () =
         |> not
 
     test <@ hasAttr @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``Redis case always carries the exact connection string provided`` (connStr: NonNull<string>) =
+    let provider = Redis connStr.Get
+    match provider with
+    | Redis s -> s = connStr.Get
+    | _ -> false
+
+[<Property>]
+let ``AzureStorage case always carries the exact connection string provided`` (connStr: NonNull<string>) =
+    let provider = AzureStorage connStr.Get
+    match provider with
+    | AzureStorage s -> s = connStr.Get
+    | _ -> false
+
+[<Property>]
+let ``GrainDirectory.configure returns a callable function for built-in providers`` () =
+    let providers = [ Default; Redis "test"; AzureStorage "test" ]
+    providers |> List.forall (fun p ->
+        let f = GrainDirectory.configure p
+        let funcType = f.GetType()
+        let expected = typedefof<FSharpFunc<_, _>>.MakeGenericType(typeof<ISiloBuilder>, typeof<ISiloBuilder>)
+        expected.IsAssignableFrom(funcType))

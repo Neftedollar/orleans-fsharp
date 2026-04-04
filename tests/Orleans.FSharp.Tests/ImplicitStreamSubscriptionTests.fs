@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.ImplicitStreamSubscriptionTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.FSharp
 
 [<Fact>]
@@ -86,3 +88,28 @@ let ``grain CE later implicit subscription overrides earlier with same namespace
     let handler = def.ImplicitSubscriptions.["ns"]
     let result = handler 0 (box ()) |> Async.AwaitTask |> Async.RunSynchronously
     test <@ result = 100 @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``implicitStreamSubscription stores any non-empty namespace`` (ns: NonEmptyString) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            implicitStreamSubscription ns.Get (fun state _event -> task { return state })
+        }
+    def.ImplicitSubscriptions |> Map.containsKey ns.Get
+
+[<Property>]
+let ``implicitStreamSubscription handler increments state for any initial int state`` (initial: int) =
+    let def =
+        grain {
+            defaultState 0
+            handle (fun state (_msg: string) -> task { return state, box state })
+            implicitStreamSubscription "test" (fun state _event -> task { return state + 1 })
+        }
+    let handler = def.ImplicitSubscriptions.["test"]
+    handler initial (box ()) |> Async.AwaitTask |> Async.RunSynchronously = initial + 1

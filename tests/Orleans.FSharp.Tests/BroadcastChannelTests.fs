@@ -2,6 +2,8 @@ module Orleans.FSharp.Tests.BroadcastChannelTests
 
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans.BroadcastChannel
 open Orleans.FSharp.BroadcastChannel
 
@@ -101,3 +103,21 @@ let ``getChannel function exists in BroadcastChannel module`` () =
         |> Array.tryFind (fun m -> m.Name = "getChannel")
 
     test <@ getChannelMethod.IsSome @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``getChannel with any namespace and key creates ChannelId matching Create`` (ns: NonNull<string>) (key: NonNull<string>) =
+    let provider = FakeBroadcastChannelProvider() :> IBroadcastChannelProvider
+    let ref = BroadcastChannel.getChannel<int> provider ns.Get key.Get
+    let expected = ChannelId.Create(ns.Get, key.Get)
+    ref.ChannelId = expected
+
+[<Property>]
+let ``getChannel same ns and key always produces equal ChannelId`` (ns: NonNull<string>) (key: NonNull<string>) =
+    let provider = FakeBroadcastChannelProvider() :> IBroadcastChannelProvider
+    let ref1 = BroadcastChannel.getChannel<int> provider ns.Get key.Get
+    let ref2 = BroadcastChannel.getChannel<int> provider ns.Get key.Get
+    ref1.ChannelId = ref2.ChannelId

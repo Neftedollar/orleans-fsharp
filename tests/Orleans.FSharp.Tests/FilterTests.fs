@@ -3,6 +3,8 @@ module Orleans.FSharp.Tests.FilterTests
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open FsCheck
+open FsCheck.Xunit
 open Orleans
 open Orleans.FSharp
 
@@ -78,3 +80,24 @@ let ``Filter.outgoing creates distinct filter instances`` () =
     let f1 = Filter.outgoing handler
     let f2 = Filter.outgoing handler
     test <@ not (obj.ReferenceEquals(f1, f2)) @>
+
+// ---------------------------------------------------------------------------
+// FsCheck property tests
+// ---------------------------------------------------------------------------
+
+[<Property>]
+let ``Filter.incoming always creates a FSharpIncomingFilter instance`` () =
+    let filter = Filter.incoming (fun _ctx -> Task.FromResult())
+    filter :? FSharpIncomingFilter
+
+[<Property>]
+let ``Filter.outgoing always creates a FSharpOutgoingFilter instance`` () =
+    let filter = Filter.outgoing (fun _ctx -> Task.FromResult())
+    filter :? FSharpOutgoingFilter
+
+[<Property>]
+let ``n Filter.incoming calls each produce a distinct instance`` (n: PositiveInt) =
+    let count = min n.Get 5
+    let handler = fun (_ctx: IIncomingGrainCallContext) -> Task.FromResult()
+    let filters = Array.init count (fun _ -> Filter.incoming handler)
+    filters |> Array.pairwise |> Array.forall (fun (a, b) -> not (obj.ReferenceEquals(a, b)))
