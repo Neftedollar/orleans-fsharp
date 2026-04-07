@@ -60,16 +60,19 @@ let renderEventSourcedStub (info: EventSourcedStubInfo) (ns: string) : string =
     let tmpl = loadTemplate templateName
 
     let so = ScriptObject()
-    so.["class_name"]     <- toClassName info.InterfaceType :> obj
-    so.["interface_fqn"]  <- fqn info.InterfaceType :> obj
-    so.["state_fqn"]      <- fqn info.StateType :> obj
-    so.["event_fqn"]      <- fqn info.EventType :> obj
-    so.["command_fqn"]    <- fqn info.CommandType :> obj
-    so.["namespace"]      <- ns :> obj
-    so.["source_module"]  <- info.SourceModule :> obj
-    so.["def_name"]       <- info.DefinitionName :> obj
-    so.["assembly_name"]  <- info.AssemblyName :> obj
-    so.["command_cases"]  <- (info.CommandCases |> String.concat ", ") :> obj
+    so.["class_name"]            <- toClassName info.InterfaceType :> obj
+    so.["interface_fqn"]         <- fqn info.InterfaceType :> obj
+    so.["state_fqn"]             <- fqn info.StateType :> obj
+    so.["event_fqn"]             <- fqn info.EventType :> obj
+    so.["command_fqn"]           <- fqn info.CommandType :> obj
+    so.["namespace"]             <- ns :> obj
+    so.["source_module"]         <- info.SourceModule :> obj
+    so.["source_module_fqn"]     <- info.SourceModuleFqn :> obj
+    so.["def_name"]              <- info.DefinitionName :> obj
+    so.["assembly_name"]         <- info.AssemblyName :> obj
+    so.["command_cases"]         <- (info.CommandCases |> String.concat ", ") :> obj
+    so.["has_custom_storage"]    <- info.HasCustomStorage :> obj
+    so.["consistency_provider"]  <- (info.ConsistencyProvider |> Option.defaultValue "") :> obj
 
     let ctx = TemplateContext()
     ctx.PushGlobal(so)

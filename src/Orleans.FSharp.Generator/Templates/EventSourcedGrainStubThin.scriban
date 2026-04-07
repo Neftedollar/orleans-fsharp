@@ -15,6 +15,9 @@ namespace {{ namespace }};
 /// <c>IEventSourcedHandlerRegistry</c> — no F# type parameters here.
 /// Do not add logic here — modify the F# grain definition instead.
 /// </summary>
+{{- if consistency_provider != "" }}
+[global::Orleans.Providers.LogConsistencyProvider(ProviderName = "{{ consistency_provider }}")]
+{{- end }}
 public sealed class {{ class_name }}
     : global::Orleans.FSharp.FSharpEventSourcedGrainImpl
     , global::{{ interface_fqn }}
@@ -22,4 +25,25 @@ public sealed class {{ class_name }}
     /// <inheritdoc />
     public {{ class_name }}(global::Orleans.FSharp.IEventSourcedHandlerRegistry registry)
         : base(registry) { }
+{{- if has_custom_storage }}
+
+    /// <inheritdoc />
+    protected override async global::System.Threading.Tasks.Task<global::System.Collections.Generic.KeyValuePair<int, global::Orleans.FSharp.WrappedEventSourcedState>> ReadStateFromStorageCore()
+    {
+        var (version, state) = await global::{{ source_module_fqn }}.{{ def_name }}.CustomStorage.Value.ReadBoxed.Invoke();
+        return new global::System.Collections.Generic.KeyValuePair<int, global::Orleans.FSharp.WrappedEventSourcedState>(
+            version,
+            new global::Orleans.FSharp.WrappedEventSourcedState { Value = state });
+    }
+
+    /// <inheritdoc />
+    protected override global::System.Threading.Tasks.Task<bool> ApplyUpdatesToStorageCore(
+        global::System.Collections.Generic.IReadOnlyList<global::Orleans.FSharp.WrappedEventSourcedEvent> updates,
+        int expectedVersion)
+    {
+        var boxedEvents = global::Microsoft.FSharp.Collections.ListModule.OfSeq(
+            global::System.Linq.Enumerable.Select(updates, u => u.Value!));
+        return global::{{ source_module_fqn }}.{{ def_name }}.CustomStorage.Value.WriteBoxed.Invoke(boxedEvents, expectedVersion);
+    }
+{{- end }}
 }

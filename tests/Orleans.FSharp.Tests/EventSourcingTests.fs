@@ -1,5 +1,6 @@
 module Orleans.FSharp.Tests.EventSourcingTests
 
+open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
 open FsCheck
@@ -499,3 +500,136 @@ let ``shouldSnapshot Every N is true iff version > 0 and version mod N = 0`` (ve
     let v = abs version
     let expected = v > 0 && v % 5 = 0
     EventStore.shouldSnapshot defEvery5 v { Balance = 0m } = expected
+
+// ---------------------------------------------------------------------------
+// CustomStorage CE keyword — unit tests (no Orleans cluster required)
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``eventSourcedGrain CE defaults CustomStorage to None`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+        }
+
+    test <@ def.CustomStorage.IsNone @>
+
+[<Fact>]
+let ``customStorage CE keyword sets CustomStorage to Some`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            customStorage
+                (fun () -> task { return 0, { Balance = 0m } })
+                (fun _events _version -> task { return true })
+        }
+
+    test <@ def.CustomStorage.IsSome @>
+
+[<Fact>]
+let ``customStorage ReadBoxed calls the read function and returns correct version`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            customStorage
+                (fun () -> task { return 7, { Balance = 99m } })
+                (fun _events _version -> task { return true })
+        }
+
+    let struct (version, _) = def.CustomStorage.Value.ReadBoxed.Invoke().GetAwaiter().GetResult()
+    test <@ version = 7 @>
+
+[<Fact>]
+let ``customStorage ReadBoxed boxes the state value`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            customStorage
+                (fun () -> task { return 0, { Balance = 42m } })
+                (fun _events _version -> task { return true })
+        }
+
+    let struct (_, boxedState) = def.CustomStorage.Value.ReadBoxed.Invoke().GetAwaiter().GetResult()
+    let state = unbox<BankAccountState> boxedState
+    test <@ state = { Balance = 42m } @>
+
+[<Fact>]
+let ``customStorage WriteBoxed unboxes events and calls write function`` () =
+    let mutable capturedEvents: BankAccountEvent list = []
+    let mutable capturedVersion = -1
+
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            customStorage
+                (fun () -> task { return 0, { Balance = 0m } })
+                (fun events version ->
+                    task {
+                        capturedEvents <- events
+                        capturedVersion <- version
+                        return true
+                    })
+        }
+
+    let boxedEvents = [ box (Deposited 50m); box (Deposited 25m) ]
+    def.CustomStorage.Value.WriteBoxed.Invoke(boxedEvents, 3).GetAwaiter().GetResult() |> ignore
+
+    test <@ capturedEvents = [ Deposited 50m; Deposited 25m ] @>
+    test <@ capturedVersion = 3 @>
+
+[<Fact>]
+let ``customStorage WriteBoxed returns write function result`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            customStorage
+                (fun () -> task { return 0, { Balance = 0m } })
+                (fun _events _version -> task { return false }) // simulate concurrency conflict
+        }
+
+    let result = def.CustomStorage.Value.WriteBoxed.Invoke([], 99).GetAwaiter().GetResult()
+    test <@ result = false @>
+
+[<Fact>]
+let ``customStorage and logConsistencyProvider can be combined`` () =
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            logConsistencyProvider "CustomStorage"
+            customStorage
+                (fun () -> task { return 0, { Balance = 0m } })
+                (fun _events _version -> task { return true })
+        }
+
+    test <@ def.ConsistencyProvider = Some "CustomStorage" @>
+    test <@ def.CustomStorage.IsSome @>
+
+[<Property>]
+let ``customStorage ReadBoxed always returns the version from the read function`` (v: int) =
+    let version = abs v
+    let def =
+        eventSourcedGrain {
+            defaultState { Balance = 0m }
+            apply applyEvent
+            handle handleCommand
+            customStorage
+                (fun () -> task { return version, { Balance = 0m } })
+                (fun _events _version -> task { return true })
+        }
+
+    let struct (got, _) = def.CustomStorage.Value.ReadBoxed.Invoke().GetAwaiter().GetResult()
+    got = version

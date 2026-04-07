@@ -1,5 +1,6 @@
 namespace Orleans.FSharp.EventSourcing
 
+open System.Collections.Generic
 open System.Reflection
 open System.Threading
 open System.Threading.Tasks
@@ -7,6 +8,7 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.EventSourcing
+open Orleans.EventSourcing.CustomStorage
 open Orleans.FSharp
 
 /// <summary>
@@ -55,6 +57,45 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
 
     /// <summary>Internal bridge for protected ConfirmEvents method, callable from closures.</summary>
     member internal this.InternalConfirmEvents() = this.ConfirmEvents()
+
+    interface ICustomStorageInterface<'State, 'Event> with
+        /// <summary>
+        /// Reads the current (version, state) from the custom storage back-end.
+        /// Delegates to the <c>customStorage</c> read callback defined in the grain definition.
+        /// Throws <see cref="System.NotSupportedException"/> when no custom storage is configured.
+        /// </summary>
+        member _.ReadStateFromStorage() =
+            match definition.CustomStorage with
+            | None ->
+                raise (
+                    System.NotSupportedException(
+                        "No customStorage configured for this grain. \
+                         Provide read/write callbacks via customStorage in eventSourcedGrain { } \
+                         and set logConsistencyProvider \"CustomStorage\"."
+                    )
+                )
+            | Some adapter ->
+                task {
+                    let! struct (version, stateObj) = adapter.ReadBoxed.Invoke()
+                    return KeyValuePair(version, unbox<'State> stateObj)
+                }
+
+        /// <summary>
+        /// Persists a batch of events to the custom storage back-end.
+        /// Delegates to the <c>customStorage</c> write callback defined in the grain definition.
+        /// Throws <see cref="System.NotSupportedException"/> when no custom storage is configured.
+        /// </summary>
+        member _.ApplyUpdatesToStorage(updates: IReadOnlyList<'Event>, expectedVersion: int) =
+            match definition.CustomStorage with
+            | None ->
+                raise (
+                    System.NotSupportedException(
+                        "No customStorage configured for this grain."
+                    )
+                )
+            | Some adapter ->
+                let boxed = updates |> Seq.map box |> Seq.toList
+                adapter.WriteBoxed.Invoke(boxed, expectedVersion)
 
     /// <summary>
     /// Called when the grain is activated. Logs activation with current state.
