@@ -47,9 +47,10 @@
 | `handleStateWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State>` | Context + cancellation, state-only return |
 | `handleTypedWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Context + cancellation, typed result |
 | `persist` | `string` | Name of the storage provider for state |
-| `onActivate` | `GrainContext -> Task<unit>` | Runs on grain activation |
-| `onDeactivate` | `GrainContext -> DeactivationReason -> Task<unit>` | Runs on grain deactivation |
-| `onReminder` | `string -> TickStatus -> Task<unit>` | Named reminder handler |
+| `onActivate` | `'State -> Task<'State>` | Hook on grain activation; may modify state |
+| `onDeactivate` | `'State -> Task<unit>` | Hook on grain deactivation; cleanup |
+| `onReminder` | `string * ('State -> string -> TickStatus -> Task<'State>)` | Named reminder with stateful handler |
+| `onTimer` | `string * TimeSpan * TimeSpan * ('State -> Task<'State>)` | Declarative timer: name, dueTime, period, handler |
 | `reentrant` | — | Allow concurrent message processing |
 | `statelessWorker` | — | Allow multiple activations per silo |
 
@@ -101,6 +102,8 @@ Helpers for the behavior pattern — grains whose state includes a phase discrim
 | `invokeHandler` | `GrainDefinition -> 'State -> 'Message -> Task<'State * obj>` | Invoke handler (C# interop) |
 | `invokeContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> Task<'State * obj>` | Invoke context handler (C# interop) |
 | `invokeCancellableContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> CT -> Task<'State * obj>` | Invoke cancellable (C# interop) |
+| `invokeOnActivate` | `GrainDefinition -> 'State -> Task<'State>` | Run activation hook directly |
+| `invokeOnDeactivate` | `GrainDefinition -> 'State -> Task` | Run deactivation hook directly |
 
 #### `GrainRef`
 
@@ -485,122 +488,46 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 
 #### `EventSourcedGrainDefinition`
 
-| Function | Signature | Description |
-|---|---|---|
-| `foldEvents` | `definition -> 'State -> 'Event list -> 'State` | Replay events onto state |
-| `handleCommand` | `definition -> 'State -> 'Command -> 'State * 'Event list` | Process command |
-
-#### `EventStore`
-
-| Function | Signature | Description |
-|---|---|---|
-| `processCommand` | `definition -> 'State -> 'Command -> 'Event list` | Produce events from command |
-| `applyEvent` | `definition -> 'State -> 'Event -> 'State` | Apply single event |
-| `replayEvents` | `definition -> 'State -> 'Event list -> 'State` | Replay event list |
+| Function | Description |
+|---|---|
+| `foldEvents def state events` | Replay events through `apply` to rebuild state |
+| `handleCommand def state cmd` | Process command: returns `(newState, events)` |
+| `applyEvent def state event` | Apply a single event to state |
 
 ---
 
 ## Orleans.FSharp.Testing
 
-### Types
-
-| Type | Description |
-|---|---|
-| `TestHarness` | Test cluster wrapper with log capture |
-| `MockGrainFactory` | Mock IGrainFactory for unit tests |
-| `CapturingLogger` | In-memory ILogger |
-| `CapturingLoggerFactory` | Factory for CapturingLogger instances |
-| `CapturedLogEntry` | Captured structured log entry |
-
-#### `TestHarness`
-
-| Function | Signature | Description |
+| Module | Key Functions | Description |
 |---|---|---|
-| `createTestCluster` | `unit -> Task<TestHarness>` | Create default test cluster |
-| `createTestClusterWith` | `SiloConfig -> Task<TestHarness>` | Create with custom config |
-| `getGrainByString<'T>` | `TestHarness -> string -> GrainRef<'T, string>` | Get grain by string key |
-| `getGrainByInt64<'T>` | `TestHarness -> int64 -> GrainRef<'T, int64>` | Get grain by int64 key |
-| `getGrainByGuid<'T>` | `TestHarness -> Guid -> GrainRef<'T, Guid>` | Get grain by GUID key |
-| `captureLogs` | `TestHarness -> CapturedLogEntry list` | Get all captured logs |
-| `reset` | `TestHarness -> Task<unit>` | Clear captured logs |
-| `dispose` | `TestHarness -> Task<unit>` | Stop and dispose cluster |
-
-#### `GrainMock`
-
-| Function | Signature | Description |
-|---|---|---|
-| `create` | `unit -> MockGrainFactory` | Create empty mock factory |
-| `withGrain<'T>` | `obj -> 'T -> MockGrainFactory -> MockGrainFactory` | Register mock grain |
-
-#### `GrainArbitrary`
-
-| Function | Signature | Description |
-|---|---|---|
-| `forState<'T>` | `unit -> Arbitrary<'T>` | Auto-generate Arbitrary for state type |
-| `forCommands<'T>` | `unit -> Arbitrary<'T list>` | Auto-generate Arbitrary for command sequences |
-
-#### `FsCheckHelpers`
-
-| Function | Signature | Description |
-|---|---|---|
-| `commandSequenceArb<'T>` | `unit -> Arbitrary<'T list>` | Non-empty command list Arbitrary |
-| `stateMachineProperty` | `'State -> ('State -> 'Cmd -> 'State) -> ('State -> bool) -> 'Cmd list -> bool` | State machine invariant check |
-
-#### `LogCapture`
-
-| Function | Signature | Description |
-|---|---|---|
-| `create` | `unit -> CapturingLoggerFactory` | Create capturing factory |
-| `captureLogs` | `CapturingLoggerFactory -> CapturedLogEntry list` | Get all entries |
-
-#### `GrainMock` — Universal Pattern Support
-
-| Function | Signature | Description |
-|---|---|---|
-| `withFSharpGrain<'S,'M>` | `GrainDefinition<'S,'M> -> string -> MockGrainFactory -> MockGrainFactory` | Register F# grain definition as mock |
-| `createMockContext` | `GrainDefinition<'S,'M> -> 'S -> MockGrainContext` | Create a mock grain context |
+| `TestHarness` | `createTestCluster`, `getGrainByString`, `getGrainByInt64`, `getGrainByGuid`, `captureLogs`, `reset`, `dispose` | Wrap TestCluster with log capture |
+| `GrainMock` | `create`, `withGrain`, `withFSharpGrain`, `withFSharpGrainGuid`, `withFSharpGrainInt` | Mock IGrainFactory for unit tests |
+| `GrainArbitrary` | `forState<'T>`, `forCommands<'T>` | FsCheck Arbitrary generators for DUs |
+| `FsCheckHelpers` | `stateMachineProperty`, `commandSequenceArb` | Property-based testing helpers |
+| `LogCapture` | `create`, `captureLogs` | In-memory log capture for assertions |
 
 ---
 
 ## Orleans.FSharp.Analyzers
 
-Compile-time F# analyzer package — install in your grain projects to catch `async {}` misuse at build time.
+Compile-time checks for common Orleans + F# mistakes.
 
-```bash
-dotnet add package Orleans.FSharp.Analyzers
-```
+| Rule Code | Description | Fix |
+|---|---|---|
+| `OF0001` | Warns on `async { }` usage in production code | Use `task { }` instead |
 
-### Diagnostics
+Opt-out with `[<AllowAsync>]` attribute on a module or function.
 
-| Code | Severity | Message | Description |
-|---|---|---|---|
-| `OF0001` | Warning | Use `task { }` instead of `async { }` | Detects `async { }` computation expressions in Orleans grain code |
+---
 
-### Types
+## Orleans.FSharp.Scripting
 
-| Type | Description |
-|---|---|
-| `AllowAsyncAttribute` | Suppresses OF0001 on the annotated binding. Apply when `async { }` is genuinely required (e.g., interop with `Async<'T>` APIs). |
+Programmatic silo start/shutdown for F# scripts and REPL sessions.
 
-### Usage
-
-```fsharp
-// Triggers OF0001 — use task { } in grain handlers
-let handler state cmd =
-    async { return state, box 0 }  // ⚠️ OF0001
-
-// Suppress when async is genuinely needed
-open Orleans.FSharp.Analyzers.AsyncUsageAnalyzer
-
-[<AllowAsync>]
-let legacyAdapter (url: string) : Async<string> =
-    async { return! fetchLegacy url }  // ✅ suppressed
-```
-
-See [Analyzers guide](analyzers.md) for full documentation.
-
-### Internal API (test use only)
-
-| Module | Function | Signature | Description |
-|---|---|---|---|
-| `AstWalker` | `collectAsyncRanges` | `ParsedInput -> range list` | Walk AST and return all unsuppressed `async { }` ranges |
+| Function | Signature | Description |
+|---|---|---|
+| `Scripting.startOnPorts` | `SiloConfig -> int -> int -> Task<SiloHandle>` | Start silo on given ports |
+| `Scripting.quickStart` | `unit -> Task<SiloHandle>` | Start with defaults |
+| `Scripting.shutdown` | `SiloHandle -> Task` | Stop the silo |
+| `Scripting.getGrain<'T>` | `SiloHandle -> string -> 'T` | Get grain by string key |
+| `Scripting.getGrainByString<'T>` | `SiloHandle -> string -> 'T` | Alias for getGrain |

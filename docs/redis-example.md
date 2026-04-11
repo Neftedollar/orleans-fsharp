@@ -69,21 +69,21 @@ let cartGrain =
         defaultState { Items = []; CheckedOut = false }
         persist "Default"   // maps to the "Default" Redis storage provider
 
-        // Idle-cart cleanup: remind once after 30 minutes
-        onActivate (fun ctx state -> task {
-            do! Reminder.register ctx.Self "idle-cleanup"
-                    (TimeSpan.FromMinutes 30.)
-                    (TimeSpan.FromMinutes 30.)
-                |> Task.ignore
-            return state
-        })
+        // Activate hook: log the cart creation
+        onActivate (fun state ->
+            task {
+                printfn "Cart grain activated"
+                return state
+            })
 
-        onReminder "idle-cleanup" (fun ctx state -> task {
-            // Deactivate empty or checked-out carts after inactivity
-            if state.Items.IsEmpty || state.CheckedOut then
-                ctx.DeactivateOnIdle()
-            return state
-        })
+        // Idle-cart cleanup: remind after 30 minutes of inactivity
+        onReminder "idle-cleanup" (fun state reminderName tickStatus ->
+            task {
+                // Deactivate empty or checked-out carts after inactivity
+                if state.Items.IsEmpty || state.CheckedOut then
+                    printfn "Reminder '%s' fired — cart is empty or checked out, will deactivate" reminderName
+                return state
+            })
 
         handle (fun state cmd -> task {
             match cmd with

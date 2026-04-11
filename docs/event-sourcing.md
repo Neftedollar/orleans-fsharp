@@ -193,7 +193,7 @@ let ``balance is never negative for any command sequence`` () =
             commands)
 ```
 
-You can also test `apply` in isolation:
+You can also test `applyEvent` in isolation:
 
 ```fsharp
 [<Property>]
@@ -201,23 +201,43 @@ let ``deposits always increase balance`` (amount: decimal) =
     amount > 0m ==>
         lazy
             let state = { Balance = 50m; TransactionCount = 0 }
-            let newState = bankAccount.Apply state (Deposited amount)
+            let newState = EventSourcedGrainDefinition.applyEvent bankAccount state (Deposited amount)
             newState.Balance = state.Balance + amount
 ```
 
 ---
 
-## EventStore Module
+## Event-Sourcing API Reference
 
-The `EventStore` module provides lower-level functions for the C# CodeGen bridge:
+The `EventSourcedGrainDefinition` module provides helper functions for testing and programmatic use:
 
 | Function | Description |
 |---|---|
-| `EventStore.processCommand def state cmd` | Produce events from a command |
-| `EventStore.applyEvent def state event` | Apply a single event |
-| `EventStore.replayEvents def state events` | Replay a list of events |
+| `foldEvents def state events` | Replay a list of events through `apply` to rebuild state |
+| `handleCommand def state cmd` | Process a command: returns `(newState, events)` |
+| `applyEvent def state event` | Apply a single event to state |
 
-These are used internally by the generated C# `JournaledGrain` class.
+```fsharp
+// Handle a command programmatically
+let currentState = { Balance = 100m; TransactionCount = 0 }
+let newState, events =
+    EventSourcedGrainDefinition.handleCommand bankAccount currentState (Withdraw 30m)
+// newState = { Balance = 70m; TransactionCount = 1 }
+// events = [ Withdrawn 30m ]
+
+// Apply a single event
+let newState2 = EventSourcedGrainDefinition.applyEvent newState (Withdrawn 20m)
+// newState2 = { Balance = 50m; TransactionCount = 2 }
+
+// Replay event history
+let finalState =
+    EventSourcedGrainDefinition.foldEvents bankAccount
+        { Balance = 0m; TransactionCount = 0 }
+        [ Deposited 100m; Withdrawn 30m; Deposited 50m ]
+// finalState = { Balance = 120m; TransactionCount = 3 }
+```
+
+These are also used internally by the generated C# `JournaledGrain` class.
 
 ---
 

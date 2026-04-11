@@ -437,13 +437,15 @@ open Orleans.FSharp.EventSourcing
 [<Fact>]
 let ``deposit produces Deposited event`` () =
     let state = { Balance = 100m; TransactionCount = 0 }
-    let events = bankAccount.Handle state (Deposit 50m)
+    let newState, events =
+        EventSourcedGrainDefinition.handleCommand bankAccount state (Deposit 50m)
     Assert.Equal([ Deposited 50m ], events)
+    Assert.Equal(150m, newState.Balance)
 
 [<Fact>]
 let ``apply Deposited increases balance`` () =
     let state = { Balance = 100m; TransactionCount = 0 }
-    let newState = bankAccount.Apply state (Deposited 50m)
+    let newState = EventSourcedGrainDefinition.applyEvent bankAccount state (Deposited 50m)
     Assert.Equal(150m, newState.Balance)
 
 [<Property>]
@@ -453,9 +455,10 @@ let ``replaying events produces the same state as fold`` () =
         let mutable state = { Balance = 0m; TransactionCount = 0 }
         let mutable allEvents = []
         for cmd in commands do
-            let events = bankAccount.Handle state cmd
+            let newState, events =
+                EventSourcedGrainDefinition.handleCommand bankAccount state cmd
             allEvents <- allEvents @ events
-            state <- events |> List.fold bankAccount.Apply state
+            state <- newState
 
         let replayed =
             EventSourcedGrainDefinition.foldEvents bankAccount
