@@ -10,9 +10,9 @@ open Orleans.FSharp
 [<GenerateSerializer>]
 type EchoCommand =
     /// <summary>Echo back the given message with the grain's key prepended.</summary>
-    | [<Id(0u)>] Echo of message: string
+    | Echo of message: string
     /// <summary>Get a greeting using the grain's identity.</summary>
-    | [<Id(1u)>] Greet
+    | Greet
 
 /// <summary>
 /// Grain interface for the echo grain. Uses string key.

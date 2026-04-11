@@ -11,9 +11,9 @@ open Orleans.FSharp
 [<GenerateSerializer>]
 type TimerCommand =
     /// <summary>Get the current timer fire count.</summary>
-    | [<Id(0u)>] GetTimerFireCount
+    | GetTimerFireCount
     /// <summary>Get the current state value.</summary>
-    | [<Id(1u)>] GetTimerState
+    | GetTimerState
 
 /// <summary>
 /// Grain interface for the declarative timer test grain. Uses string key.

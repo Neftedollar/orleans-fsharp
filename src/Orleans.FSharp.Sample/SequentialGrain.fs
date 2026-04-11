@@ -10,9 +10,9 @@ open Orleans.FSharp
 [<GenerateSerializer>]
 type SequentialCommand =
     /// <summary>Add a value with a simulated delay. Used to measure sequential vs concurrent processing.</summary>
-    | [<Id(0u)>] SlowAdd of value: int
+    | SlowAdd of value: int
     /// <summary>Get the current total without changing state.</summary>
-    | [<Id(1u)>] GetTotal
+    | GetTotal
 
 /// <summary>
 /// Grain interface for the non-reentrant sequential grain. Uses string key.

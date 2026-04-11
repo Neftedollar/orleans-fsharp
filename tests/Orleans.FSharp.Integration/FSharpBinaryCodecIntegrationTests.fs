@@ -48,6 +48,14 @@ type BinaryCodecClientConfigurator() =
         member _.Configure(_configuration, clientBuilder: IClientBuilder) =
             clientBuilder.AddMemoryStreams("StreamProvider") |> ignore
 
+            // Register F# binary serialization on the client so the proxy can deep-copy
+            // F# types passed as `object` to IFSharpGrain.HandleMessage / IFSharpEventSourcedGrain.HandleCommand.
+            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                clientBuilder.Services,
+                System.Action<Orleans.Serialization.ISerializerBuilder>(fun b ->
+                    Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder b |> ignore))
+            |> ignore
+
 /// <summary>
 /// xUnit fixture that starts a TestCluster with F# binary codec serialization enabled.
 /// </summary>

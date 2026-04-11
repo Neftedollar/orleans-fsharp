@@ -16,14 +16,13 @@ type PlayerScoreState =
       [<Id(1u)>] GamesPlayed: int }
 
 /// <summary>Commands for the player score grain.</summary>
-[<GenerateSerializer>]
 type PlayerScoreCommand =
     /// <summary>Add points to the player's total score.</summary>
-    | [<Id(0u)>] AddScore of points: int
+    | AddScore of points: int
     /// <summary>Reset the player's score to zero.</summary>
-    | [<Id(1u)>] ResetScore
+    | ResetScore
     /// <summary>Get the player's current score (returns PlayerScoreState).</summary>
-    | [<Id(2u)>] GetScore
+    | GetScore
 
 /// <summary>
 /// Module containing the player score grain definition.
@@ -65,17 +64,16 @@ type LeaderboardState =
       [<Id(1u)>] LastSnapshot: (string * int) list }
 
 /// <summary>Commands for the leaderboard grain.</summary>
-[<GenerateSerializer>]
 type LeaderboardCommand =
     /// <summary>Register a new player key to track.</summary>
-    | [<Id(0u)>] TrackPlayer of playerKey: string
+    | TrackPlayer of playerKey: string
     /// <summary>
     /// Refresh the leaderboard by querying each tracked player grain
     /// and rebuild the sorted snapshot. Returns the top-N list.
     /// </summary>
-    | [<Id(1u)>] RefreshAndGetTop of topN: int
+    | RefreshAndGetTop of topN: int
     /// <summary>Return the cached leaderboard snapshot without refreshing.</summary>
-    | [<Id(2u)>] GetCachedSnapshot
+    | GetCachedSnapshot
 
 /// <summary>
 /// Module containing the leaderboard grain definition.

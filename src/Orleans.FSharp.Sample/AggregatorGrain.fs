@@ -10,9 +10,9 @@ open Orleans.FSharp
 [<GenerateSerializer>]
 type AggregatorCommand =
     /// <summary>Add a value to the running total. Simulates a slow operation for reentrancy testing.</summary>
-    | [<Id(0u)>] AddValue of value: int
+    | AddValue of value: int
     /// <summary>Get the current total without changing state.</summary>
-    | [<Id(1u)>] GetTotal
+    | GetTotal
 
 /// <summary>
 /// Grain interface for the reentrant aggregator grain. Uses string key.

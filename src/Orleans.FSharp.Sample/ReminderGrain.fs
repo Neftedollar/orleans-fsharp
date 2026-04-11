@@ -21,11 +21,11 @@ type ReminderStateHolder() =
 [<GenerateSerializer>]
 type ReminderCommand =
     /// <summary>Get the current reminder fire count.</summary>
-    | [<Id(0u)>] GetFireCount
+    | GetFireCount
     /// <summary>Register a reminder with the given name.</summary>
-    | [<Id(1u)>] RegisterReminder of name: string
+    | RegisterReminder of name: string
     /// <summary>Unregister a reminder by name.</summary>
-    | [<Id(2u)>] UnregisterReminder of name: string
+    | UnregisterReminder of name: string
 
 /// <summary>
 /// Grain interface for the reminder test grain. Uses string key.

@@ -58,34 +58,52 @@ module internal FSharpBinaryFormat =
     let private builtCodecs = ConcurrentDictionary<Type, TypeCodec>()
 
     /// <summary>
+    /// Returns true if the given type is an F# DU case type (a nested class whose
+    /// declaring type is an F# union). This handles cases like BankAccountCommand+Deposit
+    /// where Orleans sees the concrete runtime type rather than the parent union.
+    /// </summary>
+    let isUnionCaseType (t: Type) : bool =
+        t.IsNested && FSharpType.IsUnion(t.DeclaringType, true)
+
+    /// <summary>
     /// Returns the codec for <paramref name="t"/>, building it on first access.
     /// Self-referential types are handled via a forwarding ref that is populated
     /// after the real codec is built.
+    /// For F# DU case types (e.g. BankAccountCommand+Deposit), delegates to the
+    /// parent union's codec since the case type is a subtype of the union.
     /// </summary>
     let rec getCodec (t: Type) : TypeCodec =
         // Fast path: fully built
         match builtCodecs.TryGetValue(t) with
         | true, c -> c
         | _ ->
-            let r = codecRefs.GetOrAdd(t, fun _ -> ref None)
-            match r.Value with
-            | Some c -> c  // forwarding (during recursive build) or real (concurrent thread)
-            | None ->
-                // Install a forwarding codec BEFORE building so any re-entrant call
-                // for the same type returns this forwarding instead of looping.
-                let fwd = {
-                    Write = fun bw v -> r.Value.Value.Write bw v
-                    Read  = fun br  -> r.Value.Value.Read br
-                }
-                r.Value <- Some fwd
-                let shape = TypeShape.Create(t)
-                let realCodec =
-                    shape.Accept { new ITypeVisitor<TypeCodec> with
-                        member _.Visit<'T>() = buildCodecFor<'T>() }
-                // Populate the forwarding ref and add to fast cache
-                r.Value <- Some realCodec
-                builtCodecs.TryAdd(t, realCodec) |> ignore
-                realCodec
+            // DU case types: delegate to the parent union's codec
+            if isUnionCaseType t then
+                let parentCodec = getCodec t.DeclaringType
+                // Wrap so the Write accepts the case type (it's already a union value)
+                // and Read returns the parent union type (compatible with the case type)
+                { Write = parentCodec.Write
+                  Read  = parentCodec.Read }
+            else
+                let r = codecRefs.GetOrAdd(t, fun _ -> ref None)
+                match r.Value with
+                | Some c -> c  // forwarding (during recursive build) or real (concurrent thread)
+                | None ->
+                    // Install a forwarding codec BEFORE building so any re-entrant call
+                    // for the same type returns this forwarding instead of looping.
+                    let fwd = {
+                        Write = fun bw v -> r.Value.Value.Write bw v
+                        Read  = fun br  -> r.Value.Value.Read br
+                    }
+                    r.Value <- Some fwd
+                    let shape = TypeShape.Create(t)
+                    let realCodec =
+                        shape.Accept { new ITypeVisitor<TypeCodec> with
+                            member _.Visit<'T>() = buildCodecFor<'T>() }
+                    // Populate the forwarding ref and add to fast cache
+                    r.Value <- Some realCodec
+                    builtCodecs.TryAdd(t, realCodec) |> ignore
+                    realCodec
 
     and private buildCodecFor<'T>() : TypeCodec =
         let shape = TypeShape.Create<'T>() :> TypeShape
@@ -449,27 +467,30 @@ module internal FSharpBinaryFormat =
     let isSupportedType (t: Type) : bool =
         if isNull t then false
         else
-            let shape = TypeShape.Create(t)
-            match shape with
-            // Primitive-like classes that TypeShape also classifies as Poco — exclude them.
-            | Shape.String
-            | Shape.Guid
-            | Shape.DateTime
-            | Shape.DateTimeOffset
-            | Shape.TimeSpan
-            | Shape.ByteArray -> false
-            // F# composite types
-            | Shape.FSharpOption _
-            | Shape.FSharpList _
-            | Shape.FSharpMap _
-            | Shape.FSharpSet _
-            | Shape.Array _
-            | Shape.Tuple _
-            | Shape.FSharpRecord _
-            | Shape.FSharpUnion _
-            | Shape.Poco _
-            | Shape.CliMutable _ -> true
-            | _ -> false
+            // Check for DU case types first (nested class of an F# union)
+            if isUnionCaseType t then true
+            else
+                let shape = TypeShape.Create(t)
+                match shape with
+                // Primitive-like classes that TypeShape also classifies as Poco — exclude them.
+                | Shape.String
+                | Shape.Guid
+                | Shape.DateTime
+                | Shape.DateTimeOffset
+                | Shape.TimeSpan
+                | Shape.ByteArray -> false
+                // F# composite types
+                | Shape.FSharpOption _
+                | Shape.FSharpList _
+                | Shape.FSharpMap _
+                | Shape.FSharpSet _
+                | Shape.Array _
+                | Shape.Tuple _
+                | Shape.FSharpRecord _
+                | Shape.FSharpUnion _
+                | Shape.Poco _
+                | Shape.CliMutable _ -> true
+                | _ -> false
 
     /// <summary>Serializes a value to a byte array using the F# binary format.</summary>
     let serialize (value: obj) (valueType: Type) : byte array =
@@ -486,6 +507,40 @@ module internal FSharpBinaryFormat =
         use br = new BinaryReader(ms, Text.Encoding.UTF8, true)
         let codec = getCodec expectedType
         codec.Read br
+
+    /// <summary>
+    /// Serializes a value to a codec-level byte array that embeds the type's FullName.
+    /// Used by WriteField/ReadValue so deserialization can recover the type even when
+    /// Orleans omits the field-type header (SchemaType.Expected optimization).
+    /// Format: [length-prefixed UTF8 FullName][raw value bytes from serialize].
+    /// </summary>
+    let serializeWithType (value: obj) (valueType: Type) : byte array =
+        use ms = new MemoryStream()
+        use bw = new BinaryWriter(ms, Text.Encoding.UTF8, true)
+        bw.Write(valueType.FullName)
+        let valueBytes = serialize value valueType
+        bw.Write(int32 valueBytes.Length)
+        bw.Write(valueBytes)
+        bw.Flush()
+        ms.ToArray()
+
+    /// <summary>
+    /// Deserializes a value from a codec-level byte array produced by <see cref="serializeWithType"/>.
+    /// If <paramref name="hintType"/> is non-null it is used directly; otherwise the type name
+    /// embedded in the bytes is resolved via <see cref="Type.GetType"/>.
+    /// </summary>
+    let deserializeWithType (data: byte array) (hintType: Type) : obj =
+        use ms = new MemoryStream(data)
+        use br = new BinaryReader(ms, Text.Encoding.UTF8, true)
+        let typeName = br.ReadString()
+        let valueLen  = br.ReadInt32()
+        let valueBytes = br.ReadBytes(valueLen)
+        let actualType =
+            if isNull hintType then
+                Type.GetType(typeName, throwOnError = true)
+            else
+                hintType
+        deserialize valueBytes actualType
 
 /// <summary>
 /// Orleans generalized codec that serializes F# types and POCO classes in binary format
@@ -504,7 +559,9 @@ type FSharpBinaryCodec() =
                 ()
             else
                 let actualType = if isNull value then expectedType else value.GetType()
-                let bytes = FSharpBinaryFormat.serialize value actualType
+                // serializeWithType embeds the FullName so ReadValue can recover the
+                // type when Orleans elides the field-type header (SchemaType.Expected).
+                let bytes = FSharpBinaryFormat.serializeWithType value actualType
                 writer.WriteFieldHeader(fieldIdDelta, expectedType, actualType, WireType.LengthPrefixed)
                 writer.WriteVarUInt32(uint32 bytes.Length)
                 writer.Write(ReadOnlySpan<byte>(bytes))
@@ -515,12 +572,9 @@ type FSharpBinaryCodec() =
             else
                 let length = reader.ReadVarUInt32()
                 let bytes  = reader.ReadBytes(length)
-                let fieldType = field.FieldType
-
-                if isNull fieldType then
-                    invalidOp "Cannot deserialize F# binary codec value without field type information"
-
-                FSharpBinaryFormat.deserialize bytes fieldType
+                // field.FieldType is null when Orleans uses SchemaType.Expected (no type
+                // bytes in the header); deserializeWithType reads the type from our prefix.
+                FSharpBinaryFormat.deserializeWithType bytes field.FieldType
 
     interface IGeneralizedCopier with
         member _.IsSupportedType(``type``: Type) =
@@ -531,9 +585,12 @@ type FSharpBinaryCodec() =
             if isNull input then null
             else
                 let t = input.GetType()
+                // F# unions, records, options, lists, maps, and DU case types are all
+                // structurally immutable — return as-is without cloning.
                 if t.IsClass
                    && not (FSharpType.IsUnion(t, true))
                    && not (FSharpType.IsRecord(t, true))
+                   && not (FSharpBinaryFormat.isUnionCaseType t)
                    && not (t.IsGenericType
                            && (t.GetGenericTypeDefinition() = typedefof<option<_>>
                                || t.GetGenericTypeDefinition() = typedefof<list<_>>)) then

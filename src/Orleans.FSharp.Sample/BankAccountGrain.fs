@@ -12,24 +12,22 @@ open Orleans.FSharp.EventSourcing
 /// Events that can occur on a bank account.
 /// These are the facts that are stored and replayed to rebuild state.
 /// </summary>
-[<GenerateSerializer>]
 type BankAccountEvent =
     /// <summary>A deposit was made to the account.</summary>
-    | [<Id(0u)>] Deposited of amount: decimal
+    | Deposited of amount: decimal
     /// <summary>A withdrawal was made from the account.</summary>
-    | [<Id(1u)>] Withdrawn of amount: decimal
+    | Withdrawn of amount: decimal
 
 /// <summary>
 /// Commands that can be sent to the bank account grain.
 /// </summary>
-[<GenerateSerializer>]
 type BankAccountCommand =
     /// <summary>Deposit funds into the account.</summary>
-    | [<Id(0u)>] Deposit of amount: decimal
+    | Deposit of amount: decimal
     /// <summary>Withdraw funds from the account.</summary>
-    | [<Id(1u)>] Withdraw of amount: decimal
+    | Withdraw of amount: decimal
     /// <summary>Query the current balance without modifying state.</summary>
-    | [<Id(2u)>] GetBalance
+    | GetBalance
 
 /// <summary>
 /// The state of a bank account, derived by folding events.

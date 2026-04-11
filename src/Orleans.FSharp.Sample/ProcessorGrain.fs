@@ -11,9 +11,9 @@ open Orleans.FSharp
 [<GenerateSerializer>]
 type ProcessorCommand =
     /// <summary>Process a value and return a result. Returns the activation's unique ID to prove multiple activations.</summary>
-    | [<Id(0u)>] Process of value: string
+    | Process of value: string
     /// <summary>Get the unique activation identifier.</summary>
-    | [<Id(1u)>] GetActivationId
+    | GetActivationId
 
 /// <summary>
 /// Grain interface for the stateless worker processor grain. Uses integer key.
