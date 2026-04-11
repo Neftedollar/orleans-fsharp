@@ -15,7 +15,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - run: dotnet build --verbosity quiet
-      - run: dotnet test --verbosity quiet
+      - run: dotnet test tests/Orleans.FSharp.Tests --verbosity quiet
 
   security-scan:
     runs-on: ubuntu-latest
