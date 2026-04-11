@@ -306,6 +306,115 @@ do! Log.withCorrelation requestId (fun () ->
     })
 ```
 
+---
+
+## Orleans Dashboard Security
+
+> **⚠️ Warning**: The Orleans Dashboard exposes grain state, silo metrics, and cluster
+> topology **without authentication** by default. Anyone on the network who can reach
+> the dashboard port can read all grain state.
+
+### Production guidelines
+
+1. **Do not enable the dashboard** in production unless you need it, OR
+2. **Place it behind a reverse proxy** with authentication (nginx + basic auth, Cloudflare Access, etc.), OR
+3. **Restrict network access** to the dashboard port using firewall rules or security groups
+
+```fsharp
+// Dashboard is opt-in — only add it when you need it
+let config = siloConfig {
+    addDashboard   // requires Microsoft.Orleans.Dashboard package
+    // NOT recommended for production without additional access controls
+}
+```
+
+---
+
+## FSharpBinaryCodec Trust Model
+
+`FSharpBinaryCodec` serializes F# types (DUs, records, options, lists, maps) without
+requiring `[<GenerateSerializer>]` or `[<Id>]` attributes. It embeds the type's full
+name in the serialized bytes so the deserializer can recover the type at runtime.
+
+### Trust boundary
+
+The codec assumes that **all serialized bytes come from trusted Orleans silos within
+the same cluster**. It is NOT designed to deserialize untrusted input from:
+
+- External HTTP APIs
+- User-uploaded files
+- Third-party message queues outside your cluster
+- Any source that an attacker could control
+
+### What happens on untrusted input
+
+If an attacker can inject crafted bytes into the Orleans message stream, they could:
+1. Embed arbitrary type names in the serialized data
+2. Force the codec to instantiate unexpected types via `Type.GetType()`
+3. Manipulate grain state through carefully constructed payloads
+
+### Mitigation
+
+**At the network layer** (recommended): Orleans already encrypts silo-to-silo
+communication when TLS is configured. Ensure TLS is enabled in production:
+
+```fsharp
+let config = siloConfig {
+    useTls "CN=my-silo-cert"   // encrypts all silo communication
+}
+```
+
+**At the codec layer** (defense-in-depth): If you need to deserialize bytes from
+an untrusted source, use `deserializeWithType` with an explicit `hintType` parameter
+so the type name from the bytes is ignored:
+
+```fsharp
+// Safe: hintType is known at compile time, type name in bytes is ignored
+let result = FSharpBinaryFormat.deserializeWithType bytes typeof<MyKnownType>
+```
+
+---
+
+## RequestCtx Trust Model
+
+`RequestCtx` propagates key-value pairs across grain calls using Orleans' built-in
+`RequestContext` mechanism. Values flow automatically from caller to callee.
+
+### Trust boundary
+
+`RequestCtx` values are **only trustworthy if all grains in the cluster run trusted
+code**. Any grain can read, modify, or forge `RequestCtx` values for downstream calls.
+
+### What this means
+
+- ✅ Safe for: correlation IDs, tracing, feature flags, non-security context
+- ⚠️ Use with caution: user identity, tenant ID, role claims
+- ❌ Never use for: authorization decisions without server-side validation
+
+### Authorization pattern
+
+If you use `RequestCtx` for security context (e.g., user principal), validate it
+in an incoming grain call filter — don't trust the value in the handler alone:
+
+```fsharp
+let authFilter = Filter.incoming (fun ctx ->
+    task {
+        match RequestCtx.get<string> "Principal" with
+        | Some principal ->
+            // Validate: is this principal authorized for this method?
+            let methodName = FilterContext.methodName ctx
+            if not (isAuthorized principal methodName) then
+                raise (UnauthorizedAccessException "Access denied")
+            do! ctx.Invoke()
+        | None ->
+            invalidOp "Unauthenticated grain call — no principal in request context"
+    })
+
+let config = siloConfig {
+    addIncomingFilter authFilter
+}
+```
+
 ## Next steps
 
 - [Silo Configuration](silo-configuration.md) -- TLS and filter configuration

@@ -13,8 +13,8 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
       - run: dotnet build --verbosity quiet
@@ -25,8 +25,8 @@ jobs:
     needs: build-and-test
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
       - name: Run quick integration tests
@@ -44,23 +44,47 @@ jobs:
       contains(github.event.head_commit.message, '[full-ci]')
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
       - name: Run all integration tests
         run: dotnet test tests/Orleans.FSharp.Integration --verbosity quiet
 
-  security-scan:
+  # ── Security scanning ─────────────────────────────────────────────
+  secrets-scan:
+    name: Secrets Detection
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           fetch-depth: 0
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@4df448123c42152998010d84f6e14b872c23ee28 # v2.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-scan:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Check for vulnerable packages
+        run: dotnet list package --vulnerable --include-transitive | grep -q "Critical\|High" && exit 1 || exit 0
+
+  sast:
+    name: Static Analysis (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: semgrep/semgrep-action@54577f56466587770af154b4f62f521b6f7d24d7 # v2.0.0
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/cwe-top-25
 
   publish:
     needs: build-and-test
@@ -71,8 +95,8 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
       - run: dotnet build --configuration Release --verbosity quiet
@@ -80,7 +104,7 @@ jobs:
 
       - name: NuGet login (trusted publisher)
         id: nuget-login
-        uses: NuGet/login@v1
+        uses: NuGet/login@73b9bf58922768c79eb4770303e7a3f2a802598e # v1.2.0
         with:
           user: Neftedollar
 
