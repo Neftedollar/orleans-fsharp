@@ -527,7 +527,8 @@ module internal FSharpBinaryFormat =
     /// <summary>
     /// Deserializes a value from a codec-level byte array produced by <see cref="serializeWithType"/>.
     /// If <paramref name="hintType"/> is non-null it is used directly; otherwise the type name
-    /// embedded in the bytes is resolved via <see cref="Type.GetType"/>.
+    /// embedded in the bytes is resolved via <see cref="Type.GetType"/> with an assembly
+    /// allow-list for defense-in-depth.
     /// </summary>
     let deserializeWithType (data: byte array) (hintType: Type) : obj =
         use ms = new MemoryStream(data)
@@ -535,9 +536,32 @@ module internal FSharpBinaryFormat =
         let typeName = br.ReadString()
         let valueLen  = br.ReadInt32()
         let valueBytes = br.ReadBytes(valueLen)
+
+        // Known-safe assembly name prefixes for type resolution.
+        // Only types from these assemblies are resolved when hintType is null.
+        let allowedAssemblyPrefixes =
+            [| "Orleans.FSharp"
+               "System"
+               "Microsoft.FSharp"
+               "FSharp.Core"
+               "mscorlib"
+               "netstandard"
+               "TypeShape" |]
+
+        let isAssemblyAllowed (asmName: string) : bool =
+            asmName <> null &&
+            allowedAssemblyPrefixes |> Array.exists (fun prefix -> asmName.StartsWith prefix)
+
         let actualType =
             if isNull hintType then
-                Type.GetType(typeName, throwOnError = true)
+                match Type.GetType(typeName, throwOnError = false) with
+                | null ->
+                    invalidOp $"FSharpBinaryCodec: type '{typeName}' not found. Ensure the type is in a loaded assembly."
+                | t ->
+                    let asmName = t.Assembly.GetName().Name
+                    if isAssemblyAllowed asmName then t
+                    else
+                        invalidOp $"FSharpBinaryCodec: type '{typeName}' is from assembly '{asmName}' which is not in the trusted allow-list. Provide an explicit hintType to deserialize safely."
             else
                 hintType
         deserialize valueBytes actualType
