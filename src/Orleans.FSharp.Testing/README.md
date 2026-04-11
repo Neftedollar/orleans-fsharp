@@ -24,6 +24,75 @@ let factory = MockGrainFactory()
 GrainMock.withGrain<IMyDep> "key" myMockImpl factory
 ```
 
+### WebTestHarness
+
+For HTTP endpoint tests, you can run ASP.NET Core `TestServer` without Orleans `TestCluster`
+and inject a mocked grain factory directly:
+
+```fsharp
+let! harness =
+    WebTestHarness.createWithMockFactory
+        (fun factory ->
+            factory
+            |> GrainMock.withFSharpGrain "company-1" companyGrainDefinition)
+        (fun web ->
+            web.Configure(fun app ->
+                app.Run(fun ctx ->
+                    task {
+                        let gf = ctx.RequestServices.GetRequiredService<IGrainFactory>()
+                        let handle = FSharpGrain.ref<CompanyState, CompanyCommand> gf "company-1"
+                        let! state = handle |> FSharpGrain.send Increment
+                        return! ctx.Response.WriteAsync(string state.Count)
+                    } :> Task))
+            |> ignore)
+```
+
+This keeps endpoint tests fast and deterministic while still exercising
+`FSharpGrain.ref`/`send` flows.
+
+`WebTestHarness.createWithFactory` and `createWithMockFactory` fail fast when
+`configureWeb` already registers `IGrainFactory`, preventing ambiguous DI setup.
+
+For typed query-style responses, use `FSharpGrain.ask`:
+
+```fsharp
+type CompanyState = { Count: int }
+type CompanyCommand =
+    | Increment
+    | GetCount
+
+let companyDef =
+    grain {
+        defaultState { Count = 0 }
+        handleTyped (fun state cmd ->
+            task {
+                match cmd with
+                | Increment ->
+                    let next = { Count = state.Count + 1 }
+                    return next, next.Count
+                | GetCount ->
+                    return state, state.Count
+            })
+    }
+
+let! harness =
+    WebTestHarness.createWithMockFactory
+        (fun factory -> factory |> GrainMock.withFSharpGrain "company-42" companyDef)
+        (fun web ->
+            web.Configure(fun app ->
+                app.Run(fun ctx ->
+                    task {
+                        let gf = ctx.RequestServices.GetRequiredService<IGrainFactory>()
+                        let handle = FSharpGrain.ref<CompanyState, CompanyCommand> gf "company-42"
+                        let! count = handle |> FSharpGrain.ask<CompanyState, CompanyCommand, int> GetCount
+                        return! ctx.Response.WriteAsync(string count)
+                    } :> Task))
+            |> ignore)
+```
+
+Use `send` when the handler result is the state; use `ask` when the handler returns
+another typed value (for example `int`, DTO, tuple).
+
 ### GrainArbitrary
 
 TypeShape-based auto-generator of FsCheck `Arbitrary` instances for F# discriminated unions. Automatically discovers DU cases and field types to produce well-typed random grain states.

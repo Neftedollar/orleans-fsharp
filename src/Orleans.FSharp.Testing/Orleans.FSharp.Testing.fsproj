@@ -15,10 +15,12 @@
     <Compile Include="TestHarness.fs" />
     <Compile Include="GrainArbitrary.fs" />
     <Compile Include="GrainMock.fs" />
+    <Compile Include="WebTestHarness.fs" />
     <Compile Include="FsCheckIntegration.fs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
     <PackageReference Include="Microsoft.Orleans.TestingHost" Version="10.*" />
     <PackageReference Include="FsCheck" Version="3.*" />

@@ -19,6 +19,7 @@
     <Compile Include="SiloConfigTests.fs" />
     <Compile Include="LoggingTests.fs" />
     <Compile Include="TestHarnessTests.fs" />
+    <Compile Include="WebTestHarnessTests.fs" />
     <Compile Include="FsCheckIntegrationTests.fs" />
     <Compile Include="Benchmarks.fs" />
     <Compile Include="ReminderTests.fs" />
