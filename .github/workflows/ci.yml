@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly full integration at 02:00 UTC
+    - cron: '0 2 * * *'
 
 jobs:
   build-and-test:
@@ -16,6 +19,37 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet build --verbosity quiet
       - run: dotnet test tests/Orleans.FSharp.Tests --verbosity quiet
+
+  quick-integration:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run quick integration tests
+        run: >
+          dotnet test tests/Orleans.FSharp.Integration
+          --filter "FullyQualifiedName~ConcurrencyTests|FullyQualifiedName~ErrorHandlingTests|FullyQualifiedName~ReentrancyIntegrationTests|FullyQualifiedName~TransactionConflictTests|FullyQualifiedName~FSharpBinaryCodecIntegration"
+          --verbosity quiet
+
+  full-integration:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      contains(github.event.head_commit.message, '[full-ci]')
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run all integration tests
+        run: dotnet test tests/Orleans.FSharp.Integration --verbosity quiet
 
   security-scan:
     runs-on: ubuntu-latest

@@ -23,9 +23,10 @@ type ReentrancyIntegrationTests(fixture: ClusterFixture) =
             let sw = Stopwatch.StartNew()
 
             // Fire two concurrent calls, each with a 500ms delay
-            let task1 = grain.HandleMessage(AddValue 1)
-            let task2 = grain.HandleMessage(AddValue 2)
-            let! _ = Task.WhenAll(task1, task2)
+            let t1 = grain.HandleMessage(AddValue 1)
+            let t2 = grain.HandleMessage(AddValue 2)
+            let! _ = t1
+            and! _ = t2
 
             sw.Stop()
 
@@ -43,9 +44,10 @@ type ReentrancyIntegrationTests(fixture: ClusterFixture) =
             let sw = Stopwatch.StartNew()
 
             // Fire two concurrent calls, each with a 500ms delay
-            let task1 = grain.HandleMessage(SlowAdd 1)
-            let task2 = grain.HandleMessage(SlowAdd 2)
-            let! _ = Task.WhenAll(task1, task2)
+            let t1 = grain.HandleMessage(SlowAdd 1)
+            let t2 = grain.HandleMessage(SlowAdd 2)
+            let! _ = t1
+            and! _ = t2
 
             sw.Stop()
 
@@ -60,15 +62,16 @@ type ReentrancyIntegrationTests(fixture: ClusterFixture) =
             let grain =
                 fixture.GrainFactory.GetGrain<IAggregatorGrain>("reentrant-result-test")
 
-            let task1 = grain.HandleMessage(AddValue 10)
-            let task2 = grain.HandleMessage(AddValue 20)
-            let! results = Task.WhenAll(task1, task2)
+            let t1 = grain.HandleMessage(AddValue 10)
+            let t2 = grain.HandleMessage(AddValue 20)
+            let! r1 = t1
+            and! r2 = t2
 
             // Both calls should complete successfully with int results
-            let r1 = unbox<int> results.[0]
-            let r2 = unbox<int> results.[1]
+            let result1 = unbox<int> r1
+            let result2 = unbox<int> r2
             // The sum of results should reflect both values being added
             // (order may vary due to concurrent execution)
-            test <@ r1 > 0 @>
-            test <@ r2 > 0 @>
+            test <@ result1 > 0 @>
+            test <@ result2 > 0 @>
         }

@@ -44,6 +44,9 @@
     <Compile Include="TemplateTests.fs" />
     <Compile Include="RedisIntegrationTests.fs" />
     <Compile Include="GrainResilienceIntegrationTests.fs" />
+    <Compile Include="ConcurrencyTests.fs" />
+    <Compile Include="ErrorHandlingTests.fs" />
+    <Compile Include="TransactionConflictTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

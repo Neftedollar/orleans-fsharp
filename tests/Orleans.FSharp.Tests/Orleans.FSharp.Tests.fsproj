@@ -90,6 +90,7 @@
     <Compile Include="GrainResilienceTests.fs" />
     <Compile Include="GrainBatchTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
+    <Compile Include="FSharpBinaryCodecEdgeCases.fs" />
   </ItemGroup>
 
   <ItemGroup>
