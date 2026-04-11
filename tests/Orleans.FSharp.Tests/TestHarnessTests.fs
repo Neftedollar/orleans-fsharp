@@ -171,3 +171,49 @@ let ``TestHarness module has dispose function`` () =
         |> Array.tryFind (fun m -> m.Name = "dispose")
 
     test <@ disposeMethod.IsSome @>
+
+// --- New FSharpGrain helper function existence tests ---
+
+[<Fact>]
+let ``TestHarness module has getFSharpGrain function`` () =
+    let testHarnessModule = findTestHarnessModule ()
+    test <@ testHarnessModule.IsSome @>
+
+    let method =
+        testHarnessModule.Value.GetMethods()
+        |> Array.tryFind (fun m -> m.Name = "getFSharpGrain")
+
+    test <@ method.IsSome @>
+
+[<Fact>]
+let ``TestHarness module has getFSharpGrainGuid function`` () =
+    let testHarnessModule = findTestHarnessModule ()
+    test <@ testHarnessModule.IsSome @>
+
+    let method =
+        testHarnessModule.Value.GetMethods()
+        |> Array.tryFind (fun m -> m.Name = "getFSharpGrainGuid")
+
+    test <@ method.IsSome @>
+
+[<Fact>]
+let ``TestHarness module has getFSharpGrainInt function`` () =
+    let testHarnessModule = findTestHarnessModule ()
+    test <@ testHarnessModule.IsSome @>
+
+    let method =
+        testHarnessModule.Value.GetMethods()
+        |> Array.tryFind (fun m -> m.Name = "getFSharpGrainInt")
+
+    test <@ method.IsSome @>
+
+[<Fact>]
+let ``TestHarness module has createTestClusterWith function`` () =
+    let testHarnessModule = findTestHarnessModule ()
+    test <@ testHarnessModule.IsSome @>
+
+    let method =
+        testHarnessModule.Value.GetMethods()
+        |> Array.tryFind (fun m -> m.Name = "createTestClusterWith")
+
+    test <@ method.IsSome @>

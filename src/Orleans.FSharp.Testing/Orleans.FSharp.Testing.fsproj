@@ -16,7 +16,6 @@
     <Compile Include="GrainArbitrary.fs" />
     <Compile Include="GrainMock.fs" />
     <Compile Include="FsCheckIntegration.fs" />
-    <Compile Include="Library.fs" />
   </ItemGroup>
 
   <ItemGroup>

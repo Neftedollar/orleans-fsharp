@@ -66,8 +66,28 @@ module TestHarness =
         }
 
     /// <summary>
+    /// Internal configurator that reads state from a ref cell.
+    /// Required because TestClusterBuilder.AddSiloBuilderConfigurator<'T>
+    /// only accepts types with a parameterless constructor.
+    /// </summary>
+    type private SiloConfiguratorRef =
+        { Config: SiloConfig; LogFactory: CapturingLoggerFactory }
+
+    let private mutableConfigRef = ref None
+
+    type private CustomSiloConfigurator() =
+        interface ISiloConfigurator with
+            member _.Configure(siloBuilder: ISiloBuilder) =
+                match !mutableConfigRef with
+                | Some { Config = cfg; LogFactory = lf } ->
+                    SiloConfig.applyToSiloBuilder cfg siloBuilder
+                    siloBuilder.Services.AddSingleton<ILoggerFactory>(lf) |> ignore
+                | None -> ()
+
+    /// <summary>
     /// Creates a TestHarness with a custom SiloConfig applied.
-    /// The harness includes the custom configuration plus log capture.
+    /// The custom configuration is applied via SiloConfig.applyToSiloBuilder
+    /// instead of the default in-memory configurator.
     /// </summary>
     /// <param name="config">The silo configuration to apply.</param>
     /// <returns>A Task containing the initialized TestHarness.</returns>
@@ -75,10 +95,12 @@ module TestHarness =
         task {
             let logFactory = new CapturingLoggerFactory()
 
+            // Set the ref before building (thread-safe since we're single-threaded here)
+            mutableConfigRef := Some { Config = config; LogFactory = logFactory }
+
             let builder = TestClusterBuilder()
             builder.Options.InitialSilosCount <- 1s
-
-            builder.AddSiloBuilderConfigurator<TestSiloConfigurator>() |> ignore
+            builder.AddSiloBuilderConfigurator<CustomSiloConfigurator>() |> ignore
 
             let cluster = builder.Build()
             do! cluster.DeployAsync()
@@ -90,6 +112,53 @@ module TestHarness =
                     LogFactory = logFactory
                 }
         }
+
+    // ── FSharpGrain helpers ──────────────────────────────────────────
+
+    /// <summary>
+    /// Gets an FSharpGrain handle from the test harness using a string key.
+    /// This is the universal-pattern shortcut — no interface type needed.
+    /// </summary>
+    /// <param name="harness">The test harness to get the grain from.</param>
+    /// <param name="key">The string key for the grain.</param>
+    /// <typeparam name="'State">The grain state type.</typeparam>
+    /// <typeparam name="'Message">The grain message/command type.</typeparam>
+    /// <returns>An FSharpGrainHandle for the specified grain.</returns>
+    let getFSharpGrain<'State, 'Message>
+        (harness: TestHarness)
+        (key: string)
+        : FSharpGrainHandle<'State, 'Message> =
+        FSharpGrain.ref<'State, 'Message> harness.Cluster.GrainFactory key
+
+    /// <summary>
+    /// Gets an FSharpGrain handle from the test harness using a Guid key.
+    /// This is the universal-pattern shortcut — no interface type needed.
+    /// </summary>
+    /// <param name="harness">The test harness to get the grain from.</param>
+    /// <param name="key">The Guid key for the grain.</param>
+    /// <typeparam name="'State">The grain state type.</typeparam>
+    /// <typeparam name="'Message">The grain message/command type.</typeparam>
+    /// <returns>An FSharpGrainGuidHandle for the specified grain.</returns>
+    let getFSharpGrainGuid<'State, 'Message>
+        (harness: TestHarness)
+        (key: Guid)
+        : FSharpGrainGuidHandle<'State, 'Message> =
+        FSharpGrain.refGuid<'State, 'Message> harness.Cluster.GrainFactory key
+
+    /// <summary>
+    /// Gets an FSharpGrain handle from the test harness using an int64 key.
+    /// This is the universal-pattern shortcut — no interface type needed.
+    /// </summary>
+    /// <param name="harness">The test harness to get the grain from.</param>
+    /// <param name="key">The int64 key for the grain.</param>
+    /// <typeparam name="'State">The grain state type.</typeparam>
+    /// <typeparam name="'Message">The grain message/command type.</typeparam>
+    /// <returns>An FSharpGrainIntHandle for the specified grain.</returns>
+    let getFSharpGrainInt<'State, 'Message>
+        (harness: TestHarness)
+        (key: int64)
+        : FSharpGrainIntHandle<'State, 'Message> =
+        FSharpGrain.refInt<'State, 'Message> harness.Cluster.GrainFactory key
 
     /// <summary>
     /// Gets a typed grain reference from the test harness using a string key.
