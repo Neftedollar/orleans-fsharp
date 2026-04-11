@@ -1,281 +1,372 @@
 # Orleans.FSharp
 
-**Idiomatic F# for Microsoft Orleans -- computation expressions, not boilerplate**
+> **Write Orleans grains in idiomatic F# — computation expressions, not boilerplate.**
 
 [![CI](https://github.com/Neftedollar/orleans-fsharp/actions/workflows/ci.yml/badge.svg)](https://github.com/Neftedollar/orleans-fsharp/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Orleans 10](https://img.shields.io/badge/Orleans-10.0.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
-[![Tests](https://img.shields.io/badge/tests-1447-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1542-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 
 ---
 
-## Why this exists
+## The Problem
 
-Orleans is a powerful virtual actor framework, but using it from F# means fighting C# idioms at every turn: mutable state bags, attribute-heavy classes, verbose DI wiring. Orleans.FSharp replaces all of that with computation expressions that let you define grains, configure silos, and wire streaming in natural F# style -- discriminated unions as state, pure handler functions, and declarative configuration. The full Orleans runtime does the heavy lifting underneath.
+Using Orleans from C# works great. Using it from F# means fighting C# idioms:
+
+```fsharp
+// ❌ C# Orleans style in F# — verbose, mutable, attribute-heavy
+[<GenerateSerializer>]
+type MyGrain() =
+    inherit Grain()
+    member val _state = 0 with get, set
+    member this.Increment() =
+        this._state <- this._state + 1
+        Task.FromResult(this._state)
+```
+
+Orleans.FSharp replaces all of that with computation expressions, pure functions, and discriminated unions — **while the full Orleans runtime does the heavy lifting underneath**.
+
+```fsharp
+// ✅ Orleans.FSharp — pure, declarative, zero boilerplate
+type State = { Count: int }
+type Msg = Increment | GetCount
+
+let counter = grain {
+    defaultState { Count = 0 }
+    handle (fun state msg -> task {
+        match msg with
+        | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
+        | GetCount  -> return state, box state.Count
+    })
+    persist "Default"
+}
+```
+
+**1,542 tests. Zero C# grain stubs. One NuGet package.**
+
+---
+
+## Why It Matters
+
+| | Traditional Orleans (C#) | Orleans.FSharp |
+|---|---|---|
+| **State** | Mutable class | Immutable record or DU |
+| **Handler** | Imperative method | Pure function `state → msg → new state` |
+| **Config** | Extension method chains | `siloConfig { }` CE |
+| **Client** | `IGrainFactory.GetGrain<IFooGrain>(key)` | `FSharpGrain.ref<State, Msg> factory key` |
+| **Serialization** | `[<GenerateSerializer>]` + `[<Id>]` on everything | Optional — `FSharpBinaryCodec` handles F# types automatically |
+| **Test** | Mock the Orleans runtime | `TestHarness`, `MockGrainFactory`, FsCheck properties |
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│                     Your F# Code                     │
+│  ┌──────────┐  ┌─────────────┐  ┌─────────────────┐ │
+│  │ grain { }│  │siloConfig {}│  │ FSharpGrain.ref │ │
+│  │  CE      │  │  CE         │  │  typed handles  │ │
+│  └────┬─────┘  └──────┬──────┘  └────────┬────────┘ │
+│       │               │                   │          │
+│  ┌────▼───────────────▼───────────────────▼────────┐ │
+│  │           Orleans.FSharp Runtime                │ │
+│  │  • Universal grain handler dispatch             │ │
+│  │  • FSharpBinaryCodec (no attributes needed)     │ │
+│  │  • Streaming, Reminders, Timers, Observers      │ │
+│  │  • Transaction, Resilience, Filters              │ │
+│  └───────────────────────┬─────────────────────────┘ │
+│                          │                           │
+│  ┌───────────────────────▼─────────────────────────┐ │
+│  │         Orleans.FSharp.Abstractions              │ │
+│  │     IFSharpGrain / IFSharpEventSourcedGrain      │ │
+│  │          (C# shim for Orleans proxy gen)         │ │
+│  └───────────────────────┬─────────────────────────┘ │
+└──────────────────────────┼───────────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────────┐
+│                Microsoft Orleans Runtime              │
+│  Placement • Activation • Reminders • Transactions   │
+│  Streaming • Storage • Serialization • Clustering     │
+└──────────────────────────────────────────────────────┘
+```
+
+---
 
 ## Quick Start
 
+### 1. Create a project
+
+```bash
+dotnet new console -n MyOrleansApp -lang F#
+cd MyOrleansApp
+dotnet add package Orleans.FSharp
+dotnet add package Orleans.FSharp.Runtime
+dotnet add package Orleans.FSharp.Abstractions
+```
+
+### 2. Define a grain
+
 ```fsharp
 open Orleans.FSharp
-open Orleans.FSharp.Runtime
 
-// 1. Define state and commands — plain F# types, no attributes needed
+// Plain F# types — no attributes, no codegen
 type CounterState = { Count: int }
-type CounterCommand = Increment | Decrement | GetValue
+type CounterCommand = Increment | Decrement | GetCount
 
-// 2. Define the grain with a computation expression
 let counter = grain {
     defaultState { Count = 0 }
     handle (fun state cmd -> task {
         match cmd with
         | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
         | Decrement -> return { Count = state.Count - 1 }, box (state.Count - 1)
-        | GetValue  -> return state, box state.Count
+        | GetCount  -> return state, box state.Count
     })
     persist "Default"
 }
+```
 
-// 3. Configure the silo — clean F#, no C# extension method chains
-let config = siloConfig {
-    useLocalhostClustering
-    addMemoryStorage "Default"
-    useJsonFallbackSerialization  // enables clean types without Orleans attributes
+### 3. Configure and run the silo
+
+```fsharp
+open Microsoft.Extensions.Hosting
+open Orleans.FSharp.Runtime
+
+let host =
+    Host.CreateDefaultBuilder()
+        .ConfigureSilo(siloConfig {
+            useLocalhostClustering
+            addMemoryStorage "Default"
+        })
+        .ConfigureServices(fun services ->
+            services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
+        )
+        .Build()
+
+host.Run()
+```
+
+### 4. Call it from a client
+
+```fsharp
+open Orleans.FSharp
+
+let grainRef = FSharpGrain.ref<CounterState, CounterCommand> clientFactory "my-counter"
+let! newCount = grainRef |> FSharpGrain.ask GetCount   // → 1
+```
+
+> 📖 **Full getting-started guide**: [docs/getting-started.md](docs/getting-started.md)
+
+---
+
+## Features at a Glance
+
+### `grain { }` — Declarative Grain Definition
+
+```fsharp
+let bank = grain {
+    defaultState { Balance = 0m }
+
+    // Multiple handler styles
+    handle (fun state msg -> ...)                          // basic
+    handleTyped (fun state msg -> task { return state, result })  // typed result
+    handleWithContext (fun ctx state msg -> ...)           // with GrainContext
+    handleCancellable (fun state msg ct -> ...)            // with cancellation
+
+    // Lifecycle hooks
+    onActivate (fun state -> task { return state })
+    onDeactivate (fun state -> task { ... })
+
+    // Reminders & timers
+    onReminder "daily-report" (fun state name status -> task { return state })
+    timer "heartbeat" (TimeSpan.FromSeconds 1.0) (TimeSpan.FromSeconds 5.0)
+          (fun state -> task { return state })
+
+    // Persistence
+    persist "Default"
+    additionalState "audit" "Default" { EventCount = 0 }
+
+    // Concurrency
+    reentrant
+    statelessWorker
+    placement PreferLocalPlacement
+
+    // Streaming
+    implicitSubscription "orders" (fun state evt -> task { return state })
 }
 ```
 
-## Feature Showcase
-
-### `grain { }` -- Grain Definition
-
-| Keyword | Description |
-|---|---|
-| `defaultState` | Set the initial state value |
-| `handle` | Register a `state -> msg -> Task<state * obj>` handler |
-| `handleState` | Simpler: `state -> msg -> Task<state>` — result IS the new state |
-| `handleTyped` | Typed result without manual boxing: `state -> msg -> Task<state * 'R>` |
-| `handleWithContext` | Handler with `GrainContext` for grain-to-grain calls and DI |
-| `handleStateWithContext` | `GrainContext` + state-only result |
-| `handleTypedWithContext` | `GrainContext` + typed result |
-| `handleWithServices` | Alias for `handleWithContext` emphasizing DI access |
-| `handleStateWithServices` | Services + state-only result |
-| `handleTypedWithServices` | Services + typed result |
-| `handleCancellable` | Handler with `CancellationToken` support |
-| `handleStateCancellable` | State-only result + cancellation |
-| `handleTypedCancellable` | Typed result + cancellation |
-| `handleWithContextCancellable` | Context + cancellation |
-| `handleWithServicesCancellable` | Services + cancellation |
-| `persist` | Name the storage provider for state persistence |
-| `additionalState` | Declare a named secondary persistent state |
-| `onActivate` | Hook that runs on grain activation |
-| `onDeactivate` | Hook that runs on grain deactivation |
-| `onReminder` | Register a named reminder handler |
-| `onTimer` | Register a declarative timer with dueTime + period |
-| `onLifecycleStage` | Hook into grain lifecycle stages |
-| `reentrant` | Allow concurrent message processing |
-| `interleave` | Mark a method as always interleaved |
-| `readOnly` | Mark a method as read-only (interleaved for reads) |
-| `mayInterleave` | Custom reentrancy predicate |
-| `statelessWorker` | Allow multiple activations per silo |
-| `maxActivations` | Cap local worker count |
-| `oneWay` | Mark a method as fire-and-forget |
-| `grainType` | Set a custom grain type name |
-| `deactivationTimeout` | Per-grain idle timeout |
-| `implicitStreamSubscription` | Auto-subscribe to a stream namespace |
-| `preferLocalPlacement` | Place grain on the calling silo |
-| `randomPlacement` | Random silo placement |
-| `hashBasedPlacement` | Consistent-hash placement |
-| `activationCountPlacement` | Fewest-activations placement |
-| `resourceOptimizedPlacement` | Resource-aware placement |
-| `siloRolePlacement` | Role-based silo targeting |
-| `customPlacement` | Custom placement strategy type |
-
-### `siloConfig { }` -- Silo Configuration
-
-| Keyword | Description |
-|---|---|
-| `useLocalhostClustering` | Local dev clustering |
-| `addRedisClustering` | Redis-based clustering |
-| `addAzureTableClustering` | Azure Table clustering |
-| `addAdoNetClustering` | ADO.NET clustering (Postgres, SQL Server) |
-| `addMemoryStorage` | In-memory grain storage |
-| `addRedisStorage` | Redis grain storage |
-| `addAzureBlobStorage` | Azure Blob grain storage |
-| `addAzureTableStorage` | Azure Table grain storage |
-| `addAdoNetStorage` | ADO.NET grain storage |
-| `addCosmosStorage` | Cosmos DB grain storage |
-| `addDynamoDbStorage` | DynamoDB grain storage |
-| `addCustomStorage` | Custom storage provider |
-| `addMemoryStreams` | In-memory stream provider |
-| `addPersistentStreams` | Durable stream provider |
-| `addBroadcastChannel` | Broadcast channel provider |
-| `addMemoryReminderService` | In-memory reminders |
-| `addRedisReminderService` | Redis reminders |
-| `addCustomReminderService` | Custom reminder service |
-| `useSerilog` | Wire Serilog as logging provider |
-| `configureServices` | Register custom DI services |
-| `addIncomingFilter` | Incoming grain call filter |
-| `addOutgoingFilter` | Outgoing grain call filter |
-| `addGrainService` | Register a GrainService type |
-| `addStartupTask` | Run a task when the silo starts |
-| `enableHealthChecks` | Register health check endpoints |
-| `useTls` / `useTlsWithCertificate` | TLS encryption |
-| `useMutualTls` / `useMutualTlsWithCertificate` | Mutual TLS |
-| `addDashboard` / `addDashboardWithOptions` | Orleans Dashboard |
-| `useGrainVersioning` | Grain interface versioning |
-| `clusterId` / `serviceId` / `siloName` | Cluster identity |
-| `siloPort` / `gatewayPort` / `advertisedIpAddress` | Endpoints |
-| `grainCollectionAge` | Global idle deactivation timeout |
-
-### `clientConfig { }` -- Client Configuration
-
-| Keyword | Description |
-|---|---|
-| `useLocalhostClustering` | Local dev clustering |
-| `useStaticClustering` | Static gateway endpoints |
-| `addMemoryStreams` | In-memory stream provider |
-| `configureServices` | Register custom DI services |
-| `useTls` / `useTlsWithCertificate` | TLS encryption |
-| `useMutualTls` | Mutual TLS |
-| `clusterId` / `serviceId` | Cluster identity |
-| `gatewayListRefreshPeriod` | Gateway refresh interval |
-| `preferredGatewayIndex` | Preferred gateway |
-
-### Universal Grain Pattern — zero C# stubs
-
-Call any registered F# grain without defining a per-grain C# interface:
+### `eventSourcedGrain { }` — Event Sourcing
 
 ```fsharp
-// Silo startup — register your grain definition
-siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
+type OrderEvent = OrderPlaced of string | OrderShipped
+type OrderCommand = Place of string | Ship
 
-// Client / handler — string, GUID, or int key
-let handle = FSharpGrain.ref<PingState, PingCommand> factory "ping-1"
-let! state  = handle |> FSharpGrain.send Ping          // returns Task<PingState>
-do! handle  |> FSharpGrain.post Ping                   // awaits RPC but discards result
-
-// ask returns a type you choose — useful when the handler returns something other than the state
-let! count  = handle |> FSharpGrain.ask<PingState, PingCommand, int> GetCount
-
-// GUID and integer keys
-let h = FSharpGrain.refGuid<S, M> factory (Guid.NewGuid())
-let! s = h |> FSharpGrain.sendGuid MyCommand
-let! r = h |> FSharpGrain.askGuid<S, M, string> QueryCmd
-
-let h = FSharpGrain.refInt<S, M> factory 42L
-do! h |> FSharpGrain.postInt MyCommand
+let orderGrain = eventSourcedGrain {
+    defaultState { Items = []; Shipped = false }
+    apply (fun state event -> match event with
+        | OrderPlaced items -> { state with Items = items }
+        | OrderShipped      -> { state with Shipped = true })
+    handle (fun state cmd -> match cmd with
+        | Place items -> [ OrderPlaced items ]
+        | Ship        -> if not state.Shipped then [ OrderShipped ] else [])
+    logConsistencyProvider "LogStorage"
+}
 ```
 
-The universal pattern works with any F# discriminated union as the command type — including cases with fields (`Append of string`) and nullary cases in mixed DUs. No CodeGen project is required; Orleans discovers the grains through `Orleans.FSharp.Abstractions`.
+### `siloConfig { }` — Clean Infrastructure Setup
 
-### `eventSourcedGrain { }` -- Event Sourcing
+```fsharp
+let config = siloConfig {
+    useLocalhostClustering       // or addRedisClustering, addAzureTableClustering...
+    clusterId "my-cluster"
+    serviceId "my-service"
 
-| Keyword | Description |
+    addMemoryStorage "Default"   // or addRedisStorage, addPostgresStorage...
+    addMemoryStreams "StreamProvider"
+    useInMemoryReminderService
+
+    addIncomingFilter  (fun ctx -> ...)
+    addOutgoingFilter (fun ctx -> ...)
+
+    enableHealthChecks
+    addDashboard
+}
+```
+
+### `FSharpGrain` — Typed Client API
+
+```fsharp
+// String key
+let handle = FSharpGrain.ref<State, Msg> factory "order-123"
+let! state = handle |> FSharpGrain.send PlaceOrder
+let! result = handle |> FSharpGrain.ask<State, Msg, int> GetItemCount
+do! handle |> FSharpGrain.post CancelOrder
+
+// GUID key
+let guidHandle = FSharpGrain.refGuid<State, Msg> factory (Guid.NewGuid())
+
+// Integer key
+let intHandle = FSharpGrain.refInt<State, Msg> factory 42L
+```
+
+---
+
+## What You Get
+
+| Feature | How |
 |---|---|
-| `defaultState` | Initial state before any events |
-| `apply` | Pure event fold: `state -> event -> state` |
-| `handle` | Command handler: `state -> command -> event list` |
-| `logConsistencyProvider` | Orleans log consistency provider name |
+| **State management** | Immutable records, DU state machines, event sourcing |
+| **Persistence** | Memory, Redis, Azure Blob/Table, Postgres, Cosmos, DynamoDB |
+| **Streaming** | Memory, EventHub, Azure Queue, broadcast channels |
+| **Reminders** | In-memory, Redis, durable |
+| **Timers** | Declarative within `grain { }` |
+| **Transactions** | Orleans Transactions with typed state |
+| **Resilience** | Polly retry, circuit-breaker, timeout pipelines |
+| **Filters** | Incoming/outgoing grain call filters for cross-cutting concerns |
+| **Observers** | FSharpObserverManager with subscription management |
+| **Versioning** | Compatibility strategies, migration framework |
+| **Serialization** | FSharpBinaryCodec (automatic), JSON fallback, Orleans native |
+| **Testing** | TestHarness, MockGrainFactory, FsCheck generators, log capture |
+| **Analyzers** | Compile-time checks for common mistakes |
+| **Scripting** | Programmatic silo start/shutdown for F# scripts |
+
+---
 
 ## Installation
 
 ```bash
+# Core — grain CE, GrainRef, streaming, serialization
 dotnet add package Orleans.FSharp
+
+# Silo hosting, client config
 dotnet add package Orleans.FSharp.Runtime
-```
 
-Silo-side proxy generation (required for Orleans to locate your grains):
-
-```bash
+# Required: C# shim for Orleans proxy generation (no code to write)
 dotnet add package Orleans.FSharp.Abstractions
 ```
 
-Optional packages:
+**Optional packages:**
 
 ```bash
-dotnet add package Orleans.FSharp.EventSourcing  # Event sourcing
-dotnet add package Orleans.FSharp.Testing         # Test harness + FsCheck
-```
+# Event sourcing
+dotnet add package Orleans.FSharp.EventSourcing
 
-> **Why `Orleans.FSharp.Abstractions`?** Orleans source generators only run on C# projects.
-> `Abstractions` is a tiny C# shim (no code to write) that lets the Orleans runtime generate
-> the proxy classes for `IFSharpGrain`. Reference it from your silo project — that's it.
+# Testing utilities
+dotnet add package Orleans.FSharp.Testing
 
-## Project Template
-
-Scaffold a new project in seconds:
-
-```bash
+# Project templates
 dotnet new install Orleans.FSharp.Templates
-dotnet new orleans-fsharp -n MyApp
 ```
+
+> **Why `Abstractions`?** Orleans source generators only run on C# projects.
+> `Orleans.FSharp.Abstractions` is a tiny C# package that defines `IFSharpGrain` —
+> just reference it and you're done. No code to write.
+
+---
 
 ## Documentation
 
-| Guide | Description |
+| Guide | What you'll learn |
 |---|---|
 | [Getting Started](docs/getting-started.md) | Zero to working grain in 15 minutes |
 | [Grain Definition](docs/grain-definition.md) | Complete `grain { }` CE reference |
-| [Silo Configuration](docs/silo-configuration.md) | Complete `siloConfig { }` CE reference |
-| [Client Configuration](docs/client-configuration.md) | `clientConfig { }` CE reference |
-| [Serialization](docs/serialization.md) | 3 modes: F# Binary, JSON, Orleans Native |
-| [Streaming](docs/streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](docs/event-sourcing.md) | `eventSourcedGrain { }` CE guide |
-| [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |
-| [Analyzers](docs/analyzers.md) | OF0001: async {} detection, AllowAsync opt-out |
-| [Security](docs/security.md) | TLS, mTLS, filters, secrets |
-| [Advanced](docs/advanced.md) | Transactions, telemetry, shutdown, migration |
-| [Resilience](docs/resilience.md) | Polly v8 retry, circuit-breaker, and timeout patterns |
-| [Redis Example](docs/redis-example.md) | End-to-end shopping cart with Redis storage/clustering |
-| [API Reference](docs/api-reference.md) | All public modules, types, functions |
+| [Silo Configuration](docs/silo-configuration.md) | Storage, clustering, streaming setup |
+| [Serialization](docs/serialization.md) | Binary codec, JSON fallback, schema evolution |
+| [Event Sourcing](docs/event-sourcing.md) | `eventSourcedGrain { }` with snapshots |
+| [Streaming](docs/streaming.md) | Publish, subscribe, TaskSeq integration |
+| [Testing](docs/testing.md) | TestHarness, FsCheck, property-based testing |
+| [Resilience](docs/resilience.md) | Retry, circuit-breaker, timeout patterns |
+| [Redis Example](docs/redis-example.md) | Shopping cart with Redis — end-to-end |
+| [Security](docs/security.md) | TLS, mTLS, secrets management |
+| [API Reference](docs/api-reference.md) | All public types and modules |
 
-## Package Structure
+---
 
-| Package | Description |
-|---|---|
-| `Orleans.FSharp` | Core: grain CE, GrainRef, streaming, logging, reminders, timers, observers, serialization |
-| `Orleans.FSharp.Runtime` | Silo hosting, client config, grain discovery |
-| `Orleans.FSharp.Abstractions` | C# shim — Orleans proxy generation for `IFSharpGrain` (reference from silo) |
-| `Orleans.FSharp.EventSourcing` | Event-sourced grain CE |
-| `Orleans.FSharp.CodeGen` | Optional: per-grain C# code generation for custom grain interfaces (legacy pattern) |
-| `Orleans.FSharp.Testing` | Test harness, GrainArbitrary, GrainMock, log capture |
-| `Orleans.FSharp.Analyzers` | F# analyzer: OF0001 warns on `async { }` usage; `[<AllowAsync>]` opt-out |
-| `Orleans.FSharp.Templates` | `dotnet new` project template |
+## Project Structure
 
-## Security
-
-### Connection Strings
-
-Never inline connection strings containing passwords or secrets in source code. Load them from configuration or environment variables at runtime.
-
-**Recommended:** Use `IConfiguration` or environment variables:
-
-```fsharp
-let connStr = Environment.GetEnvironmentVariable("REDIS_CONNECTION")
-
-let config = siloConfig {
-    useLocalhostClustering
-    addRedisStorage "Default" connStr
-}
+```
+src/
+├── Orleans.FSharp/              # Core: grain CE, GrainRef, streaming, logging
+├── Orleans.FSharp.Runtime/      # Silo hosting, client configuration
+├── Orleans.FSharp.Abstractions/  # C# shim for Orleans proxy generation
+├── Orleans.FSharp.EventSourcing/ # Event-sourced grain CE
+├── Orleans.FSharp.Testing/      # TestHarness, GrainMock, FsCheck
+├── Orleans.FSharp.Analyzers/    # Compile-time F# checks
+├── Orleans.FSharp.CodeGen/      # Optional: per-grain C# stubs (legacy)
+├── Orleans.FSharp.Generator/    # Source generator for event-sourced grains
+└── Orleans.FSharp.Sample/       # Reference implementations
+tests/
+├── Orleans.FSharp.Tests/         # 1,542 unit + property tests
+└── Orleans.FSharp.Integration/   # End-to-end Orleans TestCluster tests
 ```
 
-**Avoid:** Hardcoding secrets in source files:
+---
 
-```fsharp
-// DO NOT do this -- secrets will leak into version control
-addRedisStorage "Default" "redis://user:password@host:6379"
-```
+## Community & Support
 
-### TLS Certificates
+- **💬 Issues & Questions**: [Open a GitHub Issue](https://github.com/Neftedollar/orleans-fsharp/issues)
+- **📖 Documentation**: [docs/](docs/) folder — every guide is tested
+- **🐛 Bug Reports**: Include reproduction steps — we fix fast
+- **💡 Feature Requests**: We track community-voted priorities publicly
+- **⭐ Star this repo** — it's free and it helps others find the project
 
-When using `useTls` or `useMutualTls`, always use valid certificates from a trusted certificate authority in production. Do not disable certificate validation in production environments.
+---
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/orleans-fsharp/orleans-fsharp).
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+- **Docs**: Every guide has an edit link at the bottom — fixes are the most valuable contributions
+- **Samples**: Real-world grain definitions are better than abstract examples
+- **Tests**: More integration coverage, more FsCheck properties
+- **Benchmarks**: Performance regressions need catching
+
+---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE) — use it in personal and commercial projects.
