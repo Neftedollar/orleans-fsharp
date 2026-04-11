@@ -23,9 +23,9 @@ type LifecycleState =
 [<GenerateSerializer>]
 type LifecycleTestCommand =
     /// <summary>Returns the current state snapshot without side effects.</summary>
-    | [<Id(0u)>] GetLifecycleState
+    | GetLifecycleState
     /// <summary>Adds <c>n</c> to the <c>Value</c> field and returns the updated state.</summary>
-    | [<Id(1u)>] IncrementValue of n: int
+    | IncrementValue of n: int
 
 /// <summary>
 /// Grain interface for the lifecycle hook test grain.

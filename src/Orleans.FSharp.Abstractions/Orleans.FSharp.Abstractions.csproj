@@ -16,6 +16,8 @@
     <!-- Orleans.Sdk brings in source generators that produce Proxy_IFSharpGrain* classes
          and the Metadata manifest — all within this assembly, no cross-assembly access issues. -->
     <PackageReference Include="Microsoft.Orleans.Sdk" Version="10.*" />
+    <!-- JournaledGrain base class for FSharpEventSourcedGrainImpl. -->
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
   </ItemGroup>
 
 </Project>

@@ -15,8 +15,9 @@ let config =
 let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 
-// Register grain definitions with the DI container
-builder.Services.AddFSharpGrain<CounterState, CounterCommand>(CounterGrainDef.counter) |> ignore
+// Register all [<FSharpGrain>]-annotated definitions in this assembly automatically
+builder.Services.AddFSharpGrainsFromAssembly(typeof<CounterState>.Assembly) |> ignore
+// Grains without the attribute still register manually:
 builder.Services.AddFSharpGrain<OrderStatus, OrderCommand>(OrderGrainDef.order) |> ignore
 builder.Services.AddFSharpGrain<string, EchoCommand>(EchoGrainDef.echo) |> ignore
 

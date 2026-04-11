@@ -15,6 +15,9 @@ namespace {{ namespace }};
 /// <c>FSharpEventSourcedGrain&lt;TState, TEvent, TCommand&gt;</c>.
 /// Do not add logic here — modify the F# grain definition instead.
 /// </summary>
+{{- if consistency_provider != "" }}
+[global::Orleans.Providers.LogConsistencyProvider(ProviderName = "{{ consistency_provider }}")]
+{{- end }}
 public sealed class {{ class_name }}
     : global::Orleans.FSharp.EventSourcing.FSharpEventSourcedGrain<
         global::{{ state_fqn }},

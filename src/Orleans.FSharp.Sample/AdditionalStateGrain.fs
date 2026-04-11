@@ -28,13 +28,13 @@ type AuditState =
 [<GenerateSerializer>]
 type AdditionalStateCommand =
     /// <summary>Increments the main counter AND the audit event count.</summary>
-    | [<Id(0u)>] IncrCounter
+    | IncrCounter
     /// <summary>Increments only the audit event count without changing the counter.</summary>
-    | [<Id(1u)>] IncrAudit
+    | IncrAudit
     /// <summary>Returns a tuple of (counter, auditEventCount) without mutating state.</summary>
-    | [<Id(2u)>] GetBoth
+    | GetBoth
     /// <summary>Resets both the counter and the audit count to zero.</summary>
-    | [<Id(3u)>] ResetAll
+    | ResetAll
 
 /// <summary>
 /// Grain interface for the additional-state test grain.

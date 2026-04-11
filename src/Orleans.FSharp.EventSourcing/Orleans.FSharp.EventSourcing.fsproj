@@ -13,6 +13,7 @@
     <Compile Include="Library.fs" />
     <Compile Include="EventSourcedGrainBuilder.fs" />
     <Compile Include="EventStore.fs" />
+    <Compile Include="EventSourcedHandlerRegistry.fs" />
     <Compile Include="EventSourcedGrainDiscovery.fs" />
   </ItemGroup>
 

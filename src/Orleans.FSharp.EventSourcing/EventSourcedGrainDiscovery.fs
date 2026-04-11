@@ -1,11 +1,14 @@
 namespace Orleans.FSharp.EventSourcing
 
+open System.Collections.Generic
+open System.Reflection
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.EventSourcing
+open Orleans.EventSourcing.CustomStorage
 open Orleans.FSharp
 
 /// <summary>
@@ -54,6 +57,45 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
 
     /// <summary>Internal bridge for protected ConfirmEvents method, callable from closures.</summary>
     member internal this.InternalConfirmEvents() = this.ConfirmEvents()
+
+    interface ICustomStorageInterface<'State, 'Event> with
+        /// <summary>
+        /// Reads the current (version, state) from the custom storage back-end.
+        /// Delegates to the <c>customStorage</c> read callback defined in the grain definition.
+        /// Throws <see cref="System.NotSupportedException"/> when no custom storage is configured.
+        /// </summary>
+        member _.ReadStateFromStorage() =
+            match definition.CustomStorage with
+            | None ->
+                raise (
+                    System.NotSupportedException(
+                        "No customStorage configured for this grain. \
+                         Provide read/write callbacks via customStorage in eventSourcedGrain { } \
+                         and set logConsistencyProvider \"CustomStorage\"."
+                    )
+                )
+            | Some adapter ->
+                task {
+                    let! struct (version, stateObj) = adapter.ReadBoxed.Invoke()
+                    return KeyValuePair(version, unbox<'State> stateObj)
+                }
+
+        /// <summary>
+        /// Persists a batch of events to the custom storage back-end.
+        /// Delegates to the <c>customStorage</c> write callback defined in the grain definition.
+        /// Throws <see cref="System.NotSupportedException"/> when no custom storage is configured.
+        /// </summary>
+        member _.ApplyUpdatesToStorage(updates: IReadOnlyList<'Event>, expectedVersion: int) =
+            match definition.CustomStorage with
+            | None ->
+                raise (
+                    System.NotSupportedException(
+                        "No customStorage configured for this grain."
+                    )
+                )
+            | Some adapter ->
+                let boxed = updates |> Seq.map box |> Seq.toList
+                adapter.WriteBoxed.Invoke(boxed, expectedVersion)
 
     /// <summary>
     /// Called when the grain is activated. Logs activation with current state.
@@ -132,4 +174,64 @@ module EventSourcedGrainSiloBuilderExtensions =
             and 'Event: not struct>
             (definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>)
             : IServiceCollection =
+
+            // ── Typed FSharpEventSourcedGrain<S,E,C> (per-grain stub pattern) ─────────
             services.AddSingleton<EventSourcedGrainDefinition<'State, 'Event, 'Command>>(definition)
+            |> ignore
+
+            // ── EventSourcedHandlerRegistry (universal FSharpEventSourcedGrainImpl pattern) ─
+            let handlerRegistry =
+                services
+                |> Seq.tryFind (fun sd -> sd.ServiceType = typeof<EventSourcedHandlerRegistry>)
+                |> Option.map (fun sd -> sd.ImplementationInstance :?> EventSourcedHandlerRegistry)
+                |> Option.defaultWith (fun () ->
+                    let r = EventSourcedHandlerRegistry()
+                    services.AddSingleton<EventSourcedHandlerRegistry>(r) |> ignore
+                    services.AddSingleton<IEventSourcedHandlerRegistry>(r) |> ignore
+                    r)
+
+            handlerRegistry.Register<'State, 'Event, 'Command>(definition)
+            services
+
+        /// <summary>
+        /// Scans the given assembly for all module-level
+        /// <c>EventSourcedGrainDefinition&lt;TState, TEvent, TCommand&gt;</c> values marked
+        /// with <see cref="FSharpEventSourcedGrainAttribute"/> and registers each one via
+        /// <see cref="AddFSharpEventSourcedGrain{TState, TEvent, TCommand}"/>.
+        /// </summary>
+        /// <param name="assembly">The assembly to scan.</param>
+        /// <returns>The service collection for chaining.</returns>
+        member services.AddFSharpEventSourcedGrainsFromAssembly(assembly: System.Reflection.Assembly) : IServiceCollection =
+            let defOpenType = typedefof<EventSourcedGrainDefinition<_, _, _>>
+            let attrType = typeof<FSharpEventSourcedGrainAttribute>
+            let flags = System.Reflection.BindingFlags.Static ||| System.Reflection.BindingFlags.Public
+
+            // Resolve or create the shared EventSourcedHandlerRegistry once.
+            let handlerRegistry =
+                services
+                |> Seq.tryFind (fun sd -> sd.ServiceType = typeof<EventSourcedHandlerRegistry>)
+                |> Option.map (fun sd -> sd.ImplementationInstance :?> EventSourcedHandlerRegistry)
+                |> Option.defaultWith (fun () ->
+                    let r = EventSourcedHandlerRegistry()
+                    services.AddSingleton<EventSourcedHandlerRegistry>(r) |> ignore
+                    services.AddSingleton<IEventSourcedHandlerRegistry>(r) |> ignore
+                    r)
+
+            for t in assembly.GetTypes() do
+                for prop in t.GetProperties(flags : System.Reflection.BindingFlags) do
+                    let pt = prop.PropertyType
+                    if pt.IsGenericType
+                       && pt.GetGenericTypeDefinition() = defOpenType
+                       && prop.IsDefined(attrType, false) then
+                        let definition : obj = prop.GetValue(null)
+                        let typeArgs = pt.GetGenericArguments()
+                        // AddSingleton<EventSourcedGrainDefinition<S,E,C>>(definition)
+                        services.Add(ServiceDescriptor.Singleton(pt, definition))
+                        // handlerRegistry.Register<S,E,C>(definition) via reflection
+                        let registerMethod =
+                            typeof<EventSourcedHandlerRegistry>
+                                .GetMethod("Register")
+                                .MakeGenericMethod(typeArgs)
+                        registerMethod.Invoke(handlerRegistry, [| definition |]) |> ignore
+
+            services

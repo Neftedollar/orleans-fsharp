@@ -15,9 +15,7 @@ type CounterState =
     | [<Id(1u)>] Count of int
 
 /// <summary>
-/// Wrapper record for CounterState that Orleans can instantiate for persistence.
-/// F# discriminated unions compile to abstract classes, which Orleans cannot create via GetUninitializedObject.
-/// This wrapper provides a concrete class that holds the DU value.
+/// Wrapper class for CounterState used by the C# grain stub for persistence.
 /// </summary>
 [<GenerateSerializer>]
 [<Sealed>]
@@ -32,11 +30,11 @@ type CounterStateHolder() =
 [<GenerateSerializer>]
 type CounterCommand =
     /// <summary>Increment the counter by 1.</summary>
-    | [<Id(0u)>] Increment
+    | Increment
     /// <summary>Decrement the counter by 1 (minimum is Zero).</summary>
-    | [<Id(1u)>] Decrement
+    | Decrement
     /// <summary>Get the current counter value without changing state.</summary>
-    | [<Id(2u)>] GetValue
+    | GetValue
 
 /// <summary>
 /// Grain interface for the counter grain. Orleans requires this for grain references.
@@ -63,6 +61,7 @@ module CounterGrainDef =
     /// <summary>
     /// The counter grain definition, built using the grain computation expression.
     /// </summary>
+    [<FSharpGrain>]
     let counter =
         grain {
             defaultState Zero

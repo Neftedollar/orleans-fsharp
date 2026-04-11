@@ -24,9 +24,7 @@ type OrderStatus =
     | [<Id(3u)>] Failed of reason: string
 
 /// <summary>
-/// Wrapper class for OrderStatus that Orleans can instantiate for persistence.
-/// F# discriminated unions compile to abstract classes, so this concrete wrapper
-/// holds the DU value for IPersistentState.
+/// Wrapper class for OrderStatus used by the C# grain stub for persistence.
 /// </summary>
 [<GenerateSerializer>]
 [<Sealed>]
@@ -41,15 +39,15 @@ type OrderStatusHolder() =
 [<GenerateSerializer>]
 type OrderCommand =
     /// <summary>Place a new order with the given description.</summary>
-    | [<Id(0u)>] Place of description: string
+    | Place of description: string
     /// <summary>Confirm a processing order.</summary>
-    | [<Id(1u)>] Confirm
+    | Confirm
     /// <summary>Ship a confirmed order (completing it).</summary>
-    | [<Id(2u)>] Ship
+    | Ship
     /// <summary>Cancel the current order.</summary>
-    | [<Id(3u)>] Cancel
+    | Cancel
     /// <summary>Get the current order status.</summary>
-    | [<Id(4u)>] GetStatus
+    | GetStatus
 
 /// <summary>
 /// Grain interface for the order processing grain.

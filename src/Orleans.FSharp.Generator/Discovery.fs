@@ -22,10 +22,20 @@ type EventSourcedStubInfo =
       DefinitionName: string
       /// The compiled module class name (e.g. "BankAccountGrainDef")
       SourceModule: string
+      /// Fully-qualified C# name of the source module (e.g. "Orleans.FSharp.Sample.BankAccountGrainDef")
+      SourceModuleFqn: string
       /// Short name of the source assembly
       AssemblyName: string
       /// DU case names of the command type (for documentation)
-      CommandCases: string list }
+      CommandCases: string list
+      /// True when the grain interface inherits IFSharpEventSourcedGrain —
+      /// use the thin FSharpEventSourcedGrainImpl-based stub template.
+      UseThinStub: bool
+      /// The log consistency provider name (e.g. "LogStorage", "CustomStorage"), or None for silo default.
+      ConsistencyProvider: string option
+      /// True when the definition declares customStorage callbacks — the thin stub
+      /// will override ReadStateFromStorageCore / ApplyUpdatesToStorageCore.
+      HasCustomStorage: bool }
 
 // ---------------------------------------------------------------------------
 // TypeShape helpers
@@ -69,6 +79,16 @@ let private AttrFullName =
 [<Literal>]
 let private DefTypeBaseName =
     "Orleans.FSharp.EventSourcing.EventSourcedGrainDefinition`3"
+
+/// Full name of the universal event-sourced grain interface.
+[<Literal>]
+let private UniversalInterfaceFullName =
+    "Orleans.FSharp.IFSharpEventSourcedGrain"
+
+/// True when the interface inherits IFSharpEventSourcedGrain (by name, cross-load-context safe).
+let private inheritsUniversalInterface (t: Type) : bool =
+    t.GetInterfaces()
+    |> Array.exists (fun i -> i.FullName = UniversalInterfaceFullName)
 
 /// Scan all public static properties in the assembly for
 /// [<FSharpEventSourcedGrain(typeof<IGrainInterface>)>] bindings.
@@ -114,6 +134,33 @@ let discoverEventSourcedGrains (assembly: Assembly) : EventSourcedStubInfo list 
 
                   validateStateType stateType
 
+                  // Read the actual definition value to inspect runtime fields.
+                  let defValue = prop.GetValue(null)
+
+                  // Extract ConsistencyProvider: string option
+                  // FSharpOption<string>: None = null object, Some x = non-null FSharpOption<string>
+                  let consistencyProvider =
+                      if isNull defValue then None
+                      else
+                          match propType.GetProperty("ConsistencyProvider") with
+                          | null -> None
+                          | csProp ->
+                              let opt = csProp.GetValue(defValue)
+                              if isNull opt then None
+                              else
+                                  // FSharpOption<string> is non-null for Some — read .Value
+                                  match opt.GetType().GetProperty("Value") with
+                                  | null -> None
+                                  | vProp -> vProp.GetValue(opt) |> Option.ofObj |> Option.map string
+
+                  // Detect custom storage: CustomStorage field is None (null) or Some (non-null)
+                  let hasCustomStorage =
+                      if isNull defValue then false
+                      else
+                          match propType.GetProperty("CustomStorage") with
+                          | null -> false
+                          | csProp -> not (isNull (csProp.GetValue(defValue)))
+
                   yield
                       { InterfaceType = grainInterface
                         StateType = stateType
@@ -121,5 +168,9 @@ let discoverEventSourcedGrains (assembly: Assembly) : EventSourcedStubInfo list 
                         CommandType = commandType
                         DefinitionName = prop.Name
                         SourceModule = t.Name
+                        SourceModuleFqn = t.FullName.Replace('+', '.')
                         AssemblyName = assembly.GetName().Name
-                        CommandCases = getUnionCaseNames commandType } ]
+                        CommandCases = getUnionCaseNames commandType
+                        UseThinStub = inheritsUniversalInterface grainInterface
+                        ConsistencyProvider = consistencyProvider
+                        HasCustomStorage = hasCustomStorage } ]

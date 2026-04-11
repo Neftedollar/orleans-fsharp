@@ -673,3 +673,74 @@ Use distinct command/message types for each grain."
                 |> ignore
 
             services.AddSingleton<GrainDefinition<'State, 'Message>>(definition)
+
+        /// <summary>
+        /// Scans the given assembly for all module-level <c>GrainDefinition&lt;TState, TMessage&gt;</c>
+        /// values marked with <see cref="FSharpGrainAttribute"/> and registers each one.
+        /// </summary>
+        /// <param name="assembly">The assembly to scan.</param>
+        /// <returns>The service collection for chaining.</returns>
+        /// <remarks>
+        /// F# module-level <c>let</c> bindings compile to static properties on the generated module class.
+        /// This method inspects every static property in the assembly, finds those whose type is a
+        /// closed generic instantiation of <c>GrainDefinition&lt;,&gt;</c> and that carry
+        /// <c>[&lt;FSharpGrain&gt;]</c>, then calls the typed registration path for each one.
+        /// </remarks>
+        member services.AddFSharpGrainsFromAssembly(assembly: Reflection.Assembly) : IServiceCollection =
+            let grainDefOpenType = typedefof<GrainDefinition<_, _>>
+            let attrType = typeof<FSharpGrainAttribute>
+            let flags = Reflection.BindingFlags.Static ||| Reflection.BindingFlags.Public
+
+            // Resolve or create the shared registries once, outside the loop.
+            let grainRegistry =
+                services
+                |> Seq.tryFind (fun sd -> sd.ServiceType = typeof<GrainRegistry>)
+                |> Option.map (fun sd -> sd.ImplementationInstance :?> GrainRegistry)
+                |> Option.defaultWith (fun () ->
+                    let r = GrainRegistry()
+                    services.AddSingleton<GrainRegistry>(r) |> ignore
+                    r)
+
+            let handlerRegistry =
+                services
+                |> Seq.tryFind (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
+                |> Option.map (fun sd -> sd.ImplementationInstance :?> UniversalGrainHandlerRegistry)
+                |> Option.defaultWith (fun () ->
+                    let r = UniversalGrainHandlerRegistry()
+                    services.AddSingleton<UniversalGrainHandlerRegistry>(r) |> ignore
+                    services.AddSingleton<IUniversalGrainHandler>(r) |> ignore
+                    r)
+
+            // FSharpBinaryCodec — once per container.
+            let codecRegistered =
+                services |> Seq.exists (fun sd -> sd.ServiceType = typeof<FSharpBinaryCodec>)
+
+            if not codecRegistered then
+                Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+                    services,
+                    System.Action<Orleans.Serialization.ISerializerBuilder>(fun sb ->
+                        FSharpBinaryCodecRegistration.addToSerializerBuilder sb |> ignore))
+                |> ignore
+
+            for t in assembly.GetTypes() do
+                for prop in t.GetProperties(flags) do
+                    let pt = prop.PropertyType
+                    if pt.IsGenericType
+                       && pt.GetGenericTypeDefinition() = grainDefOpenType
+                       && prop.IsDefined(attrType, false) then
+                        let definition = prop.GetValue(null)
+                        let typeArgs = pt.GetGenericArguments()
+                        let stateType = typeArgs.[0]
+                        let msgType = typeArgs.[1]
+                        let key = $"{stateType.FullName}+{msgType.FullName}"
+                        grainRegistry.Register(key, stateType)
+                        // handlerRegistry.Register<S,M>(definition) via reflection
+                        let registerMethod =
+                            typeof<UniversalGrainHandlerRegistry>
+                                .GetMethod("Register")
+                                .MakeGenericMethod(typeArgs)
+                        registerMethod.Invoke(handlerRegistry, [| definition |]) |> ignore
+                        // AddSingleton<GrainDefinition<S,M>>(definition) — non-generic path
+                        services.Add(ServiceDescriptor.Singleton(pt, definition))
+
+            services

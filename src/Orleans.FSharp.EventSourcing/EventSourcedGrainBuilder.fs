@@ -1,6 +1,7 @@
 namespace Orleans.FSharp.EventSourcing
 
 open System
+open System.Threading.Tasks
 
 /// <summary>
 /// Marks a module-level F# event-sourced grain definition for automatic C# stub generation.
@@ -26,6 +27,25 @@ type FSharpEventSourcedGrainAttribute(grainInterface: Type) =
     inherit Attribute()
     /// <summary>The Orleans grain interface that the generated C# stub will implement.</summary>
     member _.GrainInterface = grainInterface
+
+/// <summary>
+/// Boxed read/write callbacks for custom log-consistency storage, used to bridge
+/// typed F# functions to C#-callable delegates without per-grain generic parameters.
+/// The F# user provides typed callbacks via the <c>customStorage</c> CE operation;
+/// this adapter is stored in the definition and consumed by the generated C# stub.
+/// </summary>
+[<NoEquality; NoComparison>]
+type CustomStorageAdapter =
+    { /// <summary>
+      /// Reads the current version and grain state from the custom storage back-end.
+      /// Returns a struct tuple (version, boxed state) so the C# caller can destructure it.
+      /// </summary>
+      ReadBoxed: Func<Task<struct (int * obj)>>
+      /// <summary>
+      /// Applies a list of boxed events to the custom storage back-end using optimistic concurrency.
+      /// Returns <c>true</c> when the write succeeds, <c>false</c> on concurrency conflict.
+      /// </summary>
+      WriteBoxed: Func<obj list, int, Task<bool>> }
 
 /// <summary>
 /// Controls when state snapshots are written alongside the event log.
@@ -89,6 +109,15 @@ type EventSourcedGrainDefinition<'State, 'Event, 'Command> =
         /// (e.g. a future Marten hybrid provider) to have an effect at runtime.
         /// </summary>
         SnapshotStrategy: SnapshotStrategy<'State>
+        /// <summary>
+        /// Optional custom storage adapter for use with
+        /// <c>CustomStorageBasedLogConsistencyProvider</c> (provider name <c>"CustomStorage"</c>).
+        /// When set, the generated C# stub implements
+        /// <c>ICustomStorageInterface&lt;WrappedEventSourcedState, WrappedEventSourcedEvent&gt;</c>
+        /// and delegates read/write calls to these typed F# functions.
+        /// Combine with <c>logConsistencyProvider "CustomStorage"</c>.
+        /// </summary>
+        CustomStorage: CustomStorageAdapter option
     }
 
 /// <summary>
@@ -154,6 +183,7 @@ type EventSourcedGrainBuilder() =
             Handle = fun _state _command -> []
             ConsistencyProvider = None
             SnapshotStrategy = Never
+            CustomStorage = None
         }
 
     /// <summary>
@@ -228,6 +258,44 @@ type EventSourcedGrainBuilder() =
             strategy: SnapshotStrategy<'State>
         ) =
         { definition with SnapshotStrategy = strategy }
+
+    /// <summary>
+    /// Configures custom storage callbacks for use with <c>CustomStorageBasedLogConsistencyProvider</c>.
+    /// The read function loads the current (version, state) from your storage back-end;
+    /// the write function persists a batch of new events with optimistic concurrency.
+    /// Pair this with <c>logConsistencyProvider "CustomStorage"</c>.
+    /// </summary>
+    /// <param name="definition">The current definition being built.</param>
+    /// <param name="read">
+    /// Function that reads the current version and state from custom storage.
+    /// Returns a tuple of (version, state).
+    /// </param>
+    /// <param name="write">
+    /// Function that applies a list of new events to custom storage.
+    /// Receives the events and the expected version for optimistic concurrency.
+    /// Returns <c>true</c> on success, <c>false</c> on concurrency conflict.
+    /// </param>
+    /// <returns>The updated definition with custom storage configured.</returns>
+    [<CustomOperation("customStorage")>]
+    member _.CustomStorage
+        (
+            definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>,
+            read: unit -> Task<int * 'State>,
+            write: 'Event list -> int -> Task<bool>
+        ) : EventSourcedGrainDefinition<'State, 'Event, 'Command> =
+        let adapter =
+            { ReadBoxed =
+                Func<_>(fun () -> task {
+                    let! v, s = read ()
+                    return struct (v, box s)
+                })
+              WriteBoxed =
+                Func<_, _, _>(fun (events: obj list) version -> task {
+                    let typed = events |> List.map unbox<'Event>
+                    return! write typed version
+                }) }
+
+        { definition with CustomStorage = Some adapter }
 
     /// <summary>Returns the completed event-sourced grain definition. Validates that defaultState was set.</summary>
     /// <exception cref="System.InvalidOperationException">Thrown when defaultState was not set for reference types.</exception>
