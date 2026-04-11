@@ -5,7 +5,7 @@ description: Common questions about Orleans.FSharp — the idiomatic F# API for 
 
 ## What is Orleans.FSharp?
 
-Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (`grain {}`, `siloConfig {}`, `eventSourcedGrain {}`) that let you define distributed actors using pure F# — no C# boilerplate needed. It has full Orleans 10.0.1 feature parity with 800+ tests.
+Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (`grain {}`, `siloConfig {}`, `eventSourcedGrain {}`) that let you define distributed actors using pure F# — no C# boilerplate needed. It has Orleans 10 parity and 1500+ tests across unit and integration suites.
 
 ## How do I use Microsoft Orleans with F#?
 
@@ -14,7 +14,7 @@ Install the package and use the `grain {}` computation expression:
 ```bash
 dotnet add package Orleans.FSharp
 dotnet add package Orleans.FSharp.Runtime
-dotnet add package Orleans.FSharp.CodeGen
+dotnet add package Orleans.FSharp.Abstractions
 ```
 
 ```fsharp
@@ -80,10 +80,10 @@ There is zero overhead — benchmarks show ~8 nanoseconds per grain call, unmeas
 
 ## Is Orleans.FSharp production-ready?
 
-Yes. Orleans.FSharp v1.0.0 has:
+Yes. Orleans.FSharp has:
 
-- 804 tests (718 unit + 86 integration)
-- Full Orleans 10.0.1 API parity (85 CE keywords)
+- 1500+ tests across unit and integration suites
+- Full Orleans 10 feature parity (85+ CE keywords)
 - Zero `Unchecked.defaultof` in source code
 - TLS/mTLS support, call filters, request context propagation
 - Input validation on all string parameters
@@ -91,7 +91,7 @@ Yes. Orleans.FSharp v1.0.0 has:
 
 ## What Microsoft Orleans features are supported?
 
-All of them. Orleans.FSharp wraps every Microsoft Orleans 10.0.1 feature:
+All of them. Orleans.FSharp wraps the Orleans 10 feature set:
 
 - Grain lifecycle (activate, deactivate, timers, reminders)
 - State persistence (memory, Redis, Azure, Cosmos, DynamoDB, ADO.NET)
@@ -128,7 +128,7 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 | State | Automatic persistence | Manual persistence |
 | .NET version | .NET 10 | .NET 6+ |
 | Clustering | Built-in (Redis, Azure, Kubernetes) | Akka.Cluster |
-| Maintenance | Active (Orleans 10.0.1) | Community maintained |
+| Maintenance | Active (Orleans 10 parity) | Community maintained |
 
 ## What NuGet packages does Orleans.FSharp include?
 
@@ -136,7 +136,7 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 |---------|-------------|
 | `Orleans.FSharp` | Core: grain CE, modules, types |
 | `Orleans.FSharp.Runtime` | Silo + client configuration CEs |
-| `Orleans.FSharp.CodeGen` | C# bridge for Orleans source generators |
+| `Orleans.FSharp.Abstractions` | C# shim for universal proxy generation |
 | `Orleans.FSharp.Testing` | TestHarness, GrainMock, GrainArbitrary |
 | `Orleans.FSharp.EventSourcing` | Event sourcing CE |
 
@@ -154,7 +154,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What is Orleans.FSharp?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (grain {}, siloConfig {}, eventSourcedGrain {}) that let you define distributed actors using pure F# — no C# boilerplate needed. It has full Orleans 10.0.1 feature parity with 800+ tests."
+        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (grain {}, siloConfig {}, eventSourcedGrain {}) that let you define distributed actors using pure F# — no C# boilerplate needed. It has Orleans 10 parity and 1500+ tests."
       }
     },
     {
@@ -162,7 +162,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "How do I use Microsoft Orleans with F#?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the grain {} computation expression to define grains declaratively. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.CodeGen generates the C# bridge at build time."
+        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the grain {} computation expression to define grains declaratively. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.Abstractions provides the C# shim for Orleans proxy generation."
       }
     },
     {
@@ -170,7 +170,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "Is Orleans.FSharp production-ready?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Orleans.FSharp v1.0.0 has 804 tests (718 unit + 86 integration), full Orleans 10.0.1 API parity with 85 CE keywords, zero Unchecked.defaultof in source code, TLS/mTLS support, call filters, request context propagation, input validation on all string parameters, and security scanning in CI."
+        "text": "Yes. Orleans.FSharp has 1500+ tests, full Orleans 10 parity with 85+ CE keywords, zero Unchecked.defaultof in source code, TLS/mTLS support, call filters, request context propagation, input validation on all string parameters, and security scanning in CI."
       }
     },
     {
@@ -186,7 +186,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What Microsoft Orleans features does Orleans.FSharp support?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "All of them. Orleans.FSharp wraps every Orleans 10.0.1 feature: grain lifecycle, state persistence (memory, Redis, Azure, Cosmos, DynamoDB, ADO.NET), streaming, reentrancy, stateless workers, placement strategies, event sourcing, transactions, observers, call filters, grain directory, TLS/mTLS, health checks, OpenTelemetry, and Kubernetes clustering."
+        "text": "All of them. Orleans.FSharp wraps the Orleans 10 feature set: grain lifecycle, state persistence (memory, Redis, Azure, Cosmos, DynamoDB, ADO.NET), streaming, reentrancy, stateless workers, placement strategies, event sourcing, transactions, observers, call filters, grain directory, TLS/mTLS, health checks, OpenTelemetry, and Kubernetes clustering."
       }
     }
   ]

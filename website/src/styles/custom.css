@@ -1,20 +1,77 @@
-/* Orleans.FSharp custom overrides on top of Starlight Black */
+/* Orleans.FSharp custom design layer on top of Starlight Black */
 
 :root {
-  /* F# purple accent — replaces Black's default accent */
-  --sl-color-accent-low: hsl(271, 54%, 16%);
-  --sl-color-accent: hsl(271, 82%, 63%);
-  --sl-color-accent-high: hsl(271, 82%, 85%);
+  --sl-color-accent-low: hsl(268, 52%, 16%);
+  --sl-color-accent: hsl(268, 88%, 66%);
+  --sl-color-accent-high: hsl(268, 88%, 88%);
 
-  /* Slightly wider content for code blocks */
-  --sl-content-width: 50rem;
+  --of-surface-1: hsla(231, 28%, 12%, 0.95);
+  --of-surface-2: hsla(231, 26%, 10%, 0.96);
+  --of-border-soft: hsla(231, 30%, 70%, 0.18);
+  --of-border-strong: hsla(268, 70%, 70%, 0.38);
+  --of-shadow: 0 12px 34px hsla(248, 70%, 5%, 0.38);
+  --of-radius: 14px;
+  --of-radius-sm: 10px;
+
+  --sl-content-width: 54rem;
 }
 
-/* ── Hero section ─────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
+::selection {
+  background: hsla(268, 88%, 66%, 0.32);
+  color: var(--sl-color-white);
+}
+
+/* Base content readability */
+
+.sl-markdown-content {
+  line-height: 1.72;
+}
+
+.sl-markdown-content > p,
+.sl-markdown-content li,
+.sl-markdown-content blockquote p {
+  color: var(--sl-color-gray-2);
+}
+
+.sl-markdown-content > h2,
+.sl-markdown-content > h3,
+.sl-markdown-content > h4 {
+  letter-spacing: -0.018em;
+  line-height: 1.2;
+}
+
+.sl-markdown-content > h2 {
+  margin-top: 2.6rem;
+  margin-bottom: 0.9rem;
+}
+
+.sl-markdown-content > h3 {
+  margin-top: 1.8rem;
+  margin-bottom: 0.55rem;
+}
+
+.sl-markdown-content > h4 {
+  margin-top: 1.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.sl-markdown-content :not(pre) > code {
+  border: 1px solid var(--of-border-soft);
+  border-radius: 8px;
+  padding: 0.14rem 0.4rem;
+  background: hsla(230, 22%, 16%, 0.8);
+}
+
+/* Hero */
 
 [data-has-hero] .hero h1 {
   font-size: clamp(2.5rem, 5vw, 4rem);
-  line-height: 1.1;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
   background: linear-gradient(135deg, var(--sl-color-accent-high) 0%, var(--sl-color-blue-high) 100%);
   -webkit-background-clip: text;
   background-clip: text;
@@ -22,123 +79,251 @@
 }
 
 [data-has-hero] .hero p {
-  font-size: 1.25rem;
-  max-width: 36rem;
+  font-size: 1.18rem;
+  max-width: 40rem;
   color: var(--sl-color-gray-2);
 }
 
-/* Hero CTA buttons */
 [data-has-hero] .hero a[data-variant="primary"] {
-  background: var(--sl-color-accent);
-  color: #000;
-  font-weight: 600;
   border: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--sl-color-accent) 0%, hsl(253, 95%, 68%) 100%);
+  color: hsl(234, 28%, 9%);
+  font-weight: 700;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 [data-has-hero] .hero a[data-variant="primary"]:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 20px hsla(271, 82%, 63%, 0.4);
+  box-shadow: 0 8px 24px hsla(268, 88%, 66%, 0.35);
 }
 
 [data-has-hero] .hero a[data-variant="secondary"] {
-  border-color: var(--sl-color-gray-3);
-  transition: border-color 0.15s ease;
+  border-radius: 10px;
+  border-color: var(--of-border-strong);
+  background: hsla(229, 26%, 13%, 0.5);
 }
 
 [data-has-hero] .hero a[data-variant="secondary"]:hover {
   border-color: var(--sl-color-accent);
+  background: hsla(229, 26%, 13%, 0.85);
 }
 
-/* ── CardGrid hover effects ───────────────────────────── */
+/* Cards */
 
 .sl-container .card {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  border: 1px solid var(--sl-color-hairline);
+  border: 1px solid var(--of-border-soft);
+  border-radius: var(--of-radius);
+  background: linear-gradient(180deg, var(--of-surface-1), var(--of-surface-2));
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .sl-container .card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 30px hsla(271, 50%, 20%, 0.15);
   border-color: var(--sl-color-accent);
+  box-shadow: var(--of-shadow);
 }
 
-/* ── Code blocks ──────────────────────────────────────── */
-
-.expressive-code pre {
-  border-radius: 8px !important;
-  border: 1px solid var(--sl-color-hairline) !important;
+.sl-container .card .title {
+  line-height: 1.22;
+  letter-spacing: -0.015em;
 }
 
-.expressive-code pre:hover {
-  border-color: var(--sl-color-accent) !important;
+/* Splash page rhythm */
+
+[data-has-hero] .sl-markdown-content {
+  padding-bottom: 2.6rem;
 }
 
-/* ── Sidebar polish ───────────────────────────────────── */
-
-.sidebar-pane {
-  border-right: 1px solid var(--sl-color-hairline);
+[data-has-hero] .sl-markdown-content > h2 {
+  margin-top: clamp(2.8rem, 6vw, 4rem);
+  margin-bottom: 0.95rem;
 }
 
-/* ── Badge styling ────────────────────────────────────── */
-
-.badge {
-  border-radius: 9999px;
-  font-weight: 600;
-  font-size: 0.75rem;
-  padding: 0.15rem 0.6rem;
+[data-has-hero] .sl-markdown-content > p {
+  margin-bottom: 1.05rem;
 }
 
-/* ── Nav header ───────────────────────────────────────── */
-
-.site-title {
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--sl-color-white);
+[data-has-hero] .sl-markdown-content .card-grid {
+  gap: 1rem;
+  margin-top: 1.2rem;
+  margin-bottom: 1.9rem;
 }
 
-/* ── Table styling ────────────────────────────────────── */
+@media (min-width: 50rem) {
+  [data-has-hero] .sl-markdown-content .card-grid {
+    gap: 1.2rem;
+  }
+}
 
-.sl-markdown-content table {
+[data-has-hero] .sl-markdown-content .card {
+  background:
+    radial-gradient(120% 120% at 0% 0%, hsla(268, 88%, 66%, 0.12) 0%, transparent 58%),
+    linear-gradient(180deg, var(--of-surface-1), var(--of-surface-2));
+}
+
+[data-has-hero] .sl-markdown-content .card p {
+  color: var(--sl-color-gray-2);
+}
+
+[data-has-hero] .sl-markdown-content > ul {
+  margin-top: 1rem;
+  margin-bottom: 2rem;
+  padding: 1.1rem 1.2rem 1.1rem 1.9rem;
+  border: 1px solid var(--of-border-soft);
+  border-radius: 12px;
+  background: linear-gradient(180deg, hsla(230, 26%, 11%, 0.76), hsla(230, 24%, 9%, 0.58));
+}
+
+[data-has-hero] .sl-markdown-content > ul li {
+  margin: 0.45rem 0;
+}
+
+/* Docs pages (non-splash) */
+
+:not([data-has-hero]) .sl-markdown-content > h2:first-of-type {
+  margin-top: 1rem;
+}
+
+:not([data-has-hero]) .sl-markdown-content > p:first-of-type {
+  font-size: 1.06rem;
+  color: var(--sl-color-gray-1);
+}
+
+:not([data-has-hero]) .sl-markdown-content pre {
+  border-radius: var(--of-radius-sm) !important;
+  border: 1px solid var(--of-border-soft) !important;
+}
+
+:not([data-has-hero]) .sl-markdown-content table {
   border-collapse: separate;
   border-spacing: 0;
-  border-radius: 8px;
+  border: 1px solid var(--of-border-soft);
+  border-radius: var(--of-radius-sm);
   overflow: hidden;
-  border: 1px solid var(--sl-color-hairline);
+  margin: 1rem 0 1.5rem;
 }
 
-.sl-markdown-content table th {
-  background: hsla(271, 30%, 15%, 0.5);
-  font-weight: 600;
+:not([data-has-hero]) .sl-markdown-content table th {
+  font-weight: 650;
+  background: hsla(268, 40%, 18%, 0.45);
 }
 
-.sl-markdown-content table tr:hover td {
-  background: hsla(271, 30%, 15%, 0.2);
+:not([data-has-hero]) .sl-markdown-content table tr:hover td {
+  background: hsla(268, 34%, 18%, 0.25);
 }
 
-/* ── Smooth scrolling ─────────────────────────────────── */
-
-html {
-  scroll-behavior: smooth;
-}
-
-/* ── Selection ────────────────────────────────────────── */
-
-::selection {
-  background: hsla(271, 82%, 63%, 0.3);
-  color: var(--sl-color-white);
-}
-
-/* ── Links ────────────────────────────────────────────── */
+/* Link polish */
 
 .sl-markdown-content a:not(.card) {
   color: var(--sl-color-accent);
-  text-decoration-color: var(--sl-color-accent);
-  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 70%, transparent);
   text-underline-offset: 2px;
-  transition: color 0.15s ease;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 
 .sl-markdown-content a:not(.card):hover {
   color: var(--sl-color-accent-high);
+  text-decoration-color: var(--sl-color-accent-high);
+}
+
+/* Sidebar and nav */
+
+.sidebar-pane {
+  border-right: 1px solid var(--of-border-soft);
+  background: linear-gradient(180deg, hsla(230, 22%, 10%, 0.9), hsla(230, 20%, 9%, 0.9));
+}
+
+.site-title {
+  color: var(--sl-color-white);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Mobile polish */
+
+@media (max-width: 48rem) {
+  :root {
+    --sl-content-width: 100%;
+  }
+
+  .sl-markdown-content {
+    line-height: 1.64;
+  }
+
+  .sl-markdown-content > h2 {
+    margin-top: 2rem;
+    margin-bottom: 0.7rem;
+    font-size: clamp(1.45rem, 6.4vw, 1.85rem);
+  }
+
+  .sl-markdown-content > h3 {
+    margin-top: 1.35rem;
+    margin-bottom: 0.45rem;
+    font-size: clamp(1.2rem, 5.2vw, 1.45rem);
+  }
+
+  [data-has-hero] .hero h1 {
+    font-size: clamp(2.05rem, 10vw, 2.8rem);
+    line-height: 1.06;
+  }
+
+  [data-has-hero] .hero p {
+    font-size: 1rem;
+    line-height: 1.55;
+    max-width: 32rem;
+  }
+
+  [data-has-hero] .hero a[data-variant] {
+    width: 100%;
+    justify-content: center;
+  }
+
+  [data-has-hero] .sl-markdown-content .card-grid {
+    gap: 0.75rem;
+    margin-top: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .sl-container .card {
+    border-radius: 12px;
+  }
+
+  .sl-container .card .title {
+    font-size: 1.22rem;
+  }
+
+  [data-has-hero] .sl-markdown-content > ul {
+    padding: 0.95rem 0.95rem 0.95rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  :not([data-has-hero]) .sl-markdown-content pre {
+    font-size: 0.88rem;
+  }
+
+  :not([data-has-hero]) .sl-markdown-content table {
+    display: block;
+    overflow-x: auto;
+    width: 100%;
+    white-space: nowrap;
+  }
+}
+
+/* Accessibility: respect reduced-motion preference */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .sl-container .card,
+  [data-has-hero] .hero a[data-variant="primary"] {
+    transition: none;
+  }
+
+  .sl-container .card:hover,
+  [data-has-hero] .hero a[data-variant="primary"]:hover {
+    transform: none;
+  }
 }
