@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightThemeBlack from 'starlight-theme-black';
 
 // https://astro.build/config
 export default defineConfig({
@@ -11,6 +12,7 @@ export default defineConfig({
 		starlight({
 			title: 'Orleans.FSharp',
 			description: 'Idiomatic F# API for Microsoft Orleans',
+			plugins: [starlightThemeBlack({})],
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/Neftedollar/orleans-fsharp' },
 			],
@@ -18,27 +20,30 @@ export default defineConfig({
 				baseUrl: 'https://github.com/Neftedollar/orleans-fsharp/edit/main/website/',
 			},
 			sidebar: [
-				{ label: 'Getting Started', slug: 'getting-started' },
+				{ label: 'Getting Started', link: '/getting-started' },
 				{
-					label: 'Guides',
+					label: 'Core Guides',
 					items: [
-						{ label: 'Grain Definition', slug: 'guides/grain-definition' },
-						{ label: 'Serialization', slug: 'guides/serialization' },
-						{ label: 'Silo Configuration', slug: 'guides/silo-configuration' },
-						{ label: 'Client Configuration', slug: 'guides/client-configuration' },
-						{ label: 'Streaming', slug: 'guides/streaming' },
-						{ label: 'Event Sourcing', slug: 'guides/event-sourcing' },
-						{ label: 'Testing', slug: 'guides/testing' },
-						{ label: 'Security', slug: 'guides/security' },
-						{ label: 'Advanced', slug: 'guides/advanced' },
+						{ label: 'Grain Definition', link: '/grain-definition' },
+						{ label: 'Silo Configuration', link: '/silo-configuration' },
+						{ label: 'Client Configuration', link: '/client-configuration' },
+						{ label: 'Serialization', link: '/serialization' },
+						{ label: 'Streaming', link: '/streaming' },
+						{ label: 'Event Sourcing', link: '/event-sourcing' },
+						{ label: 'Testing', link: '/testing' },
+						{ label: 'Security', link: '/security' },
+						{ label: 'Resilience', link: '/resilience' },
+						{ label: 'Advanced', link: '/advanced' },
+						{ label: 'Analyzers', link: '/analyzers' },
 					],
 				},
-				{ label: 'API Reference', slug: 'api-reference' },
-				{ label: 'How To', slug: 'how-to' },
-				{ label: 'FAQ', slug: 'faq' },
-				{ label: 'Comparison', slug: 'comparison' },
+				{ label: 'Redis Example', link: '/redis-example' },
+				{ label: 'API Reference', link: '/api-reference' },
+				{ label: 'How To', link: '/how-to' },
+				{ label: 'Comparison', link: '/comparison' },
+				{ label: 'FAQ', link: '/faq' },
 			],
-			customCss: [],
+			customCss: ['./src/styles/custom.css'],
 			head: [
 				// SEO meta
 				{ tag: 'meta', attrs: { name: 'keywords', content: 'fsharp, f#, orleans, dotnet, .net, actors, distributed systems, computation expressions, virtual actors, grains, microsoft orleans, functional programming' } },
@@ -47,7 +52,7 @@ export default defineConfig({
 				{ tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
 				{ tag: 'meta', attrs: { property: 'og:site_name', content: 'Orleans.FSharp' } },
 				{ tag: 'meta', attrs: { property: 'og:title', content: 'Orleans.FSharp — Idiomatic F# for Microsoft Orleans' } },
-				{ tag: 'meta', attrs: { property: 'og:description', content: 'Full Orleans 10.0.1 parity with computation expressions. 800+ tests. grain {}, siloConfig {}, eventSourcedGrain {} CEs. Zero boilerplate.' } },
+				{ tag: 'meta', attrs: { property: 'og:description', content: 'Full Orleans 10.0.1 parity with computation expressions. 1500+ tests. grain {}, siloConfig {}, eventSourcedGrain {} CEs. Zero boilerplate.' } },
 				{ tag: 'meta', attrs: { property: 'og:locale', content: 'en_US' } },
 				// Twitter Card
 				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },

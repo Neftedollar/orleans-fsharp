@@ -1,0 +1,144 @@
+/* Orleans.FSharp custom overrides on top of Starlight Black */
+
+:root {
+  /* F# purple accent — replaces Black's default accent */
+  --sl-color-accent-low: hsl(271, 54%, 16%);
+  --sl-color-accent: hsl(271, 82%, 63%);
+  --sl-color-accent-high: hsl(271, 82%, 85%);
+
+  /* Slightly wider content for code blocks */
+  --sl-content-width: 50rem;
+}
+
+/* ── Hero section ─────────────────────────────────────── */
+
+[data-has-hero] .hero h1 {
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  line-height: 1.1;
+  background: linear-gradient(135deg, var(--sl-color-accent-high) 0%, var(--sl-color-blue-high) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+[data-has-hero] .hero p {
+  font-size: 1.25rem;
+  max-width: 36rem;
+  color: var(--sl-color-gray-2);
+}
+
+/* Hero CTA buttons */
+[data-has-hero] .hero a[data-variant="primary"] {
+  background: var(--sl-color-accent);
+  color: #000;
+  font-weight: 600;
+  border: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-has-hero] .hero a[data-variant="primary"]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px hsla(271, 82%, 63%, 0.4);
+}
+
+[data-has-hero] .hero a[data-variant="secondary"] {
+  border-color: var(--sl-color-gray-3);
+  transition: border-color 0.15s ease;
+}
+
+[data-has-hero] .hero a[data-variant="secondary"]:hover {
+  border-color: var(--sl-color-accent);
+}
+
+/* ── CardGrid hover effects ───────────────────────────── */
+
+.sl-container .card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border: 1px solid var(--sl-color-hairline);
+}
+
+.sl-container .card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px hsla(271, 50%, 20%, 0.15);
+  border-color: var(--sl-color-accent);
+}
+
+/* ── Code blocks ──────────────────────────────────────── */
+
+.expressive-code pre {
+  border-radius: 8px !important;
+  border: 1px solid var(--sl-color-hairline) !important;
+}
+
+.expressive-code pre:hover {
+  border-color: var(--sl-color-accent) !important;
+}
+
+/* ── Sidebar polish ───────────────────────────────────── */
+
+.sidebar-pane {
+  border-right: 1px solid var(--sl-color-hairline);
+}
+
+/* ── Badge styling ────────────────────────────────────── */
+
+.badge {
+  border-radius: 9999px;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.6rem;
+}
+
+/* ── Nav header ───────────────────────────────────────── */
+
+.site-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--sl-color-white);
+}
+
+/* ── Table styling ────────────────────────────────────── */
+
+.sl-markdown-content table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--sl-color-hairline);
+}
+
+.sl-markdown-content table th {
+  background: hsla(271, 30%, 15%, 0.5);
+  font-weight: 600;
+}
+
+.sl-markdown-content table tr:hover td {
+  background: hsla(271, 30%, 15%, 0.2);
+}
+
+/* ── Smooth scrolling ─────────────────────────────────── */
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* ── Selection ────────────────────────────────────────── */
+
+::selection {
+  background: hsla(271, 82%, 63%, 0.3);
+  color: var(--sl-color-white);
+}
+
+/* ── Links ────────────────────────────────────────────── */
+
+.sl-markdown-content a:not(.card) {
+  color: var(--sl-color-accent);
+  text-decoration-color: var(--sl-color-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition: color 0.15s ease;
+}
+
+.sl-markdown-content a:not(.card):hover {
+  color: var(--sl-color-accent-high);
+}

@@ -1,6 +1,6 @@
 ---
-title: Serialization
-description: Three serialization modes — F# Binary (recommended), JSON fallback, and Orleans Native for C# interop
+title: "Serialization"
+description: "FSharpBinaryCodec, JSON fallback, and schema evolution."
 ---
 
 # Serialization
@@ -14,6 +14,21 @@ Orleans.FSharp offers three serialization modes. Choose based on your needs — 
 | **F# Binary** | `useFSharpBinarySerialization` | Fast | No | None | Pure F# clusters (recommended) |
 | **JSON** | `useJsonFallbackSerialization` | Good | No | None | Prototyping, schema flexibility |
 | **Orleans Native** | *(default)* | Fastest | Yes (CodeGen) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
+
+## Universal Grain Pattern — auto-registration
+
+When you use the universal grain pattern (`AddFSharpGrain<State, Command>`), **F# Binary serialization is registered automatically** — you do not need to add `useFSharpBinarySerialization` to your silo config.
+
+```fsharp
+// This is all you need — FSharpBinaryCodec is registered for you
+builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
+```
+
+The registration is idempotent: calling `AddFSharpGrain` multiple times for different `(State, Command)` pairs only registers the codec once.
+
+If you are NOT using the universal pattern (i.e., you are using per-grain C# stubs via `Orleans.FSharp.CodeGen`), you still need to opt in manually via `useFSharpBinarySerialization` or `useJsonFallbackSerialization`.
+
+---
 
 ## Mode 1: F# Binary (Recommended)
 
@@ -132,7 +147,7 @@ F# Silo only            → F# Binary (recommended)
 
 **Migrating from C# to F#.** If you're gradually moving C# grains to F#, start with Orleans Native for compatibility. Once all silos are F#, switch to F# Binary.
 
-**Mixed codebase (C# core + F# new grains).** Existing C# grains keep Orleans Native serialization. New F# grains can use F# Binary — they have separate state types that don't cross the C#/F# boundary.
+**Korat pattern (C# core + F# new grains).** Existing C# grains keep Orleans Native serialization. New F# grains can use F# Binary — they have separate state types that don't cross the C#/F# boundary.
 
 ### Setting Up CodeGen (Orleans Native only)
 

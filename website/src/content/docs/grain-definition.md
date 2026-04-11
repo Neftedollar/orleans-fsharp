@@ -1,7 +1,9 @@
 ---
-title: Grain Definition
-description: Complete guide to the grain {} computation expression — all 31 keywords with examples
+title: "Grain Definition"
+description: "Complete guide to the grain computation expression."
 ---
+
+# Grain Definition
 
 **Complete guide to the `grain { }` computation expression.**
 
@@ -27,8 +29,30 @@ let myGrain = grain {
 ```
 
 Every grain definition requires at minimum:
-1. A `defaultState` -- the initial state value
-2. At least one handler (`handle`, `handleWithContext`, `handleCancellable`, etc.)
+1. A `defaultState` — the initial state value
+2. At least one handler from the table below
+
+### Handler variant quick reference
+
+| Variant | Signature | Use when |
+|---------|-----------|----------|
+| `handle` | `'S -> 'M -> Task<'S * obj>` | Full control, manual `box` |
+| `handleState` | `'S -> 'M -> Task<'S>` | Caller only needs state |
+| `handleTyped` | `'S -> 'M -> Task<'S * 'R>` | Typed result, no `box` |
+| `handleWithContext` | `GrainContext -> 'S -> 'M -> Task<'S * obj>` | Need grain-to-grain calls or DI |
+| `handleStateWithContext` | `GrainContext -> 'S -> 'M -> Task<'S>` | Context + state-only return |
+| `handleTypedWithContext` | `GrainContext -> 'S -> 'M -> Task<'S * 'R>` | Context + typed result |
+| `handleCancellable` | `'S -> 'M -> CancellationToken -> Task<'S * obj>` | Long-running ops, manual `box` |
+| `handleStateCancellable` | `'S -> 'M -> CancellationToken -> Task<'S>` | Long-running ops, state-only |
+| `handleTypedCancellable` | `'S -> 'M -> CancellationToken -> Task<'S * 'R>` | Long-running ops, typed result |
+| `handleWithContextCancellable` | `GrainContext -> 'S -> 'M -> CancellationToken -> Task<'S * obj>` | Context + cancellation |
+| `handleStateWithContextCancellable` | `GrainContext -> 'S -> 'M -> CancellationToken -> Task<'S>` | Context + cancellation, state-only |
+| `handleTypedWithContextCancellable` | `GrainContext -> 'S -> 'M -> CancellationToken -> Task<'S * 'R>` | Context + cancellation, typed result |
+
+Aliases: `handleWithServices` = `handleWithContext`, `handleStateWithServices` = `handleStateWithContext`,
+`handleWithServicesCancellable` = `handleWithContextCancellable`,
+`handleStateWithServicesCancellable` = `handleStateWithContextCancellable`,
+`handleTypedWithServicesCancellable` = `handleTypedWithContextCancellable`.
 
 ---
 
@@ -70,6 +94,48 @@ grain {
 }
 ```
 
+### `handleState`
+
+A simpler variant of `handle` for grains where the caller only needs the updated state. The handler returns `Task<'State>` — no need to box a result separately.
+
+```fsharp
+grain {
+    defaultState { Count = 0 }
+    handleState (fun state msg ->
+        task {
+            match msg with
+            | Increment -> return { Count = state.Count + 1 }
+            | Decrement -> return { Count = state.Count - 1 }
+            | GetValue  -> return state
+        })
+}
+```
+
+The result returned to the caller is the new state (boxed internally).
+
+### `handleTyped`
+
+Like `handle`, but accepts a strongly-typed result instead of `obj`. No manual `box` call needed.
+
+```fsharp
+grain {
+    defaultState { Count = 0 }
+    handleTyped (fun state msg ->
+        task {
+            match msg with
+            | Increment ->
+                let ns = { Count = state.Count + 1 }
+                return ns, ns.Count    // 'Result = int — no box needed
+            | GetValue ->
+                return state, state.Count
+        })
+}
+```
+
+The `'Result` type is inferred from the handler return type. The framework boxes it internally before sending to the caller.
+
+---
+
 ### `handleWithContext`
 
 Like `handle`, but the handler receives a `GrainContext` as the first argument. Use this when you need to call other grains or resolve DI services from within the handler.
@@ -107,6 +173,51 @@ The `GrainContext` provides:
 | `GrainContext.primaryKeyGuid` | Get the Guid primary key |
 | `GrainContext.primaryKeyInt64` | Get the int64 primary key |
 
+### `handleStateWithContext`
+
+Like `handleWithContext`, but returns only the new state — no need to manually box a result. Use this when the handler needs `GrainContext` but the caller only needs the updated state.
+
+```fsharp
+grain {
+    defaultState { Score = 0 }
+    handleStateWithContext (fun ctx state msg ->
+        task {
+            match msg with
+            | AddPoints n ->
+                return { Score = state.Score + n }
+            | SubtractPoints n ->
+                return { Score = state.Score - n }
+            | NotifyAchievement achievementId ->
+                let notifier = GrainContext.getService<IAchievementNotifier> ctx
+                do! notifier.NotifyAsync(achievementId)
+                return state
+        })
+}
+```
+
+> Pair with `FSharpGrain.send` to receive the updated state back.
+
+### `handleTypedWithContext`
+
+Like `handleWithContext`, but returns a strongly-typed result — no manual `box` call needed. Combines context access with the clean `handleTyped` return style.
+
+```fsharp
+grain {
+    defaultState { Balance = 0m }
+    handleTypedWithContext (fun ctx state msg ->
+        task {
+            match msg with
+            | Deposit amount ->
+                let ns = { Balance = state.Balance + amount }
+                return ns, ns.Balance          // 'Result = decimal
+            | GetBalance ->
+                return state, state.Balance
+        })
+}
+```
+
+> Pair with `FSharpGrain.ask<'S,'C,decimal>` to receive the typed result.
+
 ### `handleWithServices`
 
 Alias for `handleWithContext` that emphasizes DI access. Identical behavior.
@@ -138,6 +249,50 @@ grain {
 }
 ```
 
+### `handleStateCancellable`
+
+Like `handleState`, but the handler receives a `CancellationToken`. Returns only the updated state — no manual `box` needed.
+
+```fsharp
+grain {
+    defaultState { Items = [] }
+    handleStateCancellable (fun state msg ct ->
+        task {
+            match msg with
+            | FetchAndAppend url ->
+                let! item = fetchWithTimeout url ct
+                return { Items = item :: state.Items }
+            | Clear ->
+                return { Items = [] }
+        })
+}
+```
+
+> The CancellationToken comes from the Orleans runtime and allows long-running
+> fetch/IO operations to be cancelled cleanly when the silo shuts down.
+
+### `handleTypedCancellable`
+
+Like `handleTyped`, but the handler also receives a `CancellationToken`. Returns a strongly-typed result — no `box` needed.
+
+```fsharp
+grain {
+    defaultState { Results = [] }
+    handleTypedCancellable (fun state msg ct ->
+        task {
+            match msg with
+            | ComputeSum inputs ->
+                let sum = List.sum inputs
+                return { Results = sum :: state.Results }, sum   // 'Result = int
+            | GetLatest ->
+                let latest = state.Results |> List.tryHead |> Option.defaultValue 0
+                return state, latest
+        })
+}
+```
+
+> Pair with `FSharpGrain.ask<'S,'C,int>` to receive the typed result.
+
 ### `handleWithContextCancellable`
 
 Combines `GrainContext` and `CancellationToken`.
@@ -157,6 +312,56 @@ grain {
 ### `handleWithServicesCancellable`
 
 Alias for `handleWithContextCancellable`.
+
+### `handleStateWithContextCancellable`
+
+Combines `GrainContext`, CancellationToken, and state-only return — no manual `box` needed. The maximum set of inputs with the simplest return.
+
+```fsharp
+grain {
+    defaultState { Items = [] }
+    handleStateWithContextCancellable (fun ctx state msg ct ->
+        task {
+            match msg with
+            | FetchAndStore url ->
+                let http = GrainContext.getService<HttpClient> ctx
+                let! body = http.GetStringAsync(url, ct)
+                return { Items = body :: state.Items }
+            | Clear ->
+                return { Items = [] }
+        })
+}
+```
+
+### `handleStateWithServicesCancellable`
+
+Alias for `handleStateWithContextCancellable`.
+
+### `handleTypedWithContextCancellable`
+
+The full combination: `GrainContext`, CancellationToken, and a typed result — no `box` needed.
+
+```fsharp
+grain {
+    defaultState { Total = 0 }
+    handleTypedWithContextCancellable (fun ctx state msg ct ->
+        task {
+            match msg with
+            | FetchAndAdd url ->
+                let http = GrainContext.getService<HttpClient> ctx
+                let! n = http.GetStringAsync(url, ct) |> Task.map int
+                return { Total = state.Total + n }, state.Total + n  // 'Result = int
+            | GetTotal ->
+                return state, state.Total
+        })
+}
+```
+
+> Pair with `FSharpGrain.ask<'S,'C,int>` to receive the typed result.
+
+### `handleTypedWithServicesCancellable`
+
+Alias for `handleTypedWithContextCancellable`.
 
 ---
 
@@ -571,6 +776,7 @@ let chatRoom =
 
 ## Next steps
 
-- [Silo Configuration](/orleans-fsharp/guides/silo-configuration/) -- configure storage, clustering, and streaming for your grains
-- [Streaming](/orleans-fsharp/guides/streaming/) -- publish and subscribe to events
-- [Testing](/orleans-fsharp/guides/testing/) -- test your grain definitions with FsCheck and TestHarness
+- [Silo Configuration](silo-configuration.md) -- configure storage, clustering, and streaming for your grains
+- [Streaming](streaming.md) -- publish and subscribe to events
+- [Testing](testing.md) -- test your grain definitions with FsCheck and TestHarness
+- [Advanced](advanced.md#behavior-pattern) -- behavior pattern: state machines with `Behavior.run` / `Behavior.runWithContext`

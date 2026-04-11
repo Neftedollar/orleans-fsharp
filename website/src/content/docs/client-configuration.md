@@ -1,7 +1,9 @@
 ---
-title: Client Configuration
-description: Guide to the clientConfig {} computation expression — connect to Orleans silos with clustering, TLS, and streaming
+title: "Client Configuration"
+description: "Complete clientConfig CE reference for configuring an Orleans client."
 ---
+
+# Client Configuration
 
 **Guide to the `clientConfig { }` computation expression.**
 
@@ -186,6 +188,6 @@ let! result = GrainRef.invoke counterRef (fun g -> g.Increment())
 
 ## Next steps
 
-- [Silo Configuration](/orleans-fsharp/guides/silo-configuration/) -- configure the silo that this client connects to
-- [Streaming](/orleans-fsharp/guides/streaming/) -- publish and subscribe to streams from the client
-- [Security](/orleans-fsharp/guides/security/) -- TLS and mTLS in depth
+- [Silo Configuration](silo-configuration.md) -- configure the silo that this client connects to
+- [Streaming](streaming.md) -- publish and subscribe to streams from the client
+- [Security](security.md) -- TLS and mTLS in depth

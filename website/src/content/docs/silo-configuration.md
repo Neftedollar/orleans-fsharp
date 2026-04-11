@@ -1,7 +1,9 @@
 ---
-title: Silo Configuration
-description: Complete guide to the siloConfig {} computation expression — clustering, storage, streaming, TLS, dashboard, and more
+title: "Silo Configuration"
+description: "Complete siloConfig CE reference."
 ---
+
+# Silo Configuration
 
 **Complete guide to the `siloConfig { }` computation expression.**
 
@@ -619,7 +621,7 @@ let config = siloConfig {
 
 ## Next steps
 
-- [Client Configuration](/orleans-fsharp/guides/client-configuration/) -- configure Orleans clients
-- [Grain Definition](/orleans-fsharp/guides/grain-definition/) -- define grains that use these providers
-- [Streaming](/orleans-fsharp/guides/streaming/) -- publish and subscribe to events
-- [Security](/orleans-fsharp/guides/security/) -- TLS, mTLS, and call filters in depth
+- [Client Configuration](client-configuration.md) -- configure Orleans clients
+- [Grain Definition](grain-definition.md) -- define grains that use these providers
+- [Streaming](streaming.md) -- publish and subscribe to events
+- [Security](security.md) -- TLS, mTLS, and call filters in depth

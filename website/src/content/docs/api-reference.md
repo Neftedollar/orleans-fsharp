@@ -1,7 +1,9 @@
 ---
-title: API Reference
-description: Quick reference for all public modules, types, and functions in Orleans.FSharp
+title: "API Reference"
+description: "Quick reference for all public modules, types, and functions in Orleans.FSharp."
 ---
+
+# API Reference
 
 **Quick reference for all public modules, types, and functions in Orleans.FSharp.**
 
@@ -32,6 +34,33 @@ description: Quick reference for all public modules, types, and functions in Orl
 |---|---|---|
 | `grain { }` | `GrainBuilder` | Define grain behavior declaratively |
 
+#### `grain { }` — Key CE Keywords
+
+| Keyword | Handler Signature | Description |
+|---|---|---|
+| `defaultState` | `'State` | Initial state value |
+| `handle` | `'State -> 'Msg -> Task<'State * obj>` | Register handler with manual `box` |
+| `handleState` | `'State -> 'Msg -> Task<'State>` | Handler returning only state (no result value) |
+| `handleTyped` | `'State -> 'Msg -> Task<'State * 'R>` | Handler with typed result — no `box` needed |
+| `handleWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * obj>` | Handler with DI/grain-to-grain access |
+| `handleStateWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State>` | Context + state-only return |
+| `handleTypedWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * 'R>` | Context + typed result |
+| `handleCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State * obj>` | Cancellation, manual `box` |
+| `handleStateCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State>` | Cancellation, state-only return |
+| `handleTypedCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Cancellation, typed result |
+| `handleWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * obj>` | Context + cancellation |
+| `handleStateWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State>` | Context + cancellation, state-only return |
+| `handleTypedWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Context + cancellation, typed result |
+| `persist` | `string` | Name of the storage provider for state |
+| `onActivate` | `'State -> Task<'State>` | Hook on grain activation; may modify state |
+| `onDeactivate` | `'State -> Task<unit>` | Hook on grain deactivation; cleanup |
+| `onReminder` | `string * ('State -> string -> TickStatus -> Task<'State>)` | Named reminder with stateful handler |
+| `onTimer` | `string * TimeSpan * TimeSpan * ('State -> Task<'State>)` | Declarative timer: name, dueTime, period, handler |
+| `reentrant` | — | Allow concurrent message processing |
+| `statelessWorker` | — | Allow multiple activations per silo |
+
+See [Grain Definition guide](grain-definition.md) for the full keyword list.
+
 ### Modules
 
 #### `GrainContext`
@@ -51,6 +80,21 @@ description: Quick reference for all public modules, types, and functions in Orl
 | `primaryKeyString` | `GrainContext -> string` | Get string primary key |
 | `primaryKeyGuid` | `GrainContext -> Guid` | Get Guid primary key |
 | `primaryKeyInt64` | `GrainContext -> int64` | Get int64 primary key |
+| `empty` | `GrainContext` | Empty context for unit tests (all fields null/None) |
+
+#### `Behavior`
+
+Helpers for the behavior pattern — grains whose state includes a phase discriminated union.
+
+| Function | Signature | Description |
+|---|---|---|
+| `run` | `('S -> 'M -> Task<BehaviorResult<'S>>) -> 'S -> 'M -> Task<'S>` | Adapter for `handleState`: unwraps result, Stop returns original state |
+| `runWithContext` | `(GrainContext -> 'S -> 'M -> Task<BehaviorResult<'S>>) -> GrainContext -> 'S -> 'M -> Task<'S>` | Adapter for `handleStateWithContext`: Stop calls `DeactivateOnIdle` |
+| `unwrap` | `'S -> BehaviorResult<'S> -> 'S` | Extract state from Stay/Become; fallback to original for Stop |
+| `map` | `('S -> 'S) -> BehaviorResult<'S> -> BehaviorResult<'S>` | Map over state inside a BehaviorResult |
+| `isTransition` | `BehaviorResult<'S> -> bool` | True if result is `Become` |
+| `isStopped` | `BehaviorResult<'S> -> bool` | True if result is `Stop` |
+| `toHandlerResult` | `'S -> BehaviorResult<'S> -> 'S * obj` | Convert to `state * obj` for use with raw `handle` |
 
 #### `GrainDefinition`
 
@@ -63,6 +107,8 @@ description: Quick reference for all public modules, types, and functions in Orl
 | `invokeHandler` | `GrainDefinition -> 'State -> 'Message -> Task<'State * obj>` | Invoke handler (C# interop) |
 | `invokeContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> Task<'State * obj>` | Invoke context handler (C# interop) |
 | `invokeCancellableContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> CT -> Task<'State * obj>` | Invoke cancellable (C# interop) |
+| `invokeOnActivate` | `GrainDefinition -> 'State -> Task<'State>` | Run activation hook directly |
+| `invokeOnDeactivate` | `GrainDefinition -> 'State -> Task` | Run deactivation hook directly |
 
 #### `GrainRef`
 
@@ -172,8 +218,9 @@ description: Quick reference for all public modules, types, and functions in Orl
 | Function | Signature | Description |
 |---|---|---|
 | `migration<'TOld, 'TNew>` | `int -> int -> ('TOld -> 'TNew) -> Migration<obj, obj>` | Define a migration |
-| `applyMigrations<'T>` | `Migration list -> int -> obj -> 'T` | Apply migration chain |
-| `validate` | `Migration list -> string list` | Validate migration chain |
+| `applyMigrations<'T>` | `Migration list -> int -> obj -> 'T` | Apply migration chain (throws on invalid chain) |
+| `tryApplyMigrations<'T>` | `Migration list -> int -> obj -> Result<'T, string list>` | Validate and apply; returns `Ok` or `Error` with messages |
+| `validate` | `Migration list -> string list` | Validate migration chain; empty list means valid |
 
 #### `Serialization`
 
@@ -192,6 +239,69 @@ description: Quick reference for all public modules, types, and functions in Orl
 | `taskMap` | `('T -> 'U) -> Task<Result<'T, 'E>> -> Task<Result<'U, 'E>>` | Map Ok value |
 | `taskBind` | `('T -> Task<Result<'U, 'E>>) -> Task<Result<'T, 'E>> -> Task<Result<'U, 'E>>` | Bind Ok value |
 
+#### `FSharpGrain` — Universal Grain Pattern
+
+Zero C# stubs. Register once with `AddFSharpGrain`, call from anywhere with `FSharpGrain.ref`.
+
+| Type | Description |
+|---|---|
+| `FSharpGrainHandle<'S,'M>` | Zero-alloc struct handle for a string-keyed grain |
+| `FSharpGrainGuidHandle<'S,'M>` | Zero-alloc struct handle for a GUID-keyed grain |
+| `FSharpGrainIntHandle<'S,'M>` | Zero-alloc struct handle for an int64-keyed grain |
+
+| Function | Signature | Description |
+|---|---|---|
+| `FSharpGrain.ref<'S,'M>` | `IGrainFactory -> string -> FSharpGrainHandle<'S,'M>` | Handle for string-keyed grain |
+| `FSharpGrain.refGuid<'S,'M>` | `IGrainFactory -> Guid -> FSharpGrainGuidHandle<'S,'M>` | Handle for GUID-keyed grain |
+| `FSharpGrain.refInt<'S,'M>` | `IGrainFactory -> int64 -> FSharpGrainIntHandle<'S,'M>` | Handle for int64-keyed grain |
+| `FSharpGrain.send<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task<'S>` | Send command, return typed state |
+| `FSharpGrain.post<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task` | Fire-and-forget command |
+| `FSharpGrain.ask<'S,'M,'R>` | `'M -> FSharpGrainHandle<'S,'M> -> Task<'R>` | Send command, return typed result (can differ from state) |
+| `FSharpGrain.sendGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task<'S>` | Send to GUID-keyed grain |
+| `FSharpGrain.postGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task` | Post to GUID-keyed grain |
+| `FSharpGrain.askGuid<'S,'M,'R>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task<'R>` | Ask GUID-keyed grain for typed result |
+| `FSharpGrain.sendInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task<'S>` | Send to int64-keyed grain |
+| `FSharpGrain.postInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task` | Post to int64-keyed grain |
+| `FSharpGrain.askInt<'S,'M,'R>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task<'R>` | Ask int64-keyed grain for typed result |
+
+DI registration (call once per grain definition at silo startup):
+
+```fsharp
+// Automatically registers FSharpBinaryCodec (idempotent)
+services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
+```
+
+#### `GrainResilience` — Polly v8 resilience wrappers
+
+Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](resilience.md).
+
+| Type | Description |
+|---|---|
+| `ResilienceOptions` | Record: `MaxRetryAttempts`, `RetryDelay`, `CircuitBreakerThreshold`, `CircuitBreakerDuration`, `Timeout` |
+
+| Function | Signature | Description |
+|---|---|---|
+| `GrainResilience.defaultOptions` | `ResilienceOptions` | 3 retries · 1s delay · no circuit breaker · no timeout |
+| `GrainResilience.retry<'T>` | `int -> TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Retry N times with delay |
+| `GrainResilience.withTimeout<'T>` | `TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Enforce per-call deadline |
+| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout |
+| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Build reusable Polly pipeline |
+| `GrainResilience.circuitBreaker` | `int -> TimeSpan -> ResiliencePipeline` | Shared circuit breaker (non-generic, long-lived) |
+
+#### `GrainBatch` — concurrent fan-out
+
+| Function | Signature | Description |
+|---|---|---|
+| `GrainBatch.map<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list>` | Fan-out; fails if any call throws |
+| `GrainBatch.tryMap<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<Result<'TR, exn> list>` | Fan-out; captures individual failures |
+| `GrainBatch.aggregate<'TG,'TR,'TA>` | `'TG seq -> ('TG -> Task<'TR>) -> ('TR list -> 'TA) -> Task<'TA>` | Fan-out then reduce |
+| `GrainBatch.iter<'TG>` | `'TG seq -> ('TG -> Task) -> Task` | Concurrent fire-and-forget; fails if any throws |
+| `GrainBatch.tryIter<'TG>` | `'TG seq -> ('TG -> Task) -> Task<Result<unit, exn> list>` | Concurrent fire-and-forget; captures failures |
+| `GrainBatch.choose<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR option>) -> Task<'TR list>` | Fan-out; filters out None results |
+| `GrainBatch.partition<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list * exn list>` | Fan-out; separates successes from failures |
+
+> **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and compiles to the same `Task.WhenAll` pattern. Use `GrainBatch` when the number of grains is dynamic.
+
 #### Other modules
 
 | Module | Key Function | Description |
@@ -199,6 +309,7 @@ description: Quick reference for all public modules, types, and functions in Orl
 | `GrainExtension.getExtension<'T>` | `IAddressable -> 'T` | Get grain extension reference |
 | `GrainServices.addGrainService<'T>` | `ISiloBuilder -> ISiloBuilder` | Register grain service |
 | `FSharpSerialization.addFSharpSerialization` | `ISiloBuilder -> ISiloBuilder` | Orleans native F# serializer |
+| `FSharpBinaryCodecRegistration.addToSerializerBuilder` | `ISerializerBuilder -> ISerializerBuilder` | Register FSharpBinaryCodec manually |
 | `immutable` | `'T -> Immutable<'T>` | Wrap as immutable |
 | `unwrapImmutable` | `Immutable<'T> -> 'T` | Unwrap immutable |
 
@@ -325,6 +436,17 @@ description: Quick reference for all public modules, types, and functions in Orl
 | `ReminderProvider` | MemoryReminder, RedisReminder, CustomReminder |
 | `TlsConfig` | TlsSubject, TlsCertificate, MutualTlsSubject, MutualTlsCertificate |
 | `DashboardConfig` | DashboardDefaults, DashboardWithOptions |
+| `TransactionalGrainDefinition<'State>` | Record of pure functions describing transactional grain behaviour (Deposit, Withdraw, GetBalance, CopyState) |
+| `AtmGrainDefinition<'TAccountGrain>` | Record containing a Transfer function for orchestrating cross-grain atomic transfers |
+| `FSharpTransactionalGrain<'State>` | Generic base class that bridges a `TransactionalGrainDefinition` to Orleans ACID transactions |
+| `FSharpAtmGrain<'TAccountGrain>` | Generic base class for ATM grains that create and coordinate transactions across multiple account grains |
+
+### Transactional Grain Extension Methods
+
+| Method | Signature | Description |
+|---|---|---|
+| `AddFSharpTransactionalGrain<'State>` | `IServiceCollection -> TransactionalGrainDefinition<'State> -> IServiceCollection` | Register a transactional grain definition as a singleton |
+| `AddFSharpAtmGrain<'TAccountGrain>` | `IServiceCollection -> AtmGrainDefinition<'TAccountGrain> -> IServiceCollection` | Register an ATM grain definition as a singleton |
 
 ### Computation Expressions
 
@@ -371,70 +493,46 @@ description: Quick reference for all public modules, types, and functions in Orl
 
 #### `EventSourcedGrainDefinition`
 
-| Function | Signature | Description |
-|---|---|---|
-| `foldEvents` | `definition -> 'State -> 'Event list -> 'State` | Replay events onto state |
-| `handleCommand` | `definition -> 'State -> 'Command -> 'State * 'Event list` | Process command |
-
-#### `EventStore`
-
-| Function | Signature | Description |
-|---|---|---|
-| `processCommand` | `definition -> 'State -> 'Command -> 'Event list` | Produce events from command |
-| `applyEvent` | `definition -> 'State -> 'Event -> 'State` | Apply single event |
-| `replayEvents` | `definition -> 'State -> 'Event list -> 'State` | Replay event list |
+| Function | Description |
+|---|---|
+| `foldEvents def state events` | Replay events through `apply` to rebuild state |
+| `handleCommand def state cmd` | Process command: returns `(newState, events)` |
+| `applyEvent def state event` | Apply a single event to state |
 
 ---
 
 ## Orleans.FSharp.Testing
 
-### Types
+| Module | Key Functions | Description |
+|---|---|---|
+| `TestHarness` | `createTestCluster`, `getGrainByString`, `getGrainByInt64`, `getGrainByGuid`, `captureLogs`, `reset`, `dispose` | Wrap TestCluster with log capture |
+| `GrainMock` | `create`, `withGrain`, `withFSharpGrain`, `withFSharpGrainGuid`, `withFSharpGrainInt` | Mock IGrainFactory for unit tests |
+| `GrainArbitrary` | `forState<'T>`, `forCommands<'T>` | FsCheck Arbitrary generators for DUs |
+| `FsCheckHelpers` | `stateMachineProperty`, `commandSequenceArb` | Property-based testing helpers |
+| `LogCapture` | `create`, `captureLogs` | In-memory log capture for assertions |
 
-| Type | Description |
-|---|---|
-| `TestHarness` | Test cluster wrapper with log capture |
-| `MockGrainFactory` | Mock IGrainFactory for unit tests |
-| `CapturingLogger` | In-memory ILogger |
-| `CapturingLoggerFactory` | Factory for CapturingLogger instances |
-| `CapturedLogEntry` | Captured structured log entry |
+---
 
-#### `TestHarness`
+## Orleans.FSharp.Analyzers
+
+Compile-time checks for common Orleans + F# mistakes.
+
+| Rule Code | Description | Fix |
+|---|---|---|
+| `OF0001` | Warns on `async { }` usage in production code | Use `task { }` instead |
+
+Opt-out with `[<AllowAsync>]` attribute on a module or function.
+
+---
+
+## Orleans.FSharp.Scripting
+
+Programmatic silo start/shutdown for F# scripts and REPL sessions.
 
 | Function | Signature | Description |
 |---|---|---|
-| `createTestCluster` | `unit -> Task<TestHarness>` | Create default test cluster |
-| `createTestClusterWith` | `SiloConfig -> Task<TestHarness>` | Create with custom config |
-| `getGrainByString<'T>` | `TestHarness -> string -> GrainRef<'T, string>` | Get grain by string key |
-| `getGrainByInt64<'T>` | `TestHarness -> int64 -> GrainRef<'T, int64>` | Get grain by int64 key |
-| `getGrainByGuid<'T>` | `TestHarness -> Guid -> GrainRef<'T, Guid>` | Get grain by GUID key |
-| `captureLogs` | `TestHarness -> CapturedLogEntry list` | Get all captured logs |
-| `reset` | `TestHarness -> Task<unit>` | Clear captured logs |
-| `dispose` | `TestHarness -> Task<unit>` | Stop and dispose cluster |
-
-#### `GrainMock`
-
-| Function | Signature | Description |
-|---|---|---|
-| `create` | `unit -> MockGrainFactory` | Create empty mock factory |
-| `withGrain<'T>` | `obj -> 'T -> MockGrainFactory -> MockGrainFactory` | Register mock grain |
-
-#### `GrainArbitrary`
-
-| Function | Signature | Description |
-|---|---|---|
-| `forState<'T>` | `unit -> Arbitrary<'T>` | Auto-generate Arbitrary for state type |
-| `forCommands<'T>` | `unit -> Arbitrary<'T list>` | Auto-generate Arbitrary for command sequences |
-
-#### `FsCheckHelpers`
-
-| Function | Signature | Description |
-|---|---|---|
-| `commandSequenceArb<'T>` | `unit -> Arbitrary<'T list>` | Non-empty command list Arbitrary |
-| `stateMachineProperty` | `'State -> ('State -> 'Cmd -> 'State) -> ('State -> bool) -> 'Cmd list -> bool` | State machine invariant check |
-
-#### `LogCapture`
-
-| Function | Signature | Description |
-|---|---|---|
-| `create` | `unit -> CapturingLoggerFactory` | Create capturing factory |
-| `captureLogs` | `CapturingLoggerFactory -> CapturedLogEntry list` | Get all entries |
+| `Scripting.startOnPorts` | `SiloConfig -> int -> int -> Task<SiloHandle>` | Start silo on given ports |
+| `Scripting.quickStart` | `unit -> Task<SiloHandle>` | Start with defaults |
+| `Scripting.shutdown` | `SiloHandle -> Task` | Stop the silo |
+| `Scripting.getGrain<'T>` | `SiloHandle -> string -> 'T` | Get grain by string key |
+| `Scripting.getGrainByString<'T>` | `SiloHandle -> string -> 'T` | Alias for getGrain |

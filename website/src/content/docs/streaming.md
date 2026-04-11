@@ -1,7 +1,9 @@
 ---
-title: Streaming
-description: Guide to Orleans streaming with F#-idiomatic APIs — publish, subscribe, broadcast channels, and TaskSeq consumption
+title: "Streaming"
+description: "Publish, subscribe, and consume streams."
 ---
+
+# Streaming
 
 **Guide to Orleans streaming with F#-idiomatic APIs.**
 
@@ -251,6 +253,6 @@ for event in events do
 
 ## Next steps
 
-- [Grain Definition](/orleans-fsharp/guides/grain-definition/) -- `implicitStreamSubscription` and other grain features
-- [Silo Configuration](/orleans-fsharp/guides/silo-configuration/) -- configure stream providers
-- [Event Sourcing](/orleans-fsharp/guides/event-sourcing/) -- CQRS pattern with event streams
+- [Grain Definition](grain-definition.md) -- `implicitStreamSubscription` and other grain features
+- [Silo Configuration](silo-configuration.md) -- configure stream providers
+- [Event Sourcing](event-sourcing.md) -- CQRS pattern with event streams
