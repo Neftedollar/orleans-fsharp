@@ -1,5 +1,9 @@
 # Orleans.FSharp
 
+<p align="center">
+  <img src="website/public/orleans-fsharp-logo.svg" alt="Orleans.FSharp logo" width="156" height="156" />
+</p>
+
 **Idiomatic F# for Microsoft Orleans -- computation expressions, not boilerplate**
 
 [![CI](https://github.com/Neftedollar/orleans-fsharp/actions/workflows/ci.yml/badge.svg)](https://github.com/Neftedollar/orleans-fsharp/actions)
