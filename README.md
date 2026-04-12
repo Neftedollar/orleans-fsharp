@@ -1,7 +1,7 @@
 # Orleans.FSharp
 
 <p align="center">
-  <img src="website/public/orleans-fsharp-logo.svg" alt="Orleans.FSharp logo" width="156" height="156" />
+  <img src="https://raw.githubusercontent.com/Neftedollar/orleans-fsharp/main/website/public/orleans-fsharp-logo.svg" alt="Orleans.FSharp logo" width="156" height="156" />
 </p>
 
 **Idiomatic F# for Microsoft Orleans -- computation expressions, not boilerplate**
