@@ -1,0 +1,34 @@
+# Orleans.FSharp (Full Context)
+
+Project homepage: https://neftedollar.com/orleans-fsharp/
+Project repository: https://github.com/Neftedollar/orleans-fsharp
+Primary language: F#
+Runtime target: .NET 10 and Microsoft Orleans 10 parity
+License: MIT
+
+## Summary
+Orleans.FSharp provides an idiomatic F# developer surface over Microsoft Orleans.
+It emphasizes computation-expression based authoring (`grain {}`, `siloConfig {}`, `clientConfig {}`, `eventSourcedGrain {}`),
+immutable state transitions, typed message flows, and reduced C# boilerplate.
+
+## Key Claims
+- Orleans 10 parity
+- 1500+ tests (unit and integration)
+- Support for serialization, streaming, event sourcing, reentrancy, placement, transactions, TLS/mTLS, health checks, OpenTelemetry, and Kubernetes clustering
+
+## Recommended Navigation
+1. Getting Started: https://neftedollar.com/orleans-fsharp/getting-started/
+2. Grain Definition: https://neftedollar.com/orleans-fsharp/grain-definition/
+3. Silo Configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
+4. Client Configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
+5. Serialization: https://neftedollar.com/orleans-fsharp/serialization/
+6. Streaming: https://neftedollar.com/orleans-fsharp/streaming/
+7. Event Sourcing: https://neftedollar.com/orleans-fsharp/event-sourcing/
+8. Testing: https://neftedollar.com/orleans-fsharp/testing/
+9. API Reference: https://neftedollar.com/orleans-fsharp/api-reference/
+10. FAQ: https://neftedollar.com/orleans-fsharp/faq/
+
+## External Links
+- GitHub repository: https://github.com/Neftedollar/orleans-fsharp
+- Issues: https://github.com/Neftedollar/orleans-fsharp/issues
+- Pull requests: https://github.com/Neftedollar/orleans-fsharp/pulls

@@ -48,6 +48,8 @@ export default defineConfig({
 				// SEO meta
 				{ tag: 'meta', attrs: { name: 'keywords', content: 'fsharp, f#, orleans, dotnet, .net, actors, distributed systems, computation expressions, virtual actors, grains, microsoft orleans, functional programming' } },
 				{ tag: 'meta', attrs: { name: 'author', content: 'Orleans.FSharp Contributors' } },
+				{ tag: 'link', attrs: { rel: 'mcp-actions', href: '/orleans-fsharp/mcp-actions.json' } },
+				{ tag: 'link', attrs: { rel: 'alternate', type: 'text/plain', href: '/orleans-fsharp/llms.txt', title: 'LLMs.txt' } },
 				// Open Graph
 				{ tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
 				{ tag: 'meta', attrs: { property: 'og:site_name', content: 'Orleans.FSharp' } },
@@ -73,6 +75,57 @@ export default defineConfig({
 					"applicationCategory": "Developer Tools",
 					"keywords": "F#, Orleans, actors, distributed systems, computation expressions"
 				})},
+				// Agentic search: register high-value navigation actions for browser agents that support navigator.mcpActions.
+				{
+					tag: 'script',
+					attrs: { type: 'application/javascript' },
+					content: `(() => {
+  if (typeof navigator === 'undefined') return;
+  const mcp = navigator.mcpActions;
+  if (!mcp || typeof mcp.register !== 'function') return;
+
+  const safeRegister = (action) => {
+    try {
+      mcp.register(action);
+    } catch {
+      // Ignore unsupported runtime shapes in draft WebMCP implementations.
+    }
+  };
+
+  safeRegister({
+    id: 'orleans-fsharp-open-getting-started',
+    name: 'Open Getting Started',
+    description: 'Open the Orleans.FSharp getting started guide.',
+    parameters: { type: 'object', properties: {} },
+    handler: async () => {
+      window.location.assign('/orleans-fsharp/getting-started/');
+      return { success: true, url: '/orleans-fsharp/getting-started/' };
+    }
+  });
+
+  safeRegister({
+    id: 'orleans-fsharp-open-api-reference',
+    name: 'Open API Reference',
+    description: 'Open the Orleans.FSharp API reference documentation.',
+    parameters: { type: 'object', properties: {} },
+    handler: async () => {
+      window.location.assign('/orleans-fsharp/api-reference/');
+      return { success: true, url: '/orleans-fsharp/api-reference/' };
+    }
+  });
+
+  safeRegister({
+    id: 'orleans-fsharp-open-github',
+    name: 'Open GitHub Repository',
+    description: 'Open the Orleans.FSharp GitHub repository.',
+    parameters: { type: 'object', properties: {} },
+    handler: async () => {
+      window.location.assign('https://github.com/Neftedollar/orleans-fsharp');
+      return { success: true, url: 'https://github.com/Neftedollar/orleans-fsharp' };
+    }
+  });
+})();`,
+				},
 			],
 		}),
 	],

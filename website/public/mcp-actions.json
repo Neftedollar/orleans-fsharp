@@ -1,0 +1,46 @@
+{
+  "version": "1.0",
+  "site": "https://neftedollar.com/orleans-fsharp/",
+  "actions": [
+    {
+      "id": "orleans-fsharp-open-getting-started",
+      "name": "Open Getting Started",
+      "description": "Open the Orleans.FSharp getting started guide.",
+      "method": "link",
+      "href": "https://neftedollar.com/orleans-fsharp/getting-started/",
+      "priority": "high"
+    },
+    {
+      "id": "orleans-fsharp-open-api-reference",
+      "name": "Open API Reference",
+      "description": "Open the Orleans.FSharp API reference documentation.",
+      "method": "link",
+      "href": "https://neftedollar.com/orleans-fsharp/api-reference/",
+      "priority": "high"
+    },
+    {
+      "id": "orleans-fsharp-open-how-to",
+      "name": "Open How-To Guide",
+      "description": "Open step-by-step guidance for implementing Orleans.FSharp.",
+      "method": "link",
+      "href": "https://neftedollar.com/orleans-fsharp/how-to/",
+      "priority": "medium"
+    },
+    {
+      "id": "orleans-fsharp-open-comparison",
+      "name": "Open Comparison",
+      "description": "Compare Orleans.FSharp with C# Orleans and alternatives.",
+      "method": "link",
+      "href": "https://neftedollar.com/orleans-fsharp/comparison/",
+      "priority": "medium"
+    },
+    {
+      "id": "orleans-fsharp-open-github",
+      "name": "Open GitHub Repository",
+      "description": "Open the Orleans.FSharp source repository on GitHub.",
+      "method": "link",
+      "href": "https://github.com/Neftedollar/orleans-fsharp",
+      "priority": "high"
+    }
+  ]
+}

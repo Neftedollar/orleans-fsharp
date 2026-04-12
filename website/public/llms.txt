@@ -1,0 +1,32 @@
+# Orleans.FSharp
+
+Canonical: https://neftedollar.com/orleans-fsharp/
+Repository: https://github.com/Neftedollar/orleans-fsharp
+License: MIT
+
+## High-Value Actions
+- Start here: https://neftedollar.com/orleans-fsharp/getting-started/
+- API reference: https://neftedollar.com/orleans-fsharp/api-reference/
+- How-to guide: https://neftedollar.com/orleans-fsharp/how-to/
+- Comparison: https://neftedollar.com/orleans-fsharp/comparison/
+
+## Core Docs
+- Grain definition: https://neftedollar.com/orleans-fsharp/grain-definition/
+- Silo configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
+- Client configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
+- Serialization: https://neftedollar.com/orleans-fsharp/serialization/
+- Streaming: https://neftedollar.com/orleans-fsharp/streaming/
+- Event sourcing: https://neftedollar.com/orleans-fsharp/event-sourcing/
+- Testing: https://neftedollar.com/orleans-fsharp/testing/
+- Security: https://neftedollar.com/orleans-fsharp/security/
+- Resilience: https://neftedollar.com/orleans-fsharp/resilience/
+- Advanced: https://neftedollar.com/orleans-fsharp/advanced/
+- Analyzers: https://neftedollar.com/orleans-fsharp/analyzers/
+
+## Packages
+- Orleans.FSharp
+- Orleans.FSharp.Runtime
+- Orleans.FSharp.Abstractions
+- Orleans.FSharp.EventSourcing
+- Orleans.FSharp.Testing
+- Orleans.FSharp.Analyzers

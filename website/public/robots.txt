@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://neftedollar.com/orleans-fsharp/sitemap-index.xml
