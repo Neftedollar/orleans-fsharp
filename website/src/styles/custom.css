@@ -68,6 +68,13 @@ html {
 
 /* Hero */
 
+[data-has-hero] .hero {
+  width: 100%;
+  max-width: var(--sl-content-width);
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 2.4vw, 1.5rem);
+}
+
 [data-has-hero] .hero h1 {
   font-size: clamp(2.5rem, 5vw, 4rem);
   line-height: 1.08;
@@ -302,6 +309,10 @@ html {
     line-height: 1.08;
     letter-spacing: -0.025em;
     max-width: 100%;
+  }
+
+  [data-has-hero] .hero {
+    padding-inline: 1rem;
   }
 
   [data-has-hero] .hero p {
