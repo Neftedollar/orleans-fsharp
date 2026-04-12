@@ -72,6 +72,9 @@ html {
   font-size: clamp(2.5rem, 5vw, 4rem);
   line-height: 1.08;
   letter-spacing: -0.03em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  max-width: 16ch;
   background: linear-gradient(135deg, var(--sl-color-accent-high) 0%, var(--sl-color-blue-high) 100%);
   -webkit-background-clip: text;
   background-clip: text;
@@ -133,11 +136,34 @@ html {
 
 [data-has-hero] .sl-markdown-content {
   padding-bottom: 2.6rem;
+  max-width: var(--sl-content-width);
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 2.4vw, 1.5rem);
 }
 
 [data-has-hero] .sl-markdown-content > h2 {
   margin-top: clamp(2.8rem, 6vw, 4rem);
   margin-bottom: 0.95rem;
+}
+
+[data-has-hero] .sl-markdown-content .sl-heading-wrapper.level-h2 > h2,
+[data-has-hero] .sl-markdown-content .sl-heading-wrapper.level-h3 > h3 {
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+[data-has-hero] .sl-markdown-content .sl-heading-wrapper.level-h2 > h2 {
+  margin-top: clamp(2.8rem, 6vw, 4rem);
+  margin-bottom: 0.95rem;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+[data-has-hero] .sl-markdown-content .sl-heading-wrapper.level-h3 > h3 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.6rem;
+  letter-spacing: -0.016em;
+  line-height: 1.2;
 }
 
 [data-has-hero] .sl-markdown-content > p {
@@ -164,6 +190,14 @@ html {
 
 [data-has-hero] .sl-markdown-content .card p {
   color: var(--sl-color-gray-2);
+}
+
+[data-has-hero] .sl-markdown-content pre {
+  margin: 1rem 0 1.4rem;
+  border-radius: var(--of-radius-sm) !important;
+  border: 1px solid var(--of-border-soft) !important;
+  background: linear-gradient(180deg, hsla(230, 26%, 11%, 0.92), hsla(230, 24%, 9%, 0.9));
+  overflow-x: auto;
 }
 
 [data-has-hero] .sl-markdown-content > ul {
@@ -264,8 +298,10 @@ html {
   }
 
   [data-has-hero] .hero h1 {
-    font-size: clamp(2.05rem, 10vw, 2.8rem);
-    line-height: 1.06;
+    font-size: clamp(1.85rem, 8.2vw, 2.45rem);
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    max-width: 100%;
   }
 
   [data-has-hero] .hero p {
@@ -285,6 +321,10 @@ html {
     margin-bottom: 1.5rem;
   }
 
+  [data-has-hero] .sl-markdown-content {
+    padding-inline: 1rem;
+  }
+
   .sl-container .card {
     border-radius: 12px;
   }
@@ -293,9 +333,26 @@ html {
     font-size: 1.22rem;
   }
 
+  [data-has-hero] .sl-markdown-content .sl-heading-wrapper.level-h2 > h2 {
+    font-size: clamp(1.45rem, 6.4vw, 1.85rem);
+    margin-top: 2rem;
+    margin-bottom: 0.7rem;
+  }
+
+  [data-has-hero] .sl-markdown-content .sl-heading-wrapper.level-h3 > h3 {
+    font-size: clamp(1.2rem, 5.2vw, 1.45rem);
+    margin-top: 1.35rem;
+    margin-bottom: 0.45rem;
+  }
+
   [data-has-hero] .sl-markdown-content > ul {
     padding: 0.95rem 0.95rem 0.95rem 1.5rem;
     margin-bottom: 1.5rem;
+  }
+
+  [data-has-hero] .sl-markdown-content pre {
+    font-size: 0.88rem;
+    padding: 0.75rem 0.85rem;
   }
 
   :not([data-has-hero]) .sl-markdown-content pre {
