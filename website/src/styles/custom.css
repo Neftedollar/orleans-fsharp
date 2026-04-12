@@ -395,3 +395,19 @@ html {
     transform: none;
   }
 }
+
+
+/* Clickable cards for homepage Next Steps */
+.next-steps-card-link {
+  display: block;
+  text-decoration: none !important;
+  color: inherit !important;
+}
+
+.next-steps-card-link:hover {
+  color: inherit !important;
+}
+
+.next-steps-card-link .card {
+  height: 100%;
+}
