@@ -851,13 +851,20 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Marks the grain as reentrant, allowing concurrent message processing.
-    /// A reentrant grain can process multiple messages simultaneously without waiting for each to complete.
-    /// In C# CodeGen, this corresponds to the [Reentrant] attribute on the grain class.
+    /// Marks the grain as reentrant.
+    /// <para>
+    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
+    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain <c>[Reentrant]</c>
+    /// attribute cannot be applied. The setter still records the intent on
+    /// <c>GrainDefinition.IsReentrant</c>, but no runtime consumer reads it.
+    /// To enable Orleans reentrancy, write a per-grain C# stub manually.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <returns>The updated grain definition with reentrant mode enabled.</returns>
     [<CustomOperation("reentrant")>]
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+                false)>]
     member _.Reentrant(definition: GrainDefinition<'State, 'Message>) =
         { definition with IsReentrant = true }
 
@@ -876,13 +883,20 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Marks the grain as a stateless worker, allowing multiple activations per silo
-    /// for load balancing. Stateless workers cannot use persistent state.
-    /// In C# CodeGen, this corresponds to the [StatelessWorker] attribute on the grain class.
+    /// Marks the grain as a stateless worker.
+    /// <para>
+    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
+    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain
+    /// <c>[StatelessWorker]</c> attribute cannot be applied. The setter records intent on
+    /// <c>GrainDefinition.IsStatelessWorker</c> but no runtime consumer reads it.
+    /// To enable Orleans stateless-worker placement, write a per-grain C# stub manually.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <returns>The updated grain definition with stateless worker mode enabled.</returns>
     [<CustomOperation("statelessWorker")>]
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+                false)>]
     member _.StatelessWorker(definition: GrainDefinition<'State, 'Message>) =
         { definition with
             IsStatelessWorker = true
@@ -890,12 +904,17 @@ type GrainBuilder() =
 
     /// <summary>
     /// Sets the maximum number of local worker activations per silo for a stateless worker grain.
-    /// When not specified, Orleans defaults to the number of CPU cores.
+    /// <para>
+    /// <b>Non-functional in the universal F# grain pattern</b> — paired with the deprecated
+    /// <c>statelessWorker</c> keyword, see its remarks for context.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <param name="count">The maximum number of local worker activations.</param>
     /// <returns>The updated grain definition with the max activations set.</returns>
     [<CustomOperation("maxActivations")>]
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+                false)>]
     member _.MaxActivations(definition: GrainDefinition<'State, 'Message>, count: int) =
         { definition with
             MaxLocalWorkers = Some count
@@ -1263,15 +1282,20 @@ type GrainBuilder() =
 
     /// <summary>
     /// Sets a custom reentrancy predicate method name for the grain.
-    /// The named static method receives an InvokeMethodRequest and returns bool to decide
-    /// whether the incoming call may interleave with the current execution.
-    /// In C# CodeGen, this corresponds to [MayInterleave("PredicateMethodName")] on the grain class.
-    /// Note: call chain reentrancy (grain A -> grain B -> grain A) is automatic when the grain is [Reentrant].
+    /// <para>
+    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
+    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain
+    /// <c>[MayInterleave("...")]</c> attribute cannot be applied. The setter records the
+    /// predicate name on <c>GrainDefinition.MayInterleavePredicate</c> but no runtime
+    /// consumer reads it. To use a custom interleave predicate, write a per-grain C# stub.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <param name="predicateMethodName">The name of the static predicate method.</param>
     /// <returns>The updated grain definition with the reentrancy predicate set.</returns>
     [<CustomOperation("mayInterleave")>]
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+                false)>]
     member _.MayInterleave(definition: GrainDefinition<'State, 'Message>, predicateMethodName: string) =
         { definition with
             MayInterleavePredicate = Some predicateMethodName

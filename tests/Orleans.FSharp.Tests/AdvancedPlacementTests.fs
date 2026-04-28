@@ -1,5 +1,8 @@
 module Orleans.FSharp.Tests.AdvancedPlacementTests
 
+// FS44: deprecated CE keywords (reentrant) used here intentionally to assert legacy behaviour.
+#nowarn "44"
+
 open System
 open System.Threading.Tasks
 open Xunit

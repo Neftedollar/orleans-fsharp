@@ -1,5 +1,8 @@
 module Orleans.FSharp.Tests.StatelessWorkerTests
 
+// FS44: deprecated CE keywords (statelessWorker, maxActivations) used here intentionally to assert legacy behaviour.
+#nowarn "44"
+
 open System
 open System.Threading.Tasks
 open Xunit

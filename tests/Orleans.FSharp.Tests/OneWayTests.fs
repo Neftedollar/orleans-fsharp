@@ -1,5 +1,8 @@
 module Orleans.FSharp.Tests.OneWayTests
 
+// FS44: deprecated CE keywords (reentrant, oneWay, interleave) used here intentionally to assert legacy behaviour.
+#nowarn "44"
+
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
