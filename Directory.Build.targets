@@ -1,0 +1,10 @@
+<Project>
+  <!-- Imported AFTER individual project files, so $(IsPackable) reflects each
+       project's actual setting (test/sample/template projects opt out via
+       <IsPackable>false</IsPackable> in their .fsproj/.csproj). Pack-only
+       PackageReferences belong here, not in Directory.Build.props. -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.*" PrivateAssets="All" />
+    <PackageReference Include="MinVer" Version="6.*" PrivateAssets="All" />
+  </ItemGroup>
+</Project>

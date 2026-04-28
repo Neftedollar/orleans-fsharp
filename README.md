@@ -11,7 +11,7 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Orleans 10](https://img.shields.io/badge/Orleans-10.0.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
-[![Tests](https://img.shields.io/badge/tests-1447-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1500%2B-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 
 ---
@@ -216,6 +216,10 @@ dotnet new install Orleans.FSharp.Templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
+## Upgrading from 1.x
+
+The 2.0 line introduces the **Universal Grain Pattern** (`AddFSharpGrain` + `FSharpGrain.ref`/`send`/`ask`/`post`) and deprecates 7 `grain { }` CE keywords that are non-functional under that pattern: `reentrant`, `statelessWorker`, `maxActivations`, `mayInterleave`, `interleave`, `oneWay`, `readOnly`. They remain compilable as warnings; existing code keeps building. See the [CHANGELOG](CHANGELOG.md) for the full breaking-change list and a migration walkthrough.
+
 ## Documentation
 
 | Guide | Description |
@@ -278,7 +282,7 @@ When using `useTls` or `useMutualTls`, always use valid certificates from a trus
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/orleans-fsharp/orleans-fsharp).
+Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/Neftedollar/orleans-fsharp).
 
 ## License
 

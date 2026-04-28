@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [2.0.0-alpha.1] - 2026-04-28
+
+First 2.0.0 preview. API may still shift before the stable 2.0.0 release. Install with `--prerelease` from NuGet. Headline themes:
+
+- **Universal Grain Pattern** — call any registered F# grain without per-grain C# stubs. New `Orleans.FSharp.Abstractions` package hosts `IFSharpGrain` / `IFSharpGrainWithGuidKey` / `IFSharpGrainWithIntKey`. Register once with `services.AddFSharpGrain<State, Command>(grainDef)` and dispatch via `FSharpGrain.ref` / `send` / `ask` / `post`. Works with string, GUID, and integer keys.
+- **Handler matrix completed** — 12 `handle*` CE variants covering every combination of state-only / typed result / context / cancellation: `handleState`, `handleTyped`, `handleStateWithContext`, `handleTypedWithContext`, `handleStateCancellable`, `handleTypedCancellable`, `handleStateWithContextCancellable`, `handleTypedWithContextCancellable`, plus the existing four. `getCancellableContextHandler` is the universal dispatch fallback.
+- **Behavior pattern adapters** — `Behavior.run` and `Behavior.runWithContext` plug behavior handlers directly into `handleState` / `handleStateWithContext` without manual `BehaviorResult` unwrapping. `runWithContext` calls `ctx.DeactivateOnIdle()` on `Stop`.
+- **`ask` / `askGuid` / `askInt`** — typed result access for handlers that return a value distinct from the state.
+- **`Orleans.FSharp.Analyzers`** — new package shipping `OF0001` (warns on `async {}` in grain code) with `[<AllowAsync>]` opt-out.
+- **Safer state migrations** — `StateMigration.tryApplyMigrations` returns `Result<'T, string list>` instead of throwing. `GrainContext.empty` for unit tests.
+- **Auto-registered F# binary serializer** — `AddFSharpGrain` wires `FSharpBinaryCodec` automatically; no manual `addToSerializerBuilder` call needed for the universal pattern.
+- **Test growth** — ~1500 tests (unit + integration), including 27 new FsCheck property suites across `StateMigration`, `SchemaEvolution`, `GrainRef`, `InputValidation`, and the full handler matrix.
+- **MinVer-driven release** — version is now derived from the `v*` git tag; CI publishes on tag push.
+
+### Deprecations
+
+The following 7 `grain { }` CE keywords are now compile-time warnings (not errors) and are non-functional in the universal grain pattern. They remain in the API for source compatibility but produce no runtime effect, since all F# grains share `FSharpGrainImpl` and cannot carry per-grain class or per-method attributes:
+
+- `reentrant`
+- `statelessWorker`
+- `maxActivations`
+- `mayInterleave`
+- `interleave`
+- `oneWay`
+- `readOnly`
+
+To apply class-level (`[Reentrant]`, `[StatelessWorker]`, `[MayInterleave]`) or per-method (`[AlwaysInterleave]`, `[ReadOnly]`, `[OneWay]`) attributes, write a per-grain C# stub manually using the legacy `Orleans.FSharp.CodeGen` pattern. Existing callers will see warnings but continue to compile.
+
+### Other breaking changes
+
+- `IUniversalGrainHandler.Handle` signature widened from 2 to 4 parameters (`serviceProvider`, `grainFactory` added). Pass `null` in tests that do not exercise context.
+- `IFSharpGrain` no longer inherits `IRemindable`. `IRemindable` is implemented directly by `FSharpGrain<'S,'M>` in `Orleans.FSharp.Runtime`. This avoids pulling the `Microsoft.Orleans.Reminders` source generator into the Abstractions project.
+
+### Migration from 1.0.0
+
+1. Add `Orleans.FSharp.Abstractions` to your silo project.
+2. Register grains: `services.AddFSharpGrain<State, Command>(myGrainDef)`.
+3. Call grains: `FSharpGrain.ref<State, Command> factory "key" |> FSharpGrain.send MyCommand`.
+4. Replace any uses of the 7 deprecated CE keywords if you need their effect — write a per-grain C# stub via `Orleans.FSharp.CodeGen`.
+5. Update `IUniversalGrainHandler.Handle` callers to pass the new `serviceProvider` and `grainFactory` parameters.
+
+### Detailed change list
+
 ### `StateMigration.tryApplyMigrations` — safe Result-based migration
 
 A new function that validates the migration chain before applying it, returning
@@ -247,8 +290,20 @@ reachable through the full fallback chain in `getCancellableContextHandler`.
 - Expanded `docs/testing.md` with direct handler testing and universal pattern test examples
 - Added `handleState`/`handleTyped` documentation to `docs/grain-definition.md`
 
+### Deprecations
+
+Seven `grain { }` CE keywords are now marked `[<Obsolete>]` (compile warnings, not errors) because
+they are non-functional under the universal F# grain pattern, where all grains share `FSharpGrainImpl`:
+
+- Class-level attributes (cannot be applied to a shared impl class): `reentrant`, `statelessWorker`, `maxActivations`, `mayInterleave`
+- Per-method attributes (the universal pattern exposes a single `HandleMessage(object)` entry point): `interleave`, `oneWay`, `readOnly`
+
+Existing call sites continue to compile. To get the underlying Orleans behavior, write a per-grain
+C# stub manually using `Orleans.FSharp.CodeGen`.
+
 ### Breaking changes
 - `IFSharpGrain` no longer inherits `IRemindable`. `IRemindable` is implemented directly by `FSharpGrain<'S,'M>` in `Orleans.FSharp.Runtime`. This avoids pulling the `Microsoft.Orleans.Reminders` source generator into the Abstractions project.
+- `IUniversalGrainHandler.Handle` signature changed from 2 to 4 parameters (added `serviceProvider`, `grainFactory`).
 
 ### Migration
 From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` pattern:
@@ -369,4 +424,6 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 - 3 sample patterns: CQRS, Saga, Rate Limiter
 - Complete API reference
 
+[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v2.0.0-alpha.1...HEAD
+[2.0.0-alpha.1]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v2.0.0-alpha.1
 [1.0.0]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v1.0.0
