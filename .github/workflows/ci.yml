@@ -17,8 +17,8 @@ jobs:
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet build --verbosity quiet
-      - run: dotnet test tests/Orleans.FSharp.Tests --verbosity quiet
+      - run: dotnet build --verbosity normal
+      - run: dotnet test tests/Orleans.FSharp.Tests --verbosity normal
 
   quick-integration:
     runs-on: ubuntu-latest
