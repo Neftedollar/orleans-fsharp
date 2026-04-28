@@ -22,7 +22,7 @@ The following 7 `grain { }` CE keywords are now compile-time warnings (not error
 
 - `reentrant`
 - `statelessWorker`
-- `maxLocalWorkers`
+- `maxActivations`
 - `mayInterleave`
 - `interleave`
 - `oneWay`
@@ -295,7 +295,7 @@ reachable through the full fallback chain in `getCancellableContextHandler`.
 Seven `grain { }` CE keywords are now marked `[<Obsolete>]` (compile warnings, not errors) because
 they are non-functional under the universal F# grain pattern, where all grains share `FSharpGrainImpl`:
 
-- Class-level attributes (cannot be applied to a shared impl class): `reentrant`, `statelessWorker`, `maxLocalWorkers`, `mayInterleave`
+- Class-level attributes (cannot be applied to a shared impl class): `reentrant`, `statelessWorker`, `maxActivations`, `mayInterleave`
 - Per-method attributes (the universal pattern exposes a single `HandleMessage(object)` entry point): `interleave`, `oneWay`, `readOnly`
 
 Existing call sites continue to compile. To get the underlying Orleans behavior, write a per-grain

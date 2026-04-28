@@ -23,7 +23,7 @@ The solution uses `TreatWarningsAsErrors`, so the build must complete with **zer
 dotnet test
 ```
 
-All 800+ tests must pass before submitting a pull request.
+All 1500+ tests must pass before submitting a pull request.
 
 ## Code Style
 
@@ -87,6 +87,17 @@ Use the [Bug Report](https://github.com/Neftedollar/orleans-fsharp/issues/new?te
 - .NET version
 - Minimal reproduction steps
 - Expected vs actual behavior
+
+## Releasing
+
+Versioning is driven by [MinVer](https://github.com/adamralph/minver) from git tags. Maintainers cut a release like this:
+
+1. Make sure `main` is green and `CHANGELOG.md` has a dated section for the new version.
+2. Tag the commit on `main`: `git tag v<X.Y.Z>` (or `v<X.Y.Z>-alpha.N` for prereleases).
+3. Push the tag: `git push origin v<X.Y.Z>`.
+4. CI builds, packs, and publishes to NuGet via OIDC trusted publisher on tag push.
+
+Do **not** edit `Directory.Build.props` to bump the version — MinVer derives the package version from the tag. Stable tags (`v2.0.0`) produce stable packages; pre-release tags (`v2.0.0-alpha.1`) produce pre-release packages.
 
 ## Code of Conduct
 
