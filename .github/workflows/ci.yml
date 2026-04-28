@@ -111,7 +111,7 @@ jobs:
 
       - name: NuGet login (trusted publisher)
         id: nuget-login
-        uses: NuGet/login@73b9bf58922768c79eb4770303e7a3f2a802598e # v1.2.0
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
           user: Neftedollar
 
