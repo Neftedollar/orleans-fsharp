@@ -863,7 +863,7 @@ type GrainBuilder() =
     /// <param name="definition">The current grain definition being built.</param>
     /// <returns>The updated grain definition with reentrant mode enabled.</returns>
     [<CustomOperation("reentrant")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
                 false)>]
     member _.Reentrant(definition: GrainDefinition<'State, 'Message>) =
         { definition with IsReentrant = true }
@@ -883,7 +883,7 @@ type GrainBuilder() =
     /// <param name="methodName">The name of the method to always interleave.</param>
     /// <returns>The updated grain definition with the method added to the interleaved set.</returns>
     [<CustomOperation("interleave")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: TBD.",
+    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
                 false)>]
     member _.Interleave(definition: GrainDefinition<'State, 'Message>, methodName: string) =
         { definition with
@@ -903,7 +903,7 @@ type GrainBuilder() =
     /// <param name="definition">The current grain definition being built.</param>
     /// <returns>The updated grain definition with stateless worker mode enabled.</returns>
     [<CustomOperation("statelessWorker")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
                 false)>]
     member _.StatelessWorker(definition: GrainDefinition<'State, 'Message>) =
         { definition with
@@ -921,7 +921,7 @@ type GrainBuilder() =
     /// <param name="count">The maximum number of local worker activations.</param>
     /// <returns>The updated grain definition with the max activations set.</returns>
     [<CustomOperation("maxActivations")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
                 false)>]
     member _.MaxActivations(definition: GrainDefinition<'State, 'Message>, count: int) =
         { definition with
@@ -1275,7 +1275,7 @@ type GrainBuilder() =
     /// <param name="methodName">The name of the method to mark as one-way.</param>
     /// <returns>The updated grain definition with the method added to the one-way set.</returns>
     [<CustomOperation("oneWay")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: TBD.",
+    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
                 false)>]
     member _.OneWay(definition: GrainDefinition<'State, 'Message>, methodName: string) =
         { definition with
@@ -1297,7 +1297,7 @@ type GrainBuilder() =
     /// <param name="methodName">The name of the method to mark as read-only.</param>
     /// <returns>The updated grain definition with the method added to the read-only set.</returns>
     [<CustomOperation("readOnly")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: TBD.",
+    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
                 false)>]
     member _.ReadOnly(definition: GrainDefinition<'State, 'Message>, methodName: string) =
         { definition with
@@ -1318,7 +1318,7 @@ type GrainBuilder() =
     /// <param name="predicateMethodName">The name of the static predicate method.</param>
     /// <returns>The updated grain definition with the reentrancy predicate set.</returns>
     [<CustomOperation("mayInterleave")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: TBD.",
+    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
                 false)>]
     member _.MayInterleave(definition: GrainDefinition<'State, 'Message>, predicateMethodName: string) =
         { definition with
