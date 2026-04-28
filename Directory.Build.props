@@ -6,8 +6,11 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>2.0.0</Version>
-    <PackageVersion>2.0.0</PackageVersion>
+    <!-- Version is derived from git tags by MinVer (see ItemGroup below). The most
+         recent tag matching v* (e.g. v2.0.0) sets the package version. Commits past
+         the tag get pre-release versions like 2.0.1-alpha.0.<height>. CI's publish
+         job fires only on tag pushes, so a regular merge to main never publishes —
+         tag explicitly to release: `git tag v2.0.1 && git push origin v2.0.1`. -->
     <Authors>Orleans.FSharp Contributors</Authors>
     <Description>Idiomatic F# API for Microsoft Orleans</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -19,9 +22,11 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.*" PrivateAssets="All" />
+    <PackageReference Include="MinVer" Version="6.*" PrivateAssets="All" />
   </ItemGroup>
 </Project>
