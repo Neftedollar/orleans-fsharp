@@ -1,5 +1,9 @@
 namespace Orleans.FSharp.Sample
 
+// FS44: the `reentrant` CE keyword is currently deprecated/non-functional in the universal pattern.
+// This sample still exercises it to demonstrate the API surface; the runtime semantics are sequential.
+#nowarn "44"
+
 open System.Threading.Tasks
 open Orleans
 open Orleans.FSharp

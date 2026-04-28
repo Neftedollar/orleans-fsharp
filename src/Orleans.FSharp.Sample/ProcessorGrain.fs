@@ -1,5 +1,8 @@
 namespace Orleans.FSharp.Sample
 
+// FS44: deprecated CE keywords (statelessWorker, maxActivations) — see GrainBuilder.fs.
+#nowarn "44"
+
 open System
 open System.Threading.Tasks
 open Orleans
