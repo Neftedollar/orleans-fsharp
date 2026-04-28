@@ -48,7 +48,12 @@
           BeforeTargets="CoreCompile"
           DependsOnTargets="ResolveProjectReferences">
     <PropertyGroup>
-      <_GeneratorAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\bin\$(Configuration)\net10.0\Orleans.FSharp.Generator.dll'))</_GeneratorAssembly>
+      <!-- Generator is a build-time tool only (not shipped, IsPackable=false in
+           Generator.fsproj). MSBuild's ReferenceOutputAssembly=false reference does
+           not propagate $(Configuration), so the generator always lands in
+           bin/Debug/ regardless of whether the parent build is Debug or Release.
+           Hardcoding Debug here keeps the path correct for both. -->
+      <_GeneratorAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\bin\Debug\net10.0\Orleans.FSharp.Generator.dll'))</_GeneratorAssembly>
       <_SampleAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Sample\bin\$(Configuration)\net10.0\Orleans.FSharp.Sample.dll'))</_SampleAssembly>
       <_GeneratedDir>$(MSBuildThisFileDirectory)Generated\</_GeneratedDir>
     </PropertyGroup>
