@@ -869,14 +869,22 @@ type GrainBuilder() =
         { definition with IsReentrant = true }
 
     /// <summary>
-    /// Marks a specific method as always interleaved (concurrently processed),
-    /// even on non-reentrant grains. In C# CodeGen, this corresponds to the
-    /// [AlwaysInterleave] attribute on the interface method.
+    /// Marks a specific method as always interleaved.
+    /// <para>
+    /// <b>Non-functional in the universal F# grain pattern.</b> The
+    /// <c>[AlwaysInterleave]</c> attribute must be placed on an interface method, but
+    /// the universal pattern exposes a single <c>HandleMessage(object)</c> method via
+    /// <c>IFSharpGrain</c> — there is no per-method interface entry to attribute.
+    /// The setter records the name on <c>GrainDefinition.InterleavedMethods</c> but no
+    /// runtime consumer reads it. Write a per-grain C# stub manually if you need this.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <param name="methodName">The name of the method to always interleave.</param>
     /// <returns>The updated grain definition with the method added to the interleaved set.</returns>
     [<CustomOperation("interleave")>]
+    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: TBD.",
+                false)>]
     member _.Interleave(definition: GrainDefinition<'State, 'Message>, methodName: string) =
         { definition with
             InterleavedMethods = definition.InterleavedMethods |> Set.add methodName
@@ -1254,27 +1262,43 @@ type GrainBuilder() =
 
     /// <summary>
     /// Marks a specific method as one-way (fire-and-forget).
-    /// In C# CodeGen, this corresponds to the [OneWay] attribute on the interface method.
-    /// One-way methods return immediately to the caller without waiting for the grain to finish processing.
+    /// <para>
+    /// <b>Non-functional in the universal F# grain pattern.</b> The <c>[OneWay]</c>
+    /// attribute must be on an interface method, but the universal pattern exposes a
+    /// single <c>HandleMessage(object)</c> method via <c>IFSharpGrain</c> — there is
+    /// no per-method interface entry to attribute. The setter records the name on
+    /// <c>GrainDefinition.OneWayMethods</c> but no runtime consumer reads it.
+    /// Write a per-grain C# stub manually if you need <c>[OneWay]</c> semantics.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <param name="methodName">The name of the method to mark as one-way.</param>
     /// <returns>The updated grain definition with the method added to the one-way set.</returns>
     [<CustomOperation("oneWay")>]
+    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: TBD.",
+                false)>]
     member _.OneWay(definition: GrainDefinition<'State, 'Message>, methodName: string) =
         { definition with
             OneWayMethods = definition.OneWayMethods |> Set.add methodName
         }
 
     /// <summary>
-    /// Marks a specific interface method as read-only, allowing it to be interleaved (processed concurrently)
-    /// even on non-reentrant grains. Read-only methods must not modify grain state.
-    /// In C# CodeGen, this corresponds to the [ReadOnly] attribute on the interface method.
+    /// Marks a specific interface method as read-only.
+    /// <para>
+    /// <b>Non-functional in the universal F# grain pattern.</b> The <c>[ReadOnly]</c>
+    /// attribute must be on an interface method, but the universal pattern exposes a
+    /// single <c>HandleMessage(object)</c> method via <c>IFSharpGrain</c> — there is
+    /// no per-method interface entry to attribute. The setter records the name on
+    /// <c>GrainDefinition.ReadOnlyMethods</c> but no runtime consumer reads it.
+    /// Write a per-grain C# stub manually if you need <c>[ReadOnly]</c> semantics.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <param name="methodName">The name of the method to mark as read-only.</param>
     /// <returns>The updated grain definition with the method added to the read-only set.</returns>
     [<CustomOperation("readOnly")>]
+    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: TBD.",
+                false)>]
     member _.ReadOnly(definition: GrainDefinition<'State, 'Message>, methodName: string) =
         { definition with
             ReadOnlyMethods = definition.ReadOnlyMethods |> Set.add methodName
