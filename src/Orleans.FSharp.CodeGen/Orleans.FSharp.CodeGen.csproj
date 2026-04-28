@@ -39,7 +39,21 @@
       <_GeneratedDir>$(MSBuildThisFileDirectory)Generated\</_GeneratedDir>
     </PropertyGroup>
     <MakeDir Directories="$(_GeneratedDir)" />
-    <Exec Command="dotnet run --project &quot;$(_GeneratorProject)&quot; -- --assembly &quot;$(_SampleAssembly)&quot; --output &quot;$(_GeneratedDir)&quot; --namespace Orleans.FSharp.CodeGen" />
+    <!-- ConsoleToMSBuild + IgnoreExitCode: capture the generator's stdout/stderr so we
+         can print it via <Message Importance="High"> regardless of whether the generator
+         succeeded or failed. Without this, MSBuild Exec output flows at "Low" importance
+         and is filtered out at the default verbosity normal, leaving CI logs with only
+         a bare MSB3073 wrapper on failure. The conditional <Error> after printing fails
+         the build for non-zero exit codes, preserving the original failure semantics. -->
+    <Exec Command="dotnet run --project &quot;$(_GeneratorProject)&quot; -- --assembly &quot;$(_SampleAssembly)&quot; --output &quot;$(_GeneratedDir)&quot; --namespace Orleans.FSharp.CodeGen"
+          ConsoleToMSBuild="true"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" ItemName="_GeneratorOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="_GeneratorExitCode" />
+    </Exec>
+    <Message Text="%(_GeneratorOutput.Identity)" Importance="High" />
+    <Error Text="Orleans.FSharp.Generator failed with exit code $(_GeneratorExitCode)"
+           Condition=" '$(_GeneratorExitCode)' != '0' " />
   </Target>
 
   <!-- Step 2: Add the generated files to the Compile ItemGroup AFTER they exist.
