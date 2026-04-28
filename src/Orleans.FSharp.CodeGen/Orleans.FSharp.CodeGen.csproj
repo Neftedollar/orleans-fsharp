@@ -39,7 +39,14 @@
 
   <!-- Step 1: Run the F# generator to emit *.g.cs files into Generated/.
        Orleans.FSharp.Sample is already built via ProjectReference above, so its DLL exists. -->
-  <Target Name="RunFSharpGrainGenerator" BeforeTargets="BeforeBuild">
+  <!-- BeforeTargets=CoreCompile + DependsOnTargets=ResolveProjectReferences:
+       BeforeBuild fires too early on Linux parallel builds — ProjectReference output
+       assemblies (Sample.dll) aren't placed in bin/ yet when BeforeBuild runs, even
+       though the references are listed. Moving to CoreCompile guarantees all
+       ProjectReference outputs are available before the generator is invoked. -->
+  <Target Name="RunFSharpGrainGenerator"
+          BeforeTargets="CoreCompile"
+          DependsOnTargets="ResolveProjectReferences">
     <PropertyGroup>
       <_GeneratorProject>$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\Orleans.FSharp.Generator.fsproj</_GeneratorProject>
       <_SampleAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Sample\bin\$(Configuration)\net10.0\Orleans.FSharp.Sample.dll'))</_SampleAssembly>
