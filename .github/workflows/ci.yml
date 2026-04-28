@@ -32,8 +32,8 @@ jobs:
       - name: Run quick integration tests
         run: >
           dotnet test tests/Orleans.FSharp.Integration
-          --filter "FullyQualifiedName~ConcurrencyTests|FullyQualifiedName~ErrorHandlingTests|FullyQualifiedName~ReentrancyIntegrationTests|FullyQualifiedName~TransactionConflictTests|FullyQualifiedName~FSharpBinaryCodecIntegration"
-          --verbosity quiet
+          --filter "FullyQualifiedName~GrainResilienceIntegrationTests|FullyQualifiedName~ReentrancyIntegrationTests|FullyQualifiedName~TransactionIntegrationTests|FullyQualifiedName~FSharpBinaryCodecIntegrationTests"
+          --verbosity normal
 
   full-integration:
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@4df448123c42152998010d84f6e14b872c23ee28 # v2.0.1
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-      - uses: semgrep/semgrep-action@54577f56466587770af154b4f62f521b6f7d24d7 # v2.0.0
+      - uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
         with:
           config: >-
             p/owasp-top-ten
