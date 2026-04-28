@@ -25,8 +25,9 @@
     <MinVerTagPrefix>v</MinVerTagPrefix>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(IsPackable)' == 'true'">
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.*" PrivateAssets="All" />
-    <PackageReference Include="MinVer" Version="6.*" PrivateAssets="All" />
-  </ItemGroup>
+  <!-- Note: IsPackable-conditional ItemGroups belong in Directory.Build.targets,
+       not here. .props is imported BEFORE individual project files, so a project
+       that overrides <IsPackable>false</IsPackable> hasn't done so yet when this
+       file is read — meaning conditioned ItemGroups would land in non-packable
+       projects too. .targets is imported AFTER project files. See Directory.Build.targets. -->
 </Project>
