@@ -48,18 +48,27 @@
           BeforeTargets="CoreCompile"
           DependsOnTargets="ResolveProjectReferences">
     <PropertyGroup>
-      <_GeneratorProject>$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\Orleans.FSharp.Generator.fsproj</_GeneratorProject>
+      <_GeneratorAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\bin\$(Configuration)\net10.0\Orleans.FSharp.Generator.dll'))</_GeneratorAssembly>
       <_SampleAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Sample\bin\$(Configuration)\net10.0\Orleans.FSharp.Sample.dll'))</_SampleAssembly>
       <_GeneratedDir>$(MSBuildThisFileDirectory)Generated\</_GeneratedDir>
     </PropertyGroup>
     <MakeDir Directories="$(_GeneratedDir)" />
-    <!-- ConsoleToMSBuild + IgnoreExitCode: capture the generator's stdout/stderr so we
+    <!-- Invoke the pre-built generator DLL via `dotnet exec`, NOT `dotnet run`.
+         `dotnet run` spawns a separate MSBuild process that re-builds the Generator's
+         dependency graph (Generator → EventSourcing → Orleans.FSharp). When the parent
+         build also depends on Orleans.FSharp (e.g. `dotnet test` on Integration), both
+         processes race on the same files and one deadlocks. Generator is wired in as a
+         ProjectReference above with ReferenceOutputAssembly=false, so the Generator DLL
+         is guaranteed to exist by the time this target fires (DependsOnTargets ensures
+         that). `dotnet exec` simply runs it.
+
+         ConsoleToMSBuild + IgnoreExitCode: capture the generator's stdout/stderr so we
          can print it via <Message Importance="High"> regardless of whether the generator
          succeeded or failed. Without this, MSBuild Exec output flows at "Low" importance
          and is filtered out at the default verbosity normal, leaving CI logs with only
          a bare MSB3073 wrapper on failure. The conditional <Error> after printing fails
          the build for non-zero exit codes, preserving the original failure semantics. -->
-    <Exec Command="dotnet run --project &quot;$(_GeneratorProject)&quot; -- --assembly &quot;$(_SampleAssembly)&quot; --output &quot;$(_GeneratedDir)&quot; --namespace Orleans.FSharp.CodeGen"
+    <Exec Command="dotnet exec &quot;$(_GeneratorAssembly)&quot; --assembly &quot;$(_SampleAssembly)&quot; --output &quot;$(_GeneratedDir)&quot; --namespace Orleans.FSharp.CodeGen"
           ConsoleToMSBuild="true"
           IgnoreExitCode="true">
       <Output TaskParameter="ConsoleOutput" ItemName="_GeneratorOutput" />
