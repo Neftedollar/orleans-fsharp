@@ -23,6 +23,13 @@
     <!-- Optional: add your grain project here to generate per-grain proxies (legacy pattern).
          In the new universal interface pattern, only Abstractions is needed. -->
     <ProjectReference Include="..\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj" />
+    <!-- Pull the F# generator into this project's build graph so MSBuild builds it
+         in a single coordinated pass. Without this, the Exec below spawns a sibling
+         `dotnet run` that re-builds Orleans.FSharp transitively in parallel with the
+         parent build, racing on Orleans.FSharp.deps.json. ReferenceOutputAssembly=false
+         keeps the generator's DLL out of CodeGen's compile inputs. -->
+    <ProjectReference Include="..\Orleans.FSharp.Generator\Orleans.FSharp.Generator.fsproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- Exclude Generated/ from SDK auto-discovery — files are added dynamically by IncludeGeneratedStubs. -->
