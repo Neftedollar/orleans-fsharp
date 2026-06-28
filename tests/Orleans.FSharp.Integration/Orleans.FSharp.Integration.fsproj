@@ -19,7 +19,6 @@
     <Compile Include="HandleTypedWithContextIntegrationTests.fs" />
     <Compile Include="HandleStateWithContextCancellableIntegrationTests.fs" />
     <Compile Include="HandleTypedWithContextCancellableIntegrationTests.fs" />
-    <Compile Include="BehaviorPatternIntegrationTests.fs" />
     <Compile Include="GrainLifecycleTests.fs" />
     <Compile Include="AdditionalStateIntegrationTests.fs" />
     <Compile Include="TransactionIntegrationTests.fs" />

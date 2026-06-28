@@ -14,7 +14,6 @@
     <Compile Include="GrainState.fs" />
     <Compile Include="GrainRef.fs" />
     <Compile Include="GrainBuilder.fs" />
-    <Compile Include="BehaviorPattern.fs" />
     <Compile Include="Reminders.fs" />
     <Compile Include="Timers.fs" />
     <Compile Include="Streaming.fs" />
@@ -26,9 +25,6 @@
     <Compile Include="RequestCtx.fs" />
     <Compile Include="Transactions.fs" />
     <Compile Include="GrainDirectory.fs" />
-    <Compile Include="Telemetry.fs" />
-    <Compile Include="GrainServices.fs" />
-    <Compile Include="GrainExtensions.fs" />
     <Compile Include="Serialization.fs" />
     <Compile Include="StateMigration.fs" />
     <Compile Include="Shutdown.fs" />

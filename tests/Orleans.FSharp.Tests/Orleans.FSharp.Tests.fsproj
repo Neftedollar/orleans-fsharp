@@ -43,11 +43,9 @@
     <Compile Include="AdvancedReentrancyTests.fs" />
     <Compile Include="VersioningTests.fs" />
     <Compile Include="GrainServiceTests.fs" />
-    <Compile Include="GrainExtensionTests.fs" />
     <Compile Include="PersistentStreamTests.fs" />
     <Compile Include="TransactionTests.fs" />
     <Compile Include="GrainDirectoryTests.fs" />
-    <Compile Include="TelemetryTests.fs" />
     <Compile Include="SerializationTests.fs" />
     <Compile Include="StateMigrationTests.fs" />
     <Compile Include="ShutdownTests.fs" />
@@ -78,7 +76,6 @@
     <Compile Include="FSharpGrainRefTests.fs" />
     <Compile Include="UniversalGrainHandlerTests.fs" />
     <Compile Include="AddFSharpGrainTests.fs" />
-    <Compile Include="BehaviorPatternTests.fs" />
     <Compile Include="HandlerCompositionProperties.fs" />
     <Compile Include="GrainHandlerStateMachineProperties.fs" />
     <Compile Include="SiloIdentityTests.fs" />
