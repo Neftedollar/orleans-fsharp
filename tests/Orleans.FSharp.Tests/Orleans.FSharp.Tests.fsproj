@@ -41,6 +41,7 @@
     <Compile Include="OneWayTests.fs" />
     <Compile Include="BroadcastChannelTests.fs" />
     <Compile Include="AdvancedReentrancyTests.fs" />
+    <Compile Include="MayInterleaveTests.fs" />
     <Compile Include="VersioningTests.fs" />
     <Compile Include="GrainServiceTests.fs" />
     <Compile Include="PersistentStreamTests.fs" />

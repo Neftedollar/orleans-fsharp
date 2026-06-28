@@ -591,6 +591,12 @@ Use distinct command/message types for each grain."
                         defaults <- Map.add nestedType.FullName (box d) defaults
             | None -> ()
 
+            // Push interleavable message types into the process-wide static registry that the
+            // universal grain's [MayInterleave] predicate consults. The predicate is static
+            // (Orleans requires it) so it cannot read DI; this registry is the realization.
+            for interleaveType in definition.InterleaveMessageTypes do
+                Orleans.FSharp.FSharpInterleaveRegistry.Register(interleaveType)
+
         interface IUniversalGrainHandler with
 
             /// <inheritdoc/>

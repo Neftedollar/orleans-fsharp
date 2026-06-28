@@ -335,10 +335,15 @@ type GrainDefinition<'State, 'Message> =
         /// <summary>Set of method names that should be marked with the [OneWay] attribute in C# CodeGen.
         /// One-way methods are fire-and-forget: the caller does not wait for the grain to finish processing.</summary>
         OneWayMethods: Set<string>
-        /// <summary>Optional name of a static predicate method for custom reentrancy decisions.
-        /// In C# CodeGen, maps to [MayInterleave("PredicateMethodName")] on the grain class.
-        /// The predicate receives the incoming InvokeMethodRequest and returns bool.</summary>
-        MayInterleavePredicate: string option
+        /// <summary>The message types whose incoming requests may interleave with an
+        /// in-progress request on the same grain activation. Populated by the
+        /// <c>interleaveMessage</c> CE operation. At silo-configuration time each type is
+        /// pushed into the process-wide <c>Orleans.FSharp.FSharpInterleaveRegistry</c>, which
+        /// the static <c>[MayInterleave]</c> predicate on the universal grain classes consults.
+        /// Registering a discriminated-union type makes every one of its cases interleavable
+        /// (the predicate matches by assignability). Uses a list rather than a set because
+        /// <c>System.Type</c> does not satisfy F#'s <c>comparison</c> constraint.</summary>
+        InterleaveMessageTypes: Type list
         /// <summary>Lifecycle hooks keyed by GrainLifecycleStage (int).
         /// Each hook is invoked during the corresponding lifecycle stage with a CancellationToken.
         /// Standard stages: First=2000, SetupState=4000, Activate=6000, Last=int.MaxValue.</summary>
@@ -565,7 +570,7 @@ type GrainBuilder() =
             TimerHandlers = Map.empty
             AdditionalStates = Map.empty
             OneWayMethods = Set.empty
-            MayInterleavePredicate = None
+            InterleaveMessageTypes = []
             LifecycleHooks = Map.empty
         }
 
@@ -1113,25 +1118,35 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Sets a custom reentrancy predicate method name for the grain.
+    /// Marks a message type as interleavable: when a request carrying a message of this type
+    /// (or, for a discriminated union, any of its cases) arrives while the grain is already
+    /// processing another request, Orleans is permitted to begin handling it concurrently
+    /// rather than queueing it behind the in-progress request.
     /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
-    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain
-    /// <c>[MayInterleave("...")]</c> attribute cannot be applied. The setter records the
-    /// predicate name on <c>GrainDefinition.MayInterleavePredicate</c> but no runtime
-    /// consumer reads it. To use a custom interleave predicate, write a per-grain C# stub.
+    /// This is the one reentrancy lever that fits the universal F# grain pattern. All F#
+    /// grains share <c>Orleans.FSharp.FSharpGrainImpl</c> (and its Guid/Int siblings), which
+    /// carry a single class-level <c>[MayInterleave]</c> predicate keyed on the incoming
+    /// message's runtime type. Each declared type is pushed into the process-wide
+    /// <c>Orleans.FSharp.FSharpInterleaveRegistry</c> when the grain is added to the silo.
+    /// </para>
+    /// <para>
+    /// Pass the discriminated-union type itself — e.g. <c>interleaveMessage typeof&lt;Query&gt;</c>
+    /// — to make all of its cases interleavable; the predicate matches by assignability, so
+    /// field-carrying DU cases (which compile to nested subtypes that cannot be named in
+    /// source) are covered. Repeated registrations of the same type are de-duplicated.
     /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="predicateMethodName">The name of the static predicate method.</param>
-    /// <returns>The updated grain definition with the reentrancy predicate set.</returns>
-    [<CustomOperation("mayInterleave")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.MayInterleave(definition: GrainDefinition<'State, 'Message>, predicateMethodName: string) =
-        { definition with
-            MayInterleavePredicate = Some predicateMethodName
-        }
+    /// <param name="messageType">The message (or discriminated-union) type to mark interleavable.</param>
+    /// <returns>The updated grain definition with the message type recorded.</returns>
+    [<CustomOperation("interleaveMessage")>]
+    member _.InterleaveMessage(definition: GrainDefinition<'State, 'Message>, messageType: Type) =
+        if definition.InterleaveMessageTypes |> List.contains messageType then
+            definition
+        else
+            { definition with
+                InterleaveMessageTypes = messageType :: definition.InterleaveMessageTypes
+            }
 
     /// <summary>
     /// Registers a lifecycle hook at the specified grain lifecycle stage.
@@ -1187,6 +1202,6 @@ module GrainBuilderInstance =
     /// handleWithContextCancellable, handleWithServices, handleStateWithServices,
     /// handleTypedWithServices, handleWithServicesCancellable, persist,
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
-    /// mayInterleave, oneWay, onLifecycleStage.
+    /// interleaveMessage, oneWay, onLifecycleStage.
     /// </summary>
     let grain = GrainBuilder()
