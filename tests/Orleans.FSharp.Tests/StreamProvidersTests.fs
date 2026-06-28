@@ -74,6 +74,33 @@ let ``addAzureQueueStreams error mentions AddAzureQueueStreams method`` () =
     let ex = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
     test <@ ex.Message.Contains("AddAzureQueueStreams") @>
 
+// --- addRedisStreams tests ---
+
+[<Fact>]
+let ``addRedisStreams returns a function`` () =
+    let f = StreamProviders.addRedisStreams "MyRedis" "localhost:6379"
+    let funcType = f.GetType()
+    let expectedBase = typedefof<FSharpFunc<_, _>>.MakeGenericType(typeof<ISiloBuilder>, typeof<ISiloBuilder>)
+    test <@ expectedBase.IsAssignableFrom(funcType) @>
+
+[<Fact>]
+let ``addRedisStreams with different names produces distinct functions`` () =
+    let f1 = StreamProviders.addRedisStreams "Redis1" "conn1"
+    let f2 = StreamProviders.addRedisStreams "Redis2" "conn2"
+    test <@ not (obj.ReferenceEquals(f1, f2)) @>
+
+[<Fact>]
+let ``addRedisStreams throws when package not installed`` () =
+    let f = StreamProviders.addRedisStreams "MyRedis" "localhost:6379"
+    let ex = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
+    test <@ ex.Message.Contains("Microsoft.Orleans.Streaming.Redis") @>
+
+[<Fact>]
+let ``addRedisStreams error mentions AddRedisStreams method`` () =
+    let f = StreamProviders.addRedisStreams "Provider" "localhost:6379"
+    let ex = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
+    test <@ ex.Message.Contains("AddRedisStreams") @>
+
 // --- Function signature tests ---
 
 [<Fact>]
@@ -100,6 +127,18 @@ let ``addAzureQueueStreams has correct parameter count via reflection`` () =
 
     test <@ method.IsSome @>
 
+[<Fact>]
+let ``addRedisStreams has correct parameter count via reflection`` () =
+    let moduleType =
+        typeof<Orleans.FSharp.AssemblyMarker>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.Name = "StreamProviders" && t.IsAbstract && t.IsSealed)
+
+    let method =
+        moduleType.GetMethods()
+        |> Array.tryFind (fun m -> m.Name = "addRedisStreams")
+
+    test <@ method.IsSome @>
+
 // ---------------------------------------------------------------------------
 // FsCheck property tests
 // ---------------------------------------------------------------------------
@@ -115,3 +154,15 @@ let ``addEventHubStreams error contains expected package name for any provider n
     let f = StreamProviders.addEventHubStreams name.Get "conn" "hub"
     let ex = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
     ex.Message.Contains("Microsoft.Orleans.Streaming.EventHubs")
+
+[<Property>]
+let ``addRedisStreams produces distinct closures for distinct provider names`` (n: PositiveInt) =
+    let count = min n.Get 5
+    let funcs = Array.init count (fun i -> StreamProviders.addRedisStreams $"Redis{i}" "localhost:6379")
+    funcs |> Array.pairwise |> Array.forall (fun (a, b) -> not (obj.ReferenceEquals(a, b)))
+
+[<Property>]
+let ``addRedisStreams error contains expected package name for any provider name`` (name: NonEmptyString) =
+    let f = StreamProviders.addRedisStreams name.Get "localhost:6379"
+    let ex = Assert.Throws<InvalidOperationException>(fun () -> f (Unchecked.defaultof<ISiloBuilder>) |> ignore)
+    ex.Message.Contains("Microsoft.Orleans.Streaming.Redis")
