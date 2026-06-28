@@ -27,28 +27,6 @@ type FSharpGrainAttribute() =
     inherit Attribute()
 
 /// <summary>
-/// Specifies the grain placement strategy that determines which silo activates a grain.
-/// In C# CodeGen, these map to Orleans placement attributes on the grain class.
-/// </summary>
-type PlacementStrategy =
-    /// <summary>Uses the Orleans default placement strategy (typically random).</summary>
-    | Default
-    /// <summary>Prefers to place the grain on the silo where the request originated.</summary>
-    | PreferLocal
-    /// <summary>Places the grain on a randomly selected silo.</summary>
-    | Random
-    /// <summary>Places the grain based on a hash of the grain ID for consistent placement.</summary>
-    | HashBased
-    /// <summary>Places the grain on the silo with the fewest activations. In C# CodeGen, maps to [ActivationCountBasedPlacement].</summary>
-    | ActivationCountBased
-    /// <summary>Places the grain based on resource usage metrics (CPU, memory, etc.). In C# CodeGen, maps to [ResourceOptimizedPlacement].</summary>
-    | ResourceOptimized
-    /// <summary>Places the grain on silos with the specified role. In C# CodeGen, maps to [SiloRoleBasedPlacement].</summary>
-    | SiloRoleBased of role: string
-    /// <summary>Uses a custom placement strategy type. The type must implement IPlacementStrategy. In C# CodeGen, the strategy attribute is applied to the grain class.</summary>
-    | Custom of strategyType: Type
-
-/// <summary>
 /// Provides access to grain infrastructure from within a grain handler.
 /// Enables grain-to-grain communication via type-safe GrainRef creation
 /// and service resolution via the IServiceProvider.
@@ -352,8 +330,6 @@ type GrainDefinition<'State, 'Message> =
         /// <summary>Named declarative timer handlers. Each entry maps a timer name to its dueTime, period, and state-transforming callback.
         /// Timers are automatically registered on grain activation and disposed on deactivation by Orleans.</summary>
         TimerHandlers: Map<string, TimeSpan * TimeSpan * ('State -> Task<'State>)>
-        /// <summary>The placement strategy for the grain. In C# CodeGen, maps to Orleans placement attributes.</summary>
-        PlacementStrategy: PlacementStrategy
         /// <summary>Named additional persistent states. Each entry maps a state name to its storage provider name, default value, and type.</summary>
         AdditionalStates: Map<string, AdditionalStateSpec>
         /// <summary>Set of method names that should be marked with the [OneWay] attribute in C# CodeGen.
@@ -367,15 +343,6 @@ type GrainDefinition<'State, 'Message> =
         /// Each hook is invoked during the corresponding lifecycle stage with a CancellationToken.
         /// Standard stages: First=2000, SetupState=4000, Activate=6000, Last=int.MaxValue.</summary>
         LifecycleHooks: Map<int, (CancellationToken -> Task<unit>) list>
-        /// <summary>Implicit stream subscriptions mapping stream namespace to event handler functions.
-        /// In C# CodeGen, maps to [ImplicitStreamSubscription("namespace")] on the grain class.
-        /// Each handler receives the current state and a stream event (boxed), and returns the new state.</summary>
-        ImplicitSubscriptions: Map<string, 'State -> obj -> Task<'State>>
-        /// <summary>Per-grain deactivation timeout override. When set, configures the idle timeout
-        /// before this grain type is deactivated. In C# CodeGen, maps to [CollectionAgeLimit] attribute.</summary>
-        DeactivationTimeout: TimeSpan option
-        /// <summary>Custom grain type name. In C# CodeGen, maps to [GrainType("name")] attribute on the grain class.</summary>
-        GrainTypeName: string option
     }
 
 /// <summary>
@@ -596,14 +563,10 @@ type GrainBuilder() =
             OnDeactivate = None
             ReminderHandlers = Map.empty
             TimerHandlers = Map.empty
-            PlacementStrategy = PlacementStrategy.Default
             AdditionalStates = Map.empty
             OneWayMethods = Set.empty
             MayInterleavePredicate = None
             LifecycleHooks = Map.empty
-            ImplicitSubscriptions = Map.empty
-            DeactivationTimeout = None
-            GrainTypeName = None
         }
 
     /// <summary>
@@ -1128,45 +1091,6 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Sets the grain placement strategy to PreferLocal.
-    /// Prefers to place the grain on the silo where the request originated.
-    /// In C# CodeGen, this corresponds to the [PreferLocalPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with PreferLocal placement.</returns>
-    [<CustomOperation("preferLocalPlacement")>]
-    member _.PreferLocalPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.PreferLocal
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to Random.
-    /// Places the grain on a randomly selected compatible silo.
-    /// In C# CodeGen, this corresponds to the [RandomPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with Random placement.</returns>
-    [<CustomOperation("randomPlacement")>]
-    member _.RandomPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.Random
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to HashBased.
-    /// Places the grain based on a consistent hash of the grain ID.
-    /// In C# CodeGen, this corresponds to the [HashBasedPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with HashBased placement.</returns>
-    [<CustomOperation("hashBasedPlacement")>]
-    member _.HashBasedPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.HashBased
-        }
-
-    /// <summary>
     /// Marks a specific method as one-way (fire-and-forget).
     /// <para>
     /// <b>Non-functional in the universal F# grain pattern.</b> The <c>[OneWay]</c>
@@ -1210,62 +1134,6 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Sets the grain placement strategy to ActivationCountBased.
-    /// Places the grain on the silo with the fewest active grain activations.
-    /// In C# CodeGen, this corresponds to the [ActivationCountBasedPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with ActivationCountBased placement.</returns>
-    [<CustomOperation("activationCountPlacement")>]
-    member _.ActivationCountPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.ActivationCountBased
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to ResourceOptimized.
-    /// Places the grain based on silo resource usage metrics (CPU, memory, etc.).
-    /// In C# CodeGen, this corresponds to the [ResourceOptimizedPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with ResourceOptimized placement.</returns>
-    [<CustomOperation("resourceOptimizedPlacement")>]
-    member _.ResourceOptimizedPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.ResourceOptimized
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to SiloRoleBased with the specified role.
-    /// Places the grain only on silos configured with the given role.
-    /// In C# CodeGen, this corresponds to the [SiloRoleBasedPlacement] attribute with the role parameter.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="role">The silo role name to target.</param>
-    /// <returns>The updated grain definition with SiloRoleBased placement.</returns>
-    [<CustomOperation("siloRolePlacement")>]
-    member _.SiloRolePlacement(definition: GrainDefinition<'State, 'Message>, role: string) =
-        if String.IsNullOrWhiteSpace(role) then
-            invalidArg (nameof role) "Silo role name cannot be empty or whitespace"
-        { definition with
-            PlacementStrategy = PlacementStrategy.SiloRoleBased role
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to a custom type.
-    /// The type must implement IPlacementStrategy.
-    /// In C# CodeGen, the custom strategy attribute is applied to the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="strategyType">The System.Type of the custom placement strategy.</param>
-    /// <returns>The updated grain definition with Custom placement.</returns>
-    [<CustomOperation("customPlacement")>]
-    member _.CustomPlacement(definition: GrainDefinition<'State, 'Message>, strategyType: Type) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.Custom strategyType
-        }
-
-    /// <summary>
     /// Registers a lifecycle hook at the specified grain lifecycle stage.
     /// The hook is invoked with a CancellationToken during grain activation.
     /// Standard stages: GrainLifecycleStage.First (2000), SetupState (4000), Activate (6000), Last (int.MaxValue).
@@ -1289,55 +1157,6 @@ type GrainBuilder() =
 
         { definition with
             LifecycleHooks = definition.LifecycleHooks |> Map.add stage (existing @ [ hook ])
-        }
-
-    /// <summary>
-    /// Declares an implicit stream subscription for the given namespace.
-    /// In C# CodeGen, maps to [ImplicitStreamSubscription("namespace")] on the grain class.
-    /// The handler receives the current state and a stream event (boxed), and returns the new state.
-    /// Multiple implicit subscriptions can be registered for different namespaces.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="ns">The stream namespace to subscribe to.</param>
-    /// <param name="handler">The event handler function that transforms state based on the stream event.</param>
-    /// <returns>The updated grain definition with the implicit stream subscription registered.</returns>
-    [<CustomOperation("implicitStreamSubscription")>]
-    member _.ImplicitStreamSubscription
-        (
-            definition: GrainDefinition<'State, 'Message>,
-            ns: string,
-            handler: 'State -> obj -> Task<'State>
-        ) =
-        { definition with
-            ImplicitSubscriptions = definition.ImplicitSubscriptions |> Map.add ns handler
-        }
-
-    /// <summary>
-    /// Sets the per-grain deactivation timeout (idle timeout before this grain type is deactivated).
-    /// In C# CodeGen, maps to the [CollectionAgeLimit] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="timeout">The deactivation timeout as a TimeSpan.</param>
-    /// <returns>The updated grain definition with the deactivation timeout set.</returns>
-    [<CustomOperation("deactivationTimeout")>]
-    member _.DeactivationTimeout(definition: GrainDefinition<'State, 'Message>, timeout: TimeSpan) =
-        { definition with
-            DeactivationTimeout = Some timeout
-        }
-
-    /// <summary>
-    /// Sets a custom grain type name for this grain.
-    /// In C# CodeGen, maps to [GrainType("name")] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="name">The custom grain type name.</param>
-    /// <returns>The updated grain definition with the grain type name set.</returns>
-    [<CustomOperation("grainType")>]
-    member _.GrainType(definition: GrainDefinition<'State, 'Message>, name: string) =
-        if String.IsNullOrWhiteSpace(name) then
-            invalidArg (nameof name) "Grain type name cannot be empty or whitespace"
-        { definition with
-            GrainTypeName = Some name
         }
 
     /// <summary>Returns the completed grain definition. Validates constraints:
@@ -1368,9 +1187,6 @@ module GrainBuilderInstance =
     /// handleWithContextCancellable, handleWithServices, handleStateWithServices,
     /// handleTypedWithServices, handleWithServicesCancellable, persist,
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
-    /// preferLocalPlacement, randomPlacement, hashBasedPlacement, activationCountPlacement,
-    /// resourceOptimizedPlacement, siloRolePlacement, customPlacement,
-    /// mayInterleave, oneWay, onLifecycleStage,
-    /// implicitStreamSubscription.
+    /// mayInterleave, oneWay, onLifecycleStage.
     /// </summary>
     let grain = GrainBuilder()

@@ -31,7 +31,6 @@
     <Compile Include="EventSourcingTests.fs" />
     <Compile Include="GrainArbitraryTests.fs" />
     <Compile Include="ServiceInjectionTests.fs" />
-    <Compile Include="PlacementTests.fs" />
     <Compile Include="DeclarativeTimerTests.fs" />
     <Compile Include="PersistenceProviderTests.fs" />
     <Compile Include="FilterTests.fs" />
@@ -42,7 +41,6 @@
     <Compile Include="OneWayTests.fs" />
     <Compile Include="BroadcastChannelTests.fs" />
     <Compile Include="AdvancedReentrancyTests.fs" />
-    <Compile Include="AdvancedPlacementTests.fs" />
     <Compile Include="VersioningTests.fs" />
     <Compile Include="GrainServiceTests.fs" />
     <Compile Include="GrainExtensionTests.fs" />
@@ -60,7 +58,6 @@
     <Compile Include="HealthCheckTests.fs" />
     <Compile Include="TlsConfigTests.fs" />
     <Compile Include="DashboardConfigTests.fs" />
-    <Compile Include="ImplicitStreamSubscriptionTests.fs" />
     <Compile Include="AdditionalPersistenceTests.fs" />
     <Compile Include="RedisReminderTests.fs" />
     <Compile Include="StreamProvidersTests.fs" />

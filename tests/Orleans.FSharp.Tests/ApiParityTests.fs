@@ -134,27 +134,6 @@ let ``siloConfig default has no grainCollectionAge`` () =
     let config = SiloConfig.Default
     test <@ config.GrainCollectionAge.IsNone @>
 
-[<Fact>]
-let ``grain CE sets deactivationTimeout`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            deactivationTimeout (TimeSpan.FromMinutes 10.)
-        }
-
-    test <@ def.DeactivationTimeout = Some(TimeSpan.FromMinutes 10.) @>
-
-[<Fact>]
-let ``grain CE default has no deactivationTimeout`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-        }
-
-    test <@ def.DeactivationTimeout.IsNone @>
-
 // ============================================================================
 // GAP #4: Grain identity access from handler
 // ============================================================================
@@ -483,31 +462,6 @@ let ``FilterContext module has grainInstance function`` () =
     test <@ true @>
 
 // ============================================================================
-// GAP #10: GrainType attribute support
-// ============================================================================
-
-[<Fact>]
-let ``grain CE sets grainType`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            grainType "my-custom-grain-type"
-        }
-
-    test <@ def.GrainTypeName = Some "my-custom-grain-type" @>
-
-[<Fact>]
-let ``grain CE default has no grainType`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-        }
-
-    test <@ def.GrainTypeName.IsNone @>
-
-// ============================================================================
 // Combined integration tests
 // ============================================================================
 
@@ -550,45 +504,3 @@ let ``clientConfig CE combines cluster and gateway options`` () =
     test <@ config.ServiceId = Some "my-svc" @>
     test <@ config.GatewayListRefreshPeriod = Some(TimeSpan.FromSeconds 15.) @>
     test <@ config.PreferredGatewayIndex = Some 1 @>
-
-[<Fact>]
-let ``grain CE combines deactivationTimeout and grainType`` () =
-    let def =
-        grain {
-            defaultState "init"
-            handle (fun state _msg -> task { return state, box state })
-            deactivationTimeout (TimeSpan.FromMinutes 20.)
-            grainType "my-grain"
-        }
-
-    test <@ def.DeactivationTimeout = Some(TimeSpan.FromMinutes 20.) @>
-    test <@ def.GrainTypeName = Some "my-grain" @>
-
-// ---------------------------------------------------------------------------
-// FsCheck property tests
-// ---------------------------------------------------------------------------
-
-[<Property>]
-let ``deactivationTimeout stores any positive TimeSpan for grain definition`` (seconds: PositiveInt) =
-    let timeout = TimeSpan.FromSeconds(float seconds.Get)
-
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state (_msg: string) -> task { return state, box state })
-            deactivationTimeout timeout
-        }
-
-    def.DeactivationTimeout = Some timeout
-
-[<Property>]
-let ``grain CE deactivationTimeout and grainType do not disturb DefaultState for any initial int`` (initial: int) =
-    let def =
-        grain {
-            defaultState initial
-            handle (fun state (_msg: string) -> task { return state, box state })
-            deactivationTimeout (TimeSpan.FromMinutes 5.)
-            grainType "my-grain"
-        }
-
-    def.DefaultState = Some initial && def.GrainTypeName = Some "my-grain"
