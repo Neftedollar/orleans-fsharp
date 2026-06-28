@@ -326,6 +326,20 @@ module FSharpEventSourcedGrain =
         }
 
     /// <summary>
+    /// Clears the grain's event log via <c>JournaledGrain.ClearLogAsync</c> (Orleans 10.1.0+),
+    /// dispatched through <c>IFSharpEventSourcedGrain.ClearLog</c>. All confirmed events are
+    /// removed from storage and the confirmed view is re-initialised to the initial state
+    /// (version reset to 0). The grain stays usable — subsequent commands rebuild from the
+    /// now-empty log.
+    /// </summary>
+    /// <param name="handle">The typed grain handle.</param>
+    /// <typeparam name="'State">The grain's state type.</typeparam>
+    /// <typeparam name="'Command">The grain's command type.</typeparam>
+    /// <returns>A Task that completes once the log has been cleared.</returns>
+    let clearLog<'State, 'Command> (handle: FSharpEventSourcedGrainHandle<'State, 'Command>) : Task =
+        handle.Grain.ClearLog()
+
+    /// <summary>
     /// Creates a typed handle for a grain that inherits <see cref="IFSharpEventSourcedGrain"/>.
     /// Use this when your grain interface is defined as <c>type IMyGrain = inherit IFSharpEventSourcedGrain</c>
     /// and is backed by a generated thin stub (<c>MyGrainImpl : FSharpEventSourcedGrainImpl, IMyGrain</c>).

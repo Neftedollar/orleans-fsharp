@@ -282,3 +282,44 @@ type TypedEventSourcedGrainTests(fixture: ClusterFixture) =
             let! state = FSharpEventSourcedGrain.send (Deposit 77m) grain
             test <@ state.Balance = 77m @>
         }
+
+// ---------------------------------------------------------------------------
+// ClearLog — JournaledGrain.ClearLogAsync bridge (Orleans 10.1.0+)
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Verifies <c>FSharpEventSourcedGrain.clearLog</c> surfaces
+/// <c>JournaledGrain.ClearLogAsync</c> on the universal event-sourced path.
+/// The test cluster configures the <c>LogStorage</c> log-consistency provider
+/// (<c>AddLogStorageBasedLogConsistencyProviderAsDefault</c>), whose log-view adaptor
+/// overrides <c>ClearPrimaryLogAsync</c> (→ <c>ClearStateAsync</c>) and, in
+/// <c>ProcessClearLogRequest</c>, re-initialises the confirmed view to the initial state
+/// and resets the version to 0. ClearLog's effect is therefore deterministically
+/// observable on the same activation: the balance reads back as the default (0) after a
+/// confirmed deposit, and a subsequent command rebuilds correctly from the cleared log.
+/// </summary>
+[<Collection("ClusterCollection")>]
+type EventSourcedClearLogTests(fixture: ClusterFixture) =
+
+    [<Fact>]
+    member _.``clearLog resets confirmed log/state and a subsequent command rebuilds`` () =
+        task {
+            let grain =
+                FSharpEventSourcedGrain.ref<BankAccountState, BankAccountCommand> fixture.GrainFactory "univ-bank-clearlog"
+
+            // Confirm a deposit so the log is non-empty and balance is 250.
+            let! afterDeposit = FSharpEventSourcedGrain.send (Deposit 250m) grain
+            test <@ afterDeposit.Balance = 250m @>
+
+            // Clear the event log: confirmed view is reset to the initial state and version to 0.
+            do! FSharpEventSourcedGrain.clearLog grain
+
+            // After clearing, the balance reads back as the default (0) — state was recalculated
+            // from the now-empty log. GetBalance raises no events, so this reflects the cleared state.
+            let! afterClear = FSharpEventSourcedGrain.send GetBalance grain
+            test <@ afterClear.Balance = 0m @>
+
+            // The grain is still fully usable: a new deposit rebuilds from the cleared log.
+            let! afterReDeposit = FSharpEventSourcedGrain.send (Deposit 40m) grain
+            test <@ afterReDeposit.Balance = 40m @>
+        }
