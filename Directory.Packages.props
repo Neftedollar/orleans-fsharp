@@ -1,0 +1,82 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <OrleansVersion>10.2.1</OrleansVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft Orleans — all pinned to the single version knob above -->
+    <PackageVersion Include="Microsoft.Orleans.Sdk"                          Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Core.Abstractions"            Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Runtime"                      Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Server"                       Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Reminders"                    Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Streaming"                    Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.BroadcastChannel"             Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Transactions"                 Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.EventSourcing"                Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.TestingHost"                  Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Clustering.Redis"             Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Persistence.Redis"            Version="$(OrleansVersion)" />
+
+    <!-- Microsoft.Extensions / ASP.NET Core
+         Previously floated at 10.*; reconciled to highest 10.x in local cache. -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions"     Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection"      Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting"                  Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.TestHost"                  Version="10.0.9" />
+
+    <!-- Test tooling
+         Microsoft.NET.Test.Sdk previously floated at 17.*; highest 17.x = 17.14.1.
+         xunit previously floated at 2.*; highest 2.x = 2.9.3.
+         xunit.runner.visualstudio previously floated at 2.*; highest 2.x = 2.8.2.
+         FsCheck/FsCheck.Xunit: reconciled from 2.* (examples) and 3.* (solution); picking 3.3.3. -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk"                        Version="17.14.1" />
+    <PackageVersion Include="xunit"                                         Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio"                     Version="2.8.2" />
+    <PackageVersion Include="FsCheck"                                       Version="3.3.3" />
+    <PackageVersion Include="FsCheck.Xunit"                                 Version="3.3.3" />
+    <PackageVersion Include="Unquote"                                       Version="7.0.1" />
+
+    <!-- F# ecosystem -->
+    <!-- FSharp.Core: pinned to match the SDK version shipped with .NET 10 toolchain (dotnet-sdk 10.1.201).
+         Without this pin, NuGet resolves the lowest-common-denominator from transitive deps (9.0.300),
+         which breaks the 'and!' CE construct (FS3343). -->
+    <PackageVersion Include="FSharp.Core"                                   Version="10.1.201" />
+    <PackageVersion Include="FSharp.Analyzers.SDK"                          Version="0.37.2" />
+    <!-- FsToolkit.ErrorHandling: reconciled from 5.2.0 (src) and 5.* (template); pinned to 5.2.0 -->
+    <PackageVersion Include="FsToolkit.ErrorHandling"                       Version="5.2.0" />
+    <PackageVersion Include="IcedTasks"                                     Version="0.11.9" />
+    <PackageVersion Include="FSharp.SystemTextJson"                         Version="1.4.36" />
+    <!-- FSharp.Control.TaskSeq previously floated at 0.*; highest 0.x = 0.6.0 -->
+    <PackageVersion Include="FSharp.Control.TaskSeq"                        Version="0.6.0" />
+
+    <!-- Other libraries -->
+    <PackageVersion Include="Polly"                                         Version="8.7.0" />
+    <!-- Serilog.Extensions.Logging previously floated at 10.*; only 10.x in cache = 10.0.0 -->
+    <PackageVersion Include="Serilog.Extensions.Logging"                    Version="10.0.0" />
+    <PackageVersion Include="Serilog.Sinks.Console"                        Version="6.1.1" />
+    <PackageVersion Include="Marten"                                        Version="8.37.3" />
+    <!-- Scriban previously floated at 5.*; highest 5.x in cache = 5.12.1 -->
+    <PackageVersion Include="Scriban"                                       Version="5.12.1" />
+    <PackageVersion Include="TypeShape"                                     Version="10.0.0" />
+    <PackageVersion Include="StackExchange.Redis"                           Version="2.13.17" />
+
+    <!-- Fable packages (examples/fable-fullstack only) -->
+    <PackageVersion Include="Fable.Remoting.Server"                         Version="5.42.0" />
+    <PackageVersion Include="Fable.Remoting.AspNetCore"                     Version="2.43.0" />
+
+    <!-- Build-time tooling (referenced from Directory.Build.targets with PrivateAssets="All") -->
+    <PackageVersion Include="Microsoft.SourceLink.GitHub"                   Version="8.0.0" />
+    <PackageVersion Include="MinVer"                                        Version="6.1.0" />
+
+    <!-- Library's own published packages (referenced from templates).
+         Templates target 2.*; only 1.0.0 is published on NuGet.org.
+         Pinned to 1.0.0 to allow restore to succeed; the 2.x→3.x bump is a later task. -->
+    <PackageVersion Include="Orleans.FSharp"                                Version="1.0.0" />
+    <PackageVersion Include="Orleans.FSharp.Runtime"                        Version="1.0.0" />
+  </ItemGroup>
+</Project>

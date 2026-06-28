@@ -47,19 +47,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FsCheck.Xunit" Version="3.*" />
-    <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="10.*" />
-    <PackageReference Include="Unquote" Version="7.*" />
-    <PackageReference Include="xunit" Version="2.*" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
-    <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.TestingHost" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Persistence.Redis" Version="10.*" />
-    <PackageReference Include="StackExchange.Redis" Version="2.*" />
+    <PackageReference Include="FsCheck.Xunit" />
+    <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" />
+    <PackageReference Include="Unquote" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Orleans.Reminders" />
+    <PackageReference Include="Microsoft.Orleans.TestingHost" />
+    <PackageReference Include="Microsoft.Orleans.Streaming" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" />
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" />
+    <PackageReference Include="Microsoft.Orleans.Persistence.Redis" />
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
   <ItemGroup>

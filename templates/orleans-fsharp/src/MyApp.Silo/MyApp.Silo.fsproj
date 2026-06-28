@@ -9,8 +9,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Orleans.FSharp" Version="2.*" />
-    <PackageReference Include="Orleans.FSharp.Runtime" Version="2.*" />
+    <PackageReference Include="Orleans.FSharp" />
+    <PackageReference Include="Orleans.FSharp.Runtime" />
   </ItemGroup>
 
   <ItemGroup>

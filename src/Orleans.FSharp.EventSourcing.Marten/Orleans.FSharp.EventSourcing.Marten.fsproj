@@ -15,8 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Marten" Version="8.*" />
-    <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
+    <PackageReference Include="Marten" />
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" />
   </ItemGroup>
 
   <ItemGroup>

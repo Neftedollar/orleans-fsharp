@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Orleans.EventSourcing" Version="10.*" />
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" />
   </ItemGroup>
 
 </Project>

@@ -4,7 +4,7 @@
        <IsPackable>false</IsPackable> in their .fsproj/.csproj). Pack-only
        PackageReferences belong here, not in Directory.Build.props. -->
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.*" PrivateAssets="All" />
-    <PackageReference Include="MinVer" Version="6.*" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+    <PackageReference Include="MinVer" PrivateAssets="All" />
   </ItemGroup>
 </Project>

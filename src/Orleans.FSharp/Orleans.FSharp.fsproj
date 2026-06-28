@@ -48,20 +48,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0" />
-    <PackageReference Include="Microsoft.Orleans.Core.Abstractions" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Reminders" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Server" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
-    <PackageReference Include="IcedTasks" Version="0.*" />
-    <PackageReference Include="FSharp.SystemTextJson" Version="1.*" />
-    <PackageReference Include="FSharp.Control.TaskSeq" Version="0.*" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Transactions" Version="10.*" />
-    <PackageReference Include="Polly" Version="8.*" />
-    <PackageReference Include="TypeShape" Version="10.0.0" />
+    <PackageReference Include="FsToolkit.ErrorHandling" />
+    <PackageReference Include="Microsoft.Orleans.Core.Abstractions" />
+    <PackageReference Include="Microsoft.Orleans.Reminders" />
+    <PackageReference Include="Microsoft.Orleans.Runtime" />
+    <PackageReference Include="Microsoft.Orleans.Server" />
+    <PackageReference Include="Microsoft.Orleans.Streaming" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" />
+    <PackageReference Include="IcedTasks" />
+    <PackageReference Include="FSharp.SystemTextJson" />
+    <PackageReference Include="FSharp.Control.TaskSeq" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Orleans.Transactions" />
+    <PackageReference Include="Polly" />
+    <PackageReference Include="TypeShape" />
   </ItemGroup>
 
 </Project>
