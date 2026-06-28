@@ -1,8 +1,5 @@
 module Orleans.FSharp.Tests.PlacementTests
 
-// FS44: deprecated CE keywords (reentrant) used here intentionally to assert legacy behaviour.
-#nowarn "44"
-
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
@@ -52,23 +49,6 @@ let ``grain CE hashBasedPlacement sets HashBased strategy`` () =
         }
 
     test <@ def.PlacementStrategy = PlacementStrategy.HashBased @>
-
-[<Fact>]
-let ``grain CE placement does not affect other fields`` () =
-    let def =
-        grain {
-            defaultState 42
-            handle (fun state _msg -> task { return state, box state })
-            persist "Default"
-            preferLocalPlacement
-            reentrant
-        }
-
-    test <@ def.DefaultState = Some 42 @>
-    test <@ def.PersistenceName = Some "Default" @>
-    test <@ def.IsReentrant = true @>
-    test <@ def.PlacementStrategy = PlacementStrategy.PreferLocal @>
-    test <@ def.Handler |> Option.isSome @>
 
 [<Fact>]
 let ``grain CE last placement strategy wins`` () =

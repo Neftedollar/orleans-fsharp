@@ -352,14 +352,6 @@ type GrainDefinition<'State, 'Message> =
         /// <summary>Named declarative timer handlers. Each entry maps a timer name to its dueTime, period, and state-transforming callback.
         /// Timers are automatically registered on grain activation and disposed on deactivation by Orleans.</summary>
         TimerHandlers: Map<string, TimeSpan * TimeSpan * ('State -> Task<'State>)>
-        /// <summary>Whether this grain allows reentrant (concurrent) message processing.</summary>
-        IsReentrant: bool
-        /// <summary>Set of method names that are always interleaved (processed concurrently) even on non-reentrant grains.</summary>
-        InterleavedMethods: Set<string>
-        /// <summary>Whether this grain is a stateless worker that allows multiple activations per silo.</summary>
-        IsStatelessWorker: bool
-        /// <summary>Maximum number of local worker activations per silo, or None for CPU count.</summary>
-        MaxLocalWorkers: int option
         /// <summary>The placement strategy for the grain. In C# CodeGen, maps to Orleans placement attributes.</summary>
         PlacementStrategy: PlacementStrategy
         /// <summary>Named additional persistent states. Each entry maps a state name to its storage provider name, default value, and type.</summary>
@@ -367,9 +359,6 @@ type GrainDefinition<'State, 'Message> =
         /// <summary>Set of method names that should be marked with the [OneWay] attribute in C# CodeGen.
         /// One-way methods are fire-and-forget: the caller does not wait for the grain to finish processing.</summary>
         OneWayMethods: Set<string>
-        /// <summary>Set of method names that should be marked with [ReadOnly] in C# CodeGen.
-        /// Read-only methods allow interleaving for read-only calls, improving throughput for non-mutating operations.</summary>
-        ReadOnlyMethods: Set<string>
         /// <summary>Optional name of a static predicate method for custom reentrancy decisions.
         /// In C# CodeGen, maps to [MayInterleave("PredicateMethodName")] on the grain class.
         /// The predicate receives the incoming InvokeMethodRequest and returns bool.</summary>
@@ -607,14 +596,9 @@ type GrainBuilder() =
             OnDeactivate = None
             ReminderHandlers = Map.empty
             TimerHandlers = Map.empty
-            IsReentrant = false
-            InterleavedMethods = Set.empty
-            IsStatelessWorker = false
-            MaxLocalWorkers = None
             PlacementStrategy = PlacementStrategy.Default
             AdditionalStates = Map.empty
             OneWayMethods = Set.empty
-            ReadOnlyMethods = Set.empty
             MayInterleavePredicate = None
             LifecycleHooks = Map.empty
             ImplicitSubscriptions = Map.empty
@@ -848,84 +832,6 @@ type GrainBuilder() =
             invalidArg (nameof name) "Timer name cannot be empty or whitespace"
         { definition with
             TimerHandlers = definition.TimerHandlers |> Map.add name (dueTime, period, handler)
-        }
-
-    /// <summary>
-    /// Marks the grain as reentrant.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
-    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain <c>[Reentrant]</c>
-    /// attribute cannot be applied. The setter still records the intent on
-    /// <c>GrainDefinition.IsReentrant</c>, but no runtime consumer reads it.
-    /// To enable Orleans reentrancy, write a per-grain C# stub manually.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with reentrant mode enabled.</returns>
-    [<CustomOperation("reentrant")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.Reentrant(definition: GrainDefinition<'State, 'Message>) =
-        { definition with IsReentrant = true }
-
-    /// <summary>
-    /// Marks a specific method as always interleaved.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> The
-    /// <c>[AlwaysInterleave]</c> attribute must be placed on an interface method, but
-    /// the universal pattern exposes a single <c>HandleMessage(object)</c> method via
-    /// <c>IFSharpGrain</c> — there is no per-method interface entry to attribute.
-    /// The setter records the name on <c>GrainDefinition.InterleavedMethods</c> but no
-    /// runtime consumer reads it. Write a per-grain C# stub manually if you need this.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="methodName">The name of the method to always interleave.</param>
-    /// <returns>The updated grain definition with the method added to the interleaved set.</returns>
-    [<CustomOperation("interleave")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.Interleave(definition: GrainDefinition<'State, 'Message>, methodName: string) =
-        { definition with
-            InterleavedMethods = definition.InterleavedMethods |> Set.add methodName
-        }
-
-    /// <summary>
-    /// Marks the grain as a stateless worker.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
-    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain
-    /// <c>[StatelessWorker]</c> attribute cannot be applied. The setter records intent on
-    /// <c>GrainDefinition.IsStatelessWorker</c> but no runtime consumer reads it.
-    /// To enable Orleans stateless-worker placement, write a per-grain C# stub manually.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with stateless worker mode enabled.</returns>
-    [<CustomOperation("statelessWorker")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.StatelessWorker(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            IsStatelessWorker = true
-        }
-
-    /// <summary>
-    /// Sets the maximum number of local worker activations per silo for a stateless worker grain.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern</b> — paired with the deprecated
-    /// <c>statelessWorker</c> keyword, see its remarks for context.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="count">The maximum number of local worker activations.</param>
-    /// <returns>The updated grain definition with the max activations set.</returns>
-    [<CustomOperation("maxActivations")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.MaxActivations(definition: GrainDefinition<'State, 'Message>, count: int) =
-        { definition with
-            MaxLocalWorkers = Some count
         }
 
     /// <summary>
@@ -1283,28 +1189,6 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Marks a specific interface method as read-only.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> The <c>[ReadOnly]</c>
-    /// attribute must be on an interface method, but the universal pattern exposes a
-    /// single <c>HandleMessage(object)</c> method via <c>IFSharpGrain</c> — there is
-    /// no per-method interface entry to attribute. The setter records the name on
-    /// <c>GrainDefinition.ReadOnlyMethods</c> but no runtime consumer reads it.
-    /// Write a per-grain C# stub manually if you need <c>[ReadOnly]</c> semantics.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="methodName">The name of the method to mark as read-only.</param>
-    /// <returns>The updated grain definition with the method added to the read-only set.</returns>
-    [<CustomOperation("readOnly")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.ReadOnly(definition: GrainDefinition<'State, 'Message>, methodName: string) =
-        { definition with
-            ReadOnlyMethods = definition.ReadOnlyMethods |> Set.add methodName
-        }
-
-    /// <summary>
     /// Sets a custom reentrancy predicate method name for the grain.
     /// <para>
     /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
@@ -1457,8 +1341,7 @@ type GrainBuilder() =
         }
 
     /// <summary>Returns the completed grain definition. Validates constraints:
-    /// defaultState must be explicitly set, at least one handler must be registered,
-    /// and stateless workers cannot use persistent state.</summary>
+    /// defaultState must be explicitly set and at least one handler must be registered.</summary>
     /// <exception cref="System.InvalidOperationException">Thrown when validation fails.</exception>
     member _.Run(definition: GrainDefinition<'State, 'Message>) =
         if definition.DefaultState.IsNone then
@@ -1468,10 +1351,6 @@ type GrainBuilder() =
         if not (GrainDefinition.hasAnyHandler definition) then
             invalidOp
                 $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle', 'handleState', 'handleTyped', 'handleCancellable', 'handleWithContext', or 'handleWithContextCancellable' in the grain {{ }} CE."
-
-        if definition.IsStatelessWorker && definition.PersistenceName.IsSome then
-            invalidOp
-                "Stateless worker grains cannot use persistent state. Remove either 'statelessWorker' or 'persist' from the grain definition."
 
         definition
 
@@ -1491,7 +1370,7 @@ module GrainBuilderInstance =
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
     /// preferLocalPlacement, randomPlacement, hashBasedPlacement, activationCountPlacement,
     /// resourceOptimizedPlacement, siloRolePlacement, customPlacement,
-    /// reentrant, interleave, readOnly, mayInterleave, oneWay, onLifecycleStage,
+    /// mayInterleave, oneWay, onLifecycleStage,
     /// implicitStreamSubscription.
     /// </summary>
     let grain = GrainBuilder()

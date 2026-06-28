@@ -1,8 +1,5 @@
 module Orleans.FSharp.Tests.ImplicitStreamSubscriptionTests
 
-// FS44: deprecated CE keywords (reentrant) used here intentionally to assert legacy behaviour.
-#nowarn "44"
-
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
@@ -60,21 +57,6 @@ let ``grain CE implicit subscription handler is invoked correctly`` () =
     let handler = def.ImplicitSubscriptions.["test-ns"]
     let result = handler 10 (box 5) |> Async.AwaitTask |> Async.RunSynchronously
     test <@ result = 15 @>
-
-[<Fact>]
-let ``grain CE implicit subscription composes with other features`` () =
-    let def =
-        grain {
-            defaultState "initial"
-            handle (fun state _msg -> task { return state, box state })
-            persist "Default"
-            reentrant
-            implicitStreamSubscription "events" (fun state _event -> task { return state })
-        }
-
-    test <@ def.PersistenceName = Some "Default" @>
-    test <@ def.IsReentrant = true @>
-    test <@ def.ImplicitSubscriptions |> Map.containsKey "events" @>
 
 [<Fact>]
 let ``grain CE later implicit subscription overrides earlier with same namespace`` () =

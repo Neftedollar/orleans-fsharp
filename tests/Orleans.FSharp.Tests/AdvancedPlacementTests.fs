@@ -1,8 +1,5 @@
 module Orleans.FSharp.Tests.AdvancedPlacementTests
 
-// FS44: deprecated CE keywords (reentrant) used here intentionally to assert legacy behaviour.
-#nowarn "44"
-
 open System
 open System.Threading.Tasks
 open Xunit
@@ -89,23 +86,6 @@ let ``grain CE customPlacement stores the type`` () =
         | _ -> None
 
     test <@ strategyType = Some typeof<MyCustomStrategy> @>
-
-[<Fact>]
-let ``grain CE advanced placement does not affect other fields`` () =
-    let def =
-        grain {
-            defaultState 42
-            handle (fun state _msg -> task { return state, box state })
-            persist "Default"
-            reentrant
-            activationCountPlacement
-        }
-
-    test <@ def.DefaultState = Some 42 @>
-    test <@ def.PersistenceName = Some "Default" @>
-    test <@ def.IsReentrant = true @>
-    test <@ def.PlacementStrategy = PlacementStrategy.ActivationCountBased @>
-    test <@ def.Handler |> Option.isSome @>
 
 [<Fact>]
 let ``grain CE last advanced placement strategy wins`` () =

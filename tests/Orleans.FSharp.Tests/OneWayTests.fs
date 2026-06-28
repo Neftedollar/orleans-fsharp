@@ -1,6 +1,6 @@
 module Orleans.FSharp.Tests.OneWayTests
 
-// FS44: deprecated CE keywords (reentrant, oneWay, interleave) used here intentionally to assert legacy behaviour.
+// FS44: deprecated CE keyword (oneWay) used here intentionally to assert legacy behaviour.
 #nowarn "44"
 
 open System.Threading.Tasks
@@ -77,32 +77,6 @@ let ``grain CE oneWay does not affect other fields`` () =
     test <@ def.DefaultState = Some 42 @>
     test <@ def.PersistenceName = Some "Default" @>
     test <@ def.Handler |> Option.isSome @>
-    test <@ def.OneWayMethods |> Set.contains "FireAndForget" @>
-
-[<Fact>]
-let ``grain CE oneWay and interleave can coexist`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            oneWay "FireAndForget"
-            interleave "GetValue"
-        }
-
-    test <@ def.OneWayMethods |> Set.contains "FireAndForget" @>
-    test <@ def.InterleavedMethods |> Set.contains "GetValue" @>
-
-[<Fact>]
-let ``grain CE oneWay and reentrant can coexist`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            reentrant
-            oneWay "FireAndForget"
-        }
-
-    test <@ def.IsReentrant = true @>
     test <@ def.OneWayMethods |> Set.contains "FireAndForget" @>
 
 // --- invokeOneWay tests ---

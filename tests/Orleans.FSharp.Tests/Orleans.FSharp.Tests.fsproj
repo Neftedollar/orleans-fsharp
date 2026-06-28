@@ -28,8 +28,6 @@
     <Compile Include="TimerTests.fs" />
     <Compile Include="ApiSurfaceV2Tests.fs" />
     <Compile Include="ObserverTests.fs" />
-    <Compile Include="ReentrancyTests.fs" />
-    <Compile Include="StatelessWorkerTests.fs" />
     <Compile Include="EventSourcingTests.fs" />
     <Compile Include="GrainArbitraryTests.fs" />
     <Compile Include="ServiceInjectionTests.fs" />

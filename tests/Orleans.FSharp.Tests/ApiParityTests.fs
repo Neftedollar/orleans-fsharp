@@ -1,8 +1,5 @@
 module Orleans.FSharp.Tests.ApiParityTests
 
-// FS44: deprecated CE keywords (reentrant) used here intentionally to assert legacy behaviour.
-#nowarn "44"
-
 open System
 open System.Threading.Tasks
 open Xunit
@@ -509,21 +506,6 @@ let ``grain CE default has no grainType`` () =
         }
 
     test <@ def.GrainTypeName.IsNone @>
-
-[<Fact>]
-let ``grain CE can combine grainType with other options`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            grainType "custom-type"
-            reentrant
-            persist "Default"
-        }
-
-    test <@ def.GrainTypeName = Some "custom-type" @>
-    test <@ def.IsReentrant @>
-    test <@ def.PersistenceName = Some "Default" @>
 
 // ============================================================================
 // Combined integration tests

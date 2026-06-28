@@ -1,49 +1,12 @@
 module Orleans.FSharp.Tests.AdvancedReentrancyTests
 
-// FS44: deprecated CE keywords (reentrant, mayInterleave, readOnly) used here intentionally to assert legacy behaviour.
+// FS44: deprecated CE keyword (mayInterleave) used here intentionally to assert legacy behaviour.
 #nowarn "44"
 
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
-open FsCheck
-open FsCheck.Xunit
 open Orleans.FSharp
-
-[<Fact>]
-let ``grain CE default has empty ReadOnlyMethods`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-        }
-
-    test <@ def.ReadOnlyMethods = Set.empty @>
-
-[<Fact>]
-let ``grain CE readOnly adds method name to ReadOnlyMethods`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            readOnly "GetValue"
-        }
-
-    test <@ def.ReadOnlyMethods |> Set.contains "GetValue" @>
-
-[<Fact>]
-let ``grain CE multiple readOnly calls add multiple methods`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            readOnly "GetValue"
-            readOnly "GetStatus"
-        }
-
-    test <@ def.ReadOnlyMethods |> Set.count = 2 @>
-    test <@ def.ReadOnlyMethods |> Set.contains "GetValue" @>
-    test <@ def.ReadOnlyMethods |> Set.contains "GetStatus" @>
 
 [<Fact>]
 let ``grain CE default has no MayInterleavePredicate`` () =
@@ -67,49 +30,6 @@ let ``grain CE mayInterleave stores predicate method name`` () =
     test <@ def.MayInterleavePredicate = Some "ArgHasInterleaveAttribute" @>
 
 [<Fact>]
-let ``grain CE readOnly and mayInterleave can coexist`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            readOnly "GetValue"
-            mayInterleave "ShouldInterleave"
-        }
-
-    test <@ def.ReadOnlyMethods |> Set.contains "GetValue" @>
-    test <@ def.MayInterleavePredicate = Some "ShouldInterleave" @>
-
-[<Fact>]
-let ``grain CE reentrant readOnly and mayInterleave can all coexist`` () =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state _msg -> task { return state, box state })
-            reentrant
-            readOnly "GetValue"
-            mayInterleave "ShouldInterleave"
-        }
-
-    test <@ def.IsReentrant = true @>
-    test <@ def.ReadOnlyMethods |> Set.contains "GetValue" @>
-    test <@ def.MayInterleavePredicate = Some "ShouldInterleave" @>
-
-[<Fact>]
-let ``grain CE readOnly does not affect other fields`` () =
-    let def =
-        grain {
-            defaultState 42
-            handle (fun state _msg -> task { return state, box state })
-            persist "Default"
-            readOnly "GetValue"
-        }
-
-    test <@ def.DefaultState = Some 42 @>
-    test <@ def.PersistenceName = Some "Default" @>
-    test <@ def.ReadOnlyMethods |> Set.contains "GetValue" @>
-    test <@ def.IsReentrant = false @>
-
-[<Fact>]
 let ``grain CE last mayInterleave wins`` () =
     let def =
         grain {
@@ -120,33 +40,3 @@ let ``grain CE last mayInterleave wins`` () =
         }
 
     test <@ def.MayInterleavePredicate = Some "Second" @>
-
-// ---------------------------------------------------------------------------
-// FsCheck property tests
-// ---------------------------------------------------------------------------
-
-[<Property>]
-let ``readOnly stores any non-empty method name`` (name: NonEmptyString) =
-    let def =
-        grain {
-            defaultState 0
-            handle (fun state (_msg: string) -> task { return state, box state })
-            readOnly name.Get
-        }
-
-    def.ReadOnlyMethods |> Set.contains name.Get
-
-[<Property>]
-let ``two distinct readOnly calls store both method names`` (name1: NonEmptyString) (name2: NonEmptyString) =
-    name1.Get = name2.Get
-    || (let def =
-            grain {
-                defaultState 0
-                handle (fun state (_msg: string) -> task { return state, box state })
-                readOnly name1.Get
-                readOnly name2.Get
-            }
-
-        def.ReadOnlyMethods |> Set.contains name1.Get
-        && def.ReadOnlyMethods |> Set.contains name2.Get
-        && def.ReadOnlyMethods |> Set.count = 2)
