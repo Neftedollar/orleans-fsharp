@@ -65,6 +65,9 @@ CLAUDE.md
 ## Specify (project management, not source)
 .specify/memory/
 
+## Superpowers (skill-generated plans/specs, not source)
+docs/superpowers/
+
 ## Temp / local
 *.tmp
 *.swp
