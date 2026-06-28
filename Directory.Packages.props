@@ -72,11 +72,5 @@
     <!-- Build-time tooling (referenced from Directory.Build.targets with PrivateAssets="All") -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub"                   Version="8.0.0" />
     <PackageVersion Include="MinVer"                                        Version="6.1.0" />
-
-    <!-- Library's own published packages (referenced from templates).
-         Templates target 2.*; only 1.0.0 is published on NuGet.org.
-         Pinned to 1.0.0 to allow restore to succeed; the 2.x→3.x bump is a later task. -->
-    <PackageVersion Include="Orleans.FSharp"                                Version="1.0.0" />
-    <PackageVersion Include="Orleans.FSharp.Runtime"                        Version="1.0.0" />
   </ItemGroup>
 </Project>

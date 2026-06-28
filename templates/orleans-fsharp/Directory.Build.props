@@ -3,5 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The generated project is self-contained: every PackageReference carries an
+         explicit Version and there is no Directory.Packages.props alongside it.
+         Opt out of Central Package Management explicitly so the project restores
+         standalone even if instantiated inside a repo that enables CPM upstream. -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
 </Project>

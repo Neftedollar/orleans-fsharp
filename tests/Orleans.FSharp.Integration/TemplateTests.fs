@@ -85,7 +85,7 @@ let private patchProjectReferences (projectDir: string) (projectName: string) : 
 
         let patched =
             content.Replace(
-                """<PackageReference Include="Orleans.FSharp" Version="2.*" />""",
+                """<PackageReference Include="Orleans.FSharp" Version="3.*" />""",
                 $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp", "Orleans.FSharp.fsproj")}" />"""
             )
 
@@ -101,11 +101,11 @@ let private patchProjectReferences (projectDir: string) (projectName: string) : 
         let patched =
             content
                 .Replace(
-                    """<PackageReference Include="Orleans.FSharp" Version="2.*" />""",
+                    """<PackageReference Include="Orleans.FSharp" Version="3.*" />""",
                     $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp", "Orleans.FSharp.fsproj")}" />"""
                 )
                 .Replace(
-                    """<PackageReference Include="Orleans.FSharp.Runtime" Version="2.*" />""",
+                    """<PackageReference Include="Orleans.FSharp.Runtime" Version="3.*" />""",
                     $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp.Runtime", "Orleans.FSharp.Runtime.fsproj")}" />"""
                 )
 
