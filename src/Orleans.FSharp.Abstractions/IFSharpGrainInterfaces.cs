@@ -186,6 +186,12 @@ public interface IFSharpEventSourcedGrain : IGrainWithStringKey
     /// confirmed view to the initial state (version reset to 0). The grain remains usable —
     /// subsequent commands rebuild from the now-empty log. Backs <c>FSharpEventSourcedGrain.clearLog</c>.
     /// </summary>
+    /// <remarks>
+    /// Provider-dependent: Orleans' <c>ClearLogAsync</c> throws
+    /// <see cref="System.NotSupportedException"/> for log-consistency providers that do not
+    /// override <c>ClearPrimaryLogAsync</c>. Only providers with explicit log-clearing support
+    /// honour this call; others surface a <see cref="System.NotSupportedException"/> at runtime.
+    /// </remarks>
     /// <returns>A task that completes once the log has been cleared.</returns>
     Task ClearLog();
 }
@@ -474,7 +480,7 @@ public class FSharpEventSourcedGrainImpl
     /// <inheritdoc/>
     // ClearLogAsync is a protected JournaledGrain member (Orleans 10.1.0+, PR #9849).
     // Its CancellationToken parameter is optional, so the no-arg call binds to the default.
-    public async Task ClearLog() => await ClearLogAsync();
+    public Task ClearLog() => ClearLogAsync();
 
     /// <summary>
     /// Override in a generated subclass to read grain state from a custom storage back-end.

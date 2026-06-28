@@ -332,9 +332,6 @@ type GrainDefinition<'State, 'Message> =
         TimerHandlers: Map<string, TimeSpan * TimeSpan * ('State -> Task<'State>)>
         /// <summary>Named additional persistent states. Each entry maps a state name to its storage provider name, default value, and type.</summary>
         AdditionalStates: Map<string, AdditionalStateSpec>
-        /// <summary>Set of method names that should be marked with the [OneWay] attribute in C# CodeGen.
-        /// One-way methods are fire-and-forget: the caller does not wait for the grain to finish processing.</summary>
-        OneWayMethods: Set<string>
         /// <summary>The message types whose incoming requests may interleave with an
         /// in-progress request on the same grain activation. Populated by the
         /// <c>interleaveMessage</c> CE operation. At silo-configuration time each type is
@@ -569,7 +566,6 @@ type GrainBuilder() =
             ReminderHandlers = Map.empty
             TimerHandlers = Map.empty
             AdditionalStates = Map.empty
-            OneWayMethods = Set.empty
             InterleaveMessageTypes = []
             LifecycleHooks = Map.empty
         }
@@ -1096,28 +1092,6 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Marks a specific method as one-way (fire-and-forget).
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> The <c>[OneWay]</c>
-    /// attribute must be on an interface method, but the universal pattern exposes a
-    /// single <c>HandleMessage(object)</c> method via <c>IFSharpGrain</c> — there is
-    /// no per-method interface entry to attribute. The setter records the name on
-    /// <c>GrainDefinition.OneWayMethods</c> but no runtime consumer reads it.
-    /// Write a per-grain C# stub manually if you need <c>[OneWay]</c> semantics.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="methodName">The name of the method to mark as one-way.</param>
-    /// <returns>The updated grain definition with the method added to the one-way set.</returns>
-    [<CustomOperation("oneWay")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.OneWay(definition: GrainDefinition<'State, 'Message>, methodName: string) =
-        { definition with
-            OneWayMethods = definition.OneWayMethods |> Set.add methodName
-        }
-
-    /// <summary>
     /// Marks a message type as interleavable: when a request carrying a message of this type
     /// (or, for a discriminated union, any of its cases) arrives while the grain is already
     /// processing another request, Orleans is permitted to begin handling it concurrently
@@ -1206,6 +1180,6 @@ module GrainBuilderInstance =
     /// handleWithContextCancellable, handleWithServices, handleStateWithServices,
     /// handleTypedWithServices, handleWithServicesCancellable, persist,
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
-    /// interleaveMessage, oneWay, onLifecycleStage.
+    /// interleaveMessage, onLifecycleStage.
     /// </summary>
     let grain = GrainBuilder()

@@ -332,6 +332,12 @@ module FSharpEventSourcedGrain =
     /// (version reset to 0). The grain stays usable — subsequent commands rebuild from the
     /// now-empty log.
     /// </summary>
+    /// <remarks>
+    /// Provider-dependent: Orleans' <c>ClearLogAsync</c> throws
+    /// <see cref="System.NotSupportedException"/> for log-consistency providers that do not
+    /// override <c>ClearPrimaryLogAsync</c>. Only providers with explicit log-clearing support
+    /// honour this call.
+    /// </remarks>
     /// <param name="handle">The typed grain handle.</param>
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command type.</typeparam>

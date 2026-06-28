@@ -3,11 +3,8 @@ module Orleans.FSharp.Tests.GrainServiceTests
 open System
 open Xunit
 open Swensen.Unquote
-open FsCheck
 open FsCheck.Xunit
-open Orleans.FSharp
 open Orleans.FSharp.Runtime
-open Orleans.Hosting
 open Orleans.Services
 
 /// <summary>Tests for the siloConfig CE addGrainService custom operation.</summary>
