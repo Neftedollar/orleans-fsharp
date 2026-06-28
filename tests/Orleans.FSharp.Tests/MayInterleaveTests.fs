@@ -41,6 +41,13 @@ type NeverInterleavable() =
     class
     end
 
+/// Multi-case field-carrying DU: field-carrying cases compile to nested subtypes
+/// (IlvQuery+Read, IlvQuery+Write) that are distinct from IlvQuery itself.
+/// Used by the assignability-path test below.
+type IlvQuery =
+    | Read of id: int
+    | Write of value: string
+
 type MiState = { N: int }
 
 // ── FSharpInterleaveRegistry (process-wide static registry) ──────────────────
@@ -120,3 +127,13 @@ let ``AddFSharpGrain pushes interleavable message types into the static registry
     services.AddFSharpGrain<MiState, WiredInterleavable>(def) |> ignore
 
     test <@ FSharpInterleaveRegistry.MayInterleave(typeof<WiredInterleavable>) = true @>
+
+// ── Assignability path: DU case subtypes interleave via the registered DU type ──
+
+[<Fact>]
+let ``registered DU type interleaves its field-carrying nested case types`` () =
+    FSharpInterleaveRegistry.Register(typeof<IlvQuery>)
+    let caseType = (box (Read 1)).GetType() // IlvQuery+Read nested subtype
+    // Prove we are on the assignability path, NOT the ContainsKey fast-path:
+    test <@ caseType <> typeof<IlvQuery> @>
+    test <@ FSharpInterleaveRegistry.MayInterleave(caseType) = true @>

@@ -1135,6 +1135,10 @@ type GrainBuilder() =
     /// field-carrying DU cases (which compile to nested subtypes that cannot be named in
     /// source) are covered. Repeated registrations of the same type are de-duplicated.
     /// </para>
+    /// <para>
+    /// Caution: registering a broad base type, interface, or <c>obj</c> will make every
+    /// assignable message type interleavable — always register specific DU or message types.
+    /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
     /// <param name="messageType">The message (or discriminated-union) type to mark interleavable.</param>
