@@ -40,9 +40,10 @@ type UniversalPatternTests(fixture: ClusterFixture) =
     member _.``FSharpGrain.post fires without waiting for result`` () =
         task {
             let handle = FSharpGrain.ref<PingState, PingCommand> fixture.GrainFactory "universal-ping-3"
+            // post returns Task (not Task<'State>) and is a true one-way call — observe its
+            // effect via a convergent two-way read rather than racing on a single read.
             do! handle |> FSharpGrain.post Ping
-            // post returns Task (not Task<'State>) — just verify it completes
-            let! state = handle |> FSharpGrain.send GetCount
+            let! state = Eventually.until (fun s -> s.Count >= 1) (fun () -> handle |> FSharpGrain.send GetCount)
             test <@ state.Count >= 1 @>
         }
 
@@ -86,7 +87,8 @@ type UniversalPatternTests(fixture: ClusterFixture) =
             let handle = FSharpGrain.ref<PingState, PingCommand> fixture.GrainFactory "universal-concurrent-1"
             let tasks = Array.init 10 (fun _ -> handle |> FSharpGrain.post Ping)
             do! Task.WhenAll(tasks)
-            let! state = handle |> FSharpGrain.send GetCount
+            // All 10 are true one-way calls; converge on the final count rather than racing.
+            let! state = Eventually.until (fun s -> s.Count = 10) (fun () -> handle |> FSharpGrain.send GetCount)
             test <@ state.Count = 10 @>
         }
 
@@ -184,8 +186,9 @@ type UniversalPatternTests(fixture: ClusterFixture) =
         task {
             let key = Guid.NewGuid()
             let handle = FSharpGrain.refGuid<PingState, PingCommand> fixture.GrainFactory key
+            // postGuid is a true one-way call — observe its effect via a convergent read.
             do! handle |> FSharpGrain.postGuid Ping
-            let! state = handle |> FSharpGrain.sendGuid GetCount
+            let! state = Eventually.until (fun s -> s.Count >= 1) (fun () -> handle |> FSharpGrain.sendGuid GetCount)
             test <@ state.Count >= 1 @>
         }
 
@@ -224,8 +227,9 @@ type UniversalPatternTests(fixture: ClusterFixture) =
     member _.``FSharpGrain.postInt fires without waiting for result`` () =
         task {
             let handle = FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory 3001L
+            // postInt is a true one-way call — observe its effect via a convergent read.
             do! handle |> FSharpGrain.postInt Ping
-            let! state = handle |> FSharpGrain.sendInt GetCount
+            let! state = Eventually.until (fun s -> s.Count >= 1) (fun () -> handle |> FSharpGrain.sendInt GetCount)
             test <@ state.Count >= 1 @>
         }
 

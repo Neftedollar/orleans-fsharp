@@ -161,6 +161,16 @@ module GrainMock =
                             let! (newState, result) = handler state (msg :?> 'Command)
                             state <- newState
                             return result
+                    }
+
+                member _.HandleMessageOneWay(msg: obj) : Task =
+                    task {
+                        match def.Handler with
+                        | None ->
+                            failwith $"GrainMock: no handler registered for grain with state '{typeof<'State>.Name}'."
+                        | Some handler ->
+                            let! (newState, _result) = handler state (msg :?> 'Command)
+                            state <- newState
                     } }
 
         factory.Register(typeof<IFSharpGrain>, key, box mock)
@@ -197,6 +207,16 @@ module GrainMock =
                             let! (newState, result) = handler state (msg :?> 'Command)
                             state <- newState
                             return result
+                    }
+
+                member _.HandleMessageOneWay(msg: obj) : Task =
+                    task {
+                        match def.Handler with
+                        | None ->
+                            failwith $"GrainMock: no handler registered for grain with state '{typeof<'State>.Name}'."
+                        | Some handler ->
+                            let! (newState, _result) = handler state (msg :?> 'Command)
+                            state <- newState
                     } }
 
         factory.Register(typeof<IFSharpGrainWithGuidKey>, string key, box mock)
@@ -233,6 +253,16 @@ module GrainMock =
                             let! (newState, result) = handler state (msg :?> 'Command)
                             state <- newState
                             return result
+                    }
+
+                member _.HandleMessageOneWay(msg: obj) : Task =
+                    task {
+                        match def.Handler with
+                        | None ->
+                            failwith $"GrainMock: no handler registered for grain with state '{typeof<'State>.Name}'."
+                        | Some handler ->
+                            let! (newState, _result) = handler state (msg :?> 'Command)
+                            state <- newState
                     } }
 
         factory.Register(typeof<IFSharpGrainWithIntKey>, string key, box mock)

@@ -102,15 +102,18 @@ type GrainBatchIntegrationTests(fixture: ClusterFixture) =
             let handles =
                 List.init 4 (fun i -> FSharpGrain.ref<CalcState, CalcCommand> fixture.GrainFactory (key i))
 
-            // iter should complete without throwing; post is fire-and-forget (discards result)
+            // iter should complete without throwing; post is a true one-way (fire-and-forget) call.
             do!
                 GrainBatch.iter handles (fun h ->
                     FSharpGrain.post (AddValues(1, 1)) h)
 
-            // Verify by reading state
+            // Verify by reading state — converge, since one-way posts may not have landed yet.
             let! results =
-                GrainBatch.map handles (fun h ->
-                    FSharpGrain.ask<CalcState, CalcCommand, int> GetLastResult h)
+                Eventually.until
+                    (fun rs -> rs |> List.forall (fun r -> r = 2))
+                    (fun () ->
+                        GrainBatch.map handles (fun h ->
+                            FSharpGrain.ask<CalcState, CalcCommand, int> GetLastResult h))
 
             test <@ results |> List.forall (fun r -> r = 2) @>
         }

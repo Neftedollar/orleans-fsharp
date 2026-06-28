@@ -10,6 +10,40 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.EventSourcing
 
+/// <summary>
+/// Deterministic convergence helper for observing the effect of a true one-way
+/// <c>FSharpGrain.post</c> call. Because a one-way request returns once the message
+/// is sent — and Orleans gives no ordering or delivery guarantee relative to a
+/// following two-way call — a single read can race ahead of the posted command.
+/// <c>Eventually.until</c> repeatedly issues a two-way read until the predicate holds
+/// (or the attempt budget is exhausted), so the assertion converges instead of racing.
+/// This is a convergence check, not a brittle timing assertion: if a one-way post
+/// silently no-ops, the predicate never holds and the test fails.
+/// </summary>
+[<RequireQualifiedAccess>]
+module Eventually =
+
+    /// <summary>Reads via <paramref name="read"/> until <paramref name="pred"/> holds.</summary>
+    /// <param name="pred">Predicate that determines when the observed value is final.</param>
+    /// <param name="read">A two-way grain read returning the current observable value.</param>
+    /// <returns>The last value read (satisfying the predicate unless the budget ran out).</returns>
+    let until (pred: 'a -> bool) (read: unit -> Task<'a>) : Task<'a> =
+        task {
+            let mutable result = Unchecked.defaultof<'a>
+            let mutable satisfied = false
+            let mutable attempts = 0
+
+            while not satisfied && attempts < 50 do
+                let! v = read ()
+                result <- v
+
+                if pred v then satisfied <- true else do! Task.Delay 20
+
+                attempts <- attempts + 1
+
+            return result
+        }
+
 // ── Test grain types for the universal IFSharpGrain pattern ──────────────────
 
 /// <summary>State for the integration-test ping grain (universal pattern).</summary>

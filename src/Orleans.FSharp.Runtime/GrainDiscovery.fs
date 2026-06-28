@@ -279,6 +279,15 @@ type FSharpGrain<'State, 'Message>
             let typedMsg = message :?> 'Message
             this.HandleMessage(typedMsg)
 
+        /// <summary>
+        /// One-way (fire-and-forget) entry point. Dispatches like <c>HandleMessage</c> but
+        /// discards the result so no response is marshalled back to the caller.
+        /// Backs <c>FSharpGrain.post</c>.
+        /// </summary>
+        member this.HandleMessageOneWay(message: obj) : Task =
+            let typedMsg = message :?> 'Message
+            this.HandleMessage(typedMsg) :> Task
+
     interface IRemindable with
 
         /// <summary>

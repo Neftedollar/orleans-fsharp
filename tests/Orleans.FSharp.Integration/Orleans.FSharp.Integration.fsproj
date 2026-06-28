@@ -27,6 +27,7 @@
     <Compile Include="StreamingIntegrationTests.fs" />
     <Compile Include="CorrelationTests.fs" />
     <Compile Include="TestHarnessIntegrationTests.fs" />
+    <Compile Include="OneWayIntegrationTests.fs" />
     <Compile Include="ReminderIntegrationTests.fs" />
     <Compile Include="ObserverIntegrationTests.fs" />
     <Compile Include="ReentrancyIntegrationTests.fs" />

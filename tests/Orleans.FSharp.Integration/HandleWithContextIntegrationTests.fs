@@ -114,9 +114,10 @@ type HandleWithContextIntegrationTests(fixture: ClusterFixture) =
         task {
             let gf = fixture.GrainFactory
             let relay = FSharpGrain.ref<RelayState, RelayCommand> gf "relay-post"
-            // FSharpGrain.post awaits the RPC but discards the return value (not a true
-            // one-way call). State is observable immediately after the awaited post.
+            // FSharpGrain.post is a true one-way (fire-and-forget) call: it returns once the
+            // message is sent, with no response marshalled. Observe its effect via a
+            // convergent two-way read rather than racing on a single immediate read.
             do! FSharpGrain.post (ForwardPing "ping-post") relay
-            let! s = FSharpGrain.send GetRelayState relay
+            let! s = Eventually.until (fun s -> s.PingsSent = 1) (fun () -> FSharpGrain.send GetRelayState relay)
             test <@ s.PingsSent = 1 @>
         }

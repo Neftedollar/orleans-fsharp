@@ -126,7 +126,8 @@ type HandleStateWithContextIntegrationTests(fixture: ClusterFixture) =
         task {
             let gf = fixture.GrainFactory
             let g = FSharpGrain.ref<StateWithCtxState, StateWithCtxCommand> gf "swc-post"
+            // post is a true one-way call; observe its effect via a convergent two-way read.
             do! FSharpGrain.post (SWCAdd 13) g
-            let! s = FSharpGrain.send GetSWCState g
+            let! s = Eventually.until (fun s -> s.SWCSum = 13) (fun () -> FSharpGrain.send GetSWCState g)
             test <@ s.SWCSum = 13 @>
         }

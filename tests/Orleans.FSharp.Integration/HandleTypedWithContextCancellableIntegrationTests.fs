@@ -81,7 +81,10 @@ type HandleTypedWithContextCancellableIntegrationTests(fixture: ClusterFixture) 
     let ``post TWCCAdd completes without error`` () =
         task {
             let g = FSharpGrain.ref<TWCCState, TWCCCommand> fixture.GrainFactory "twcc-post"
+            // post is a true one-way call; observe its effect via a convergent two-way read.
             do! FSharpGrain.post (TWCCAdd(10, 20)) g
-            let! last = g |> FSharpGrain.ask<TWCCState, TWCCCommand, int> GetTWCCLastResult
+            let! last =
+                Eventually.until (fun v -> v = 30) (fun () ->
+                    g |> FSharpGrain.ask<TWCCState, TWCCCommand, int> GetTWCCLastResult)
             test <@ last = 30 @>
         }

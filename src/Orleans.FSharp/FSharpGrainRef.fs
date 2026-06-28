@@ -115,25 +115,23 @@ module FSharpGrain =
         }
 
     /// <summary>
-    /// Sends a command to a string-keyed grain, discarding the return value.
+    /// Sends a command to a string-keyed grain as a true one-way (fire-and-forget) call.
     /// <para>
-    /// <b>Note:</b> this function awaits the full round-trip RPC call to the grain and
-    /// discards the result. It is <em>not</em> a true fire-and-forget (one-way) call.
-    /// Use this when you want to send a state-changing command without needing the new state.
-    /// For a genuine one-way message, annotate the handler method with <c>[&lt;OneWay&gt;]</c>
-    /// and use <c>FSharpGrain.post</c> — both approaches will complete the Task on return.
+    /// This routes through the dedicated <c>[&lt;OneWay&gt;]</c> <c>HandleMessageOneWay</c>
+    /// method: the returned Task completes once the message is sent — no response is
+    /// marshalled back and grain-side exceptions are <em>not</em> propagated to the caller.
+    /// The grain still processes the command and mutates its state. Use this for
+    /// state-changing commands where you don't need the resulting state or a result value.
+    /// For a request/response call that returns the new state, use <c>FSharpGrain.send</c>.
     /// </para>
     /// </summary>
     /// <param name="cmd">The command to send.</param>
     /// <param name="handle">The typed grain handle.</param>
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
-    /// <returns>A Task that completes when the grain finishes processing.</returns>
+    /// <returns>A Task that completes once the one-way message has been sent.</returns>
     let post<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainHandle<'State, 'Command>) : Task =
-        task {
-            let! _ = handle.Grain.HandleMessage(box cmd)
-            ()
-        }
+        handle.Grain.HandleMessageOneWay(box cmd)
 
     /// <summary>
     /// Sends a command to a GUID-keyed grain and returns the typed state.
@@ -150,18 +148,18 @@ module FSharpGrain =
         }
 
     /// <summary>
-    /// Sends a command to a GUID-keyed grain, ignoring the result.
+    /// Sends a command to a GUID-keyed grain as a true one-way (fire-and-forget) call.
+    /// Routes through the dedicated <c>[&lt;OneWay&gt;]</c> <c>HandleMessageOneWay</c> method:
+    /// the returned Task completes once the message is sent — no response is marshalled back
+    /// and grain-side exceptions are not propagated. The grain still mutates its state.
     /// </summary>
     /// <param name="cmd">The command to send.</param>
     /// <param name="handle">The typed grain handle.</param>
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
-    /// <returns>A Task that completes when the grain finishes processing.</returns>
+    /// <returns>A Task that completes once the one-way message has been sent.</returns>
     let postGuid<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainGuidHandle<'State, 'Command>) : Task =
-        task {
-            let! _ = handle.Grain.HandleMessage(box cmd)
-            ()
-        }
+        handle.Grain.HandleMessageOneWay(box cmd)
 
     /// <summary>
     /// Sends a command to an integer-keyed grain and returns the typed state.
@@ -178,18 +176,18 @@ module FSharpGrain =
         }
 
     /// <summary>
-    /// Sends a command to an integer-keyed grain, ignoring the result.
+    /// Sends a command to an integer-keyed grain as a true one-way (fire-and-forget) call.
+    /// Routes through the dedicated <c>[&lt;OneWay&gt;]</c> <c>HandleMessageOneWay</c> method:
+    /// the returned Task completes once the message is sent — no response is marshalled back
+    /// and grain-side exceptions are not propagated. The grain still mutates its state.
     /// </summary>
     /// <param name="cmd">The command to send.</param>
     /// <param name="handle">The typed grain handle.</param>
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
-    /// <returns>A Task that completes when the grain finishes processing.</returns>
+    /// <returns>A Task that completes once the one-way message has been sent.</returns>
     let postInt<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainIntHandle<'State, 'Command>) : Task =
-        task {
-            let! _ = handle.Grain.HandleMessage(box cmd)
-            ()
-        }
+        handle.Grain.HandleMessageOneWay(box cmd)
 
     /// <summary>
     /// Sends a command to a string-keyed grain and returns the typed result value.

@@ -147,8 +147,9 @@ type HandleWithContextCancellableIntegrationTests(fixture: ClusterFixture) =
         task {
             let gf = fixture.GrainFactory
             let g = FSharpGrain.ref<CtxCancAccState, CtxCancAccCommand> gf "ctxcanc-post"
-            // FSharpGrain.post awaits the RPC but discards the return value.
+            // FSharpGrain.post is a true one-way (fire-and-forget) call; observe its effect
+            // via a convergent two-way read rather than racing on a single immediate read.
             do! FSharpGrain.post (CtxCancAdd 9) g
-            let! s = FSharpGrain.send GetCtxCancState g
+            let! s = Eventually.until (fun (s: CtxCancAccState) -> s.Sum = 9) (fun () -> FSharpGrain.send GetCtxCancState g)
             test <@ s.Sum = 9 @>
         }

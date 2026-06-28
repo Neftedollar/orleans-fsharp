@@ -1,4 +1,5 @@
 using Orleans;
+using Orleans.Concurrency;
 using Orleans.EventSourcing;
 using Orleans.EventSourcing.CustomStorage;
 using Orleans.Runtime;
@@ -30,6 +31,16 @@ public interface IFSharpGrain : IGrainWithStringKey
     /// <param name="message">The command or query object. Must be serializable.</param>
     /// <returns>The result produced by the grain handler, boxed as <c>object</c>.</returns>
     Task<object> HandleMessage(object message);
+
+    /// <summary>
+    /// Dispatches a message to the grain as a true one-way (fire-and-forget) call.
+    /// The caller returns once the message is sent; no response is marshalled back and
+    /// grain-side exceptions are not propagated to the caller. The grain still processes
+    /// the message and mutates its state. Backs <c>FSharpGrain.post</c>.
+    /// </summary>
+    /// <param name="message">The command object. Must be serializable.</param>
+    [OneWay]
+    Task HandleMessageOneWay(object message);
 }
 
 /// <summary>
@@ -43,6 +54,16 @@ public interface IFSharpGrainWithGuidKey : IGrainWithGuidKey
     /// <param name="message">The command or query object. Must be serializable.</param>
     /// <returns>The result produced by the grain handler, boxed as <c>object</c>.</returns>
     Task<object> HandleMessage(object message);
+
+    /// <summary>
+    /// Dispatches a message to the grain as a true one-way (fire-and-forget) call.
+    /// The caller returns once the message is sent; no response is marshalled back and
+    /// grain-side exceptions are not propagated to the caller. The grain still processes
+    /// the message and mutates its state. Backs <c>FSharpGrain.postGuid</c>.
+    /// </summary>
+    /// <param name="message">The command object. Must be serializable.</param>
+    [OneWay]
+    Task HandleMessageOneWay(object message);
 }
 
 /// <summary>
@@ -56,6 +77,16 @@ public interface IFSharpGrainWithIntKey : IGrainWithIntegerKey
     /// <param name="message">The command or query object. Must be serializable.</param>
     /// <returns>The result produced by the grain handler, boxed as <c>object</c>.</returns>
     Task<object> HandleMessage(object message);
+
+    /// <summary>
+    /// Dispatches a message to the grain as a true one-way (fire-and-forget) call.
+    /// The caller returns once the message is sent; no response is marshalled back and
+    /// grain-side exceptions are not propagated to the caller. The grain still processes
+    /// the message and mutates its state. Backs <c>FSharpGrain.postInt</c>.
+    /// </summary>
+    /// <param name="message">The command object. Must be serializable.</param>
+    [OneWay]
+    Task HandleMessageOneWay(object message);
 }
 
 /// <summary>
@@ -182,6 +213,14 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
         return dispatch.Result ?? (object)Unit.Default;
     }
 
+    /// <inheritdoc/>
+    public async Task HandleMessageOneWay(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
+        _currentState = dispatch.NewState;
+    }
+
     private readonly struct Unit { public static readonly Unit Default = default; }
 }
 
@@ -214,6 +253,14 @@ public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
         var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
+    }
+
+    /// <inheritdoc/>
+    public async Task HandleMessageOneWay(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
+        _currentState = dispatch.NewState;
     }
 
     private readonly struct Unit { public static readonly Unit Default = default; }
@@ -373,6 +420,14 @@ public sealed class FSharpGrainIntImpl : Grain, IFSharpGrainWithIntKey
         var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
+    }
+
+    /// <inheritdoc/>
+    public async Task HandleMessageOneWay(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
+        _currentState = dispatch.NewState;
     }
 
     private readonly struct Unit { public static readonly Unit Default = default; }

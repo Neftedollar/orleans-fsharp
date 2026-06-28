@@ -96,7 +96,8 @@ type HandleCancellableIntegrationTests(fixture: ClusterFixture) =
         task {
             let gf = fixture.GrainFactory
             let g = FSharpGrain.ref<CancellableAccState, CancellableAccCommand> gf "cacc-post"
+            // post is a true one-way call; observe its effect via a convergent two-way read.
             do! FSharpGrain.post (Accumulate 5) g
-            let! s = FSharpGrain.send GetAcc g
+            let! s = Eventually.until (fun (s: CancellableAccState) -> s.Sum = 5) (fun () -> FSharpGrain.send GetAcc g)
             test <@ s.Sum = 5 @>
         }
