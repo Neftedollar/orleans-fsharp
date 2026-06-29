@@ -6,14 +6,13 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- Version. The v3.0.0 release is pinned explicitly via MinVerVersionOverride
-         so `dotnet pack` produces deterministic 3.0.0 packages regardless of the
-         current git tag state (a plain <Version> would be overwritten by MinVer's
-         target). MinVer stays wired up (see ItemGroup below): to resume tag-derived
-         versioning, drop the override and tag releases with
-         `git tag v3.0.1 && git push origin v3.0.1` (CI's publish job fires only on
-         tag pushes, so a regular merge to main never publishes). -->
-    <MinVerVersionOverride>3.0.0</MinVerVersionOverride>
+    <!-- Versioning is driven by MinVer from git tags (tag prefix "v", see
+         MinVerTagPrefix below). To cut a release: `git tag v3.0.1 && git push
+         origin v3.0.1` — CI's publish job fires only on v* tag pushes, so a plain
+         merge to main never publishes. Between tags MinVer emits a pre-release
+         version (e.g. 3.0.1-alpha.0.N) for local/dev packs, which is expected.
+         (The v3.0.0 release used a temporary MinVerVersionOverride; it has been
+         removed now that tag-driven versioning is the steady state.) -->
     <Authors>Orleans.FSharp Contributors</Authors>
     <Description>Idiomatic F# API for Microsoft Orleans</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
