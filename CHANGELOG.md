@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-06-29
+
+Packaging and tooling release — **no API changes**.
+
+### Fixed
+
+- **`Orleans.FSharp.Templates` now publishes to NuGet.** The template package silently
+  failed to pack on Linux/macOS CI: the content glob used backslash path separators
+  (`orleans-fsharp\**\*`) that match nothing off-Windows, and the repo-wide symbol-package
+  setting emitted an empty `.snupkg` (NU5017). Globs are now forward-slash, symbols are
+  disabled for the content-only package, and the project is part of the solution publish
+  set. `dotnet new install Orleans.FSharp.Templates && dotnet new orleans-fsharp -n MyApp`
+  now works end to end.
+- **`bank-account` example builds again** — it referenced `MartenConfig` without a project
+  reference to (or `open` of) `Orleans.FSharp.EventSourcing.Marten`.
+
+### Added
+
+- **CI lane that builds every example.** Examples ship their own solutions outside the root
+  solution and were not built by CI, so they could rot undetected; all eight now build on
+  every push and PR.
+- **Social-preview card** (`website/public/social-preview.png`, 1280×640) wired as
+  `og:image` / `twitter:image` on the docs site and used as the GitHub repository social
+  preview.
+
+### Changed
+
+- Versioning is back to MinVer tag-driven (the temporary `MinVerVersionOverride` used for
+  the 3.0.0 release has been removed).
+- Removed tracked copy-artifact files (`README 2.md`, `website/.gitignore 2`).
+
 ## [3.0.0] - 2026-06-29
 
 **Breaking major.** The Universal Grain Pattern (`AddFSharpGrain` + `FSharpGrain.ref` / `send` /

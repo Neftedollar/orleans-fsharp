@@ -3,7 +3,7 @@
   <PropertyGroup>
     <PackageType>Template</PackageType>
     <PackageId>Orleans.FSharp.Templates</PackageId>
-    <PackageVersion>3.0.0</PackageVersion>
+    <!-- Version is driven by MinVer (git tag) like every other package — do not hardcode. -->
     <Title>Orleans F# Project Templates</Title>
     <Authors>Orleans.FSharp</Authors>
     <Description>Project templates for building Orleans applications with idiomatic F#. Includes grain definitions, silo configuration, C# code generation bridge, and property-based tests.</Description>
@@ -15,14 +15,18 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <ContentTargetFolders>content</ContentTargetFolders>
     <NoDefaultExcludes>true</NoDefaultExcludes>
+    <!-- No build output → no symbols. The global snupkg setting would otherwise emit an
+         empty symbol package and fail with NU5017 ("no dependencies nor content"). -->
+    <IncludeSymbols>false</IncludeSymbols>
 
     <!-- Suppress warnings that don't apply to template packages -->
     <NoWarn>NU5128</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="orleans-fsharp\**\*" Exclude="orleans-fsharp\**\bin\**;orleans-fsharp\**\obj\**" />
-    <Compile Remove="**\*" />
+    <!-- Forward slashes so the glob matches on Linux/macOS CI (backslashes match nothing there → NU5017). -->
+    <Content Include="orleans-fsharp/**/*" Exclude="orleans-fsharp/**/bin/**;orleans-fsharp/**/obj/**" />
+    <Compile Remove="**/*" />
   </ItemGroup>
 
 </Project>
