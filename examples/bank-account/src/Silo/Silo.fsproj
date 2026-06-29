@@ -12,6 +12,7 @@
     <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
     <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
     <ProjectReference Include="../../../../src/Orleans.FSharp.EventSourcing/Orleans.FSharp.EventSourcing.fsproj" />
+    <ProjectReference Include="../../../../src/Orleans.FSharp.EventSourcing.Marten/Orleans.FSharp.EventSourcing.Marten.fsproj" />
     <ProjectReference Include="..\Domain\Domain.fsproj" />
   </ItemGroup>
 

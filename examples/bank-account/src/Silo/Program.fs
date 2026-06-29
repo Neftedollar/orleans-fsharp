@@ -5,6 +5,7 @@ open Orleans.Hosting
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.EventSourcing
+open Orleans.FSharp.EventSourcing.Marten
 open BankAccount.Domain
 
 let config =
