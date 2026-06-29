@@ -23,9 +23,9 @@
     <!-- Each packable project ships its own per-project README.md (PackageReadmeFile in
          its .fsproj/.csproj) — more useful on nuget.org than a shared one. -->
     <PackageReleaseNotes>See https://github.com/Neftedollar/orleans-fsharp/blob/main/CHANGELOG.md</PackageReleaseNotes>
-    <!-- TODO(icon): NuGet needs a raster icon (PNG/JPG ≤1MB; SVG unsupported). Export
-         website/public/orleans-fsharp-logo.svg to a 128x128 icon.png, add
-         <PackageIcon>icon.png</PackageIcon> here, and pack it in Directory.Build.targets. -->
+    <!-- Shared package icon (128x128 PNG rasterized from website/public/orleans-fsharp-logo.svg).
+         Same logo for all packages; packed in Directory.Build.targets (IsPackable-guarded). -->
+    <PackageIcon>icon.png</PackageIcon>
     <IsPackable>true</IsPackable>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
