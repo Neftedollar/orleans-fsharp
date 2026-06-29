@@ -14,4 +14,7 @@
     <Project Path="tests/Orleans.FSharp.Integration/Orleans.FSharp.Integration.fsproj" />
     <Project Path="tests/Orleans.FSharp.Tests/Orleans.FSharp.Tests.fsproj" />
   </Folder>
+  <Folder Name="/templates/">
+    <Project Path="templates/Orleans.FSharp.Templates.csproj" />
+  </Folder>
 </Solution>
