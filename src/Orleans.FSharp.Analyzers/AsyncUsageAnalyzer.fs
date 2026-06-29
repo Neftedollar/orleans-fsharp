@@ -11,7 +11,7 @@ open FSharp.Compiler.Text
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public opt-out attribute
-// ───────────────────���──────────────────────────────��───────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// Place this attribute on a function or method binding to suppress OF0001 for that binding.
@@ -33,7 +33,7 @@ type AllowAsyncAttribute() =
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Internal AST walker  (FSharp.Compiler.Service 43.12)
-// ───────────────────────────────────��──────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// Internal AST walker.  Exposed as <c>internal</c> so the test project can exercise it
