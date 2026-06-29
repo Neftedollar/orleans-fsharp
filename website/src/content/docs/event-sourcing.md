@@ -257,6 +257,22 @@ Orleans provides several built-in log consistency providers:
 
 If you omit `logConsistencyProvider`, the silo's default provider is used.
 
+### Clearing the event log
+
+`FSharpEventSourcedGrain.clearLog` clears a grain's confirmed event log: all confirmed events
+are removed from storage and the confirmed view is re-initialised to the initial state (version
+reset to 0). The grain stays usable — subsequent commands rebuild from the now-empty log.
+
+```fsharp
+open Orleans.FSharp.EventSourcing
+
+do! handle |> FSharpEventSourcedGrain.clearLog
+```
+
+> **Provider-dependent.** This routes through Orleans' `JournaledGrain.ClearLogAsync`, which
+> throws `NotSupportedException` for log-consistency providers that do not override
+> `ClearPrimaryLogAsync`. Only providers with explicit log-clearing support honour the call.
+
 ---
 
 ## Complete Example

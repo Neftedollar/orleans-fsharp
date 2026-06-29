@@ -9,7 +9,7 @@
 [![CI](https://github.com/Neftedollar/orleans-fsharp/actions/workflows/ci.yml/badge.svg)](https://github.com/Neftedollar/orleans-fsharp/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
-[![Orleans 10](https://img.shields.io/badge/Orleans-10.0.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
+[![Orleans 10](https://img.shields.io/badge/Orleans-10.2.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
 [![Tests](https://img.shields.io/badge/tests-1500%2B-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
@@ -78,23 +78,16 @@ let config = siloConfig {
 | `onReminder` | Register a named reminder handler |
 | `onTimer` | Register a declarative timer with dueTime + period |
 | `onLifecycleStage` | Hook into grain lifecycle stages |
-| `reentrant` | Allow concurrent message processing |
-| `interleave` | Mark a method as always interleaved |
-| `readOnly` | Mark a method as read-only (interleaved for reads) |
-| `mayInterleave` | Custom reentrancy predicate |
-| `statelessWorker` | Allow multiple activations per silo |
-| `maxActivations` | Cap local worker count |
-| `oneWay` | Mark a method as fire-and-forget |
-| `grainType` | Set a custom grain type name |
-| `deactivationTimeout` | Per-grain idle timeout |
-| `implicitStreamSubscription` | Auto-subscribe to a stream namespace |
-| `preferLocalPlacement` | Place grain on the calling silo |
-| `randomPlacement` | Random silo placement |
-| `hashBasedPlacement` | Consistent-hash placement |
-| `activationCountPlacement` | Fewest-activations placement |
-| `resourceOptimizedPlacement` | Resource-aware placement |
-| `siloRolePlacement` | Role-based silo targeting |
-| `customPlacement` | Custom placement strategy type |
+| `interleaveMessage` | Allow a message type to interleave: `interleaveMessage typeof<Query>` |
+
+> **Per-grain Orleans attributes — use the C# CodeGen path.** `[Reentrant]`,
+> `[StatelessWorker]`, `[MayInterleave]`, `[ReadOnly]`, `[OneWay]`, placement strategies,
+> `[ImplicitStreamSubscription]`, and `[GrainType]` are applied through the per-grain
+> `Orleans.FSharp.CodeGen` path, where each grain compiles to its own C# class/method that
+> carries the real Orleans attribute. They are **not** `grain { }` CE keywords: the universal
+> grain pattern shares a single `FSharpGrainImpl` class and one handler method, so per-grain
+> class/method attributes cannot be expressed there. The one reentrancy lever that fits the
+> universal pattern is `interleaveMessage typeof<'Msg>`.
 
 ### `siloConfig { }` -- Silo Configuration
 
@@ -158,7 +151,7 @@ siloBuilder.Services.AddFSharpGrain<PingState, PingCommand>(pingGrain) |> ignore
 // Client / handler — string, GUID, or int key
 let handle = FSharpGrain.ref<PingState, PingCommand> factory "ping-1"
 let! state  = handle |> FSharpGrain.send Ping          // returns Task<PingState>
-do! handle  |> FSharpGrain.post Ping                   // awaits RPC but discards result
+do! handle  |> FSharpGrain.post Ping                   // true one-way: fire-and-forget, no round-trip
 
 // ask returns a type you choose — useful when the handler returns something other than the state
 let! count  = handle |> FSharpGrain.ask<PingState, PingCommand, int> GetCount
@@ -216,9 +209,19 @@ dotnet new install Orleans.FSharp.Templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
-## Upgrading from 1.x
+## Upgrading to 3.0
 
-The 2.0 line introduces the **Universal Grain Pattern** (`AddFSharpGrain` + `FSharpGrain.ref`/`send`/`ask`/`post`) and deprecates 7 `grain { }` CE keywords that are non-functional under that pattern: `reentrant`, `statelessWorker`, `maxActivations`, `mayInterleave`, `interleave`, `oneWay`, `readOnly`. They remain compilable as warnings; existing code keeps building. See the [CHANGELOG](CHANGELOG.md) for the full breaking-change list and a migration walkthrough.
+3.0 is a **breaking major**. The Universal Grain Pattern (`AddFSharpGrain` +
+`FSharpGrain.ref`/`send`/`ask`/`post`) is now the canonical path, and the non-functional
+`grain { }` CE keywords that were deprecated in 2.x have been **removed**: `reentrant`,
+`statelessWorker`, `maxActivations`, the old string-based `mayInterleave`, `interleave`,
+`oneWay`, `readOnly`, `grainType`, `deactivationTimeout`, `implicitStreamSubscription`, and the
+placement operations (`preferLocalPlacement`, `randomPlacement`, `hashBasedPlacement`,
+`activationCountPlacement`, `resourceOptimizedPlacement`, `siloRolePlacement`,
+`customPlacement`). To apply the equivalent Orleans attributes per grain, use the
+`Orleans.FSharp.CodeGen` path. To allow a message type to interleave under the universal
+pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **true one-way**
+(fire-and-forget) call. See the [CHANGELOG](CHANGELOG.md) for the full breaking-change list.
 
 ## Documentation
 
@@ -234,7 +237,7 @@ The 2.0 line introduces the **Universal Grain Pattern** (`AddFSharpGrain` + `FSh
 | [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |
 | [Analyzers](docs/analyzers.md) | OF0001: async {} detection, AllowAsync opt-out |
 | [Security](docs/security.md) | TLS, mTLS, filters, secrets |
-| [Advanced](docs/advanced.md) | Transactions, telemetry, shutdown, migration |
+| [Advanced](docs/advanced.md) | Transactions, OpenTelemetry, shutdown, migration |
 | [Resilience](docs/resilience.md) | Polly v8 retry, circuit-breaker, and timeout patterns |
 | [Redis Example](docs/redis-example.md) | End-to-end shopping cart with Redis storage/clustering |
 | [API Reference](docs/api-reference.md) | All public modules, types, functions |

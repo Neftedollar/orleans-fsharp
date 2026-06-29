@@ -49,28 +49,21 @@ This document contains exhaustive keyword references for all Orleans.FSharp comp
 
 | Keyword | Description |
 |---|---|
-| `reentrant` | Allow concurrent message processing |
-| `interleave` | Mark a method as always interleaved |
-| `readOnly` | Mark a method as read-only (interleaved for reads) |
-| `mayInterleave` | Custom reentrancy predicate |
+| `interleaveMessage` | Allow a message type to interleave: `interleaveMessage typeof<Query>` |
 
-### Worker & Placement Keywords
+`interleaveMessage` is the one reentrancy lever that fits the universal grain pattern —
+the working replacement for the removed string-based `mayInterleave`. Pass the DU type
+itself (matched by assignability, so field-carrying cases are covered). Avoid registering a
+broad base type, interface, or `obj`, which would make every assignable message interleavable.
 
-| Keyword | Description |
-|---|---|
-| `statelessWorker` | Allow multiple activations per silo |
-| `maxActivations` | Cap local worker count |
-| `oneWay` | Mark a method as fire-and-forget |
-| `grainType` | Set a custom grain type name |
-| `deactivationTimeout` | Per-grain idle timeout |
-| `implicitStreamSubscription` | Auto-subscribe to a stream namespace |
-| `preferLocalPlacement` | Place grain on the calling silo |
-| `randomPlacement` | Random silo placement |
-| `hashBasedPlacement` | Consistent-hash placement |
-| `activationCountPlacement` | Fewest-activations placement |
-| `resourceOptimizedPlacement` | Resource-aware placement |
-| `siloRolePlacement` | Role-based silo targeting |
-| `customPlacement` | Custom placement strategy type |
+### Per-grain Orleans attributes (C# CodeGen path)
+
+`[Reentrant]`, `[StatelessWorker]`, `[MayInterleave]`, `[ReadOnly]`, `[OneWay]`, placement
+strategies, `[ImplicitStreamSubscription]`, and `[GrainType]` are **not** `grain { }` CE
+keywords. The universal grain pattern shares a single `FSharpGrainImpl` class and one handler
+method, so per-grain class/method attributes cannot be expressed there. Apply them through the
+per-grain `Orleans.FSharp.CodeGen` path, where each grain compiles to its own C# class/method
+that carries the real Orleans attribute.
 
 ---
 

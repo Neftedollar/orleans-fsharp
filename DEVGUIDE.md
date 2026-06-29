@@ -531,8 +531,8 @@ Key metrics:
 1. **Use `handleState` or `handleTyped`** instead of `handle` to avoid manual boxing
 2. **Prefer records for state** (faster serialization than DUs)
 3. **Use F# Binary serialization** for performance-critical paths
-4. **Mark read-only methods** with `readOnly` to enable read-side optimization
-5. **Use `statelessWorker`** for high-throughput, stateless grains
+4. **Allow read-heavy message types to interleave** with `interleaveMessage typeof<Query>` to lift the one-message-at-a-time bottleneck
+5. **For `[StatelessWorker]` / `[Reentrant]` high-throughput grains**, use the per-grain `Orleans.FSharp.CodeGen` path (the universal pattern cannot carry per-grain attributes)
 
 ---
 

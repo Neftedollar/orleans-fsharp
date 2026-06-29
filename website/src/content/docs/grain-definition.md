@@ -11,8 +11,8 @@ description: "Complete guide to the grain computation expression."
 
 - Every keyword in the `grain { }` CE
 - How to define handlers, lifecycle hooks, reminders, and timers
-- Placement strategies, reentrancy, and stateless workers
-- Multiple named states, implicit stream subscriptions, and more
+- Allowing message types to interleave with `interleaveMessage`
+- Multiple named states, and where per-grain Orleans attributes live (the C# CodeGen path)
 
 ## Overview
 
@@ -529,179 +529,57 @@ grain {
 
 ## Reentrancy and Concurrency
 
-### `reentrant`
+By default each grain processes one message at a time. Under the universal grain pattern the
+one concurrency lever is `interleaveMessage`.
 
-Marks the grain as reentrant, allowing concurrent message processing. By default, Orleans grains process one message at a time.
+### `interleaveMessage`
 
-```fsharp
-grain {
-    defaultState Map.empty
-    handle myReadHeavyHandler
-    reentrant
-}
-```
-
-### `interleave`
-
-Marks a specific method as always interleaved, even on non-reentrant grains. Use for methods that are safe to run concurrently.
-
-```fsharp
-grain {
-    defaultState { Data = Map.empty }
-    handle myHandler
-    interleave "GetStatus"
-    interleave "GetVersion"
-}
-```
-
-### `readOnly`
-
-Marks a method as read-only. Read-only methods are interleaved for concurrent reads on non-reentrant grains.
-
-```fsharp
-grain {
-    defaultState { Items = [] }
-    handle myHandler
-    readOnly "GetItems"
-    readOnly "GetCount"
-}
-```
-
-### `mayInterleave`
-
-Sets a custom predicate method for reentrancy decisions. The named static method receives an `InvokeMethodRequest` and returns `bool`.
+Registers a message type whose calls may interleave with other calls on the same grain — the
+working replacement for the removed string-based `mayInterleave` keyword.
 
 ```fsharp
 grain {
     defaultState Map.empty
     handle myHandler
-    mayInterleave "ShouldInterleave"
+    interleaveMessage typeof<Query>     // allow all Query cases to interleave
 }
 ```
+
+All F# grains share `Orleans.FSharp.FSharpGrainImpl`, which carries a single class-level
+`[MayInterleave]` predicate keyed on the incoming message's runtime type. Each registered type
+is pushed into the process-wide `FSharpInterleaveRegistry` when the grain is added to the silo.
+Pass the discriminated-union type itself — the predicate matches by assignability, so
+field-carrying DU cases (which compile to nested subtypes that cannot be named in source) are
+covered. Repeated registrations of the same type are de-duplicated.
+
+> **Caution:** registering a broad base type, interface, or `obj` will make every assignable
+> message type interleavable — always register specific DU or message types.
 
 ---
 
-## Stateless Workers
+## Per-grain Orleans attributes (C# CodeGen path)
 
-### `statelessWorker`
+Reentrancy beyond `interleaveMessage`, stateless workers, placement strategies, one-way and
+read-only methods, implicit stream subscriptions, and custom grain-type names are **not**
+`grain { }` CE keywords. The universal grain pattern shares a single `FSharpGrainImpl` class and
+one handler method, so per-grain class-level or per-method attributes cannot be expressed there.
 
-Marks the grain as a stateless worker, allowing multiple activations per silo for load balancing. Stateless workers cannot use persistent state.
+To use them, define the grain through the per-grain `Orleans.FSharp.CodeGen` path: each grain
+compiles to its own C# class/method that carries the real Orleans attribute.
 
-```fsharp
-grain {
-    defaultState ()
-    handle (fun _ msg ->
-        task {
-            let result = processMessage msg
-            return (), box result
-        })
-    statelessWorker
-}
-```
+| Concept | Orleans attribute (CodeGen path) |
+|---|---|
+| Reentrant grain | `[Reentrant]` |
+| Custom interleave predicate | `[MayInterleave("Predicate")]` |
+| Always-interleaved / read-only method | `[AlwaysInterleave]` / `[ReadOnly]` |
+| Stateless worker (+ max activations) | `[StatelessWorker]` / `[StatelessWorker(n)]` |
+| Fire-and-forget method | `[OneWay]` |
+| Custom grain type name | `[GrainType("name")]` |
+| Implicit stream subscription | `[ImplicitStreamSubscription("namespace")]` |
+| Placement | `[PreferLocalPlacement]`, `[RandomPlacement]`, `[HashBasedPlacement]`, `[ActivationCountBasedPlacement]`, `[ResourceOptimizedPlacement]`, `[SiloRoleBasedPlacement]`, or a custom `PlacementStrategy` |
 
-### `maxActivations`
-
-Sets the maximum number of local worker activations per silo. Defaults to the number of CPU cores.
-
-```fsharp
-grain {
-    defaultState ()
-    handle myHandler
-    statelessWorker
-    maxActivations 4
-}
-```
-
----
-
-## Placement Strategies
-
-Control which silo activates a grain:
-
-```fsharp
-// Prefer the silo where the call originated
-grain { ... ; preferLocalPlacement }
-
-// Random silo
-grain { ... ; randomPlacement }
-
-// Consistent hash of grain ID
-grain { ... ; hashBasedPlacement }
-
-// Silo with fewest activations
-grain { ... ; activationCountPlacement }
-
-// Resource-aware (CPU, memory)
-grain { ... ; resourceOptimizedPlacement }
-
-// Target silos with a specific role
-grain { ... ; siloRolePlacement "worker" }
-
-// Custom strategy type
-grain { ... ; customPlacement typeof<MyPlacementStrategy> }
-```
-
----
-
-## Streaming
-
-### `implicitStreamSubscription`
-
-Auto-subscribes the grain to a stream namespace. The handler receives the current state and a stream event (boxed), and returns the new state.
-
-```fsharp
-grain {
-    defaultState { Events = [] }
-    handle myHandler
-    persist "Default"
-
-    implicitStreamSubscription "OrderEvents" (fun state event ->
-        task {
-            let orderEvent = event :?> OrderEvent
-            return { state with Events = orderEvent :: state.Events }
-        })
-}
-```
-
----
-
-## Method Annotations
-
-### `oneWay`
-
-Marks a method as fire-and-forget. The caller does not wait for the grain to finish processing.
-
-```fsharp
-grain {
-    defaultState ()
-    handle myHandler
-    oneWay "LogEvent"
-}
-```
-
-### `grainType`
-
-Sets a custom grain type name (maps to `[GrainType("name")]` in CodeGen).
-
-```fsharp
-grain {
-    defaultState 0
-    handle myHandler
-    grainType "my-counter-v2"
-}
-```
-
-### `deactivationTimeout`
-
-Sets the per-grain idle timeout before deactivation.
-
-```fsharp
-grain {
-    defaultState Map.empty
-    handle myHandler
-    deactivationTimeout (TimeSpan.FromMinutes 30.)
-}
-```
+> Per-grain idle deactivation timeouts are configured globally with `grainCollectionAge` in
+> `siloConfig { }`; there is no per-grain `grain { }` keyword for it.
 
 ---
 
@@ -758,10 +636,7 @@ let chatRoom =
             })
 
         persist "Default"
-        reentrant
-        readOnly "GetHistory"
-        readOnly "GetParticipants"
-        deactivationTimeout (TimeSpan.FromHours 1.)
+        interleaveMessage typeof<ChatCommand>   // read-heavy queries may interleave
 
         onTimer "Cleanup" (TimeSpan.FromMinutes 5.) (TimeSpan.FromMinutes 5.)
             (fun state ->
@@ -779,4 +654,4 @@ let chatRoom =
 - [Silo Configuration](silo-configuration.md) -- configure storage, clustering, and streaming for your grains
 - [Streaming](streaming.md) -- publish and subscribe to events
 - [Testing](testing.md) -- test your grain definitions with FsCheck and TestHarness
-- [Advanced](advanced.md#behavior-pattern) -- behavior pattern: state machines with `Behavior.run` / `Behavior.runWithContext`
+- [Advanced](advanced.md) -- transactions, grain directory, OpenTelemetry, shutdown, state migration

@@ -163,24 +163,13 @@ Broadcast channel consumers are grains that implement `IOnBroadcastChannelSubscr
 
 ## Implicit Stream Subscriptions
 
-Use `implicitStreamSubscription` in the `grain { }` CE to auto-subscribe a grain to a stream namespace:
-
-```fsharp
-let orderProcessor =
-    grain {
-        defaultState { ProcessedCount = 0 }
-        handle myHandler
-        persist "Default"
-
-        implicitStreamSubscription "OrderEvents" (fun state event ->
-            task {
-                let orderEvent = event :?> OrderEvent
-                return { state with ProcessedCount = state.ProcessedCount + 1 }
-            })
-    }
-```
-
-The grain is automatically subscribed when activated. Each grain ID receives events from the stream with the matching key.
+Implicit stream subscriptions are a **per-grain Orleans attribute**, applied through the C#
+CodeGen path — there is no `grain { }` CE keyword for them. The universal grain pattern shares
+a single `FSharpGrainImpl` class, so it cannot carry a per-grain
+`[ImplicitStreamSubscription("namespace")]` attribute. Define the grain via
+`Orleans.FSharp.CodeGen` and annotate the generated C# class to auto-subscribe by namespace.
+For explicit subscriptions from any grain, use `Stream.subscribe` (shown above), which works
+with the universal pattern.
 
 ---
 
@@ -199,6 +188,17 @@ let configFn = StreamProviders.addEventHubStreams "EventHub" connStr "my-hub"
 ```fsharp
 let configFn = StreamProviders.addAzureQueueStreams "AzureQueue" connStr
 ```
+
+### Redis Streams (experimental)
+
+```fsharp
+let configFn = StreamProviders.addRedisStreams "Redis" "localhost:6379"
+```
+
+> **Experimental.** `addRedisStreams` requires a prerelease `Microsoft.Orleans.Streaming.Redis`
+> package (`-alpha` / `-preview`) at runtime — there is no stable 10.x release yet. The helper
+> resolves the provider by reflection, so an absent package yields a clear "install the package"
+> error rather than a build break.
 
 Apply these to the `ISiloBuilder` directly or via `addCustomStorage` in the silo config.
 
@@ -248,6 +248,6 @@ for event in events do
 
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- `implicitStreamSubscription` and other grain features
+- [Grain Definition](grain-definition.md) -- `interleaveMessage` and other grain features
 - [Silo Configuration](silo-configuration.md) -- configure stream providers
 - [Event Sourcing](event-sourcing.md) -- CQRS pattern with event streams

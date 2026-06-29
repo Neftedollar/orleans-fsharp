@@ -1,11 +1,11 @@
 ---
 title: "Advanced Topics"
-description: "Transactions, grain directory, OpenTelemetry, shutdown, state migration, serialization, and behavior pattern."
+description: "Transactions, grain directory, OpenTelemetry, shutdown, state migration, and serialization."
 ---
 
 # Advanced Topics
 
-**Transactions, grain directory, OpenTelemetry, shutdown, state migration, serialization, and behavior pattern.**
+**Transactions, grain directory, OpenTelemetry, shutdown, state migration, and serialization.**
 
 ## What you'll learn
 
@@ -15,7 +15,6 @@ description: "Transactions, grain directory, OpenTelemetry, shutdown, state migr
 - How to perform graceful shutdown
 - How to migrate grain state between versions
 - How to configure F# type serialization
-- How to model grains as phase state machines with the behavior pattern
 
 ---
 
@@ -306,29 +305,19 @@ configureFn siloBuilder |> ignore
 
 ## OpenTelemetry
 
-The `Telemetry` module provides constants and helpers for OpenTelemetry integration.
+Orleans publishes traces and metrics under well-known activity-source and meter names. Wire
+them into OpenTelemetry directly with the standard .NET builder — no Orleans.FSharp helper is
+required.
 
-### Activity source names
-
-```fsharp
-open Orleans.FSharp
-
-// Add these to your OpenTelemetry tracing configuration
-Telemetry.runtimeActivitySourceName       // "Microsoft.Orleans.Runtime"
-Telemetry.applicationActivitySourceName   // "Microsoft.Orleans.Application"
-Telemetry.activitySourceNames             // Both as a list
-```
-
-### Meter name
+### Activity source and meter names
 
 ```fsharp
-Telemetry.meterName  // "Microsoft.Orleans"
-```
+// Orleans tracing activity sources
+"Microsoft.Orleans.Runtime"        // runtime traces
+"Microsoft.Orleans.Application"    // application traces
 
-### Enable activity propagation
-
-```fsharp
-Telemetry.enableActivityPropagation siloBuilder |> ignore
+// Orleans metrics meter
+"Microsoft.Orleans"
 ```
 
 ### Full OpenTelemetry setup
@@ -336,19 +325,18 @@ Telemetry.enableActivityPropagation siloBuilder |> ignore
 ```fsharp
 open OpenTelemetry.Trace
 open OpenTelemetry.Metrics
-open Orleans.FSharp
 
 builder.Services
     .AddOpenTelemetry()
     .WithTracing(fun tracing ->
         tracing
-            .AddSource(Telemetry.runtimeActivitySourceName)
-            .AddSource(Telemetry.applicationActivitySourceName)
+            .AddSource("Microsoft.Orleans.Runtime")
+            .AddSource("Microsoft.Orleans.Application")
             .AddOtlpExporter()
         |> ignore)
     .WithMetrics(fun metrics ->
         metrics
-            .AddMeter(Telemetry.meterName)
+            .AddMeter("Microsoft.Orleans")
             .AddOtlpExporter()
         |> ignore)
 |> ignore
@@ -511,18 +499,6 @@ let values = unwrapImmutable data
 
 ---
 
-## Grain Extensions
-
-Get a grain extension reference for adding behavior to existing grains:
-
-```fsharp
-open Orleans.FSharp
-
-let extension = GrainExtension.getExtension<IMyExtension> grainRef
-```
-
----
-
 ## Grain State Operations
 
 The `GrainState` module wraps `IPersistentState<'T>` for idiomatic F# access:
@@ -567,12 +543,16 @@ use subscription = Observer.subscribe<IMyObserver> grainFactory myObserver
 
 ## Grain Services
 
-Register background services that run on every silo:
+Register background services that run on every silo with the `addGrainService` operation in
+`siloConfig { }`:
 
 ```fsharp
-open Orleans.FSharp
+open Orleans.FSharp.Runtime
 
-GrainServices.addGrainService<MyBackgroundService> siloBuilder |> ignore
+let config = siloConfig {
+    useLocalhostClustering
+    addGrainService typeof<MyBackgroundService>
+}
 ```
 
 ---
@@ -727,141 +707,6 @@ let timerWithState = Timers.registerWithState grain callback state dueTime perio
 
 ---
 
-## Behavior Pattern
-
-The **behavior pattern** models a grain as a state machine where the state type includes
-a _phase_ discriminated union. The handler dispatches on `(phase, command)` tuples, making
-illegal transitions compile errors.
-
-### Define the domain
-
-```fsharp
-open Orleans.FSharp
-
-type Phase =
-    | WaitingForConfig
-    | Running of maxHistory: int
-    | Suspended of reason: string
-
-type ChatState = { Phase: Phase; Messages: string list }
-
-type ChatCommand =
-    | Configure of maxHistory: int
-    | Send of text: string
-    | GetHistory
-    | Suspend of reason: string
-    | Resume
-```
-
-### Write the behavior handler
-
-Return `BehaviorResult<'State>` to express transitions:
-
-```fsharp
-let chatHandler (state: ChatState) (cmd: ChatCommand) : Task<BehaviorResult<ChatState>> =
-    task {
-        match state.Phase, cmd with
-        | WaitingForConfig, Configure maxHistory ->
-            return Become { state with Phase = Running maxHistory }
-        | WaitingForConfig, _ ->
-            return Stay state
-        | Running maxHistory, Send msg ->
-            let newMessages = (msg :: state.Messages) |> List.truncate maxHistory
-            return Stay { state with Messages = newMessages }
-        | Running _, Suspend reason ->
-            return Become { state with Phase = Suspended reason }
-        | Running _, _ ->
-            return Stay state
-        | Suspended _, Resume ->
-            return Become { state with Phase = Running 50 }
-        | Suspended _, _ ->
-            return Stay state
-    }
-```
-
-| Case | Meaning |
-|---|---|
-| `Stay state` | Keep the current phase, update state. |
-| `Become state` | Transition to a new phase (phase is part of state). |
-| `Stop` | Signal that this grain should deactivate. |
-
-### Wire it into the grain CE
-
-Use `Behavior.run` to plug the handler into `handleState` without any manual unwrapping:
-
-```fsharp
-let chatGrain =
-    grain {
-        defaultState { Phase = WaitingForConfig; Messages = [] }
-        persist "Default"
-        handleState (Behavior.run chatHandler)  // one line — no match on BehaviorResult
-    }
-```
-
-If you need access to `ctx.GrainFactory` or grain-to-grain calls, use `handleStateWithContext`
-and `Behavior.runWithContext`. When the handler returns `Stop`, it automatically calls
-`ctx.DeactivateOnIdle()`:
-
-```fsharp
-let chatHandler' (ctx: GrainContext) (state: ChatState) (cmd: ChatCommand) : Task<BehaviorResult<ChatState>> =
-    task {
-        match state.Phase, cmd with
-        | Running _, Stop -> return Stop   // grain will deactivate after this message
-        | _ -> return! chatHandler state cmd  // delegate to the context-free handler
-    }
-
-let chatGrain =
-    grain {
-        defaultState { Phase = WaitingForConfig; Messages = [] }
-        handleStateWithContext (Behavior.runWithContext chatHandler')
-    }
-```
-
-### Helper functions
-
-| Function | Description |
-|---|---|
-| `Behavior.run handler` | Adapts a `BehaviorResult` handler for `handleState`. Stop returns original state. |
-| `Behavior.runWithContext handler` | Adapts a `BehaviorResult` handler for `handleStateWithContext`. Stop calls `DeactivateOnIdle`. |
-| `Behavior.unwrap original result` | Extracts state from Stay/Become; returns `original` for Stop. |
-| `Behavior.map f result` | Maps a function over the state inside a BehaviorResult. |
-| `Behavior.isTransition result` | True if result is `Become`. |
-| `Behavior.isStopped result` | True if result is `Stop`. |
-| `Behavior.toHandlerResult original result` | Converts to `state * obj` tuple for use with raw `handle`. |
-
-### Testing behavior handlers directly
-
-Because behavior handlers are pure functions returning `Task<BehaviorResult<'State>>`, they
-test without a silo — and with `Behavior.run` the whole grain can be driven via `getHandler`:
-
-```fsharp
-open Orleans.FSharp
-open Xunit
-open Swensen.Unquote
-open FsCheck.Xunit
-
-[<Fact>]
-let ``Configure transitions from WaitingForConfig to Running`` () =
-    task {
-        let initial = { Phase = WaitingForConfig; Messages = [] }
-        let! ns = Behavior.run chatHandler initial (Configure 10)
-        test <@ ns.Phase = Running 10 @>
-    }
-
-// Property: phase invariants hold for any command sequence
-[<Property>]
-let ``chat phase invariant`` (commands: ChatCommand list) =
-    let mutable s = { Phase = WaitingForConfig; Messages = [] }
-    for cmd in commands do
-        s <- (Behavior.run chatHandler s cmd).GetAwaiter().GetResult()
-    match s.Phase with
-    | WaitingForConfig -> true
-    | Running n -> n > 0
-    | Suspended r -> r.Length > 0
-```
-
----
-
 ## Request Context
 
 The `RequestCtx` module wraps Orleans `RequestContext` for idiomatic F# access.
@@ -943,8 +788,8 @@ let pingGrain =
         })
     }
 
-// Start an in-process silo (localhost clustering + in-memory storage)
-let! silo = Scripting.quickStart()
+// Start an in-process silo on the given ports (localhost clustering + in-memory storage)
+let! silo = Scripting.startOnPorts 11111 30000
 
 // Register and call the grain
 silo.Host.Services
@@ -963,13 +808,11 @@ do! Scripting.shutdown silo
 
 | Function | Description |
 |---|---|
-| `Scripting.quickStart()` | Start a silo on the default ports (11111 / 30000) |
 | `Scripting.startOnPorts siloPort gatewayPort` | Start a silo on specific ports (useful when running multiple silos) |
 | `Scripting.getGrain<'T> handle key` | Get a grain reference by `int64` key |
-| `Scripting.getGrainByString<'T> handle key` | Get a grain reference by `string` key |
 | `Scripting.shutdown handle` | Stop the silo and release resources |
 
-The `SiloHandle` returned by `quickStart` exposes `.Host`, `.Client`, and `.GrainFactory` for
+The `SiloHandle` returned by `startOnPorts` exposes `.Host`, `.Client`, and `.GrainFactory` for
 direct access when you need lower-level control.
 
 The silo is pre-configured with in-memory storage (`Default` and `PubSubStore`),

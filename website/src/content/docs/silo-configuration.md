@@ -442,7 +442,9 @@ siloConfig {
 }
 ```
 
-For per-grain timeouts, use `deactivationTimeout` in the `grain { }` CE.
+`grainCollectionAge` is the global idle-deactivation timeout. There is no per-grain `grain { }`
+keyword for it; for a per-grain idle timeout, use the C# CodeGen path with Orleans'
+`[CollectionAgeLimit]` attribute.
 
 ---
 
@@ -526,7 +528,7 @@ let timingFilter =
 
 ## Grain Services
 
-GrainServices run on every silo. Use them for background processing:
+Grain services run on every silo. Use them for background processing:
 
 ```fsharp
 siloConfig {
