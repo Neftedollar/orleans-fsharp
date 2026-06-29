@@ -56,10 +56,15 @@ export default defineConfig({
 				{ tag: 'meta', attrs: { property: 'og:title', content: 'Orleans.FSharp — Idiomatic F# for Microsoft Orleans' } },
 				{ tag: 'meta', attrs: { property: 'og:description', content: 'Full Orleans 10 parity with idiomatic F# computation expressions. 1500+ tests. grain {}, siloConfig {}, eventSourcedGrain {}.' } },
 				{ tag: 'meta', attrs: { property: 'og:locale', content: 'en_US' } },
+				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://neftedollar.com/orleans-fsharp/social-preview.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1280' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '640' } },
+				{ tag: 'meta', attrs: { property: 'og:image:alt', content: 'Orleans.FSharp — Idiomatic F# API for Microsoft Orleans' } },
 				// Twitter Card
 				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
 				{ tag: 'meta', attrs: { name: 'twitter:title', content: 'Orleans.FSharp — Idiomatic F# for Microsoft Orleans' } },
 				{ tag: 'meta', attrs: { name: 'twitter:description', content: 'Full Orleans 10 parity with idiomatic F# computation expressions. 1500+ tests. grain {}, siloConfig {}, eventSourcedGrain {}.' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://neftedollar.com/orleans-fsharp/social-preview.png' } },
 				// JSON-LD structured data
 				{ tag: 'script', attrs: { type: 'application/ld+json' }, content: JSON.stringify({
 					"@context": "https://schema.org",
