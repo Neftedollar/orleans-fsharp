@@ -12,8 +12,8 @@ type IHelloGrain =
     inherit IGrainWithIntegerKey
     abstract SayHello: name: string -> Task<string>
 
-// Start an in-process silo
-let handle = Scripting.quickStart().GetAwaiter().GetResult()
+// Start an in-process silo (silo port 11111, gateway port 30000)
+let handle = (Scripting.startOnPorts 11111 30000).GetAwaiter().GetResult()
 let grain = Scripting.getGrain<IHelloGrain> handle 0L
 printfn "Silo started! GrainFactory ready."
 
