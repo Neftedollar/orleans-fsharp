@@ -10,6 +10,40 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.EventSourcing
 
+/// <summary>
+/// Deterministic convergence helper for observing the effect of a true one-way
+/// <c>FSharpGrain.post</c> call. Because a one-way request returns once the message
+/// is sent — and Orleans gives no ordering or delivery guarantee relative to a
+/// following two-way call — a single read can race ahead of the posted command.
+/// <c>Eventually.until</c> repeatedly issues a two-way read until the predicate holds
+/// (or the attempt budget is exhausted), so the assertion converges instead of racing.
+/// This is a convergence check, not a brittle timing assertion: if a one-way post
+/// silently no-ops, the predicate never holds and the test fails.
+/// </summary>
+[<RequireQualifiedAccess>]
+module Eventually =
+
+    /// <summary>Reads via <paramref name="read"/> until <paramref name="pred"/> holds.</summary>
+    /// <param name="pred">Predicate that determines when the observed value is final.</param>
+    /// <param name="read">A two-way grain read returning the current observable value.</param>
+    /// <returns>The last value read (satisfying the predicate unless the budget ran out).</returns>
+    let until (pred: 'a -> bool) (read: unit -> Task<'a>) : Task<'a> =
+        task {
+            let mutable result = Unchecked.defaultof<'a>
+            let mutable satisfied = false
+            let mutable attempts = 0
+
+            while not satisfied && attempts < 50 do
+                let! v = read ()
+                result <- v
+
+                if pred v then satisfied <- true else do! Task.Delay 20
+
+                attempts <- attempts + 1
+
+            return result
+        }
+
 // ── Test grain types for the universal IFSharpGrain pattern ──────────────────
 
 /// <summary>State for the integration-test ping grain (universal pattern).</summary>
@@ -423,58 +457,6 @@ module TestGrains13 =
                 })
         }
 
-// ── Behavior pattern test grain ─────────────────────────────────────────────
-
-/// <summary>
-/// Phase discriminated union for the workflow grain.
-/// Drives the behavior pattern integration test.
-/// </summary>
-[<Orleans.GenerateSerializer>]
-type WorkflowPhase =
-    | [<Orleans.Id(0u)>] Idle
-    | [<Orleans.Id(1u)>] Running of completedSteps: int
-    | [<Orleans.Id(2u)>] Done of summary: string
-
-/// <summary>State for the behavior-pattern workflow grain.</summary>
-[<Orleans.GenerateSerializer>]
-type WorkflowState =
-    { [<Orleans.Id(0u)>] Phase: WorkflowPhase }
-
-/// <summary>Commands for the behavior-pattern workflow grain.</summary>
-[<Orleans.GenerateSerializer>]
-type WorkflowCommand =
-    | [<Orleans.Id(0u)>] Start
-    | [<Orleans.Id(1u)>] CompleteStep
-    | [<Orleans.Id(2u)>] Finish of summary: string
-    | [<Orleans.Id(3u)>] GetPhase
-
-module TestGrains14 =
-    /// <summary>
-    /// Workflow grain that demonstrates <c>Behavior.run</c> plugged into
-    /// <c>handleState</c>. The handler returns <c>BehaviorResult&lt;WorkflowState&gt;</c>
-    /// and the adapter unwraps it — no manual match on Stay/Become/Stop in the CE.
-    /// </summary>
-    let private workflowHandler (state: WorkflowState) (cmd: WorkflowCommand) =
-        task {
-            match state.Phase, cmd with
-            | Idle, Start ->
-                return Become { Phase = Running 0 }
-            | Running steps, CompleteStep ->
-                return Stay { Phase = Running(steps + 1) }
-            | Running steps, Finish summary ->
-                return Become { Phase = Done($"{summary} ({steps} steps)") }
-            | _, GetPhase ->
-                return Stay state
-            | _ ->
-                return Stay state
-        }
-
-    let workflowGrain =
-        grain {
-            defaultState { Phase = Idle }
-            handleState (Behavior.run workflowHandler)
-        }
-
 // ── handleCancellable (raw) test grain ───────────────────────────────────────
 
 /// <summary>State for the raw cancellable accumulator grain.</summary>
@@ -850,8 +832,6 @@ type TestSiloConfigurator() =
             siloBuilder.Services.AddFSharpGrain<TypedCancState, TypedCancCommand>(TestGrains9.typedCancGrain) |> ignore
             // Register the context-cancellable accumulator for handleWithContextCancellable tests
             siloBuilder.Services.AddFSharpGrain<CtxCancAccState, CtxCancAccCommand>(TestGrains7.ctxCancAccGrain) |> ignore
-            // Register the behavior-pattern workflow grain for Behavior.run integration tests
-            siloBuilder.Services.AddFSharpGrain<WorkflowState, WorkflowCommand>(TestGrains14.workflowGrain) |> ignore
             // Register the flaky grain for GrainResilience retry integration tests
             siloBuilder.Services.AddFSharpGrain<FlakyState, FlakyCommand>(TestGrains15.flakyGrain) |> ignore
             // Register the deactivation-control grain for deactivateOnIdle wiring tests

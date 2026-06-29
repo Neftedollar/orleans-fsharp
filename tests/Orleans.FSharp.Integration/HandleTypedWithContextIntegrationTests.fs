@@ -96,7 +96,10 @@ type HandleTypedWithContextIntegrationTests(fixture: ClusterFixture) =
     let ``post TWCAdd completes without error`` () =
         task {
             let g = FSharpGrain.ref<TypedWithCtxState, TypedWithCtxCommand> fixture.GrainFactory "twc-post"
+            // post is a true one-way call; observe its effect via a convergent two-way read.
             do! FSharpGrain.post (TWCAdd(10, 20)) g
-            let! last = g |> FSharpGrain.ask<TypedWithCtxState, TypedWithCtxCommand, int> GetTWCLastResult
+            let! last =
+                Eventually.until (fun v -> v = 30) (fun () ->
+                    g |> FSharpGrain.ask<TypedWithCtxState, TypedWithCtxCommand, int> GetTWCLastResult)
             test <@ last = 30 @>
         }

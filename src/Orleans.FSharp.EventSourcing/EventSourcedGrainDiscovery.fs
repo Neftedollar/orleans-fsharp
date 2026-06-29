@@ -58,6 +58,9 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
     /// <summary>Internal bridge for protected ConfirmEvents method, callable from closures.</summary>
     member internal this.InternalConfirmEvents() = this.ConfirmEvents()
 
+    /// <summary>Internal bridge for protected ClearLogAsync method (Orleans 10.1.0+), callable from closures.</summary>
+    member internal this.InternalClearLog() = this.ClearLogAsync()
+
     interface ICustomStorageInterface<'State, 'Event> with
         /// <summary>
         /// Reads the current (version, state) from the custom storage back-end.

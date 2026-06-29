@@ -103,7 +103,8 @@ type HandleCancellableBaseIntegrationTests(fixture: ClusterFixture) =
         task {
             let gf = fixture.GrainFactory
             let g = FSharpGrain.ref<RawCancState, RawCancCommand> gf "rawcanc-post"
+            // post is a true one-way call; observe its effect via a convergent two-way read.
             do! FSharpGrain.post (RawCancAdd 11) g
-            let! s = FSharpGrain.send GetRawCancState g
+            let! s = Eventually.until (fun s -> s.RawSum = 11) (fun () -> FSharpGrain.send GetRawCancState g)
             test <@ s.RawSum = 11 @>
         }

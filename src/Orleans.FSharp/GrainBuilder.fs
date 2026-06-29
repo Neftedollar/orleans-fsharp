@@ -27,28 +27,6 @@ type FSharpGrainAttribute() =
     inherit Attribute()
 
 /// <summary>
-/// Specifies the grain placement strategy that determines which silo activates a grain.
-/// In C# CodeGen, these map to Orleans placement attributes on the grain class.
-/// </summary>
-type PlacementStrategy =
-    /// <summary>Uses the Orleans default placement strategy (typically random).</summary>
-    | Default
-    /// <summary>Prefers to place the grain on the silo where the request originated.</summary>
-    | PreferLocal
-    /// <summary>Places the grain on a randomly selected silo.</summary>
-    | Random
-    /// <summary>Places the grain based on a hash of the grain ID for consistent placement.</summary>
-    | HashBased
-    /// <summary>Places the grain on the silo with the fewest activations. In C# CodeGen, maps to [ActivationCountBasedPlacement].</summary>
-    | ActivationCountBased
-    /// <summary>Places the grain based on resource usage metrics (CPU, memory, etc.). In C# CodeGen, maps to [ResourceOptimizedPlacement].</summary>
-    | ResourceOptimized
-    /// <summary>Places the grain on silos with the specified role. In C# CodeGen, maps to [SiloRoleBasedPlacement].</summary>
-    | SiloRoleBased of role: string
-    /// <summary>Uses a custom placement strategy type. The type must implement IPlacementStrategy. In C# CodeGen, the strategy attribute is applied to the grain class.</summary>
-    | Custom of strategyType: Type
-
-/// <summary>
 /// Provides access to grain infrastructure from within a grain handler.
 /// Enables grain-to-grain communication via type-safe GrainRef creation
 /// and service resolution via the IServiceProvider.
@@ -352,41 +330,21 @@ type GrainDefinition<'State, 'Message> =
         /// <summary>Named declarative timer handlers. Each entry maps a timer name to its dueTime, period, and state-transforming callback.
         /// Timers are automatically registered on grain activation and disposed on deactivation by Orleans.</summary>
         TimerHandlers: Map<string, TimeSpan * TimeSpan * ('State -> Task<'State>)>
-        /// <summary>Whether this grain allows reentrant (concurrent) message processing.</summary>
-        IsReentrant: bool
-        /// <summary>Set of method names that are always interleaved (processed concurrently) even on non-reentrant grains.</summary>
-        InterleavedMethods: Set<string>
-        /// <summary>Whether this grain is a stateless worker that allows multiple activations per silo.</summary>
-        IsStatelessWorker: bool
-        /// <summary>Maximum number of local worker activations per silo, or None for CPU count.</summary>
-        MaxLocalWorkers: int option
-        /// <summary>The placement strategy for the grain. In C# CodeGen, maps to Orleans placement attributes.</summary>
-        PlacementStrategy: PlacementStrategy
         /// <summary>Named additional persistent states. Each entry maps a state name to its storage provider name, default value, and type.</summary>
         AdditionalStates: Map<string, AdditionalStateSpec>
-        /// <summary>Set of method names that should be marked with the [OneWay] attribute in C# CodeGen.
-        /// One-way methods are fire-and-forget: the caller does not wait for the grain to finish processing.</summary>
-        OneWayMethods: Set<string>
-        /// <summary>Set of method names that should be marked with [ReadOnly] in C# CodeGen.
-        /// Read-only methods allow interleaving for read-only calls, improving throughput for non-mutating operations.</summary>
-        ReadOnlyMethods: Set<string>
-        /// <summary>Optional name of a static predicate method for custom reentrancy decisions.
-        /// In C# CodeGen, maps to [MayInterleave("PredicateMethodName")] on the grain class.
-        /// The predicate receives the incoming InvokeMethodRequest and returns bool.</summary>
-        MayInterleavePredicate: string option
+        /// <summary>The message types whose incoming requests may interleave with an
+        /// in-progress request on the same grain activation. Populated by the
+        /// <c>interleaveMessage</c> CE operation. At silo-configuration time each type is
+        /// pushed into the process-wide <c>Orleans.FSharp.FSharpInterleaveRegistry</c>, which
+        /// the static <c>[MayInterleave]</c> predicate on the universal grain classes consults.
+        /// Registering a discriminated-union type makes every one of its cases interleavable
+        /// (the predicate matches by assignability). Uses a list rather than a set because
+        /// <c>System.Type</c> does not satisfy F#'s <c>comparison</c> constraint.</summary>
+        InterleaveMessageTypes: Type list
         /// <summary>Lifecycle hooks keyed by GrainLifecycleStage (int).
         /// Each hook is invoked during the corresponding lifecycle stage with a CancellationToken.
         /// Standard stages: First=2000, SetupState=4000, Activate=6000, Last=int.MaxValue.</summary>
         LifecycleHooks: Map<int, (CancellationToken -> Task<unit>) list>
-        /// <summary>Implicit stream subscriptions mapping stream namespace to event handler functions.
-        /// In C# CodeGen, maps to [ImplicitStreamSubscription("namespace")] on the grain class.
-        /// Each handler receives the current state and a stream event (boxed), and returns the new state.</summary>
-        ImplicitSubscriptions: Map<string, 'State -> obj -> Task<'State>>
-        /// <summary>Per-grain deactivation timeout override. When set, configures the idle timeout
-        /// before this grain type is deactivated. In C# CodeGen, maps to [CollectionAgeLimit] attribute.</summary>
-        DeactivationTimeout: TimeSpan option
-        /// <summary>Custom grain type name. In C# CodeGen, maps to [GrainType("name")] attribute on the grain class.</summary>
-        GrainTypeName: string option
     }
 
 /// <summary>
@@ -607,19 +565,9 @@ type GrainBuilder() =
             OnDeactivate = None
             ReminderHandlers = Map.empty
             TimerHandlers = Map.empty
-            IsReentrant = false
-            InterleavedMethods = Set.empty
-            IsStatelessWorker = false
-            MaxLocalWorkers = None
-            PlacementStrategy = PlacementStrategy.Default
             AdditionalStates = Map.empty
-            OneWayMethods = Set.empty
-            ReadOnlyMethods = Set.empty
-            MayInterleavePredicate = None
+            InterleaveMessageTypes = []
             LifecycleHooks = Map.empty
-            ImplicitSubscriptions = Map.empty
-            DeactivationTimeout = None
-            GrainTypeName = None
         }
 
     /// <summary>
@@ -848,84 +796,6 @@ type GrainBuilder() =
             invalidArg (nameof name) "Timer name cannot be empty or whitespace"
         { definition with
             TimerHandlers = definition.TimerHandlers |> Map.add name (dueTime, period, handler)
-        }
-
-    /// <summary>
-    /// Marks the grain as reentrant.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
-    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain <c>[Reentrant]</c>
-    /// attribute cannot be applied. The setter still records the intent on
-    /// <c>GrainDefinition.IsReentrant</c>, but no runtime consumer reads it.
-    /// To enable Orleans reentrancy, write a per-grain C# stub manually.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with reentrant mode enabled.</returns>
-    [<CustomOperation("reentrant")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.Reentrant(definition: GrainDefinition<'State, 'Message>) =
-        { definition with IsReentrant = true }
-
-    /// <summary>
-    /// Marks a specific method as always interleaved.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> The
-    /// <c>[AlwaysInterleave]</c> attribute must be placed on an interface method, but
-    /// the universal pattern exposes a single <c>HandleMessage(object)</c> method via
-    /// <c>IFSharpGrain</c> — there is no per-method interface entry to attribute.
-    /// The setter records the name on <c>GrainDefinition.InterleavedMethods</c> but no
-    /// runtime consumer reads it. Write a per-grain C# stub manually if you need this.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="methodName">The name of the method to always interleave.</param>
-    /// <returns>The updated grain definition with the method added to the interleaved set.</returns>
-    [<CustomOperation("interleave")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.Interleave(definition: GrainDefinition<'State, 'Message>, methodName: string) =
-        { definition with
-            InterleavedMethods = definition.InterleavedMethods |> Set.add methodName
-        }
-
-    /// <summary>
-    /// Marks the grain as a stateless worker.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
-    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain
-    /// <c>[StatelessWorker]</c> attribute cannot be applied. The setter records intent on
-    /// <c>GrainDefinition.IsStatelessWorker</c> but no runtime consumer reads it.
-    /// To enable Orleans stateless-worker placement, write a per-grain C# stub manually.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with stateless worker mode enabled.</returns>
-    [<CustomOperation("statelessWorker")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.StatelessWorker(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            IsStatelessWorker = true
-        }
-
-    /// <summary>
-    /// Sets the maximum number of local worker activations per silo for a stateless worker grain.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern</b> — paired with the deprecated
-    /// <c>statelessWorker</c> keyword, see its remarks for context.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="count">The maximum number of local worker activations.</param>
-    /// <returns>The updated grain definition with the max activations set.</returns>
-    [<CustomOperation("maxActivations")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.MaxActivations(definition: GrainDefinition<'State, 'Message>, count: int) =
-        { definition with
-            MaxLocalWorkers = Some count
         }
 
     /// <summary>
@@ -1222,164 +1092,39 @@ type GrainBuilder() =
         }
 
     /// <summary>
-    /// Sets the grain placement strategy to PreferLocal.
-    /// Prefers to place the grain on the silo where the request originated.
-    /// In C# CodeGen, this corresponds to the [PreferLocalPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with PreferLocal placement.</returns>
-    [<CustomOperation("preferLocalPlacement")>]
-    member _.PreferLocalPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.PreferLocal
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to Random.
-    /// Places the grain on a randomly selected compatible silo.
-    /// In C# CodeGen, this corresponds to the [RandomPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with Random placement.</returns>
-    [<CustomOperation("randomPlacement")>]
-    member _.RandomPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.Random
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to HashBased.
-    /// Places the grain based on a consistent hash of the grain ID.
-    /// In C# CodeGen, this corresponds to the [HashBasedPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with HashBased placement.</returns>
-    [<CustomOperation("hashBasedPlacement")>]
-    member _.HashBasedPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.HashBased
-        }
-
-    /// <summary>
-    /// Marks a specific method as one-way (fire-and-forget).
+    /// Marks a message type as interleavable: when a request carrying a message of this type
+    /// (or, for a discriminated union, any of its cases) arrives while the grain is already
+    /// processing another request, Orleans is permitted to begin handling it concurrently
+    /// rather than queueing it behind the in-progress request.
     /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> The <c>[OneWay]</c>
-    /// attribute must be on an interface method, but the universal pattern exposes a
-    /// single <c>HandleMessage(object)</c> method via <c>IFSharpGrain</c> — there is
-    /// no per-method interface entry to attribute. The setter records the name on
-    /// <c>GrainDefinition.OneWayMethods</c> but no runtime consumer reads it.
-    /// Write a per-grain C# stub manually if you need <c>[OneWay]</c> semantics.
+    /// This is the one reentrancy lever that fits the universal F# grain pattern. All F#
+    /// grains share <c>Orleans.FSharp.FSharpGrainImpl</c> (and its Guid/Int siblings), which
+    /// carry a single class-level <c>[MayInterleave]</c> predicate keyed on the incoming
+    /// message's runtime type. Each declared type is pushed into the process-wide
+    /// <c>Orleans.FSharp.FSharpInterleaveRegistry</c> when the grain is added to the silo.
+    /// </para>
+    /// <para>
+    /// Pass the discriminated-union type itself — e.g. <c>interleaveMessage typeof&lt;Query&gt;</c>
+    /// — to make all of its cases interleavable; the predicate matches by assignability, so
+    /// field-carrying DU cases (which compile to nested subtypes that cannot be named in
+    /// source) are covered. Repeated registrations of the same type are de-duplicated.
+    /// </para>
+    /// <para>
+    /// Caution: registering a broad base type, interface, or <c>obj</c> will make every
+    /// assignable message type interleavable — always register specific DU or message types.
     /// </para>
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="methodName">The name of the method to mark as one-way.</param>
-    /// <returns>The updated grain definition with the method added to the one-way set.</returns>
-    [<CustomOperation("oneWay")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.OneWay(definition: GrainDefinition<'State, 'Message>, methodName: string) =
-        { definition with
-            OneWayMethods = definition.OneWayMethods |> Set.add methodName
-        }
-
-    /// <summary>
-    /// Marks a specific interface method as read-only.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> The <c>[ReadOnly]</c>
-    /// attribute must be on an interface method, but the universal pattern exposes a
-    /// single <c>HandleMessage(object)</c> method via <c>IFSharpGrain</c> — there is
-    /// no per-method interface entry to attribute. The setter records the name on
-    /// <c>GrainDefinition.ReadOnlyMethods</c> but no runtime consumer reads it.
-    /// Write a per-grain C# stub manually if you need <c>[ReadOnly]</c> semantics.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="methodName">The name of the method to mark as read-only.</param>
-    /// <returns>The updated grain definition with the method added to the read-only set.</returns>
-    [<CustomOperation("readOnly")>]
-    [<Obsolete("This CE keyword is non-functional: per-method attributes ([AlwaysInterleave]/[ReadOnly]/[OneWay]) must be on interface methods, but the universal F# grain pattern exposes a single HandleMessage(object) method via IFSharpGrain — there is no per-method interface entry to attribute. Use reentrant (also currently no-op, see related deprecation) or write a manual per-grain C# stub. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.ReadOnly(definition: GrainDefinition<'State, 'Message>, methodName: string) =
-        { definition with
-            ReadOnlyMethods = definition.ReadOnlyMethods |> Set.add methodName
-        }
-
-    /// <summary>
-    /// Sets a custom reentrancy predicate method name for the grain.
-    /// <para>
-    /// <b>Non-functional in the universal F# grain pattern.</b> All F# grains share the
-    /// universal <c>Orleans.FSharp.FSharpGrainImpl</c> class, so a per-grain
-    /// <c>[MayInterleave("...")]</c> attribute cannot be applied. The setter records the
-    /// predicate name on <c>GrainDefinition.MayInterleavePredicate</c> but no runtime
-    /// consumer reads it. To use a custom interleave predicate, write a per-grain C# stub.
-    /// </para>
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="predicateMethodName">The name of the static predicate method.</param>
-    /// <returns>The updated grain definition with the reentrancy predicate set.</returns>
-    [<CustomOperation("mayInterleave")>]
-    [<Obsolete("This CE keyword is non-functional in the universal F# grain pattern: all F# grains share Orleans.FSharp.FSharpGrainImpl, so per-grain class attributes ([Reentrant]/[StatelessWorker]/[MayInterleave]) cannot be applied. To use class-level attributes, write a per-grain C# stub manually. Tracking issue: https://github.com/Neftedollar/orleans-fsharp/issues/11",
-                false)>]
-    member _.MayInterleave(definition: GrainDefinition<'State, 'Message>, predicateMethodName: string) =
-        { definition with
-            MayInterleavePredicate = Some predicateMethodName
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to ActivationCountBased.
-    /// Places the grain on the silo with the fewest active grain activations.
-    /// In C# CodeGen, this corresponds to the [ActivationCountBasedPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with ActivationCountBased placement.</returns>
-    [<CustomOperation("activationCountPlacement")>]
-    member _.ActivationCountPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.ActivationCountBased
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to ResourceOptimized.
-    /// Places the grain based on silo resource usage metrics (CPU, memory, etc.).
-    /// In C# CodeGen, this corresponds to the [ResourceOptimizedPlacement] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <returns>The updated grain definition with ResourceOptimized placement.</returns>
-    [<CustomOperation("resourceOptimizedPlacement")>]
-    member _.ResourceOptimizedPlacement(definition: GrainDefinition<'State, 'Message>) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.ResourceOptimized
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to SiloRoleBased with the specified role.
-    /// Places the grain only on silos configured with the given role.
-    /// In C# CodeGen, this corresponds to the [SiloRoleBasedPlacement] attribute with the role parameter.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="role">The silo role name to target.</param>
-    /// <returns>The updated grain definition with SiloRoleBased placement.</returns>
-    [<CustomOperation("siloRolePlacement")>]
-    member _.SiloRolePlacement(definition: GrainDefinition<'State, 'Message>, role: string) =
-        if String.IsNullOrWhiteSpace(role) then
-            invalidArg (nameof role) "Silo role name cannot be empty or whitespace"
-        { definition with
-            PlacementStrategy = PlacementStrategy.SiloRoleBased role
-        }
-
-    /// <summary>
-    /// Sets the grain placement strategy to a custom type.
-    /// The type must implement IPlacementStrategy.
-    /// In C# CodeGen, the custom strategy attribute is applied to the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="strategyType">The System.Type of the custom placement strategy.</param>
-    /// <returns>The updated grain definition with Custom placement.</returns>
-    [<CustomOperation("customPlacement")>]
-    member _.CustomPlacement(definition: GrainDefinition<'State, 'Message>, strategyType: Type) =
-        { definition with
-            PlacementStrategy = PlacementStrategy.Custom strategyType
-        }
+    /// <param name="messageType">The message (or discriminated-union) type to mark interleavable.</param>
+    /// <returns>The updated grain definition with the message type recorded.</returns>
+    [<CustomOperation("interleaveMessage")>]
+    member _.InterleaveMessage(definition: GrainDefinition<'State, 'Message>, messageType: Type) =
+        if definition.InterleaveMessageTypes |> List.contains messageType then
+            definition
+        else
+            { definition with
+                InterleaveMessageTypes = messageType :: definition.InterleaveMessageTypes
+            }
 
     /// <summary>
     /// Registers a lifecycle hook at the specified grain lifecycle stage.
@@ -1407,58 +1152,8 @@ type GrainBuilder() =
             LifecycleHooks = definition.LifecycleHooks |> Map.add stage (existing @ [ hook ])
         }
 
-    /// <summary>
-    /// Declares an implicit stream subscription for the given namespace.
-    /// In C# CodeGen, maps to [ImplicitStreamSubscription("namespace")] on the grain class.
-    /// The handler receives the current state and a stream event (boxed), and returns the new state.
-    /// Multiple implicit subscriptions can be registered for different namespaces.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="ns">The stream namespace to subscribe to.</param>
-    /// <param name="handler">The event handler function that transforms state based on the stream event.</param>
-    /// <returns>The updated grain definition with the implicit stream subscription registered.</returns>
-    [<CustomOperation("implicitStreamSubscription")>]
-    member _.ImplicitStreamSubscription
-        (
-            definition: GrainDefinition<'State, 'Message>,
-            ns: string,
-            handler: 'State -> obj -> Task<'State>
-        ) =
-        { definition with
-            ImplicitSubscriptions = definition.ImplicitSubscriptions |> Map.add ns handler
-        }
-
-    /// <summary>
-    /// Sets the per-grain deactivation timeout (idle timeout before this grain type is deactivated).
-    /// In C# CodeGen, maps to the [CollectionAgeLimit] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="timeout">The deactivation timeout as a TimeSpan.</param>
-    /// <returns>The updated grain definition with the deactivation timeout set.</returns>
-    [<CustomOperation("deactivationTimeout")>]
-    member _.DeactivationTimeout(definition: GrainDefinition<'State, 'Message>, timeout: TimeSpan) =
-        { definition with
-            DeactivationTimeout = Some timeout
-        }
-
-    /// <summary>
-    /// Sets a custom grain type name for this grain.
-    /// In C# CodeGen, maps to [GrainType("name")] attribute on the grain class.
-    /// </summary>
-    /// <param name="definition">The current grain definition being built.</param>
-    /// <param name="name">The custom grain type name.</param>
-    /// <returns>The updated grain definition with the grain type name set.</returns>
-    [<CustomOperation("grainType")>]
-    member _.GrainType(definition: GrainDefinition<'State, 'Message>, name: string) =
-        if String.IsNullOrWhiteSpace(name) then
-            invalidArg (nameof name) "Grain type name cannot be empty or whitespace"
-        { definition with
-            GrainTypeName = Some name
-        }
-
     /// <summary>Returns the completed grain definition. Validates constraints:
-    /// defaultState must be explicitly set, at least one handler must be registered,
-    /// and stateless workers cannot use persistent state.</summary>
+    /// defaultState must be explicitly set and at least one handler must be registered.</summary>
     /// <exception cref="System.InvalidOperationException">Thrown when validation fails.</exception>
     member _.Run(definition: GrainDefinition<'State, 'Message>) =
         if definition.DefaultState.IsNone then
@@ -1468,10 +1163,6 @@ type GrainBuilder() =
         if not (GrainDefinition.hasAnyHandler definition) then
             invalidOp
                 $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle', 'handleState', 'handleTyped', 'handleCancellable', 'handleWithContext', or 'handleWithContextCancellable' in the grain {{ }} CE."
-
-        if definition.IsStatelessWorker && definition.PersistenceName.IsSome then
-            invalidOp
-                "Stateless worker grains cannot use persistent state. Remove either 'statelessWorker' or 'persist' from the grain definition."
 
         definition
 
@@ -1489,9 +1180,6 @@ module GrainBuilderInstance =
     /// handleWithContextCancellable, handleWithServices, handleStateWithServices,
     /// handleTypedWithServices, handleWithServicesCancellable, persist,
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
-    /// preferLocalPlacement, randomPlacement, hashBasedPlacement, activationCountPlacement,
-    /// resourceOptimizedPlacement, siloRolePlacement, customPlacement,
-    /// reentrant, interleave, readOnly, mayInterleave, oneWay, onLifecycleStage,
-    /// implicitStreamSubscription.
+    /// interleaveMessage, onLifecycleStage.
     /// </summary>
     let grain = GrainBuilder()

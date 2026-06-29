@@ -1,8 +1,5 @@
 namespace Orleans.FSharp.Sample
 
-// FS44: deprecated CE keyword (reentrant) — see GrainBuilder.fs.
-#nowarn "44"
-
 open System.Collections.Generic
 open System.Threading.Tasks
 open Orleans
@@ -143,5 +140,4 @@ module LeaderboardGrainDef =
                 })
 
             persist "Default"
-            reentrant
         }

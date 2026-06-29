@@ -170,8 +170,8 @@ type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
                     fixture.GrainFactory
                     (System.Guid.NewGuid().ToString("N"))
 
-            // Process some state so the grain is active
-            do! FSharpGrain.post (DeactivCtrlProcess 5) grain
+            // Process some state so the grain is active (awaited two-way write)
+            let! _ = FSharpGrain.send (DeactivCtrlProcess 5) grain
 
             // This call internally invokes GrainContext.deactivateOnIdle ctx.
             // Before the IGrainBase wiring it would throw InvalidOperationException.
@@ -189,8 +189,9 @@ type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
                     fixture.GrainFactory
                     (System.Guid.NewGuid().ToString("N"))
 
-            do! FSharpGrain.post (DeactivCtrlProcess 3) grain
-            do! FSharpGrain.post (DeactivCtrlProcess 7) grain
+            // Awaited two-way writes so both increments are applied before we read back.
+            let! _ = FSharpGrain.send (DeactivCtrlProcess 3) grain
+            let! _ = FSharpGrain.send (DeactivCtrlProcess 7) grain
 
             let! before = FSharpGrain.send DeactivCtrlGetProcessed grain
             test <@ before.Processed = 10 @>

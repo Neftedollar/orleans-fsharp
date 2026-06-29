@@ -279,6 +279,15 @@ type FSharpGrain<'State, 'Message>
             let typedMsg = message :?> 'Message
             this.HandleMessage(typedMsg)
 
+        /// <summary>
+        /// One-way (fire-and-forget) entry point. Dispatches like <c>HandleMessage</c> but
+        /// discards the result so no response is marshalled back to the caller.
+        /// Backs <c>FSharpGrain.post</c>.
+        /// </summary>
+        member this.HandleMessageOneWay(message: obj) : Task =
+            let typedMsg = message :?> 'Message
+            this.HandleMessage(typedMsg) :> Task
+
     interface IRemindable with
 
         /// <summary>
@@ -581,6 +590,12 @@ Use distinct command/message types for each grain."
                     if typeof<'Message>.IsAssignableFrom(nestedType) then
                         defaults <- Map.add nestedType.FullName (box d) defaults
             | None -> ()
+
+            // Push interleavable message types into the process-wide static registry that the
+            // universal grain's [MayInterleave] predicate consults. The predicate is static
+            // (Orleans requires it) so it cannot read DI; this registry is the realization.
+            for interleaveType in definition.InterleaveMessageTypes do
+                Orleans.FSharp.FSharpInterleaveRegistry.Register(interleaveType)
 
         interface IUniversalGrainHandler with
 

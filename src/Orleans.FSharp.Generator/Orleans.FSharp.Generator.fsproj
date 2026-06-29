@@ -21,8 +21,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Scriban" Version="5.*" />
-    <PackageReference Include="TypeShape" Version="10.0.0" />
+    <PackageReference Include="Scriban" />
+    <PackageReference Include="TypeShape" />
   </ItemGroup>
 
   <ItemGroup>

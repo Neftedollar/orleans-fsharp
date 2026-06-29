@@ -98,7 +98,10 @@ type HandleTypedCancellableIntegrationTests(fixture: ClusterFixture) =
     let ``post TypedCancAdd completes without error`` () =
         task {
             let g = FSharpGrain.ref<TypedCancState, TypedCancCommand> fixture.GrainFactory "tc-post"
+            // post is a true one-way call; observe its effect via a convergent two-way read.
             do! FSharpGrain.post (TypedCancAdd(10, 20)) g
-            let! last = g |> FSharpGrain.ask<TypedCancState, TypedCancCommand, int> GetTypedCancLastResult
+            let! last =
+                Eventually.until (fun v -> v = 30) (fun () ->
+                    g |> FSharpGrain.ask<TypedCancState, TypedCancCommand, int> GetTypedCancLastResult)
             test <@ last = 30 @>
         }

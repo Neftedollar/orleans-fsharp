@@ -17,8 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Fable.Remoting.Server" Version="5.*" />
-    <PackageReference Include="Fable.Remoting.AspNetCore" Version="2.*" />
+    <PackageReference Include="Fable.Remoting.Server" />
+    <PackageReference Include="Fable.Remoting.AspNetCore" />
   </ItemGroup>
 
 </Project>

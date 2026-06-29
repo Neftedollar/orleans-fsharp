@@ -133,8 +133,8 @@ Every major Orleans capability, wrapped in idiomatic F#:
 - **Grain lifecycle**: activate, deactivate, lifecycle hooks
 - **State persistence**: Memory, Redis, Azure Blob/Table, Cosmos, DynamoDB, ADO.NET
 - **Streaming**: Memory, Event Hubs, Azure Queue, broadcast channels, TaskSeq
-- **Reentrancy & concurrency**: Reentrant grains, interleaved methods, stateless workers
-- **Placement strategies**: Prefer local, random, hash-based, activation count, resource-optimized, silo role
+- **Reentrancy & concurrency**: `interleaveMessage typeof<'Msg>` under the universal pattern; `[Reentrant]` / `[StatelessWorker]` per-grain via the C# CodeGen path
+- **Placement strategies**: Prefer local, random, hash-based, activation count, resource-optimized, silo role (per-grain via the C# CodeGen path)
 - **Event sourcing**: `eventSourcedGrain { }` with snapshot strategies
 - **Transactions**: `TransactionalState` wrapper for ACID operations
 - **Observers & filters**: Incoming/outgoing grain call filters, request context propagation

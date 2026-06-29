@@ -1,9 +1,85 @@
 using Orleans;
+using Orleans.Concurrency;
 using Orleans.EventSourcing;
 using Orleans.EventSourcing.CustomStorage;
 using Orleans.Runtime;
+using Orleans.Serialization.Invocation;
 
 namespace Orleans.FSharp;
+
+/// <summary>
+/// Process-wide registry of message types that may interleave with an in-progress request
+/// on a universal F# grain activation.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The universal F# grain pattern routes every grain through one of three shared concrete
+/// classes (<see cref="FSharpGrainImpl"/> / <see cref="FSharpGrainGuidImpl"/> /
+/// <see cref="FSharpGrainIntImpl"/>) via a single <c>HandleMessage(object)</c> method.
+/// Orleans' only class-level reentrancy lever that fits this shape is
+/// <c>[MayInterleave(predicate)]</c>: a single <b>static</b> predicate consulted with the
+/// incoming request. Because the predicate is static it cannot reach a DI-scoped registry,
+/// so the set of interleavable message types is held here, in process-static state.
+/// </para>
+/// <para>
+/// This is correct for the universal pattern: the set of interleavable message types is a
+/// property of the grain <i>definitions</i> registered into the process, which is identical
+/// across every silo in a deployment (including a multi-silo <c>TestCluster</c>). It is
+/// populated at silo-configuration time from each grain definition's
+/// <c>InterleaveMessageTypes</c> (set by the <c>interleaveMessage</c> grain CE operation).
+/// </para>
+/// <para>
+/// Membership is matched by <b>assignability</b>, not exact type identity: registering a
+/// discriminated-union type makes every one of its cases interleavable. This is required
+/// because F# DU cases that carry fields compile to nested subtypes that are not nameable
+/// in source — callers can only write <c>typeof&lt;TheUnion&gt;</c>, while a boxed DU value
+/// reports the nested case type at runtime.
+/// </para>
+/// </remarks>
+public static class FSharpInterleaveRegistry
+{
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, byte> _types = new();
+
+    /// <summary>
+    /// Records <paramref name="messageType"/> as interleavable. Idempotent and thread-safe.
+    /// </summary>
+    /// <param name="messageType">The message (or discriminated-union) type to mark interleavable.</param>
+    public static void Register(Type messageType)
+    {
+        if (messageType is not null)
+        {
+            _types.TryAdd(messageType, 0);
+        }
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when <paramref name="messageType"/> is itself registered, or is
+    /// assignable to any registered type (so cases of a registered DU interleave).
+    /// </summary>
+    /// <param name="messageType">The runtime type of the incoming message.</param>
+    public static bool MayInterleave(Type messageType)
+    {
+        if (messageType is null)
+        {
+            return false;
+        }
+
+        if (_types.ContainsKey(messageType))
+        {
+            return true;
+        }
+
+        foreach (var registered in _types.Keys)
+        {
+            if (registered.IsAssignableFrom(messageType))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
 
 /// <summary>
 /// Universal grain interface for all F# grains with a string key.
@@ -30,6 +106,16 @@ public interface IFSharpGrain : IGrainWithStringKey
     /// <param name="message">The command or query object. Must be serializable.</param>
     /// <returns>The result produced by the grain handler, boxed as <c>object</c>.</returns>
     Task<object> HandleMessage(object message);
+
+    /// <summary>
+    /// Dispatches a message to the grain as a true one-way (fire-and-forget) call.
+    /// The caller returns once the message is sent; no response is marshalled back and
+    /// grain-side exceptions are not propagated to the caller. The grain still processes
+    /// the message and mutates its state. Backs <c>FSharpGrain.post</c>.
+    /// </summary>
+    /// <param name="message">The command object. Must be serializable.</param>
+    [OneWay]
+    Task HandleMessageOneWay(object message);
 }
 
 /// <summary>
@@ -43,6 +129,16 @@ public interface IFSharpGrainWithGuidKey : IGrainWithGuidKey
     /// <param name="message">The command or query object. Must be serializable.</param>
     /// <returns>The result produced by the grain handler, boxed as <c>object</c>.</returns>
     Task<object> HandleMessage(object message);
+
+    /// <summary>
+    /// Dispatches a message to the grain as a true one-way (fire-and-forget) call.
+    /// The caller returns once the message is sent; no response is marshalled back and
+    /// grain-side exceptions are not propagated to the caller. The grain still processes
+    /// the message and mutates its state. Backs <c>FSharpGrain.postGuid</c>.
+    /// </summary>
+    /// <param name="message">The command object. Must be serializable.</param>
+    [OneWay]
+    Task HandleMessageOneWay(object message);
 }
 
 /// <summary>
@@ -56,6 +152,16 @@ public interface IFSharpGrainWithIntKey : IGrainWithIntegerKey
     /// <param name="message">The command or query object. Must be serializable.</param>
     /// <returns>The result produced by the grain handler, boxed as <c>object</c>.</returns>
     Task<object> HandleMessage(object message);
+
+    /// <summary>
+    /// Dispatches a message to the grain as a true one-way (fire-and-forget) call.
+    /// The caller returns once the message is sent; no response is marshalled back and
+    /// grain-side exceptions are not propagated to the caller. The grain still processes
+    /// the message and mutates its state. Backs <c>FSharpGrain.postInt</c>.
+    /// </summary>
+    /// <param name="message">The command object. Must be serializable.</param>
+    [OneWay]
+    Task HandleMessageOneWay(object message);
 }
 
 /// <summary>
@@ -73,6 +179,21 @@ public interface IFSharpEventSourcedGrain : IGrainWithStringKey
     /// <param name="command">The command object. Must be serializable.</param>
     /// <returns>The grain state after all events are applied, boxed as <c>object</c>.</returns>
     Task<object> HandleCommand(object command);
+
+    /// <summary>
+    /// Clears the grain's event log via <c>JournaledGrain.ClearLogAsync</c> (Orleans 10.1.0+).
+    /// Removes all confirmed events for this grain from storage and re-initialises the
+    /// confirmed view to the initial state (version reset to 0). The grain remains usable —
+    /// subsequent commands rebuild from the now-empty log. Backs <c>FSharpEventSourcedGrain.clearLog</c>.
+    /// </summary>
+    /// <remarks>
+    /// Provider-dependent: Orleans' <c>ClearLogAsync</c> throws
+    /// <see cref="System.NotSupportedException"/> for log-consistency providers that do not
+    /// override <c>ClearPrimaryLogAsync</c>. Only providers with explicit log-clearing support
+    /// honour this call; others surface a <see cref="System.NotSupportedException"/> at runtime.
+    /// </remarks>
+    /// <returns>A task that completes once the log has been cleared.</returns>
+    Task ClearLog();
 }
 
 /// <summary>
@@ -159,6 +280,7 @@ public interface IUniversalGrainHandler
 /// CodeGen pattern with the typed <c>FSharpGrain&lt;State, Message&gt;</c> class in
 /// <c>Orleans.FSharp.Runtime</c> instead.
 /// </remarks>
+[MayInterleave(nameof(MayInterleavePredicate))]
 public sealed class FSharpGrainImpl : Grain, IFSharpGrain
 {
     private readonly IUniversalGrainHandler _handler;
@@ -173,6 +295,18 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
         _handler = handler;
     }
 
+    /// <summary>
+    /// Class-level reentrancy predicate consulted by the Orleans runtime when a request
+    /// arrives while this activation is already processing another request. Returns
+    /// <c>true</c> when the incoming message's runtime type was registered as interleavable
+    /// via the <c>interleaveMessage</c> grain CE operation (see <see cref="FSharpInterleaveRegistry"/>).
+    /// </summary>
+    /// <param name="req">The incoming invocation; argument 0 is the boxed F# message.</param>
+    public static bool MayInterleavePredicate(IInvokable req) =>
+        req.GetArgumentCount() > 0
+        && req.GetArgument(0) is { } message
+        && FSharpInterleaveRegistry.MayInterleave(message.GetType());
+
     /// <inheritdoc/>
     public async Task<object> HandleMessage(object message)
     {
@@ -180,6 +314,14 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
         var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
+    }
+
+    /// <inheritdoc/>
+    public async Task HandleMessageOneWay(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
+        _currentState = dispatch.NewState;
     }
 
     private readonly struct Unit { public static readonly Unit Default = default; }
@@ -193,6 +335,7 @@ public sealed class FSharpGrainImpl : Grain, IFSharpGrain
 /// State is kept purely in memory. For durable persistence use the typed
 /// <c>FSharpGrain&lt;State, Message&gt;</c> pattern in Orleans.FSharp.Runtime.
 /// </remarks>
+[MayInterleave(nameof(MayInterleavePredicate))]
 public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
 {
     private readonly IUniversalGrainHandler _handler;
@@ -207,6 +350,18 @@ public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
         _handler = handler;
     }
 
+    /// <summary>
+    /// Class-level reentrancy predicate consulted by the Orleans runtime when a request
+    /// arrives while this activation is already processing another request. Returns
+    /// <c>true</c> when the incoming message's runtime type was registered as interleavable
+    /// via the <c>interleaveMessage</c> grain CE operation (see <see cref="FSharpInterleaveRegistry"/>).
+    /// </summary>
+    /// <param name="req">The incoming invocation; argument 0 is the boxed F# message.</param>
+    public static bool MayInterleavePredicate(IInvokable req) =>
+        req.GetArgumentCount() > 0
+        && req.GetArgument(0) is { } message
+        && FSharpInterleaveRegistry.MayInterleave(message.GetType());
+
     /// <inheritdoc/>
     public async Task<object> HandleMessage(object message)
     {
@@ -214,6 +369,14 @@ public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
         var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
+    }
+
+    /// <inheritdoc/>
+    public async Task HandleMessageOneWay(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
+        _currentState = dispatch.NewState;
     }
 
     private readonly struct Unit { public static readonly Unit Default = default; }
@@ -314,6 +477,11 @@ public class FSharpEventSourcedGrainImpl
         return State.Value!;
     }
 
+    /// <inheritdoc/>
+    // ClearLogAsync is a protected JournaledGrain member (Orleans 10.1.0+, PR #9849).
+    // Its CancellationToken parameter is optional, so the no-arg call binds to the default.
+    public Task ClearLog() => ClearLogAsync();
+
     /// <summary>
     /// Override in a generated subclass to read grain state from a custom storage back-end.
     /// Called by <c>CustomStorageBasedLogConsistencyProvider</c> during grain activation.
@@ -352,6 +520,7 @@ public class FSharpEventSourcedGrainImpl
 /// State is kept purely in memory. For durable persistence use the typed
 /// <c>FSharpGrain&lt;State, Message&gt;</c> pattern in Orleans.FSharp.Runtime.
 /// </remarks>
+[MayInterleave(nameof(MayInterleavePredicate))]
 public sealed class FSharpGrainIntImpl : Grain, IFSharpGrainWithIntKey
 {
     private readonly IUniversalGrainHandler _handler;
@@ -366,6 +535,18 @@ public sealed class FSharpGrainIntImpl : Grain, IFSharpGrainWithIntKey
         _handler = handler;
     }
 
+    /// <summary>
+    /// Class-level reentrancy predicate consulted by the Orleans runtime when a request
+    /// arrives while this activation is already processing another request. Returns
+    /// <c>true</c> when the incoming message's runtime type was registered as interleavable
+    /// via the <c>interleaveMessage</c> grain CE operation (see <see cref="FSharpInterleaveRegistry"/>).
+    /// </summary>
+    /// <param name="req">The incoming invocation; argument 0 is the boxed F# message.</param>
+    public static bool MayInterleavePredicate(IInvokable req) =>
+        req.GetArgumentCount() > 0
+        && req.GetArgument(0) is { } message
+        && FSharpInterleaveRegistry.MayInterleave(message.GetType());
+
     /// <inheritdoc/>
     public async Task<object> HandleMessage(object message)
     {
@@ -373,6 +554,14 @@ public sealed class FSharpGrainIntImpl : Grain, IFSharpGrainWithIntKey
         var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
         _currentState = dispatch.NewState;
         return dispatch.Result ?? (object)Unit.Default;
+    }
+
+    /// <inheritdoc/>
+    public async Task HandleMessageOneWay(object message)
+    {
+        _currentState ??= _handler.GetDefaultState(message.GetType());
+        var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
+        _currentState = dispatch.NewState;
     }
 
     private readonly struct Unit { public static readonly Unit Default = default; }

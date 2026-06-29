@@ -15,7 +15,6 @@
 | `GrainRef<'TInterface, 'TKey>` | Type-safe reference to an Orleans grain |
 | `CompoundGuidKey` | Compound key: GUID + string extension |
 | `CompoundIntKey` | Compound key: int64 + string extension |
-| `PlacementStrategy` | DU: Default, PreferLocal, Random, HashBased, ActivationCountBased, ResourceOptimized, SiloRoleBased, Custom |
 | `AdditionalStateSpec` | Named additional persistent state specification |
 | `Immutable<'T>` | Alias for `Orleans.Concurrency.Immutable<'T>` for zero-copy passing |
 | `FSharpIncomingFilter` | Wraps an F# function as `IIncomingGrainCallFilter` |
@@ -50,10 +49,11 @@
 | `onActivate` | `GrainContext -> Task<unit>` | Runs on grain activation |
 | `onDeactivate` | `GrainContext -> DeactivationReason -> Task<unit>` | Runs on grain deactivation |
 | `onReminder` | `string -> TickStatus -> Task<unit>` | Named reminder handler |
-| `reentrant` | — | Allow concurrent message processing |
-| `statelessWorker` | — | Allow multiple activations per silo |
+| `interleaveMessage` | `System.Type` | Allow a message type to interleave (`interleaveMessage typeof<Query>`) |
 
-See [Grain Definition guide](grain-definition.md) for the full keyword list.
+See [Grain Definition guide](grain-definition.md) for the full keyword list. Per-grain Orleans
+attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
+`[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
 
 ### Modules
 
@@ -75,20 +75,6 @@ See [Grain Definition guide](grain-definition.md) for the full keyword list.
 | `primaryKeyGuid` | `GrainContext -> Guid` | Get Guid primary key |
 | `primaryKeyInt64` | `GrainContext -> int64` | Get int64 primary key |
 | `empty` | `GrainContext` | Empty context for unit tests (all fields null/None) |
-
-#### `Behavior`
-
-Helpers for the behavior pattern — grains whose state includes a phase discriminated union.
-
-| Function | Signature | Description |
-|---|---|---|
-| `run` | `('S -> 'M -> Task<BehaviorResult<'S>>) -> 'S -> 'M -> Task<'S>` | Adapter for `handleState`: unwraps result, Stop returns original state |
-| `runWithContext` | `(GrainContext -> 'S -> 'M -> Task<BehaviorResult<'S>>) -> GrainContext -> 'S -> 'M -> Task<'S>` | Adapter for `handleStateWithContext`: Stop calls `DeactivateOnIdle` |
-| `unwrap` | `'S -> BehaviorResult<'S> -> 'S` | Extract state from Stay/Become; fallback to original for Stop |
-| `map` | `('S -> 'S) -> BehaviorResult<'S> -> BehaviorResult<'S>` | Map over state inside a BehaviorResult |
-| `isTransition` | `BehaviorResult<'S> -> bool` | True if result is `Become` |
-| `isStopped` | `BehaviorResult<'S> -> bool` | True if result is `Stop` |
-| `toHandlerResult` | `'S -> BehaviorResult<'S> -> 'S * obj` | Convert to `state * obj` for use with raw `handle` |
 
 #### `GrainDefinition`
 
@@ -186,16 +172,6 @@ Helpers for the behavior pattern — grains whose state includes a phase discrim
 | `createRef<'T>` | `IGrainFactory -> 'T -> 'T` | Create observer reference |
 | `deleteRef<'T>` | `IGrainFactory -> 'T -> unit` | Delete observer reference |
 | `subscribe<'T>` | `IGrainFactory -> 'T -> IDisposable` | Subscribe with auto-cleanup |
-
-#### `Telemetry`
-
-| Constant/Function | Value/Signature | Description |
-|---|---|---|
-| `runtimeActivitySourceName` | `"Microsoft.Orleans.Runtime"` | Runtime tracing source |
-| `applicationActivitySourceName` | `"Microsoft.Orleans.Application"` | App tracing source |
-| `meterName` | `"Microsoft.Orleans"` | Metrics meter name |
-| `activitySourceNames` | `string list` | Both source names |
-| `enableActivityPropagation` | `ISiloBuilder -> ISiloBuilder` | Enable tracing propagation |
 
 #### `Shutdown`
 
@@ -298,8 +274,6 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 
 | Module | Key Function | Description |
 |---|---|---|
-| `GrainExtension.getExtension<'T>` | `IAddressable -> 'T` | Get grain extension reference |
-| `GrainServices.addGrainService<'T>` | `ISiloBuilder -> ISiloBuilder` | Register grain service |
 | `FSharpSerialization.addFSharpSerialization` | `ISiloBuilder -> ISiloBuilder` | Orleans native F# serializer |
 | `FSharpBinaryCodecRegistration.addToSerializerBuilder` | `ISerializerBuilder -> ISerializerBuilder` | Register FSharpBinaryCodec manually |
 | `immutable` | `'T -> Immutable<'T>` | Wrap as immutable |
@@ -353,6 +327,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 |---|---|---|
 | `addEventHubStreams` | `string -> string -> string -> ISiloBuilder -> ISiloBuilder` | Event Hubs provider |
 | `addAzureQueueStreams` | `string -> string -> ISiloBuilder -> ISiloBuilder` | Azure Queue provider |
+| `addRedisStreams` | `string -> string -> (ISiloBuilder -> ISiloBuilder)` | Redis Streams provider (**experimental**: needs a prerelease `Microsoft.Orleans.Streaming.Redis`) |
 
 ---
 

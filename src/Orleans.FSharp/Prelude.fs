@@ -140,30 +140,6 @@ module ImmutableTypes =
     let unwrapImmutable (imm: Immutable<'T>) = imm.Value
 
 /// <summary>
-/// Re-exports FsToolkit.ErrorHandling for convenient access from Orleans.FSharp consumers.
-/// Opening this module provides taskResult { }, result { }, option { }, and validation { } CEs
-/// for composable error handling in grain handlers.
-/// </summary>
-/// <example>
-/// <code>
-/// open Orleans.FSharp
-/// open FsToolkit.ErrorHandling
-///
-/// let handle state cmd = taskResult {
-///     let! validated = validateCommand cmd
-///     let! newState = applyTransition state validated
-///     return newState
-/// }
-/// </code>
-/// </example>
-module FsToolkitReexport =
-    // FsToolkit.ErrorHandling is a transitive dependency of Orleans.FSharp.
-    // Consumers just need: open FsToolkit.ErrorHandling
-    // This module exists to document the dependency and ensure it's not trimmed.
-    let private _ensureFsToolkitLoaded =
-        typeof<FsToolkit.ErrorHandling.TaskResultBuilder>.Assembly
-
-/// <summary>
 /// Pre-configured System.Text.Json serialization options for F# types.
 /// Uses FSharp.SystemTextJson to support discriminated unions, records,
 /// options, value options, lists, maps, and other F# types.

@@ -36,21 +36,6 @@ let ``persist with whitespace throws ArgumentException`` () =
         @>
 
 // ---------------------------------------------------------------------------
-// GrainBuilder: grainType
-// ---------------------------------------------------------------------------
-
-[<Fact>]
-let ``grainType with empty string throws ArgumentException`` () =
-    raises<ArgumentException>
-        <@
-            grain {
-                defaultState 0
-                handle (fun s (_m: string) -> task { return s, box s })
-                grainType ""
-            }
-        @>
-
-// ---------------------------------------------------------------------------
 // GrainBuilder: onReminder
 // ---------------------------------------------------------------------------
 
@@ -77,21 +62,6 @@ let ``onTimer with empty name throws ArgumentException`` () =
                 defaultState 0
                 handle (fun s (_m: string) -> task { return s, box s })
                 onTimer "" TimeSpan.Zero TimeSpan.Zero (fun s -> task { return s })
-            }
-        @>
-
-// ---------------------------------------------------------------------------
-// GrainBuilder: siloRolePlacement
-// ---------------------------------------------------------------------------
-
-[<Fact>]
-let ``siloRolePlacement with empty role throws ArgumentException`` () =
-    raises<ArgumentException>
-        <@
-            grain {
-                defaultState 0
-                handle (fun s (_m: string) -> task { return s, box s })
-                siloRolePlacement ""
             }
         @>
 

@@ -42,7 +42,7 @@ module internal FSharpBinaryFormat =
     // ───────────────────────────────────────────────────────────────────────
 
     /// <summary>A matched pair of write/read functions for one concrete type.</summary>
-    type TypeCodec = {
+    type internal TypeCodec = {
         Write: BinaryWriter -> obj -> unit
         Read:  BinaryReader -> obj
     }

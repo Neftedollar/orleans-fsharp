@@ -62,10 +62,13 @@ type HandleTypedTests(fixture: ClusterFixture) =
     member _.``handleTyped grain: send also works (returns CalcState)`` () =
         task {
             // send casts the result (int) to 'State (CalcState) — this fails unless
-            // handleTyped returns state as result too. Here we use post instead.
+            // handleTyped returns state as result too. Here we use post (true one-way) instead
+            // and observe its effect via a convergent two-way read.
             let handle = FSharpGrain.ref<CalcState, CalcCommand> fixture.GrainFactory "calc-post-1"
             do! handle |> FSharpGrain.post (AddValues(5, 5))
-            let! last = handle |> FSharpGrain.ask<CalcState, CalcCommand, int> GetLastResult
+            let! last =
+                Eventually.until (fun v -> v = 10) (fun () ->
+                    handle |> FSharpGrain.ask<CalcState, CalcCommand, int> GetLastResult)
             test <@ last = 10 @>
         }
 

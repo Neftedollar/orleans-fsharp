@@ -48,7 +48,7 @@ type ScriptingCollection() =
 type ScriptingTests(fixture: ScriptingFixture) =
 
     [<Fact>]
-    member _.``quickStart returns a working silo handle`` () =
+    member _.``startOnPorts returns a working silo handle`` () =
         task {
             let handle = fixture.Handle
             test <@ handle.Host <> null @>

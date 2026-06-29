@@ -104,4 +104,4 @@ fsharp-analyzers --project MyGrains.fsproj --analyzers-path <path-to-Orleans.FSh
 
 - [Getting Started](getting-started.md) — quick introduction to Orleans.FSharp
 - [Grain Definition](grain-definition.md) — complete `grain { }` CE reference
-- [Advanced](advanced.md) — transactions, telemetry, shutdown, migration
+- [Advanced](advanced.md) — transactions, OpenTelemetry, shutdown, migration

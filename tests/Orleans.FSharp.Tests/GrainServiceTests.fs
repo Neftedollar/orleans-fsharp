@@ -3,63 +3,11 @@ module Orleans.FSharp.Tests.GrainServiceTests
 open System
 open Xunit
 open Swensen.Unquote
-open FsCheck
 open FsCheck.Xunit
-open Orleans.FSharp
 open Orleans.FSharp.Runtime
-open Orleans.Hosting
 open Orleans.Services
 
-/// <summary>Tests for GrainServices module and silo config CE integration.</summary>
-
-// --- Type signature tests ---
-
-[<Fact>]
-let ``GrainServices module exists`` () =
-    let gsModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.tryFind (fun t -> t.Name = "GrainServices" && t.IsAbstract && t.IsSealed)
-
-    test <@ gsModule.IsSome @>
-
-[<Fact>]
-let ``GrainServices.addGrainService function exists`` () =
-    let gsModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "GrainServices" && t.IsAbstract && t.IsSealed)
-
-    let method =
-        gsModule.GetMethods()
-        |> Array.tryFind (fun m -> m.Name = "addGrainService")
-
-    test <@ method.IsSome @>
-
-[<Fact>]
-let ``GrainServices.addGrainService is generic`` () =
-    let gsModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "GrainServices" && t.IsAbstract && t.IsSealed)
-
-    let method =
-        gsModule.GetMethods()
-        |> Array.find (fun m -> m.Name = "addGrainService")
-
-    test <@ method.IsGenericMethod @>
-
-[<Fact>]
-let ``GrainServices.addGrainService takes ISiloBuilder and returns ISiloBuilder`` () =
-    let gsModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "GrainServices" && t.IsAbstract && t.IsSealed)
-
-    let method =
-        gsModule.GetMethods()
-        |> Array.find (fun m -> m.Name = "addGrainService")
-
-    let parameters = method.GetParameters()
-    test <@ parameters.Length = 1 @>
-    test <@ parameters.[0].ParameterType = typeof<ISiloBuilder> @>
-    test <@ typeof<ISiloBuilder>.IsAssignableFrom(method.ReturnType) @>
+/// <summary>Tests for the siloConfig CE addGrainService custom operation.</summary>
 
 // --- SiloConfig CE tests ---
 
@@ -113,14 +61,6 @@ let ``siloConfig CE addGrainService composes with other options`` () =
 // ---------------------------------------------------------------------------
 // FsCheck property tests
 // ---------------------------------------------------------------------------
-
-[<Property>]
-let ``GrainServices module methods all have non-empty names`` () =
-    let gsModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "GrainServices" && t.IsAbstract && t.IsSealed)
-    gsModule.GetMethods()
-    |> Array.forall (fun m -> m.Name.Length > 0)
 
 [<Property>]
 let ``addGrainService stores unique types for two distinct types`` () =

@@ -28,12 +28,9 @@
     <Compile Include="TimerTests.fs" />
     <Compile Include="ApiSurfaceV2Tests.fs" />
     <Compile Include="ObserverTests.fs" />
-    <Compile Include="ReentrancyTests.fs" />
-    <Compile Include="StatelessWorkerTests.fs" />
     <Compile Include="EventSourcingTests.fs" />
     <Compile Include="GrainArbitraryTests.fs" />
     <Compile Include="ServiceInjectionTests.fs" />
-    <Compile Include="PlacementTests.fs" />
     <Compile Include="DeclarativeTimerTests.fs" />
     <Compile Include="PersistenceProviderTests.fs" />
     <Compile Include="FilterTests.fs" />
@@ -44,14 +41,12 @@
     <Compile Include="OneWayTests.fs" />
     <Compile Include="BroadcastChannelTests.fs" />
     <Compile Include="AdvancedReentrancyTests.fs" />
-    <Compile Include="AdvancedPlacementTests.fs" />
+    <Compile Include="MayInterleaveTests.fs" />
     <Compile Include="VersioningTests.fs" />
     <Compile Include="GrainServiceTests.fs" />
-    <Compile Include="GrainExtensionTests.fs" />
     <Compile Include="PersistentStreamTests.fs" />
     <Compile Include="TransactionTests.fs" />
     <Compile Include="GrainDirectoryTests.fs" />
-    <Compile Include="TelemetryTests.fs" />
     <Compile Include="SerializationTests.fs" />
     <Compile Include="StateMigrationTests.fs" />
     <Compile Include="ShutdownTests.fs" />
@@ -62,7 +57,6 @@
     <Compile Include="HealthCheckTests.fs" />
     <Compile Include="TlsConfigTests.fs" />
     <Compile Include="DashboardConfigTests.fs" />
-    <Compile Include="ImplicitStreamSubscriptionTests.fs" />
     <Compile Include="AdditionalPersistenceTests.fs" />
     <Compile Include="RedisReminderTests.fs" />
     <Compile Include="StreamProvidersTests.fs" />
@@ -83,7 +77,6 @@
     <Compile Include="FSharpGrainRefTests.fs" />
     <Compile Include="UniversalGrainHandlerTests.fs" />
     <Compile Include="AddFSharpGrainTests.fs" />
-    <Compile Include="BehaviorPatternTests.fs" />
     <Compile Include="HandlerCompositionProperties.fs" />
     <Compile Include="GrainHandlerStateMachineProperties.fs" />
     <Compile Include="SiloIdentityTests.fs" />
@@ -94,18 +87,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.*" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.*" />
-    <PackageReference Include="FsCheck.Xunit" Version="3.*" />
-    <PackageReference Include="Unquote" Version="7.*" />
-    <PackageReference Include="xunit" Version="2.*" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
-    <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" Version="10.*" />
-    <PackageReference Include="Microsoft.Orleans.Transactions" Version="10.*" />
-    <PackageReference Include="FSharp.Analyzers.SDK" Version="0.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="FsCheck.Xunit" />
+    <PackageReference Include="Unquote" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Orleans.Runtime" />
+    <PackageReference Include="Microsoft.Orleans.Streaming" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" />
+    <PackageReference Include="Microsoft.Orleans.Transactions" />
+    <PackageReference Include="FSharp.Analyzers.SDK" />
   </ItemGroup>
 
   <ItemGroup>

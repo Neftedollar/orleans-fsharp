@@ -1,8 +1,5 @@
 namespace Orleans.FSharp.Sample
 
-// FS44: deprecated CE keywords (statelessWorker, maxActivations) — see GrainBuilder.fs.
-#nowarn "44"
-
 open System
 open System.Threading.Tasks
 open Orleans
@@ -13,13 +10,13 @@ open Orleans.FSharp
 /// </summary>
 [<GenerateSerializer>]
 type ProcessorCommand =
-    /// <summary>Process a value and return a result. Returns the activation's unique ID to prove multiple activations.</summary>
+    /// <summary>Process a value and return a result. Returns the activation's unique ID.</summary>
     | Process of value: string
     /// <summary>Get the unique activation identifier.</summary>
     | GetActivationId
 
 /// <summary>
-/// Grain interface for the stateless worker processor grain. Uses integer key.
+/// Grain interface for the processor grain. Uses integer key.
 /// </summary>
 type IProcessorGrain =
     inherit IGrainWithIntegerKey
@@ -28,14 +25,13 @@ type IProcessorGrain =
     abstract HandleMessage: ProcessorCommand -> Task<obj>
 
 /// <summary>
-/// Module containing the stateless worker processor grain definition built with the grain { } CE.
-/// This grain demonstrates the statelessWorker keyword for load-balanced processing.
+/// Module containing the processor grain definition built with the grain { } CE.
 /// </summary>
 module ProcessorGrainDef =
 
     /// <summary>
-    /// The stateless worker processor grain definition.
-    /// Each activation gets a unique GUID to prove multiple activations exist.
+    /// The processor grain definition.
+    /// Each activation gets a unique GUID as its state identifier.
     /// </summary>
     let processor =
         grain {
@@ -49,7 +45,4 @@ module ProcessorGrainDef =
                         return state, box result
                     | GetActivationId -> return state, box state
                 })
-
-            statelessWorker
-            maxActivations 4
         }

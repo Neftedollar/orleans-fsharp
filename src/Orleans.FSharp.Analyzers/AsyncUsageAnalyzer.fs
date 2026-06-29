@@ -89,13 +89,11 @@ module internal AstWalker =
                 walkExpr suppress e2
 
             // LetOrUse covers both let/use and let!/use! bindings.
-            // In FCS 43.10+, the former LetOrUseBang case was merged into LetOrUse;
-            // the 4th positional field (isBang) distinguishes them at runtime, but the
-            // walker treats both identically — it recurses into bindings and body regardless,
-            // so any nested async { } on either side of a let! RHS will be detected.
-            | SynExpr.LetOrUse(_, _, _, _, bindings, body, _, _) ->
-                for b in bindings do walkBinding b
-                walkExpr suppress body
+            // In this FCS version, SynExpr.LetOrUse carries a single SynLetOrUse record
+            // (not positional fields); access .Bindings and .Body via record field syntax.
+            | SynExpr.LetOrUse letOrUse ->
+                for b in letOrUse.Bindings do walkBinding b
+                walkExpr suppress letOrUse.Body
 
             // In FCS 43.12, Match has 5 fields.
             | SynExpr.Match(_, matchExpr, clauses, _, _) ->
@@ -203,8 +201,8 @@ module internal AstWalker =
             // Member: 2 fields (memberDefn: SynBinding, range).
             | SynMemberDefn.Member(binding, _) ->
                 walkBinding binding
-            // LetBindings: 4 fields in F# 10 compiler.
-            | SynMemberDefn.LetBindings(bindings, _, _, _) ->
+            // LetBindings: 5 fields in this FCS version (added trailing trivia: SynMemberDefnLetBindingsTrivia).
+            | SynMemberDefn.LetBindings(bindings, _, _, _, _) ->
                 for b in bindings do walkBinding b
             // AutoProperty: 12 fields; synExpr is at position 10.
             | SynMemberDefn.AutoProperty(_, _, _, _, _, _, _, _, _, expr, _, _) ->
@@ -224,7 +222,8 @@ module internal AstWalker =
 
         let rec walkModuleDecl (decl: SynModuleDecl) : unit =
             match decl with
-            | SynModuleDecl.Let(_, bindings, _) ->
+            // Let: 4 fields in this FCS version (added trailing trivia: SynModuleDeclLetTrivia).
+            | SynModuleDecl.Let(_, bindings, _, _) ->
                 for b in bindings do walkBinding b
             | SynModuleDecl.Types(typeDefs, _) ->
                 for td in typeDefs do walkTypeDefn td

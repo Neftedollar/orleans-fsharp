@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-06-29
+
+**Breaking major.** The Universal Grain Pattern (`AddFSharpGrain` + `FSharpGrain.ref` / `send` /
+`ask` / `post`) is now the canonical path. The non-functional `grain { }` CE keywords that were
+deprecated in 2.x have been removed, along with several helper modules that did not fit the
+universal-grain model. Adopting 3.0 requires removing those keywords/members from your code (see
+Removed) — most callers only used the universal pattern and are unaffected.
+
+### Removed
+
+- **Dead `grain { }` CE keywords** — non-functional under the universal grain pattern (all F#
+  grains share one `FSharpGrainImpl` class and one handler method, so per-grain class/method
+  attributes cannot be expressed): `reentrant`, `interleave`, `statelessWorker`, `maxActivations`,
+  `readOnly`, `oneWay`, the old string-based `mayInterleave`, `grainType`, `deactivationTimeout`,
+  `implicitStreamSubscription`, and the placement operations (`preferLocalPlacement`,
+  `randomPlacement`, `hashBasedPlacement`, `activationCountPlacement`,
+  `resourceOptimizedPlacement`, `siloRolePlacement`, `customPlacement`). The `PlacementStrategy`
+  type is also removed. To apply the equivalent per-grain Orleans attributes (`[Reentrant]`,
+  `[StatelessWorker]`, `[MayInterleave]`, `[ReadOnly]`, `[OneWay]`, placement,
+  `[ImplicitStreamSubscription]`, `[GrainType]`), use the per-grain `Orleans.FSharp.CodeGen` path.
+- **`Telemetry` module** — wire OpenTelemetry directly with the standard .NET builder using
+  Orleans' well-known names (`"Microsoft.Orleans.Runtime"`, `"Microsoft.Orleans.Application"`,
+  `"Microsoft.Orleans"`).
+- **`GrainServices` module** — register grain services with the `addGrainService` operation in
+  `siloConfig { }`.
+- **`GrainExtension` module / `getExtension`**.
+- **`Behavior` / `BehaviorPattern` module** (and `BehaviorResult`) — the behavior-pattern adapters
+  added in 2.x.
+- **`Scripting.quickStart` and `Scripting.getGrainByString`** — use `Scripting.startOnPorts` and
+  `Scripting.getGrain` (by int64 key); the rest of the `Scripting` module is unchanged.
+- **`FsToolkitReexport` module.**
+
+### Added
+
+- **`FSharpGrain.post` is now a true one-way** — `post` / `postGuid` / `postInt` route through the
+  `[OneWay] HandleMessageOneWay` interface method: the returned Task completes once the message is
+  sent, no response is marshalled back, and grain-side exceptions are not propagated. (Previously
+  `post` awaited the round-trip and discarded the result.)
+- **`interleaveMessage typeof<'Msg>`** — a working `grain { }` CE operation that allows a message
+  type to interleave, replacing the removed string-based `mayInterleave`. The universal
+  `FSharpGrainImpl` carries one class-level `[MayInterleave]` predicate keyed on the message's
+  runtime type; registered types match by assignability (registering a broad base type or
+  interface makes every assignable message interleave — register specific types).
+- **`StreamProviders.addRedisStreams name connectionString`** (**experimental**) — Redis Streams
+  transport. Requires a prerelease `Microsoft.Orleans.Streaming.Redis` package (`-alpha` /
+  `-preview`) at runtime — no stable 10.x exists yet; resolved by reflection so an absent package
+  yields a clear "install the package" error rather than a build break.
+- **`FSharpEventSourcedGrain.clearLog`** (**provider-dependent**) — clears a grain's confirmed
+  event log via Orleans' `JournaledGrain.ClearLogAsync`; the confirmed view resets to the initial
+  state (version 0). Throws `NotSupportedException` for log-consistency providers that do not
+  override `ClearPrimaryLogAsync`.
+
+### Changed
+
+- **Orleans parity raised from 10.0.1 to 10.2.1.**
+- **Adopted Central Package Management** — all package versions are managed centrally in
+  `Directory.Packages.props`.
+
 ## [2.0.0-alpha.1] - 2026-04-28
 
 First 2.0.0 preview. API may still shift before the stable 2.0.0 release. Install with `--prerelease` from NuGet. Headline themes:

@@ -10,7 +10,7 @@ open Orleans.Hosting
 /// <summary>
 /// Module providing interactive scripting support for F# scripts (.fsx).
 /// Enables quick prototyping of Orleans grains without setting up a full project.
-/// Start an in-process silo with <c>Scripting.quickStart()</c>, get grain references,
+/// Start an in-process silo with <c>Scripting.startOnPorts</c>, get grain references,
 /// and shut down when done.
 /// </summary>
 [<RequireQualifiedAccess>]
@@ -73,31 +73,13 @@ module Scripting =
         }
 
     /// <summary>
-    /// Start an in-process Orleans silo with sensible defaults.
-    /// Uses localhost clustering and in-memory storage.
-    /// Designed for .fsx REPL usage where quick iteration is important.
-    /// </summary>
-    /// <returns>A Task containing a SiloHandle for interacting with the silo.</returns>
-    let quickStart () : Task<SiloHandle> = startOnPorts 11111 30000
-
-    /// <summary>
     /// Get a grain reference from the silo by integer key.
     /// </summary>
     /// <typeparam name="'T">The grain interface type. Must inherit from IGrainWithIntegerKey.</typeparam>
-    /// <param name="handle">The silo handle returned from quickStart.</param>
+    /// <param name="handle">The silo handle returned from startOnPorts.</param>
     /// <param name="key">The integer key identifying the grain.</param>
     /// <returns>A typed grain reference.</returns>
     let getGrain<'T when 'T :> IGrainWithIntegerKey> (handle: SiloHandle) (key: int64) : 'T =
-        handle.GrainFactory.GetGrain<'T>(key)
-
-    /// <summary>
-    /// Get a grain reference from the silo by string key.
-    /// </summary>
-    /// <typeparam name="'T">The grain interface type. Must inherit from IGrainWithStringKey.</typeparam>
-    /// <param name="handle">The silo handle returned from quickStart.</param>
-    /// <param name="key">The string key identifying the grain.</param>
-    /// <returns>A typed grain reference.</returns>
-    let getGrainByString<'T when 'T :> IGrainWithStringKey> (handle: SiloHandle) (key: string) : 'T =
         handle.GrainFactory.GetGrain<'T>(key)
 
     /// <summary>

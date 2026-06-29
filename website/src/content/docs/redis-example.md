@@ -352,5 +352,5 @@ let cartGrain = grain {
 
 - [Silo Configuration](silo-configuration.md) — complete `siloConfig { }` CE reference
 - [Client Configuration](client-configuration.md) — complete `clientConfig { }` CE reference
-- [Advanced](advanced.md) — transactions, telemetry, graceful shutdown, state migration
+- [Advanced](advanced.md) — transactions, OpenTelemetry, graceful shutdown, state migration
 - [Security](security.md) — TLS, mTLS, filters, secrets management

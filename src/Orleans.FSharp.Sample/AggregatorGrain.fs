@@ -1,9 +1,5 @@
 namespace Orleans.FSharp.Sample
 
-// FS44: the `reentrant` CE keyword is currently deprecated/non-functional in the universal pattern.
-// This sample still exercises it to demonstrate the API surface; the runtime semantics are sequential.
-#nowarn "44"
-
 open System.Threading.Tasks
 open Orleans
 open Orleans.FSharp
@@ -13,13 +9,13 @@ open Orleans.FSharp
 /// </summary>
 [<GenerateSerializer>]
 type AggregatorCommand =
-    /// <summary>Add a value to the running total. Simulates a slow operation for reentrancy testing.</summary>
+    /// <summary>Add a value to the running total. Simulates a slow operation for timing tests.</summary>
     | AddValue of value: int
     /// <summary>Get the current total without changing state.</summary>
     | GetTotal
 
 /// <summary>
-/// Grain interface for the reentrant aggregator grain. Uses string key.
+/// Grain interface for the aggregator grain. Uses string key.
 /// </summary>
 type IAggregatorGrain =
     inherit IGrainWithStringKey
@@ -28,14 +24,13 @@ type IAggregatorGrain =
     abstract HandleMessage: AggregatorCommand -> Task<obj>
 
 /// <summary>
-/// Module containing the reentrant aggregator grain definition built with the grain { } CE.
-/// This grain demonstrates the reentrant keyword for concurrent message processing.
+/// Module containing the aggregator grain definition built with the grain { } CE.
 /// </summary>
 module AggregatorGrainDef =
 
     /// <summary>
-    /// The reentrant aggregator grain definition.
-    /// Being reentrant, this grain can process multiple AddValue commands concurrently.
+    /// The aggregator grain definition.
+    /// Processes AddValue commands with a simulated delay for concurrency timing tests.
     /// </summary>
     let aggregator =
         grain {
@@ -50,6 +45,4 @@ module AggregatorGrainDef =
                         return newState, box newState
                     | GetTotal -> return state, box state
                 })
-
-            reentrant
         }

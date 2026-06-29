@@ -32,7 +32,7 @@ type HandleStateTests(fixture: ClusterFixture) =
     member _.``handleState: send returns updated state after SubtractPoints`` () =
         task {
             let handle = FSharpGrain.ref<ScoreState, ScoreCommand> fixture.GrainFactory "score-sub-1"
-            do! handle |> FSharpGrain.post (AddPoints 20) // warm up
+            let! _ = handle |> FSharpGrain.send (AddPoints 20) // warm up (awaited two-way write)
             let! state = handle |> FSharpGrain.send (SubtractPoints 5)
             test <@ state.Score = 15 @>
         }
@@ -41,7 +41,7 @@ type HandleStateTests(fixture: ClusterFixture) =
     member _.``handleState: ResetScore clears score to zero`` () =
         task {
             let handle = FSharpGrain.ref<ScoreState, ScoreCommand> fixture.GrainFactory "score-reset-1"
-            do! handle |> FSharpGrain.post (AddPoints 100)
+            let! _ = handle |> FSharpGrain.send (AddPoints 100) // awaited two-way write
             let! state = handle |> FSharpGrain.send ResetScore
             test <@ state.Score = 0 @>
         }
@@ -64,9 +64,10 @@ type HandleStateTests(fixture: ClusterFixture) =
     member _.``handleState: move counter increments on every command`` () =
         task {
             let handle = FSharpGrain.ref<ScoreState, ScoreCommand> fixture.GrainFactory "score-moves-1"
-            do! handle |> FSharpGrain.post (AddPoints 1)
-            do! handle |> FSharpGrain.post (AddPoints 2)
-            do! handle |> FSharpGrain.post ResetScore
+            // Awaited two-way writes so every command is applied in order before we read back.
+            let! _ = handle |> FSharpGrain.send (AddPoints 1)
+            let! _ = handle |> FSharpGrain.send (AddPoints 2)
+            let! _ = handle |> FSharpGrain.send ResetScore
             let! state = handle |> FSharpGrain.send (AddPoints 0)
             test <@ state.Moves = 4 @>
         }
@@ -88,12 +89,13 @@ type HandleStateTests(fixture: ClusterFixture) =
     member _.``handleState: post followed by send reflects accumulated state`` () =
         task {
             let handle = FSharpGrain.ref<ScoreState, ScoreCommand> fixture.GrainFactory "score-post-1"
-            // Fire-and-forget 3 adds
+            // Fire-and-forget 3 adds via true one-way post
             do! handle |> FSharpGrain.post (AddPoints 10)
             do! handle |> FSharpGrain.post (AddPoints 20)
             do! handle |> FSharpGrain.post (AddPoints 30)
-            // A final send to read back state
-            let! state = handle |> FSharpGrain.send (AddPoints 0)
+            // A final two-way read, converging until all three one-way posts have landed.
+            // (AddPoints 0 leaves Score unchanged, so polling it is safe for the Score assertion.)
+            let! state = Eventually.until (fun s -> s.Score = 60) (fun () -> handle |> FSharpGrain.send (AddPoints 0))
             test <@ state.Score = 60 @>
         }
 
@@ -114,8 +116,8 @@ type HandleStateTests(fixture: ClusterFixture) =
         task {
             let h1 = FSharpGrain.ref<ScoreState, ScoreCommand> fixture.GrainFactory "score-isolate-A"
             let h2 = FSharpGrain.ref<ScoreState, ScoreCommand> fixture.GrainFactory "score-isolate-B"
-            do! h1 |> FSharpGrain.post (AddPoints 100)
-            do! h2 |> FSharpGrain.post (AddPoints 50)
+            let! _ = h1 |> FSharpGrain.send (AddPoints 100) // awaited two-way writes
+            let! _ = h2 |> FSharpGrain.send (AddPoints 50)
             let! s1 = h1 |> FSharpGrain.send (AddPoints 0)
             let! s2 = h2 |> FSharpGrain.send (AddPoints 0)
             test <@ s1.Score = 100 @>

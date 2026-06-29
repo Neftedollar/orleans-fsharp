@@ -99,7 +99,8 @@ type HandleStateWithContextCancellableIntegrationTests(fixture: ClusterFixture) 
         task {
             let gf = fixture.GrainFactory
             let g = FSharpGrain.ref<SWCCState, SWCCCommand> gf "swcc-post"
+            // post is a true one-way call; observe its effect via a convergent two-way read.
             do! FSharpGrain.post (SWCCAdd 7) g
-            let! s = FSharpGrain.send GetSWCCState g
+            let! s = Eventually.until (fun s -> s.SWCCSum = 7) (fun () -> FSharpGrain.send GetSWCCState g)
             test <@ s.SWCCSum = 7 @>
         }
