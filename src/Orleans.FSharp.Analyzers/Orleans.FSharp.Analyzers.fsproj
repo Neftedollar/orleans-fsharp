@@ -5,11 +5,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Orleans.FSharp.Analyzers</AssemblyName>
     <Description>Roslyn-style F# analyzers for Orleans.FSharp — compile-time feedback for idiomatic grain code.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="AsyncUsageAnalyzer.fs" />
     <Compile Include="AssemblyInfo.fs" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <!-- FSharp.Analyzers.SDK 0.36.0 pins FSharp.Core 10.0.101; suppress NU1608 -->

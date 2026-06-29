@@ -4,11 +4,11 @@ Idiomatic F# computation expressions and helpers for [Microsoft Orleans](https:/
 
 ## What it does
 
-Orleans.FSharp replaces verbose C#-style grain implementations with a declarative `grain {}` computation expression. Define state, message handlers, persistence, timers, reminders, streaming, and placement strategy in a single expression.
+Orleans.FSharp replaces verbose C#-style grain implementations with a declarative `grain {}` computation expression. Define state, message handlers, persistence, timers, reminders, and streaming in a single expression. Concurrency is controlled per message type with `interleaveMessage typeof<'Msg>`, and `FSharpGrain.post` gives true fire-and-forget (`[OneWay]`) calls.
 
 ### Modules included
 
-`GrainState` | `GrainRef` | `Streaming` | `BroadcastChannel` | `Logging` | `Reminders` | `Timers` | `Observers` | `Filters` | `RequestCtx` | `Transactions` | `Versioning` | `Telemetry` | `Shutdown` | `StateMigration` | `Serialization` | `FSharpSerialization` | `Scripting` | `Kubernetes` | `GrainDirectory` | `GrainServices` | `GrainExtensions` | `Immutable` | `StreamProviders`
+`GrainState` | `GrainRef` | `GrainBatch` | `Streaming` | `BroadcastChannel` | `Logging` | `Reminders` | `Timers` | `Observers` | `Filters` | `RequestCtx` | `Transactions` | `Versioning` | `GrainResilience` | `Shutdown` | `StateMigration` | `Serialization` | `FSharpSerialization` | `Scripting` | `Kubernetes` | `GrainDirectory` | `Immutable` | `StreamProviders`
 
 ## Quick example
 
