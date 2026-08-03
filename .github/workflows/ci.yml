@@ -7,8 +7,13 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Nightly full integration at 02:00 UTC
-    - cron: '0 2 * * *'
+    # Weekly full integration, Mondays at 02:00 UTC.
+    # This job exists to catch drift in the toolchain and in transitive
+    # packages, not to test our own commits — pushes and PRs already do that.
+    # Drift moves on the scale of weeks, so a nightly run produced ~365 builds
+    # a year and a mailbox nobody reads. Weekly keeps the signal, drops 85% of
+    # the noise.
+    - cron: '0 2 * * 1'
 
 jobs:
   build-and-test:
