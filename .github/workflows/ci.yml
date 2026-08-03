@@ -6,14 +6,11 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
-  schedule:
-    # Weekly full integration, Mondays at 02:00 UTC.
-    # This job exists to catch drift in the toolchain and in transitive
-    # packages, not to test our own commits — pushes and PRs already do that.
-    # Drift moves on the scale of weeks, so a nightly run produced ~365 builds
-    # a year and a mailbox nobody reads. Weekly keeps the signal, drops 85% of
-    # the noise.
-    - cron: '0 2 * * 1'
+  # No schedule. Pushes and pull requests already cover our own changes; the
+  # nightly build existed only to catch toolchain and transitive-package drift
+  # and produced ~365 runs a year that nobody read. Run the full integration
+  # on demand from the Actions tab when a dependency bump needs verifying.
+  workflow_dispatch:
 
 jobs:
   build-and-test:
