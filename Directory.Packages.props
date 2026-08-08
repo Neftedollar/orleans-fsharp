@@ -2,7 +2,15 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
-    <OrleansVersion>10.2.1</OrleansVersion>
+    <!-- Minimum supported Orleans, NOT the newest. NuGet emits a bare version as a
+         floor (`>= x`), so this value is what every consumer of our packages is forced
+         onto — raising it to chase releases silently locks people out of versions that
+         work fine. 10.1.0 is the real floor: JournaledGrain.ClearLogAsync (dotnet/orleans#9849,
+         used in Orleans.FSharp.Abstractions/IFSharpGrainInterfaces.cs) does not exist in 10.0.x.
+         Only raise when code actually requires a newer API.
+         CI additionally builds and tests against the newest Orleans via
+         `-p:OrleansVersion=<ver>` (see .github/workflows/ci.yml matrix). -->
+    <OrleansVersion>10.1.0</OrleansVersion>
   </PropertyGroup>
 
   <ItemGroup>

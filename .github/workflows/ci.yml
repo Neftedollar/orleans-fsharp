@@ -12,14 +12,30 @@ on:
 
 jobs:
   build-and-test:
+    name: Build & Test (Orleans ${{ matrix.label }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the supported Orleans range.
+        #  - floor: no override, so the version declared in Directory.Packages.props is
+        #    used. That is the version consumers are forced onto and the one published
+        #    assemblies are compiled against, so it must stay green.
+        #  - newest: proves we still work when Orleans moves forward, without raising
+        #    the floor for anyone. Bump this entry on each Orleans release; only touch
+        #    Directory.Packages.props when the code actually needs a newer API.
+        include:
+          - label: floor
+            arg: ''
+          - label: 10.2.2 (newest)
+            arg: '-p:OrleansVersion=10.2.2'
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet build --verbosity normal
-      - run: dotnet test tests/Orleans.FSharp.Tests --verbosity normal
+      - run: dotnet build --verbosity normal ${{ matrix.arg }}
+      - run: dotnet test tests/Orleans.FSharp.Tests --verbosity normal ${{ matrix.arg }}
 
   examples:
     name: Build Examples

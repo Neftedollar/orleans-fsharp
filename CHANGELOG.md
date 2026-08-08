@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The declared Orleans dependency is now a floor of 10.1.0, not the newest release.**
+  NuGet emits a bare `version="x"` in the nuspec as `>= x`, so whatever sits in
+  `Directory.Packages.props` is the version every consumer is *forced* onto — and it
+  can only be lowered by shipping a new release. It had been ratcheted to 10.2.1 by
+  release-chasing rather than by need, which locked out anyone on Orleans 10.1.x or
+  10.2.0 for no reason. 10.1.0 is the real floor: `JournaledGrain.ClearLogAsync`
+  (dotnet/orleans#9849), used by `Orleans.FSharp.Abstractions`, does not exist in
+  10.0.x. Established by building the solution against 10.0.1 (fails with CS0103),
+  10.1.0, 10.2.0, 10.2.1 and 10.2.2 (all green), with the full test suite passing at
+  both ends of the range. Consumers can still resolve any newer Orleans, unchanged.
+- Orleans badge in `README.md` now states the supported range (10.1.0 – 10.2.2)
+  instead of a single version.
+- The `orleans-fsharp` template scaffolds against Orleans 10.2.2 — templates create
+  new applications, where newest is the right default; this does not affect the
+  library floor.
+
+### Added
+
+- **CI matrix across the supported Orleans range.** `build-and-test` now runs twice:
+  at the declared floor, and at Orleans 10.2.2 via `-p:OrleansVersion=10.2.2`. Breakage
+  from Orleans moving forward is caught without raising the floor for consumers. Bump
+  the newest matrix entry on each Orleans release; touch `Directory.Packages.props`
+  only when the code genuinely requires a newer API.
+
 ## [3.0.1] - 2026-06-29
 
 Packaging and tooling release — **no API changes**.

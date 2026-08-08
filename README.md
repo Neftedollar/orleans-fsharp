@@ -9,7 +9,7 @@
 [![CI](https://github.com/Neftedollar/orleans-fsharp/actions/workflows/ci.yml/badge.svg)](https://github.com/Neftedollar/orleans-fsharp/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
-[![Orleans 10](https://img.shields.io/badge/Orleans-10.2.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
+[![Orleans 10](https://img.shields.io/badge/Orleans-10.1.0%20%E2%80%93%2010.2.2-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
 [![Tests](https://img.shields.io/badge/tests-1500%2B-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
