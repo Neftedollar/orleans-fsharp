@@ -1,224 +1,182 @@
-# Feature Proposal: First-Class Functional Grains on Stock Orleans
+# Feature Proposal 003: Functional Grain Runtime with User-Authored API Records
 
-**Proposal**: `003-functional-grain-runtime`  
-**Created**: 2026-08-15  
-**Status**: Draft for implementation and review  
-**Initial compatibility target**: Microsoft Orleans 10.1.0–10.2.2, .NET 10, F# 9+  
-**Primary outcome**: remove `FSharpGrainImpl` as the activation target and remove C# from the functional-grain authoring/runtime path without replacing the Orleans runtime.
+**Status:** implementation proposal
 
-## Decision summary
+**Target:** .NET 10, F# 10, Orleans 10.1.0 minimum; Orleans 10.2.2 must also pass
 
-Implement functional grains as typed F# descriptions which are hosted by stock
-Orleans activations.
+**Scope:** the new contracted, non-Journaled functional-grain path
 
-- Application authors write F# state, typed operation values, ordinary F#
-  handlers, and optional contracts. They do not write or inherit from a grain
-  class.
-- The actual activation instance is an F# object expression created by a custom
-  `IGrainActivator`. It implements one internal functional target contract and
-  the Orleans capability interfaces required by the definition.
-- A hidden F# marker type remains in the Orleans manifest. It is metadata only
-  and is never instantiated. This is required because the stock Orleans silo
-  still maps `GrainType` to a concrete CLR `Type`.
-- A typed `Operation<'Actor,'Argument,'Reply>` binds an argument and reply type
-  to one actor protocol. The caller cannot choose a result type as it can with
-  the current `ask<'Result>` API.
-- An optional contract gives stable actor identity, protocol version, operation
-  IDs, key encoding, and Orleans policies. A small deployment-local grain can
-  omit an explicit contract.
-- A build-time F# tool emits the required unique markers/manifest glue and, for
-  contracted grains, a bound plain F# `Api` record plus transport registrations.
-  Its source output is F# (`.g.fs`), not a C# project or user-visible C# API.
-- Orleans continues to own routing, activation, the scheduler, placement,
-  collection, lifecycle, persistence providers, timers, reminders, streaming,
-  filters, migration, and transactions.
-- Standard `task { }` is the baseline asynchronous API. This proposal does not
-  add `grainTask`, `grainFlow`, `become`, `stay`, or a mailbox receive loop.
+## Read this first
 
-The accurate claim is **first-class functional F# API over stock Orleans**, not
-“classless Orleans”. F# object expressions and hidden marker types are still CLR
-objects/types after compilation.
+This document is the implementation contract. It is intentionally explicit so
+that it can be implemented without access to any design discussion which led to
+it.
 
-## Why this proposal exists
+The central decision is:
 
-The current universal path is easy to start with, but it has structural
-limitations:
+> The application author writes an ordinary F# record of functions. Every field
+> is an operation. The runtime binds that record to an Orleans grain reference.
 
-1. `FSharpGrain.ref<'State,'Message>` ultimately asks Orleans for the same
-   universal `IFSharpGrain` type. Orleans cannot see the functional definition
-   identity in the grain type. Two different definitions using the same key can
-   therefore address the same activation.
-2. `ask<'Result>` lets the caller select an unrelated response type. The mistake
-   compiles and fails later through a cast.
-3. The universal `FSharpGrainImpl` has one physical method and one class-level
-   metadata set. Per-operation `ReadOnly`, `OneWay`, `AlwaysInterleave`, method
-   policies, per-actor placement, and versioning do not naturally fit it.
-4. The zero-stub universal path does not currently offer reliable parity for
-   durable state, lifecycle capabilities, reminders, timers, transactions, and
-   other Orleans facets. The C# CodeGen path recovers some features at the cost
-   of returning to C# classes and methods.
-5. The current generalized F# serialization/copying path must not treat every
-   F# record or union as deeply immutable. A record can contain `byte[]`, a ref
-   cell, or another mutable object; Orleans call isolation requires a real deep
-   copy.
+The normal client experience inside a task computation must be:
 
-The new design fixes the identity and type-safety problems first, then maps
-logical operation and actor policies onto the corresponding Orleans mechanisms.
+```fsharp
+task {
+    let lobby = RoomApi.ref client (RoomId.create "general")
+
+    do! lobby.join userId
+    let! recent = lobby.history { take = 20 }
+    return recent
+}
+```
+
+There is no public operation witness, no `operation "join"`, no generated
+`RoomApi`, and no generated `RoomApi.ref`. The record, its fields, IntelliSense,
+and type checking exist immediately because the user writes the record.
+
+The implementation must not replace any of the decisions in this document with
+an alternative which seems easier. In particular, it must not restore a public
+source-generation loop or the caller-selected `ask<'Reply>` API.
+
+## Decision ledger
+
+The following decisions are final for this proposal.
+
+1. A contracted grain has a phantom actor type, a domain key type, and a
+   user-authored F# API record.
+2. Every API-record field is automatically an operation. The only supported
+   field shape in the first version is `'Argument -> Task<'Reply>`.
+3. Operation IDs default to record-field names. A compatible source rename uses
+   `operationId "old-id" (_.newField)`.
+4. `_.field` is the normative authoring syntax. It is the F# shorthand for
+   `fun api -> api.field` supported by the repository's F# 10 toolchain.
+5. Selectors are resolved by evaluating them once against a probe record and
+   matching the returned function by sentinel identity. This proves which field
+   was returned, not the lambda's source syntax. Do not use quotations, lambda
+   IL inspection, generated accessors, or closure type names.
+6. `GrainContract<'Actor,'Key,'Api>` is local immutable metadata. Its API binder,
+   selectors, reflection data, and closures never go on the wire or into storage.
+7. `grainType` is mandatory and explicit. It is never inferred from a module,
+   record, assembly, or CLR type name.
+8. A domain key wrapper lowers deterministically to a normal Orleans key. The
+   resulting `GrainId` is the identity seen by routing and storage.
+9. The new runtime uses stock Orleans routing, activation contexts, scheduling,
+   placement, collection, lifecycle, storage, filters, reminders, timers, and
+   request context. It does not implement a mailbox, scheduler, directory, or
+   replacement `IGrainContext`.
+10. Each application contract is represented in the silo manifest by a closed
+    generic marker type. A custom `IGrainActivator` returns the actual F# target.
+11. All contracts use one precompiled generic target interface, one fixed custom
+    reference, and one fixed request/reply family. The target interface is closed
+    over the actor brand and assigned an explicit stable Orleans interface ID.
+    There is no per-contract transport generation and no application `.g.fs`.
+12. The normal `FunctionalGrain.ref` API accepts `IGrainFactory`, so the same
+    helper works from `IClusterClient` and inside another grain.
+13. The first implementation supports only explicit contracts. The legacy
+    `grain { ... }` API may coexist, but it is not silently converted into a new
+    contractless runtime mode.
+14. Ordinary persistence is part of this proposal. Journaled grains and Orleans
+    transactions remain separate workstreams and their current bridges must be
+    preserved.
+15. Breaking protocol changes require an explicit contract-version change. The
+    first version performs exact version matching; it does not claim automatic
+    structural schema compatibility or mixed-version routing.
+
+## Why this work is needed
+
+The current universal non-event-sourced path is based on
+`IFSharpGrain`/`IFSharpGrainWithGuidKey`/`IFSharpGrainWithIntKey` and the concrete
+C# classes in `Orleans.FSharp.Abstractions/IFSharpGrainInterfaces.cs`. It routes
+boxed messages through `IUniversalGrainHandler` and
+`UniversalGrainHandlerRegistry`.
+
+That path has structural limits which cannot be fixed by adding another helper:
+
+- two definitions using the same universal interface and key can resolve to the
+  same Orleans grain identity;
+- actor identity does not include a definition-specific stable grain type;
+- `ask<'Reply>` lets the caller select and then cast the reply type;
+- the universal implementation keeps only in-memory `obj` state;
+- persistence metadata, lifecycle hooks, timers, reminders, and cancellation do
+  not run through the canonical universal activation;
+- routing by incoming CLR message type does not naturally model independently
+  typed operations, stable IDs, or per-operation scheduling policies.
+
+There is also a generic F# `FSharpGrain<'State,'Message>` class in the runtime,
+but requiring the application to author or generate one subclass per grain is
+not the selected public model.
+
+The existing `Orleans.FSharp.Generator` is not a general F# source generator. It
+runs after an application assembly has compiled, scans event-sourced definitions,
+and emits C# into the repository's CodeGen project. It cannot create a public
+record which is available during the same F# type-checking session. It is not a
+dependency of the runtime proposed here.
 
 ## Goals
 
-### G1. F#-only application and runtime surface
+- Immediate F# navigation, completion, and compile-time argument/reply checking.
+- A different stable Orleans `GrainType` for every explicit grain contract.
+- Typed handlers selected by the same API fields used by callers.
+- Correct multi-silo routing and heterogeneous silo manifests.
+- Ordinary durable state backed by Orleans `IPersistentState<'State>`.
+- Stock Orleans scheduling and lifecycle behavior, including call filters and
+  `RequestContext`.
+- No reflection or selector resolution in the normal per-call hot path.
+- A migration path which can coexist with current packages and samples.
 
-No user-authored grain class, C# interface, C# implementation project, or C#
-source generator is required. The new runtime, transport bridge, contract model,
-generator, examples, and tests are written in F#.
+## Non-goals and explicitly deferred work
 
-### G2. Typed operation calls
+The following are not hidden choices for the implementer. They are out of scope
+for the first complete implementation of this proposal.
 
-Argument, reply, key, and actor protocol types are inferred from values. A caller
-must not provide generic result type arguments or cast a reply.
-
-### G3. Reuse Orleans instead of emulating it
-
-The implementation must retain stock `ActivationData`/`IGrainContext` and the
-Orleans turn scheduler. It must not build another mailbox, actor directory,
-placement system, or lifecycle engine.
-
-### G4. Orleans capability coverage
-
-The contract/definition model must have an explicit mapping for scheduling
-options, persistence, lifecycle, timers, reminders, streams, filters,
-placement, collection, versioning, cancellation, migration, and transactions.
-Where exact native method metadata is impossible with one dispatch method, the
-gap must be documented and an optional generated F# fidelity path defined.
-
-### G5. Stable distributed protocol
-
-Actor type IDs, operation IDs, versions, and schema fingerprints are explicit
-protocol data. They must not silently change because an F# module, CLR type, or
-record field is renamed.
-
-### G6. Coexistence
-
-Functional and ordinary Orleans grains must run in the same silo and call each
-other. Rich C# ergonomics for calling a functional grain are optional; a
-generated C# facade is not required by this proposal.
-
-## Non-goals for the first implementation
-
-- No MailboxProcessor/Akkling-style receive-loop API.
-- No separate workflow/composition runtime or durable workflow semantics.
-  Ordinary `task { }` and F# functions/pipelines are enough for the first
-  release. A later `grainFlow`-like layer may be built entirely on the typed
-  call API.
-- No `become`/`stay`/transition effect algebra in the baseline handler API.
-- No attempt to remove every CLR `Type`. Stock Orleans manifest construction
-  requires one.
-- No hot addition of arbitrary actor types after the silo manifest has been
-  built.
-- No exactly-once delivery claim.
-- No automatic public C# method facade.
-- Journaled grains/log-consistency parity is a second-stage workstream described
-  later in this proposal, not an acceptance gate for the first functional
-  runtime.
+- A new contractless mode. Keep the existing simple API as legacy until a
+  separate proposal defines a stable identity mechanism.
+- Public API source generation, type providers, Myriad, or FCS-based code
+  production.
+- Automatic structural compatibility analysis of arbitrary Orleans serializers.
+- Mixed contract-version routing. Version mismatch fails before handler code.
+- Transactions. They require Orleans transaction request bases and transactional
+  state, not a flag on the ordinary transport.
+- Journaled/log-consistency replacement. Preserve the existing F# and C# bridge.
+- Orleans response streaming (`IAsyncEnumerable`), implicit stream bindings,
+  grain extensions, and observer API synthesis.
+- NativeAOT/trimming support. The first implementation uses F# reflection and
+  must document that limitation instead of claiming untested support.
+- Making bound API records or their closures serializable/persistable.
+- Explicit/implicit streams, broadcast channels, additional persistent states,
+  stateless workers, custom placement policies, and activation migration. They
+  require separate public API and state semantics proposals; this document must
+  not leave their shape to the implementation agent.
 
 ## Terminology
 
 | Term | Meaning |
 |---|---|
-| Functional grain | An Orleans virtual actor whose behavior is described by F# values/functions instead of a user grain class. |
-| Definition | Server-side value containing initial state, typed handlers, persistence, lifecycle, timers, reminders, and other capabilities. |
-| Contract | Optional stable shared value containing actor identity, key codec, protocol version, operations, and invocation/actor policies. It is an Orleans.FSharp concept, not an Orleans requirement. |
-| Operation witness | Opaque `Operation<'Actor,'Argument,'Reply>` value tying an operation to one actor, argument, reply, stable ID, codecs, and policies. |
-| API record | Generated ordinary F# record of functions bound to one actor key. |
-| Marker | Hidden concrete F# type added to the Orleans manifest. It is never the activation instance. |
-| Target | F# object expression returned by the activator and invoked by Orleans. |
-| Envelope | Internal serializable request carrying stable actor/operation/schema metadata and encoded data. |
+| Actor brand | A phantom F# type, such as `RoomActor`, which prevents unrelated contracts from being mixed locally. It is never instantiated. |
+| API record | A user-authored F# record whose fields are typed remote operations. |
+| Contract | Immutable local metadata describing grain identity, key encoding, operations, version, and client-visible invocation policies. |
+| Definition | Server-side value which binds every operation to a handler and supplies state, persistence, lifecycle, and hosting policy. |
+| Selector | A function such as `_.join` with type `'Api -> ('Argument -> Task<'Reply>)`; one probe evaluation must return one field's sentinel by physical identity. |
+| Bound API | A runtime-created value of the user's API-record type. Each field is a closure over one internal Orleans reference. |
+| Marker | A closed CLR type added to the Orleans silo manifest for one contract. It is metadata, not the activation instance. |
+| Target | The object returned by the custom activator and invoked by Orleans. |
+| Transport envelope | An internal serializable request carrying contract version, operation ID, and payload. |
 
-## Proposed public F# API
+## Complete public experience
 
-The following code is the target public experience. Exact custom-operation names
-may change only where required by the F# compiler; the type-safety and visibility
-rules are normative.
-
-### Core handler type
-
-The baseline handler uses the standard .NET task builder:
+### Shared domain and contract
 
 ```fsharp
-type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
-    FunctionalGrainContext<'Actor, 'Key> ->
-    'State ->
-    'Argument ->
-    Task<'State * 'Reply>
-```
+namespace Chat.Contracts
 
-The first result is the state after the turn and the second is the typed reply.
-An operation which does not replace state returns the original state. No custom
-execution computation expression is required. `FunctionalGrainContext<'Actor,
-'Key>` exposes the target-local cancellation token, a `'Key` value,
-`IGrainFactory`, services,
-logger, time provider, RequestContext access, and the registered Orleans
-capabilities, avoiding a matrix of `handleWithContextCancellable` overloads.
+open System
+open System.Threading.Tasks
+open Orleans
+open Orleans.FSharp
 
-### Contractless simple grain
-
-An internal helper or prototype can omit a public contract:
-
-```fsharp
-let echo =
-    grain {
-        initialState (fun (_key: string) -> 0)
-
-        handle (fun _context count (text: string) ->
-            task {
-                let next = count + 1
-                return next, $"#{next}: {text}"
-            })
-    }
-
-services.AddFunctionalGrain echo
-
-let echo42 = echo.ref grainFactory "42"
-let! reply = echo42.call "hello"
-```
-
-The inferred API is equivalent to:
-
-```fsharp
-type SimpleApi<'Argument, 'Reply> =
-    { call : 'Argument -> Task<'Reply> }
-```
-
-“Contractless” means that the author did not supply a durable public protocol.
-The pre-compilation F# tool still emits a unique private actor tag/closed marker,
-internal contract descriptor, actor type ID, and operation for that source
-binding. A generic marker closed only over state/argument/reply types is not
-unique enough: two same-shaped definitions must still receive different CLR
-marker types and GrainTypes. Its identity may be derived from assembly/source
-binding metadata and is therefore not safe for rolling upgrades or a long-lived
-cross-assembly protocol.
-
-Contractless mode is available only when this minimal marker generation has run;
-it is not a dynamic runtime-only escape hatch. Emit a diagnostic when it is used
-with statically visible persistence/versioning features, and let production
-hosts opt into `RequireExplicitContracts` to reject all contractless definitions.
-
-The simple mode intentionally has one argument/reply pair. The argument can be a
-discriminated union and the handler can pattern match on it. If different cases
-need different reply types or Orleans policies, use a contracted grain with
-multiple operations.
-
-### Stable contracted grain
-
-Operation witnesses are authored in the shared contract assembly. A phantom
-`'Actor` type prevents operations belonging to different actors from being
-mixed, even when their argument and reply types happen to be identical.
-
-```fsharp
 [<Struct>]
 type UserId = private UserId of string
 
+[<RequireQualifiedAccess>]
 module UserId =
     let create value = UserId value
     let value (UserId value) = value
@@ -226,13 +184,10 @@ module UserId =
 [<Struct>]
 type RoomId = private RoomId of string
 
+[<RequireQualifiedAccess>]
 module RoomId =
     let create value = RoomId value
     let value (RoomId value) = value
-
-type UserProfile =
-    { id : UserId
-      displayName : string }
 
 type PostMessage =
     { author : UserId
@@ -245,162 +200,87 @@ type ChatMessage =
 
 type HistoryRequest = { take : int }
 
-type PostError =
-    | NotAMember
-    | EmptyText
-```
-
-The actor marker below is a phantom protocol type, not a grain implementation and
-is never instantiated:
-
-```fsharp
-type UserActor = private UserActor of unit
-
-module User =
-    let rename : Operation<UserActor, string, unit> =
-        operation "rename"
-
-    let profile : Operation<UserActor, unit, UserProfile> =
-        operation "profile"
-
-    let contract =
-        grainContract<UserActor, UserId> {
-            grainType "chat.user"
-            version 1
-            stringKey UserId.value UserId.create
-
-            operation rename
-            operation profile
-
-            readOnly profile
-            collectionAge (TimeSpan.FromMinutes 30)
-        }
-```
-
-`version 1` is the application protocol/interface version for `chat.user`. It is
-not “version 1 of Orleans.FSharp”, and it is not part of the CLR type name.
-
-The `Operation<_,_,_>` annotations are the shared protocol signatures, written
-once; the server handler and generated client bind to them, so there is no
-second C#/F# interface declaration and no result type at the call site.
-
-The room has four independently typed operations:
-
-```fsharp
-type RoomActor = private RoomActor of unit
-
 type Typing =
     { user : UserId
       isTyping : bool }
 
-module Room =
-    let join : Operation<RoomActor, UserId, unit> =
-        operation "join"
+type PostError =
+    | NotAMember
+    | EmptyText
 
-    let say : Operation<RoomActor, PostMessage, Result<int64, PostError>> =
-        operation "say"
+type RoomActor = private RoomActor of unit
 
-    let history : Operation<RoomActor, HistoryRequest, ChatMessage list> =
-        operation "history"
+[<NoEquality; NoComparison>]
+type RoomApi =
+    { join : UserId -> Task<unit>
+      say : PostMessage -> Task<Result<int64, PostError>>
+      history : HistoryRequest -> Task<ChatMessage list>
+      typing : Typing -> Task<unit> }
 
-    let typing : Operation<RoomActor, Typing, unit> =
-        operation "typing"
-
-    let contract =
-        grainContract<RoomActor, RoomId> {
+[<RequireQualifiedAccess>]
+module RoomApi =
+    let contract : GrainContract<RoomActor, RoomId, RoomApi> =
+        grainContract<RoomActor, RoomId, RoomApi>() {
             grainType "chat.room"
             version 1
             stringKey RoomId.value RoomId.create
 
-            operation join
-            operation say
-            operation history
-            operation typing
-
-            readOnly history
-            oneWay typing
-            alwaysInterleave typing
-            placement Placement.Default
-            collectionAge (TimeSpan.FromMinutes 30)
+            readOnly (_.history)
+            oneWay (_.typing)
+            alwaysInterleave (_.typing)
         }
+
+    let ref : IGrainFactory -> RoomId -> RoomApi =
+        FunctionalGrain.ref contract
+
+    let rawRef :
+        IGrainFactory ->
+        RoomId ->
+        FunctionalGrainRef<RoomActor, RoomId, RoomApi> =
+        FunctionalGrain.rawRef contract
 ```
 
-The contract centralizes durable wire identity and Orleans policies. It is still
-optional for simple grains. Operation IDs are stable values and may be given an
-alias when a source identifier is renamed. A build compatibility check must
-reject duplicate IDs or an argument/reply schema change under an unchanged
-operation ID and protocol version.
+`[<NoEquality; NoComparison>]` is recommended because structural equality for a
+record of functions is meaningless. The runtime must not require the attributes.
 
-### Server definitions
+There is deliberately no `RoomApi.join` selector. An F# record field is an
+instance property, not a generated module function. Use `_.join`.
 
-The server binds typed witnesses directly to typed handlers. There is no
-`(fun api -> api.join)` selector and no free result type:
+### Server definition
 
 ```fsharp
-type UserState =
-    { displayName : string }
+module Chat.Server
 
-let userDefinition =
-    grainFor User.contract {
-        defaultState { displayName = "" }
-        persist "Default"
+open System
+open System.Threading.Tasks
+open Chat.Contracts
+open Microsoft.Extensions.Logging
+open Orleans.FSharp
 
-        handle User.rename (fun _context state displayName ->
-            task {
-                let next =
-                    { state with
-                        displayName = displayName.Trim() }
-
-                return next, ()
-            })
-
-        handle User.profile (fun context state () ->
-            task {
-                let profile =
-                    { id = context.key
-                      displayName = state.displayName }
-
-                return state, profile
-            })
-
-        onActivate (fun context ->
-            task {
-                context.logger.LogInformation("User activated")
-            })
-
-        onDeactivate (fun context reason ->
-            task {
-                context.logger.LogInformation(
-                    "User deactivated: {Reason}", reason)
-            })
-    }
-```
-
-```fsharp
 type RoomState =
     { nextMessageId : int64
       members : Set<UserId>
       messages : ChatMessage list }
 
 let roomDefinition =
-    grainFor Room.contract {
-        defaultState
+    grainFor RoomApi.contract {
+        defaultState (fun () ->
             { nextMessageId = 1L
               members = Set.empty
-              messages = [] }
+              messages = [] })
 
         persist "Default"
+        collectionAge (TimeSpan.FromMinutes 30)
 
-        handle Room.join (fun _context state userId ->
+        handle (_.join) (fun _context state userId ->
             task {
-                let next =
+                return
                     { state with
-                        members = Set.add userId state.members }
-
-                return next, ()
+                        members = Set.add userId state.members },
+                    ()
             })
 
-        handle Room.say (fun context state post ->
+        handle (_.say) (fun context state post ->
             task {
                 if not (Set.contains post.author state.members) then
                     return state, Error NotAMember
@@ -412,27 +292,25 @@ let roomDefinition =
                           text = post.text
                           sentAt = context.utcNow }
 
-                    let messageId = state.nextMessageId
+                    let id = state.nextMessageId
 
-                    let next =
+                    return
                         { state with
-                            nextMessageId = messageId + 1L
-                            messages = message :: state.messages }
-
-                    return next, Ok messageId
+                            nextMessageId = id + 1L
+                            messages = message :: state.messages },
+                        Ok id
             })
 
-        handle Room.history (fun _context state request ->
+        handle (_.history) (fun _context state request ->
             task {
-                let result =
+                return
+                    state,
                     state.messages
                     |> List.truncate (max 0 request.take)
                     |> List.rev
-
-                return state, result
             })
 
-        handle Room.typing (fun context state typing ->
+        handle (_.typing) (fun context state typing ->
             task {
                 context.logger.LogDebug(
                     "{User} typing={IsTyping}",
@@ -441,976 +319,1890 @@ let roomDefinition =
 
                 return state, ()
             })
-
-        onReminder "trim-history" (fun _context state _tick ->
-            task {
-                return
-                    { state with
-                        messages = List.truncate 1_000 state.messages }
-            })
     }
 ```
 
-The exact hook signatures must be documented in the implementation API.
-Lifecycle and reminder handlers are ordinary functions returning `Task`. They do
-not introduce an alternate actor loop.
+### Registration and calls
 
-### Generated bound API
-
-From the contract, the F# build tool emits opaque operation/transport
-registrations, a plain record of functions, and a generated binding extension,
-conceptually:
+The hosting extension names and behavior are normative:
 
 ```fsharp
-type UserApi =
-    { rename : string -> Task<unit>
-      profile : unit -> Task<UserProfile> }
+siloBuilder.AddFunctionalGrain(roomDefinition) |> ignore
 
-type RoomApi =
-    { join : UserId -> Task<unit>
-      say : PostMessage -> Task<Result<int64, PostError>>
-      history : HistoryRequest -> Task<ChatMessage list>
-      typing : Typing -> Task<unit> }
-
-module UserApi =
-    val ref : IGrainFactory -> UserId -> UserApi
-
-module RoomApi =
-    val ref : IGrainFactory -> RoomId -> RoomApi
+clientBuilder.AddFunctionalGrainClient() |> ignore
 ```
 
-F# modules are not partial across files, so the generator must not pretend to
-append `Room.ref` or `Room.Api` to the authored `Room` module. The generated
-`RoomApi` record and its same-named companion module live together in generated
-F# source, so the normative call is `RoomApi.ref client roomId`. This uses an
-ordinary, compile-proven F# type/module pattern and does not require a specialized
-extension on `GrainContract<_,_>`. The public ergonomic requirements are:
+These are `ISiloBuilder` and `IClientBuilder` extensions, respectively. Do not
+add a raw `IServiceCollection.AddFunctionalGrain` overload: silo registration
+must happen inside `UseOrleans`, after Orleans has installed its default manifest
+providers, so provider order is deterministic.
 
-- no user-written binder record;
-- no selector lambda;
-- no call-site generic arguments;
-- no caller-selected reply type;
-- no visible Orleans `GrainReference` subclass;
-- no generated or checked-in C# project.
+`AddFunctionalGrainClient` idempotently registers the custom reference activator,
+fixed request/reply serializers/copiers/activators, client transport validation,
+and the repository's existing F# generalized codec/type filter through a new
+`FSharpBinaryCodecRegistration.addCodecToSerializerBuilder` helper. Silo
+registration first invokes the same client registration because grains make
+outgoing calls, then adds definition/manifest/activation services. Multiple
+definitions or repeated calls must not add competing codecs or duplicate
+singleton instances.
 
-The mandatory source-generator feasibility spike must prove this companion
-layout and compile ordering. Falling back to `GetGrain<T>`, selector lambdas,
-or `ask<'Result>` is not acceptable.
+Silo registration also calls
+`TryAddSingleton<TimeProvider>(TimeProvider.System)`. An application registration
+already present is preserved. The functional context resolves the guaranteed
+service with `GetRequiredService<TimeProvider>()`; `utcNow` is exactly
+`timeProvider.GetUtcNow()`. Do not use a hidden second wall clock or fail when the
+application did not explicitly register one.
 
-| Owned by | Written/generated artifacts |
+The new helper registers `FSharpBinaryCodec` as `IGeneralizedCodec` and its type
+filter only; it does **not** register the current `IGeneralizedCopier`. That
+copier returns outer F# containers unchanged and is not safe as a new global
+copying policy for nested mutable values. Functional calls do not need it because
+user values cross the explicit byte boundary. Keep the legacy
+`addToSerializerBuilder` entry point behavior-compatible for existing callers;
+make the two helpers share idempotent registration detection so enabling both
+does not duplicate the codec. Repairing/replacing the legacy recursive copier is
+separate work.
+
+The extension does not register application contracts or definitions on an
+external client and does not scan assemblies. The application still supplies its
+ordinary `RoomApi.contract` value when binding a reference. After host
+configuration, individual references require only `IGrainFactory`.
+
+Both extensions call `AddOptions<FunctionalGrainTransportOptions>()`, validate
+`MaxPayloadBytes > 0`, and use `ValidateOnStart`. Applications may configure the
+public options through `siloBuilder.Services.Configure` or
+`clientBuilder.Services.Configure` before the host is built; this is independent
+of application-contract registration.
+
+Client code and grain-to-grain code both use `IGrainFactory`:
+
+```fsharp
+task {
+    let lobby = RoomApi.ref client (RoomId.create "general")
+
+    do! lobby.join (UserId.create "alice")
+
+    let! result =
+        lobby.say
+            { author = UserId.create "alice"
+              text = "Hello from F#" }
+
+    let! recent = lobby.history { take = 20 }
+    return result, recent
+}
+```
+
+Inside a handler:
+
+```fsharp
+let otherRoom = RoomApi.ref context.grainFactory otherRoomId
+do! otherRoom.join userId
+```
+
+No generated application symbol appears in any example.
+
+## Normative public types and computation-expression builders
+
+The names and semantics below are normative. The code fence is an `.fsi`
+signature sketch, not an `.fs` implementation file: opaque type declarations
+and `val` declarations intentionally hide constructors and representations. The
+current repository contains no conflicting `GrainContract`, `FunctionalGrain`,
+or `FunctionalGrainRef` public symbol.
+
+```fsharp
+namespace Orleans.FSharp
+
+open System
+open System.Runtime.CompilerServices
+open System.Threading
+open System.Threading.Tasks
+open Microsoft.Extensions.Logging
+open Orleans
+open Orleans.Hosting
+open Orleans.Runtime
+
+[<Sealed>]
+type FunctionalGrainContext<'Actor, 'Key> =
+    member key : 'Key
+    member grainId : GrainId
+    member grainFactory : IGrainFactory
+    member services : IServiceProvider
+    member logger : ILogger
+    member timeProvider : TimeProvider
+    member utcNow : DateTimeOffset
+    member cancellationToken : CancellationToken
+    member deactivateOnIdle : unit -> unit
+    member delayDeactivation : TimeSpan -> unit
+    member tryGetRequestContext<'Value> : name: string -> 'Value option
+    member setRequestContext<'Value> : name: string -> value: 'Value -> unit
+    member removeRequestContext : name: string -> unit
+
+type OperationSelector<'Api, 'Argument, 'Reply> =
+    'Api -> ('Argument -> Task<'Reply>)
+
+type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    'Argument ->
+    Task<'State * 'Reply>
+
+type ActivateHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    Task<'State>
+
+type DeactivateHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    DeactivationReason ->
+    'State ->
+    Task<unit>
+
+type ReminderHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    TickStatus ->
+    Task<'State>
+
+type TimerHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    Task<'State>
+
+type IFunctionalRequestMetadata =
+    abstract GrainType : string
+    abstract ContractVersion : int
+    abstract OperationId : string
+    abstract IsReadOnly : bool
+    abstract IsOneWay : bool
+    abstract IsAlwaysInterleave : bool
+    abstract PayloadLength : int
+
+[<Sealed>]
+type FunctionalGrainTransportOptions =
+    new : unit -> FunctionalGrainTransportOptions
+    member MaxPayloadBytes : int with get, set
+
+[<Sealed>]
+type GrainContract<'Actor, 'Key, 'Api>
+
+[<Sealed>]
+type FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
+
+[<Sealed>]
+type FunctionalGrainRef<'Actor, 'Key, 'Api> =
+    member key : 'Key
+    member api : 'Api
+
+    member call :
+        selector: OperationSelector<'Api, 'Argument, 'Reply> ->
+        argument: 'Argument ->
+        Task<'Reply>
+
+    member callCancellable :
+        selector: OperationSelector<'Api, 'Argument, 'Reply> ->
+        argument: 'Argument ->
+        cancellationToken: CancellationToken ->
+        Task<'Reply>
+
+[<RequireQualifiedAccess>]
+module FunctionalGrain =
+    val ref :
+        contract: GrainContract<'Actor, 'Key, 'Api> ->
+        factory: IGrainFactory ->
+        key: 'Key ->
+        'Api
+
+    val rawRef :
+        contract: GrainContract<'Actor, 'Key, 'Api> ->
+        factory: IGrainFactory ->
+        key: 'Key ->
+        FunctionalGrainRef<'Actor, 'Key, 'Api>
+
+[<Sealed>]
+type GrainContractDraft<'Actor, 'Key, 'Api>
+
+[<Sealed>]
+type GrainContractBuilder<'Actor, 'Key, 'Api> =
+    member Yield :
+        unit -> GrainContractDraft<'Actor, 'Key, 'Api>
+
+    member Run :
+        GrainContractDraft<'Actor, 'Key, 'Api> ->
+        GrainContract<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("grainType")>]
+    member GrainType :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        value: string ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("version")>]
+    member Version :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        value: int ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("stringKey")>]
+    member StringKey :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        encode: ('Key -> string) *
+        decode: (string -> 'Key) ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("guidKey")>]
+    member GuidKey :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        encode: ('Key -> Guid) *
+        decode: (Guid -> 'Key) ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("int64Key")>]
+    member Int64Key :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        encode: ('Key -> int64) *
+        decode: (int64 -> 'Key) ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("guidCompoundKey")>]
+    member GuidCompoundKey :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        encode: ('Key -> Guid * string) *
+        decode: (Guid -> string -> 'Key) ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("int64CompoundKey")>]
+    member Int64CompoundKey :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        encode: ('Key -> int64 * string) *
+        decode: (int64 -> string -> 'Key) ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("readOnly")>]
+    member ReadOnly<'Argument, 'Reply> :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        selector: OperationSelector<'Api, 'Argument, 'Reply> ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("oneWay")>]
+    member OneWay<'Argument, 'Reply> :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        selector: OperationSelector<'Api, 'Argument, 'Reply> ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("alwaysInterleave")>]
+    member AlwaysInterleave<'Argument, 'Reply> :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        selector: OperationSelector<'Api, 'Argument, 'Reply> ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+    [<CustomOperation("operationId")>]
+    member OperationId<'Argument, 'Reply> :
+        state: GrainContractDraft<'Actor, 'Key, 'Api> *
+        stableWireId: string *
+        selector: OperationSelector<'Api, 'Argument, 'Reply> ->
+        GrainContractDraft<'Actor, 'Key, 'Api>
+
+[<Sealed>]
+type FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>
+
+[<Sealed>]
+type FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+[<Sealed>]
+type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> =
+    member Yield :
+        unit -> FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>
+
+    member Run<'State> :
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> ->
+        FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("defaultState")>]
+    member DefaultState<'State> :
+        state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api> *
+        factory: (unit -> 'State) ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("initialState")>]
+    member InitialState<'State> :
+        state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api> *
+        factory: ('Key -> 'State) ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("handle")>]
+    member Handle<'State, 'Argument, 'Reply> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        selector: OperationSelector<'Api, 'Argument, 'Reply> *
+        handler: Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("persist")>]
+    member Persist<'State> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        providerName: string ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("collectionAge")>]
+    member CollectionAge<'State> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        age: TimeSpan ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("onActivate")>]
+    member OnActivate<'State> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        hook: ActivateHook<'Actor, 'Key, 'State> ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("onDeactivate")>]
+    member OnDeactivate<'State> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        hook: DeactivateHook<'Actor, 'Key, 'State> ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("onReminder")>]
+    member OnReminder<'State> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        name: string *
+        dueTime: TimeSpan *
+        period: TimeSpan *
+        hook: ReminderHook<'Actor, 'Key, 'State> ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("onTimer")>]
+    member OnTimer<'State> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        name: string *
+        options: GrainTimerCreationOptions *
+        hook: TimerHook<'Actor, 'Key, 'State> ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+[<AutoOpen>]
+module FunctionalGrainBuilders =
+    val grainContract<'Actor, 'Key, 'Api> :
+        unit -> GrainContractBuilder<'Actor, 'Key, 'Api>
+
+    val grainFor :
+        contract: GrainContract<'Actor, 'Key, 'Api> ->
+        FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api>
+
+[<AbstractClass; Sealed; Extension>]
+type FunctionalGrainHostingExtensions =
+    [<Extension>]
+    static member AddFunctionalGrain<'Actor, 'Key, 'Api, 'State> :
+        builder: ISiloBuilder *
+        definition: FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State> ->
+        ISiloBuilder
+
+    [<Extension>]
+    static member AddFunctionalGrainClient :
+        builder: IClientBuilder -> IClientBuilder
+```
+
+`grainContract` is deliberately a generic factory function, not a generic value;
+the required spelling is
+`grainContract<RoomActor, RoomId, RoomApi>() { ... }`. The definition CE uses a
+typed seed: its first custom operation must be exactly one of `defaultState` or
+`initialState`, which introduces and infers `'State`. Every later custom
+operation carries the same `'State`. `Run` seals the CE and performs missing
+contract fields, missing initializer, handler coverage, and duplicate validation.
+
+Compound key encoders return ordinary F# reference tuples. Compound decoders are
+intentionally curried; struct tuples and tupled decoders are not alternative
+overloads. `onTimer` accepts one stock `GrainTimerCreationOptions`, whose
+`DueTime`, `Period`, `Interleave`, and `KeepAlive` are frozen into the definition.
+V1 rejects `Interleave = true` for a whole-state-returning timer hook.
+`onReminder` accepts explicit `dueTime` and `period`; both are reconciled through
+stock `RegisterOrUpdateReminder` on every successful activation.
+
+`FunctionalGrain.ref contract factory key` is exactly
+`(FunctionalGrain.rawRef contract factory key).api`.
+
+The raw escape hatch remains selector-typed. Do not expose
+`callById<'Reply>`, `ask<'Reply>`, or any API which lets the caller independently
+choose the result type.
+
+The primary bound-record methods do not accept a cancellation token because the
+record field shape has exactly one domain argument. Advanced callers use
+`rawRef.callCancellable`. The fixed request implements Orleans' cancellable
+`IInvokable` contract and supplies a target-local .NET `CancellationToken`.
+Cancellation is cooperative and does not roll back state or external effects.
+
+```fsharp
+let raw = RoomApi.rawRef client roomId
+let! recent = raw.callCancellable (_.history) request cancellationToken
+```
+
+## API-record rules
+
+`'Api` must be a public F# reference-record type with a public representation,
+public record constructor, public field getters, and
+`apiType.ContainsGenericParameters = false`. Non-public API records are not
+supported in v1. A closed constructed generic record is allowed; an open type is
+not. Every field must have exactly this shape:
+
+```fsharp
+'Argument -> Task<'Reply>
+```
+
+Rules for the first version:
+
+- an operation with no domain input uses `unit -> Task<'Reply>`;
+- an acknowledged operation with no result uses
+  `'Argument -> Task<unit>`;
+- multiple inputs are grouped in a record or tuple;
+- `Async<'Reply>`, `ValueTask<'Reply>`, non-generic `Task`, curried multi-input
+  functions, and non-function fields are rejected;
+- all fields are remote operations; local helpers belong in the companion module;
+- inherited properties, members, static members, and companion-module values are
+  not operations;
+- the API record and its bound closures are local facades, not grain instances or
+  Orleans references, and are never serialized.
+
+The contract constructor must reject an invalid API shape immediately. Do not
+wait until host startup or the first call.
+
+## Selector resolution
+
+The documented and normative authoring forms are direct field projections:
+
+```fsharp
+_.join
+fun api -> api.join
+```
+
+The selector's runtime acceptance rule is semantic, not syntactic: evaluating it
+once with the probe record must return exactly one cached field sentinel by
+physical identity. Consequently, these common wrapped forms fail because they
+return a different function object or invoke the sentinel:
+
+```fsharp
+fun api argument -> api.join argument
+fun api -> api.join >> logCall
+fun _api -> somePreviouslyCapturedFunction
+```
+
+Reject a selector whose result is not a probe sentinel with a diagnostic which
+includes:
+
+```text
+Use a direct API field selector such as _.join.
+```
+
+### Required algorithm
+
+Create one cached `ApiShape` per closed API type:
+
+1. Check `FSharpType.IsRecord(apiType, BindingFlags.Public)` and reject value
+   records or records whose public representation is unavailable.
+2. Read fields in declaration order with
+   `FSharpType.GetRecordFields(apiType, BindingFlags.Public)`.
+3. For each field, check `FSharpType.IsFunction(field.PropertyType)`.
+4. Use `FSharpType.GetFunctionElements` to obtain the argument and range types.
+5. Verify that the range is exactly `Task<'Reply>` and record `'Reply`.
+6. Create a unique function object assignable to the exact declared field type
+   with `FSharpValue.MakeFunction`. Its body throws if invoked.
+7. Construct one probe record from those sentinels using a cached
+   `FSharpValue.PreComputeRecordConstructor(apiType, BindingFlags.Public)`
+   delegate.
+8. Call the selector with the probe record.
+9. Resolve the returned object by `Object.ReferenceEquals` against the sentinel
+   objects.
+10. Accept only exactly one match. A wrapper, eta-expansion, invocation,
+    unrelated constant, or transformed function normally fails because it is not
+    reference-equal to a sentinel.
+
+Do not parse lambda IL, inspect generated closure names, compare `ToString()`, or
+require quotations. TypeShape is not needed for this mechanism.
+
+This mechanism cannot inspect source structure. A helper, side effect, captured
+condition, or branch between two identically typed fields can still return an
+original sentinel and therefore be accepted. Detecting those forms would require
+quotations, generated witnesses, or IL/source inspection, all deliberately
+excluded. Documentation must tell authors to use `_.field`; the runtime must not
+claim to reject every other lambda shape.
+
+Selector execution is therefore a validation convention. Contract and definition
+construction must treat selectors as untrusted application code: execute them
+exactly once, catch exceptions, wrap them in a clear contract diagnostic, and
+never run them during ordinary bound-record calls. A selector with side effects
+has unsupported application behavior even if it happens to resolve.
+
+## Contract builder
+
+A minimal contract is:
+
+```fsharp
+let contract =
+    grainContract<RoomActor, RoomId, RoomApi>() {
+        grainType "chat.room"
+        stringKey RoomId.value RoomId.create
+    }
+```
+
+### Defaults and validation
+
+| Setting | Required behavior |
 |---|---|
-| Application/contract author | Domain types, optional phantom actor token, typed operation witnesses, stable contract/policies, state, handlers, and hooks. |
-| F# build tool | Bound `Api` record/ref binder, hidden manifest marker, reference/request/invokable glue, registrations, compatibility manifest, and generated codecs where selected. |
-| Orleans | Grain identity routing, proxy invocation pipeline, activation context, scheduler, placement, collection, lifecycle orchestration, storage providers, reminders, streams, filters, migration, and transactions. |
+| `grainType` | Required exactly once, non-blank, and contains no NUL. Never inferred. Cross-contract uniqueness is checked when `AddFunctionalGrain` registers/finalizes the silo registry, because contract construction has no global view. |
+| `version` | Optional, defaults to `1`, must be a positive `int`. |
+| operation ID | Exact record-field name, ordinal and case-sensitive. |
+| invocation | Acknowledged, non-read-only, non-interleavable. |
+| key | One explicit native or wrapper codec. |
+| placement/collection/persistence | Server-definition concerns, not client contract fields. |
 
-The author does not hand-write the `ref` binding or the bound record. The
-operation values are the shared protocol declarations; the handlers are their
-server-side implementations.
+All operations are discovered from the record before applying custom operations.
+There is no `operation` custom operation.
 
-### Minimal application code
-
-Hosting configuration is intentionally omitted. `client` is an
-`IGrainFactory` (an `IClusterClient` also provides grain-factory behavior):
-
-```fsharp
-let runChat (client: IGrainFactory) =
-    task {
-        let alice =
-            UserApi.ref client (UserId.create "alice")
-
-        let lobby =
-            RoomApi.ref client (RoomId.create "general")
-
-        do! alice.rename "Alice"
-        let! profile = alice.profile ()
-
-        do! lobby.join profile.id
-
-        let! posted =
-            lobby.say
-                { author = profile.id
-                  text = "Hello from F#" }
-
-        match posted with
-        | Error error ->
-            printfn "Post rejected: %A" error
-        | Ok messageId ->
-            let! recent = lobby.history { take = 20 }
-            printfn "Posted #%d" messageId
-
-            for message in recent do
-                printfn "%A: %s" message.author message.text
-    }
-```
-
-`User` and `Room` above are modules organizing protocol values. `UserApi` and
-`RoomApi` are generated F# record types. `alice` and `lobby` are records of
-functions closed over an Orleans reference and a typed actor key. Variables such
-as `source` and `target` in transfer examples are only different keys/references;
-they are not hidden framework concepts.
-
-The compiler infers every return type from the record field:
-
-- `alice.profile ()` is `Task<UserProfile>`;
-- `lobby.say value` is `Task<Result<int64,PostError>>`;
-- `lobby.history value` is `Task<ChatMessage list>`.
-
-It is impossible to ask `profile` for an `int` or invoke `Room.join` on a User
-reference without an explicit unsafe escape hatch.
-
-### Grain-to-grain calls and future composition
-
-The same generated record is usable inside a handler:
+Contract policy custom operations use selectors:
 
 ```fsharp
-handle Transfer.move (fun context state request ->
-    task {
-        let source =
-            AccountApi.ref context.grains request.source
-
-        let target =
-            AccountApi.ref context.grains request.target
-
-        let! withdrawn = source.withdraw request.amount
-
-        match withdrawn with
-        | Error error ->
-            return state, Error error
-        | Ok transfer ->
-            do! target.deposit transfer
-            return state, Ok transfer.id
-    })
+readOnly (_.history)
+oneWay (_.typing)
+alwaysInterleave (_.typing)
+// After source field `join` has been renamed to `enter`:
+operationId "join" (_.enter)
 ```
 
-This already composes as a task and through ordinary F# functions/pipelines.
-A future computation expression or workflow package can be implemented on top
-of these functions without changing the transport. Durable orchestration,
-automatic compensation, retries, and exactly-once semantics are separate design
-problems and are not implied by chaining tasks.
+Each policy may be applied at most once per field. Duplicate declarations are
+errors rather than silently idempotent.
 
-## Operation model: no query/command split
+Final operation IDs must be non-blank and contain no NUL because NUL is the
+protocol-token delimiter. The same rule applies to explicit ID overrides.
 
-There is one public operation kind:
+### Operation identity and rename behavior
+
+Default wire ID is the record-field name. After changing the API record field
+from `join` to `enter`, the rename is therefore a protocol change unless the
+updated contract contains:
 
 ```fsharp
-Operation<'Actor, 'Argument, 'Reply>
+operationId "join" (_.enter)
 ```
 
-A mutation can return `unit`, an acknowledgement, a domain error, or a value. A
-logically read-shaped operation can update a cache or access metadata and can
-therefore remain an ordinary operation. Return type and naming cannot reliably
-classify “query” versus “command”.
+The first parameter is the stable wire ID; the selector identifies its current
+source field. At most one ID override is permitted per field, and final wire IDs
+must be unique.
 
-`readOnly` is optional Orleans scheduling metadata on an operation. It maps to
-`InvokeMethodOptions.ReadOnly`, allowing Orleans to admit read-only calls using
-its normal scheduler rules. In this F# API, the dispatcher additionally ignores
-the handler's returned replacement state and skips its automatic state write.
-This preserves one public handler shape without pretending to prove purity. It
-still cannot prevent mutation inside a mutable object graph, external effects,
-or direct use of lower-level storage services. It is not snapshot isolation,
-automatic retry, caching, or replica routing.
+Module name, API-record CLR name, actor-brand CLR name, declaration order, and
+handler name do not participate in the operation ID.
 
-`oneWay` is also explicit metadata. It must never be inferred from
-`Task<unit>`:
+An operation rename with an ID override preserves routing and storage identity,
+provided argument, reply, behavior, and version compatibility are also
+preserved. A breaking argument/reply/semantic change requires a contract-version
+change. The runtime does not pretend to prove structural serializer compatibility.
 
-- normal `Task<unit>` means an acknowledged request; target exceptions can reach
-  the caller;
-- `oneWay` means no target result or failure acknowledgement.
+### Contract version
 
-The generated one-way field can still return `Task<unit>` for uniform F#
-composition, but that task only represents local send initiation. Documentation
-and analyzers must make this distinction prominent.
+Version is application protocol metadata carried in every transport envelope.
+It is not part of the `GrainId`, storage key, or CLR marker name.
 
-Pattern matching remains fully available inside any operation argument:
+It is also not the Orleans transport-interface version. Every internal
+functional target interface publishes fixed Orleans interface version `1`; the
+custom reference provider uses the same fixed value even when an external client
+has not registered application contracts. This keeps
+`AddFunctionalGrainClient()` contract-free while application compatibility is
+enforced by the envelope version.
+
+The first implementation uses exact version equality:
+
+- a target rejects a request whose version differs from its registered contract;
+- the exception names grain type, expected version, received version, and
+  operation ID;
+- changing a version does not automatically route to a different activation;
+- mixed-version rolling upgrades require an application deployment plan and are
+  not claimed by this proposal.
+
+### Key codecs and identity
+
+The contract must support native string, `Guid`, `int64`, and their Orleans
+compound forms. Compound encoders use ordinary F# reference tuples, not struct
+tuples. Domain wrappers lower explicitly:
 
 ```fsharp
-type ModerationRequest =
-    | Mute of UserId * TimeSpan
-    | Unmute of UserId
-    | Ban of UserId * reason: string
+stringKey RoomId.value RoomId.create
+guidKey CustomerId.value CustomerId.create
+int64Key OrderId.value OrderId.create
 ```
 
-One operation over this DU shares one reply type and one Orleans policy set. Use
-separate operations when cases require different reply types, read-only/one-way
-semantics, transaction options, timeouts, or interleaving rules.
+The exact state-first custom-operation signatures are given in the normative
+public builder surface above; do not add competing tuple/struct overloads.
 
-## Contract semantics
+Native keys use `id` in both directions. Compound decoders are curried only in
+the key-codec configuration; remote API fields remain single-argument functions.
+Reject null/blank compound extensions using Orleans' normal key rules.
 
-An explicit contract is recommended whenever the grain is persisted, called
-from another assembly/service, deployed in a heterogeneous cluster, or expected
-to survive source renames.
+Every codec is part of actor identity and must obey these laws for all accepted
+domain keys/native keys:
 
-A contract contains:
+- encoding is deterministic and injective in the selected Orleans native key
+  space; two unequal domain keys must never silently address the same grain;
+- `decode (encode key) = key` under the domain type's equality semantics;
+- `encode (decode native) = native` in Orleans' canonical native
+  representation, including the compound extension;
+- decoding malformed or non-canonical values fails instead of normalizing two
+  distinct inputs to one identity.
 
-- stable grain type ID;
-- stable closed actor protocol identity;
-- key kind and typed key encoder/decoder;
-- protocol/interface version and compatibility policy;
-- stable operation IDs;
-- argument/reply schema fingerprints and codecs;
-- per-operation invocation policies;
-- actor scheduling/placement/directory/collection defaults;
-- optional compatibility aliases for controlled renames.
+Injectivity cannot be proven generically by the runtime. It is an explicit codec
+author obligation, documented next to these builders and covered by property
+tests for every shipped/sample codec.
 
-Implementation-only state and hooks remain in the server definition. Provider
-names and deployment-specific placement may be set in the definition/host and
-override contract defaults under an explicit policy.
+Internally a key codec produces and reads the same `IdSpan` representation used
+by stock Orleans key helpers. It must validate null, empty, and malformed values
+consistently with Orleans.
 
-Contract validation occurs before the silo or client finishes building:
+The stable actor identity is:
 
-1. reject duplicate actor and operation IDs;
-2. reject two definitions for one actor ID on a silo;
-3. reject an operation whose handler argument/reply type differs from its
-   witness;
-4. reject unsupported policy combinations;
-5. when a prior compatibility manifest is supplied, reject a stable operation
-   schema change without a version/compatibility rule; without a baseline,
-   report that rolling compatibility was not verified;
-6. advertise only definitions actually installed on that silo.
+```text
+GrainId(GrainType(contract.grainType), keyCodec.encode(domainKey))
+```
 
-The definition registry becomes immutable after host build. Stock Orleans does
-not support hot-adding arbitrary new grain types to the active manifest.
+Consequences which must appear in API documentation:
 
-## Runtime architecture
+- a wrapper does not introduce a new Orleans key kind;
+- Orleans routing and `IPersistentState` see a normal `GrainId`;
+- changing `grainType` or the key codec changes actor identity and can orphan
+  existing durable state unless data is migrated;
+- changing record/module/actor-brand CLR names does not change identity when the
+  explicit grain type and encoded key remain unchanged;
+- version and operation ID are not storage-key components.
 
-### Keep the stock activation context
+## Bound API construction
 
-Do not implement a custom `IGrainContext`. A replacement context would need to
-rebuild the scheduler, receive path, lifecycle, collection, migration, and
-services which this proposal is intended to retain.
+Reflection is permitted while constructing and caching shape metadata and while
+binding a reference. It is not permitted on the normal call hot path.
 
-For every registered actor contract:
+Each operation descriptor contains:
 
-1. register registry-backed `IGrainTypeProvider` and
-   `IGrainInterfaceTypeProvider` implementations which map generated closed CLR
-   marker/target types to the contract's stable IDs;
-2. register a closed hidden marker type in `GrainTypeOptions.Classes`;
-3. publish implemented-interface, version/default-grain-type, placement,
-   concurrency, directory, and capability metadata through
-   `IGrainPropertiesProvider`/`IGrainInterfacePropertiesProvider`;
-4. register the matching reference activator/provider using those stable IDs;
-5. install a custom activator through `IConfigureGrainTypeComponents`;
-6. let Orleans create its normal `ActivationData`/`IGrainContext`;
-7. return an F# object expression from `IGrainActivator.CreateInstance`.
+- field index and source field name;
+- stable operation ID;
+- exact argument and reply `Type` values;
+- invocation policy flags;
+- a preclosed generic function which creates the correctly typed call closure;
+- a preclosed generic server adapter which unboxes the expected argument and
+  boxes the reply internally.
 
-Do not rely on Orleans' default CLR/generic type-name IDs for a durable
-contract. The frozen registry is the source of truth for CLR Type ↔ stable
-`GrainType`/`GrainInterfaceType` mapping on both client and silo.
+At `rawRef` construction:
 
-The target interface inherits `IGrain`. The F# build tool emits a distinct
-**non-generic concrete marker type per actor contract**. The marker implements
-that actor's closed target interface so Orleans' normal interface-to-grain
-manifest mapping sees it; its body is unreachable because the custom activator
-never constructs it:
+1. Encode the domain key and construct the explicit `GrainId`.
+2. Compute the contract's stable actor-specific `GrainInterfaceType` and call
+   `IGrainFactory.GetGrain(grainId, grainInterfaceType)`; do not ask Orleans to
+   choose an implementation from an open generic interface.
+3. Ask the returned reference's injected codec provider to validate every exact
+   argument/reply type for this contract; fail binding before returning a facade.
+4. Create one `FunctionalGrainRef<'Actor,'Key,'Api>` around the contract, key,
+   and returned custom `FunctionalGrainReference`.
+5. Create one exact function value for every API field. It closes over that raw
+   reference and its immutable operation descriptor.
+6. Invoke the cached record constructor with the function array.
+7. Store the resulting API record in the raw wrapper and return the same instance
+   from `.api`.
+
+The generic binder is closed once per operation descriptor, not on every call.
+The implementation can use one reflective generic-method close while building
+`ApiShape`, then call the resulting delegate normally.
+
+The ordinary path `lobby.join value` must not:
+
+- enumerate record fields;
+- invoke a selector;
+- use `MethodInfo.MakeGenericMethod`;
+- look up an operation by string;
+- dynamically select a reply type.
+
+It calls an already bound typed closure. That closure serializes the argument to
+the fixed request's byte payload, and the public result is a real
+`Task<'Reply>`.
+
+`raw.call (_.join) value` resolves the selector against the already cached probe
+shape. This is a low-level/test escape hatch and is not the documentation-first
+API.
+
+## Handler and definition model
+
+The baseline handler type is:
 
 ```fsharp
-type internal ChatUserMarker() =
-    interface IFunctionalGrainTarget<UserActor> with
-        member _.Dispatch(_envelope, _cancellationToken) =
-            raise (InvalidOperationException "Metadata-only marker")
+type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    'Argument ->
+    Task<'State * 'Reply>
 ```
 
-An alternative can keep an `IGrain`-only marker only if it supplies and tests
-the complete custom interface-to-grain manifest/reference mapping. The actual
-object expression implements the same closed target interface which the
-request/invokable advertises.
-
-Do not declare a concrete open generic marker implementing `IGrain`: Orleans
-SDK/type discovery could advertise that definition independently of the frozen
-registry. Shared helper bases must be abstract or not implement a grain
-interface, and generated registration must ensure that only installed
-non-generic per-actor markers enter `GrainTypeOptions.Classes`. A single open
-marker would also make a heterogeneous silo appear capable of activating
-definitions it does not have.
-
-### Why the object expression works
-
-In Orleans 10.2.2:
-
-- `ActivationDataActivatorProvider` requires the **mapped marker type** to be
-  assignable to `IGrain`;
-- `IGrainActivator.CreateInstance` returns `object`;
-- `ActivationData.SetGrainInstance` checks state/non-null but does not require
-  the returned object to be an instance of the mapped marker;
-- invocation sets the target on an `IInvokable` and dispatches through the
-  implemented target contract.
-
-Therefore the actual object can be an F# object expression which implements the
-functional target contract, `IGrainBase`, and capability interfaces. It need not
-inherit from `Grain` or from `FSharpGrainImpl`.
-
-This behavior must be covered by integration tests for every supported Orleans
-minor/major version. It is a deliberate low-level integration seam, not an
-excuse to depend on unrelated Orleans internals.
-
-### Activation target
-
-The activator constructs state facets and capability adapters, then returns an
-object expression equivalent to:
+The public builder exposes `handle` as one tupled custom-operation member whose
+generic selector and handler parameters are linked in the same member signature;
+the exact `.fsi` shape appears above. Its semantic type relationship is:
 
 ```fsharp
-{ new IFunctionalGrainTarget<'Actor> with
-    member _.Dispatch(envelope, cancellationToken) =
-        dispatcher.invoke(envelope, cancellationToken)
-
-  interface IGrainBase with
-    member _.GrainContext = context
-
-    member _.OnActivateAsync cancellationToken =
-        lifecycle.activate cancellationToken
-
-    member _.OnDeactivateAsync(reason, cancellationToken) =
-        lifecycle.deactivate reason cancellationToken
-
-  interface IRemindable with
-    member _.ReceiveReminder(name, tick) =
-        reminders.dispatch(name, tick)
-
-  interface IIncomingGrainCallFilter with
-    member _.Invoke(callContext) =
-        filters.invoke(callContext) }
+OperationSelector<'Api, 'Argument, 'Reply> ->
+Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> ->
+definition
 ```
 
-The implementation may use a small set of precompiled F# target shapes instead
-of advertising every optional interface on every actor. It must avoid a
-combinatorial type explosion and keep marker/manifest capabilities consistent
-with the actual target.
+Therefore the compiler ties handler argument/reply types to the selected record
+field. The server cannot select an unrelated result type.
 
-`DisposeInstance` releases activation-local resources. Durable state facets must
-be created early enough to participate in the Orleans setup-state lifecycle.
+The definition builder must be typed by
+`'Actor`, `'Key`, `'Api`, and `'State`. At definition sealing, it must require:
+
+- exactly one `defaultState`/initial-state factory;
+- exactly one handler for every operation in the contract;
+- no handler for an unknown operation;
+- at most one persistence configuration for primary state;
+- unique reminder and timer names;
+- valid actor-level policy combinations.
+
+Internally normalize initialization to `'Key -> 'State`. `defaultState` accepts
+`unit -> 'State`; `initialState` accepts `'Key -> 'State`. The factory is invoked
+at most once per activation and only when the durable facet reports
+`RecordExists = false` (or once for every ephemeral activation). A captured state
+value is not a supported overload because it could share a mutable object graph
+between keys or activations.
+
+F# generic constraints cannot prove exhaustive record-field coverage without
+generation. The mandatory definition-sealing and host-start validation provides
+that guarantee. Do not describe it as a compiler guarantee.
+
+### Functional grain context
+
+`FunctionalGrainContext<'Actor,'Key>` is an immutable, per-invocation view. Create
+a fresh view for each request, lifecycle callback, reminder, and timer callback;
+never store the current cancellation token or RequestContext view in mutable
+activation-wide state. It must expose, at minimum:
+
+- `key : 'Key`, decoded once from `IGrainContext.GrainId.Key`;
+- `grainId : GrainId`;
+- `grainFactory : IGrainFactory`;
+- activation `services : IServiceProvider`;
+- `logger : ILogger` scoped to the definition/target;
+- `timeProvider : TimeProvider` and convenience `utcNow`;
+- the target-local `cancellationToken` for the current request;
+- `deactivateOnIdle` and `delayDeactivation` wrappers;
+- RequestContext read/write helpers;
+- the exact members shown in the normative `.fsi`; v1 timers/reminders are
+  declarative definition hooks rather than mutable context-owned APIs.
+
+Stable activation services may be held by an internal activation-services object,
+but the public context is the per-invocation facade over those services. Do not
+serialize the context or any service object.
+
+### Lifecycle, timer, and reminder hook shapes
+
+Use ordinary `Task` functions and the same typed context. The normative hook
+shapes are:
+
+```fsharp
+type ActivateHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    Task<'State>
+
+type DeactivateHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    DeactivationReason ->
+    'State ->
+    Task<unit>
+
+type ReminderHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    TickStatus ->
+    Task<'State>
+
+type TimerHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> ->
+    'State ->
+    Task<'State>
+```
+
+`onActivate` runs after persistent-state setup. Its returned state uses the same
+durable write-before-completion rule as a mutating handler. `onDeactivate` is for
+cleanup and does not return replacement state. Reminder/timer returned state uses
+the mutating publication rule. Their failures follow stock Orleans reminder/timer
+logging and retry/lifecycle semantics; do not invent a retry loop.
+
+Declarative `onReminder name dueTime period hook` and
+`onTimer name options hook` must reject duplicate/blank names. For reminders,
+definition sealing rejects negative `dueTime` and non-positive `period`; silo
+host validation also checks the period against its configured Orleans
+`ReminderOptions.MinimumReminderPeriod`.
+
+After state load/initialization, the optional activate hook, and its required
+write all succeed, but before activation completes, the target awaits
+`RegisterOrUpdateReminder(name, dueTime, period)` for each declared reminder in
+declaration order. Re-activation idempotently reconciles the durable schedule to
+the frozen definition. Removing/renaming a reminder from a definition does not
+magically delete the old durable registration; that is an explicit deployment
+migration which must unregister the old name first. Timers are activation-local
+and recreated after successful activation; reminders are durable registrations
+managed by Orleans.
+
+The whole-state `TimerHook`/`ReminderHook` model has the same lost-update risk as
+a mutating interleaved handler. V1 must reject
+`GrainTimerCreationOptions.Interleave = true`
+for state-returning functional timers. Reminder callbacks and timers run
+non-interleaved with functional state mutation. A future revision may add an
+explicit conflict/version model; it must not silently accept last-completion-wins.
+
+### State publication rules
+
+For an acknowledged mutating operation:
+
+1. Await the handler.
+2. If it failed, leave authoritative state unchanged.
+3. If state is ephemeral, publish the returned state and return the reply.
+4. If state is durable, retain the previous value, assign the returned value to
+   `IPersistentState.State`, and await `WriteStateAsync` while the Orleans turn is
+   still exclusive.
+5. On write failure, restore the previous in-memory value if the activation
+   remains alive, then rethrow. On success, the new value is authoritative.
+6. Only after a successful write return the reply.
+
+For `readOnly`:
+
+- Orleans receives the read-only scheduling option;
+- the F# dispatcher discards the handler's returned replacement state;
+- it does not issue the automatic primary-state write;
+- it cannot prevent in-place mutation or external side effects, so documentation
+  must require observationally read-only handlers and immutable state values.
+
+For `oneWay`:
+
+- the API field's reply must be exactly `unit`;
+- the client task means the message was handed to the local Orleans send path,
+  not that the target executed or persisted it;
+- the target still awaits its handler and any automatic persistence internally;
+- target failures cannot be reported to that caller and must be logged/traced.
+
+Handler failure is not a transactional rollback. In-place mutation which occurs
+before failure cannot be undone. Examples and docs must prefer immutable F#
+state.
+
+## Internal runtime architecture
+
+```mermaid
+flowchart TD
+    A["User-authored API record"] --> B["Reflected contract descriptors"]
+    B --> C["Bound record closures"]
+    C --> D["Fixed custom reference and request"]
+    D --> E["Grain-derived target and typed handlers"]
+    E --> F["IPersistentState and Orleans services"]
+```
+
+The shared API record exists on client and server for typing and descriptor
+construction. The bound closure values never cross the transport boundary.
+
+### Internal project ownership
+
+| Concern | Project |
+|---|---|
+| Contracts, API shape, selectors, bound records, raw refs, public builders, descriptor-to-request binding | `src/Orleans.FSharp` |
+| Closed target interface, fixed request/reply/reference types, primitive transport options, explicit transport serialization | `src/Orleans.FSharp.Abstractions` |
+| Precompiled marker, frozen definition registry, manifest providers, custom activator, target, lifecycle, persistence, reminders, silo DI | `src/Orleans.FSharp.Runtime` |
+| Unit tests | `tests/Orleans.FSharp.Tests` |
+| Real-cluster/multi-silo/restart tests | `tests/Orleans.FSharp.Integration` |
+
+Do not move the new runtime through `Orleans.FSharp.Generator` or the
+sample-specific CodeGen build target.
+
+Transport types in Abstractions are internal implementation details except for
+the deliberately tiny read-only `IFunctionalRequestMetadata` filter interface
+and public `FunctionalGrainTransportOptions` configuration class.
+Grant `InternalsVisibleTo` only to `Orleans.FSharp`, `Orleans.FSharp.Runtime`, and
+the necessary test assembly. Do not make envelopes, requests, references,
+codecs, or serializer-session internals a documented application surface merely
+to simplify cross-project access.
+
+The dependency direction is fixed: `Orleans.FSharp` already references
+`Orleans.FSharp.Abstractions`; Abstractions must never reference a
+`GrainContract`, operation descriptor, API shape, or any type owned by the upper
+F# project. The upper `FunctionalGrainRef` turns its descriptor into a fully
+specified fixed request. The lower custom reference accepts only fixed transport
+types and primitives and sends them. This rule prevents a project cycle and is a
+required architecture test.
+
+### Closed target interface and fixed request/reference
+
+The contracted core requires no per-contract source generation. Use these
+precompiled generic/fixed building blocks:
+
+```text
+FunctionalGrainMarker<'Actor>       // concrete Grain + IRemindable metadata class
+IFunctionalGrainTarget<'Actor>      // IGrain-derived closed interface per actor
+IFunctionalDispatchTarget           // non-generic actual dispatch seam
+FunctionalGrainReference            // one non-generic reference subclass
+FunctionalRequest                   // one ordinary request class
+FunctionalReply                     // one ordinary reply envelope
+```
+
+The marker alone lives in `Orleans.FSharp.Runtime`, which already references
+`Microsoft.Orleans.Reminders`. Keep the target interface and all fixed client
+transport/reference types in Abstractions. Do not add the Reminders package to
+Abstractions: that project intentionally owns SDK-generated universal proxies,
+and the existing dependency boundary avoids its known reminder-generator
+conflict.
+
+`IFunctionalGrainTarget<'Actor>` inherits `IGrain` and has one dispatch method
+accepting the transport envelope and target-local cancellation token.
+`FunctionalGrainMarker<'Actor>` derives `Grain` and implements that interface
+plus `IRemindable` for every contract.
+Its CLR generic closure supplies
+actor-specific method metadata; the wire interface ID is explicit and does not
+depend on an assembly-qualified type name. The actual target also implements the
+non-generic `IFunctionalDispatchTarget`, and the fixed request invokes that seam
+without per-call reflection.
+
+Both dispatch interfaces use the exact internal shape
+`FunctionalRequestEnvelope * CancellationToken -> ValueTask<FunctionalReply>`;
+`FunctionalRequest` derives from `Request<FunctionalReply>` and implements
+`InvokeInner` by calling the non-generic target. Do not create one request class
+per operation.
+
+`FunctionalGrainReference` derives from stock `GrainReference`. It owns only the
+protected Orleans send seam and an injected exact-type payload codec. Its
+internal methods accept an already constructed `FunctionalRequest`, apply the
+request's already selected options, and call protected
+`InvokeAsync<FunctionalReply>` or protected void `Invoke`. It does not know a
+contract or operation descriptor and must not retain mutable per-contract
+metadata.
+
+The upper `FunctionalGrainRef`/bound closure uses the injected codec to serialize
+the exact argument into fresh bytes, validates the reply token, and deserializes
+the exact reply type. It copies the descriptor's immutable primitive metadata
+into every request. Thus a cached lower reference remains safe when obtained on a
+contract-free external client.
+
+A prefix-based `IGrainReferenceActivatorProvider` returns that one reference
+class for every well-formed functional interface ID. It must not consult an
+application contract registry: `AddFunctionalGrainClient()` is deliberately
+contract-free. Application code receives only the bound API record or
+`FunctionalGrainRef` wrapper.
+
+The provider resolves the Orleans serializer service once and passes an internal
+typed-payload codec into each reference activator. The codec creates or resets a
+fresh `SerializerSession` for every independent argument/reply operation; a
+mutable session is never shared across concurrent invocations. Do not try to
+recover an `IServiceProvider` from the public `IGrainFactory` at call time. The
+provider accepts only an interface ID with prefix
+`orleans.fsharp.functional/` and a non-empty, NUL-free suffix which
+ordinal-equals the supplied `GrainId.Type`; otherwise it declines so another
+provider may handle the reference. On success it creates `GrainReferenceShared`
+with fixed internal transport-interface version `1`.
+
+Provider priority is explicit. In both `AddFunctionalGrainClient` and silo
+registration, inspect the `IServiceCollection`; if the functional provider is
+not already present, `Insert` its singleton descriptor immediately before the
+first existing `IGrainReferenceActivatorProvider` descriptor. If no provider is
+present, fail registration because Orleans defaults were not installed through
+the required builder API. Do not use `Add` or `TryAddEnumerable` for this
+provider. Microsoft DI preserves enumerable descriptor order, and Orleans
+10.1/10.2 walks reference providers in that order and stops at the first
+`TryGet = true`. Combined with the narrow prefix/suffix predicate, this makes the
+functional reference win only for its reserved identities even when
+`Microsoft.Orleans.Sdk` emitted a stock proxy provider for the generic target
+interface. Generated proxy/invokable/serializer glue may remain present and
+unused; no application code references it.
+
+`FunctionalRequest` must provide valid Orleans call-filter metadata on both
+sides. On the caller, the custom reference initializes its nonserialized closed
+target-interface `Type` and `MethodInfo`. After deserialization, `SetTarget`
+restores them from the actual target's one closed functional interface, stores
+the non-generic dispatch target, and creates target cancellation state.
+`GetInterfaceType`, `GetMethod`, `GetInterfaceName`, `GetMethodName`, and
+`GetActivityName` must then be stable and non-null. Its wire serializer must not
+serialize target objects, `Type`, `MethodInfo`, options backing fields, or
+cancellation resources.
+
+Expose two logical request arguments so filter metadata matches the dispatch
+method: `GetArgumentCount()` returns `2`; index `0` returns/replaces the envelope;
+index `1` returns/replaces the current .NET `CancellationToken`; all other indices
+throw `ArgumentOutOfRangeException`. The token remains nonserialized and is
+replaced with the target-local token in `SetTarget`.
+
+The internal envelope implements a small public, stable, read-only
+`IFunctionalRequestMetadata` interface exposing grain type, contract version,
+operation ID, policy booleans, and payload length but never payload bytes.
+Application filters may cast argument 0 to that interface, observe metadata,
+use `RequestContext`, log, time, reject, or short-circuit calls. They are not
+promised a public mutable envelope type and must not rewrite functional metadata;
+`SetArgument(0, ...)` accepts only the exact internal envelope type and all
+metadata is revalidated at dispatch. This preserves ordinary opaque filter
+participation without exposing the user's deserialized object graph.
+
+`IGrainFactory` is sufficient. Reference binding must:
+
+1. construct the exact `GrainId` from contract grain type and encoded key;
+2. construct the actor-specific stable `GrainInterfaceType`;
+3. call public `IGrainFactory.GetGrain(grainId, grainInterfaceType)`;
+4. verify/cast the returned addressable value to `FunctionalGrainReference`;
+5. fill the user API record with typed closures.
+
+Do not use a key-only `GetGrain` overload: many contracts intentionally share
+the same generic interface definition.
+
+### Transport envelope
+
+Use bytes, not `obj`, for operation arguments and replies. This is a hard
+decision.
+
+The explicit codecs use these stable numeric field IDs. Declaration order is not
+wire identity and must not be substituted for the IDs.
+
+| Type | Field ID | Field | Exact wire value |
+|---|---:|---|---|
+| `FunctionalRequestEnvelope` | 0 | `grainType` | non-empty string, no NUL |
+|  | 1 | `contractVersion` | positive signed 32-bit integer |
+|  | 2 | `operationId` | non-empty ordinal string, no NUL |
+|  | 3 | `protocolToken` | byte array of exactly 32 bytes |
+|  | 4 | `admissionFlags` | one unsigned byte; bit layout below |
+|  | 5 | `payload` | non-null byte array, possibly empty |
+| `FunctionalReply` | 0 | `protocolToken` | byte array of exactly 32 bytes |
+|  | 1 | `payload` | non-null byte array, possibly empty |
+
+`admissionFlags` is normative:
+
+| Bit | Hex | Meaning |
+|---:|---:|---|
+| 0 | `0x01` | read-only |
+| 1 | `0x02` | one-way |
+| 2 | `0x04` | always-interleave |
+| 3–7 | `0xF8` | reserved; every request with any such bit set is rejected |
+
+The codecs reject null required values, a token of any length other than 32,
+unknown flag bits, duplicate fields, a missing field, or a field with the wrong
+wire type. V1 encoders emit every field. Add binary golden vectors for both fixed
+types and every supported flag combination.
+
+The upper client closure serializes `'Argument` using the Orleans serializer and
+copies the descriptor's primitive metadata into the envelope before creating the
+request. The target validates grain type, contract version, operation, token,
+flags, and payload-size limit before deserializing into the operation's known
+`'Argument` type. It serializes `'Reply` to fresh bytes before returning.
+
+This intentional byte boundary:
+
+- keeps the fixed request wire type independent of user CLR/F# type names;
+- ensures local calls cannot alias the caller's mutable graph;
+- lets the target select the expected type before deserialization;
+- avoids relying on generalized copying of a polymorphic `obj` field.
+
+`protocolToken` is the raw 32-byte deterministic SHA-256 digest of the UTF-8
+sequence `grainType NUL version NUL operationId NUL direction`. It
+detects descriptor misrouting; it is not a structural schema fingerprint and
+must not be documented as one.
+
+Encode `version` as invariant ASCII decimal with no sign/leading zero, and use
+the exact lowercase direction literals `request` and `reply`. Grain type and
+operation ID use their exact ordinal strings. Add golden-vector tests so client
+and silo implementations cannot drift.
+
+Normative sample vectors, written as lowercase hexadecimal for test assertions:
+
+| Input | SHA-256 bytes as hex |
+|---|---|
+| `chat.room NUL 1 NUL join NUL request` | `525f112d5114016be421e973fee8aa7e4b439b560f29b419fd374e48336c430e` |
+| `chat.room NUL 1 NUL join NUL reply` | `2a2e7b5513cb992ef81759d0e761ef0071ec634be2d8d3b0931f961641ad61bf` |
+
+Add `FunctionalGrainTransportOptions.MaxPayloadBytes`, defaulting to 16 MiB, and
+enforce it before allocation/copy where length is known and always before typed
+deserialization. A request must satisfy both the caller's send limit and target
+silo's receive limit; a reply must satisfy both the silo's send limit and the
+caller's receive limit. The effective directional limit is therefore the minimum
+of the two independently configured endpoints, though neither endpoint needs to
+discover the other's value. Orleans' own message-size limit may be stricter and
+may reject first. An oversized-payload diagnostic reports grain type, operation,
+direction, actual size, and the local configured limit without logging bytes.
+
+Write explicit serializers/copiers/activators for the small fixed transport
+types. Do not use TypeShape to serialize transport targets, references, options,
+cancellation state, or delegates. User payload bytes are produced by Orleans'
+registered serializers for the exact argument/reply types. Every top-level
+serialize or deserialize operation obtains a fresh/reset serializer session and
+returns it in `finally`; never share a mutable session across concurrent calls.
+
+The explicit local-call copier must preserve envelope, dynamic options, caller
+cancellation token, and caller-side closed interface/method metadata, while
+clearing any target object or target-local cancellation source. The wire codec
+serializes only the fixed wire fields and restores options from serialized
+admission flags. Treat internal payload arrays as immutable after construction.
+
+### Dynamic scheduling options
+
+`FunctionalRequest` derives from the appropriate stock Orleans ordinary request
+base and sets `RequestBase.Options` from its validated envelope admission flags
+before send; the lower request does not own an operation descriptor.
+In Orleans 10.1/10.2, `MessageFactory` copies `OneWay`, `ReadOnly`, and
+`AlwaysInterleave` into message headers before request serialization.
+
+The same admission flags are serialized inside the request so the target can
+validate them and so server-side request metadata can restore them after
+deserialization. Target validation cannot undo scheduling which already happened,
+so this follows the ordinary Orleans trusted-client/trusted-silo boundary.
+
+One-way calls must use the reference's void `Invoke` path and return an already
+completed `Task<unit>` (for example `Task.FromResult(())`) after local send.
+Calling `InvokeAsync` with a one-way flag is not the selected implementation.
+
+Do not implement `Unordered`; Orleans 10 documents it as obsolete/no-effect.
+Transactions need a separate request derived from Orleans transaction request
+bases and are not part of this ordinary request.
+
+### Cancellation
+
+`FunctionalRequest` implements Orleans' cancellable invokable contract directly:
+
+- the caller-side nonserialized field contains the supplied .NET
+  `CancellationToken`;
+- `GetCancellationToken` returns it;
+- `IsCancellable` is true for acknowledged calls;
+- `SetTarget` creates the target-local cancellation source/token and resolves the
+  actual target;
+- `TryCancel` cancels the target-local source;
+- `Dispose` disposes request-owned cancellation resources.
+
+The target places its local token in `FunctionalGrainContext.cancellationToken`.
+`raw.callCancellable` uses this mechanism. `Task.WaitAsync(token)` alone is not
+remote cancellation and must not be used as a substitute.
+
+For a normal bound API call, the request uses `CancellationToken.None`. A future
+`refWith CallOptions` rebinding helper may offer a more ergonomic cancellation
+surface, but it is not required by this proposal and must still use the same
+request contract.
+
+One-way calls support only an already-cancelled/pre-send check, returned as
+`Task.FromCanceled<unit>(token)`. Otherwise the reference sends through protected
+void `Invoke` and returns `Task.FromResult(())`. They cannot be remotely cancelled
+after send; a token which becomes cancelled later is ignored and is not an
+error. `callCancellable` follows this rule even when
+`token.CanBeCanceled = true`; there is no separate rejection path. One-way
+validation compares the extracted reply type with `typeof<unit>`; it does not
+confuse F# `Task<unit>` with non-generic `Task` or CLR `Void`.
+The target context for a delivered one-way request uses
+`CancellationToken.None`; the request does not allocate target cancellation
+state which no caller can signal.
+
+Phase 0 must prove cancellation across two silos on both supported Orleans
+versions. If this exact public invokable seam does not work, stop and report it;
+do not serialize a .NET cancellation token into payload bytes.
+
+### Marker, interface, and manifest registration
+
+Use one concrete open generic marker:
+
+```text
+IFunctionalGrainTarget<'Actor> : IGrain
+FunctionalGrainMarker<'Actor> :
+    Grain, IFunctionalGrainTarget<'Actor>, IRemindable
+```
+
+It must be concrete: `GrainTypeResolver` rejects abstract classes. The marker is
+metadata and is not instantiated in the successful functional activation path.
+Give it a public parameterless constructor so Orleans can construct its default
+activator before the functional configurator replaces it; its dispatch method
+throws an explicit internal-error exception if the marker is ever instantiated.
+
+For every registered definition:
+
+1. Close marker and target-interface generic definitions over the actor brand.
+2. Add only those closed types to `GrainTypeOptions.Classes` and
+   `GrainTypeOptions.Interfaces`.
+3. In `IPostConfigureOptions<GrainTypeOptions>`, remove the open marker and open
+   target-interface definitions which default discovery can add.
+4. Map the exact closed marker to `GrainType.Create(contract.grainType)` with a
+   registry-backed `IGrainTypeProvider`.
+5. Map the exact closed target interface to
+   `GrainInterfaceType.Create("orleans.fsharp.functional/" + grainType)` with a
+   registry-backed `IGrainInterfaceTypeProvider`.
+6. Publish fixed internal transport-interface version `1` and the default grain
+   type through `IGrainInterfacePropertiesProvider` using Orleans well-known
+   property keys. Do not put application contract version in that property.
+7. Publish implemented interface, placement, collection, and other actor
+   properties through an `IGrainPropertiesProvider`.
+
+`ISiloBuilder.AddFunctionalGrain` performs registration through
+`builder.ConfigureServices`. In both supported Orleans versions the silo builder
+has already installed default services before user `UseOrleans` configuration.
+Register the two enumerable services exactly once with `TryAddEnumerable`:
+
+```csharp
+ServiceDescriptor.Singleton<IGrainPropertiesProvider,
+    FunctionalGrainPropertiesProvider>()
+
+ServiceDescriptor.Singleton<IPostConfigureOptions<GrainTypeOptions>,
+    FunctionalGrainTypeOptionsPostConfigure>()
+```
+
+Microsoft DI preserves `IEnumerable<IGrainPropertiesProvider>` registration
+order, and `SiloManifestProvider` invokes that sequence in order. Therefore this
+builder-only API appends the functional provider after Orleans'
+`ImplementedInterfaceProvider`. Orleans 10.1/10.2 expose no separate priority
+property. This is why a raw/pre-Orleans `IServiceCollection` overload is
+prohibited; final-manifest tests are the regression guard for the ordering seam.
+
+Orleans' default `ImplementedInterfaceProvider` normalizes a closed interface on
+a generic marker back to the open generic interface definition. Therefore the
+functional grain-properties provider must run last, remove the false open
+functional-interface entry, and publish the exact actor-specific closed
+interface ID. This is mandatory, not an optimization.
+
+Concretely, inspect only keys beginning with
+`WellKnownGrainTypeProperties.ImplementedInterfacePrefix`. Find the single value
+equal to the resolver's open functional-interface ID and replace that value in
+the same key with the registered closed interface ID. Preserve entries for
+`IRemindable` and any other deliberately advertised interfaces. Zero or multiple
+matching entries is a startup error, not a reason to append another ambiguous
+property.
+
+Validate that one actor-brand CLR type maps to exactly one contract. Validate
+that one explicit grain type maps to exactly one contract. The stable interface
+ID is derived only from explicit grain type, not from the actor-brand name.
+
+The registry is one singleton mutable-at-configuration object. In
+`FunctionalGrainTypeOptionsPostConfigure.PostConfigure`, and only for
+`Options.DefaultName`, atomically/idempotently freeze it into one immutable
+snapshot, then remove open marker/interface definitions and add the registered
+closed types. `IPostConfigureOptions` runs after all `IConfigureOptions`,
+including Orleans' `DefaultGrainTypeOptionsProvider`. `SiloManifestProvider`
+touches `GrainTypeOptions.Value` before enumerating classes/properties, so this is
+the freeze point. Do not freeze in `IConfigurationValidator`, which may run too
+late. Every resolver, properties provider, and activator reads only the frozen
+snapshot; registration after freeze throws.
+
+An external client needs no application registry and no GrainTypeOptions
+post-configurer. Public `IGrainFactory.GetGrain(GrainId, GrainInterfaceType)`
+calls the prefix reference activator directly without consulting the client
+manifest. This contract-free behavior must be proven on both Orleans versions.
+Heterogeneous silos register and advertise only definitions they actually host.
+
+### Custom activation without a custom context
+
+Register an `IConfigureGrainTypeComponents` implementation which recognizes
+functional grain types from the frozen registry and installs a custom
+`IGrainActivator`. Leave every non-functional grain type unchanged.
+
+The marker is concrete so constructing Orleans' default activator is harmless if
+the default configurator runs first. The functional configurator then replaces
+the shared activator. If the functional configurator runs first, the default one
+must observe the existing activator and leave it in place. Add an ordering test
+instead of relying on undocumented DI coincidence.
+
+`IGrainActivator.CreateInstance(IGrainContext)` returns an F# object expression
+which derives from internal `FunctionalGrainTargetBase : Grain` and implements
+the exact closed `IFunctionalGrainTarget<'Actor>` plus `IRemindable`.
+
+Immediately after construction and before returning the target or starting any
+lifecycle work, assert that
+`Object.ReferenceEquals((target :> IGrainBase).GrainContext, grainContext)`.
+`IGrainBase.GrainContext` is get-only; never try to assign it after construction.
+Using the parameterless `Grain()` constructor is also prohibited because the
+custom activator must not depend on ambient `RuntimeContext.Current`.
+
+The precompiled marker cannot conditionally add a CLR interface per definition,
+so all functional markers/targets advertise `IRemindable`. A definition with no
+matching reminder handler performs no registration; receiving an unknown/stale
+reminder name logs the stable grain/reminder identity and fails explicitly. It
+must never route to an arbitrary handler. This is also why removing a durable
+reminder requires the migration step described above.
+
+The base class contains no application behavior. It exists because
+`Grain.DelayDeactivation` is protected and is not available through
+`IGrainBase`; it exposes narrow internal wrappers for `DeactivateOnIdle` and
+`DelayDeactivation` to the immutable functional context. Do not fake
+`delayDeactivation` with timers or a custom context.
+
+Its constructor is normative:
+
+```fsharp
+type internal FunctionalGrainTargetBase
+    (grainContext: IGrainContext, grainRuntime: IGrainRuntime) =
+    inherit Grain(grainContext, grainRuntime)
+```
+
+Both Orleans 10.1.0 and 10.2.2 expose that protected `Grain` constructor. The
+custom activator resolves `IGrainRuntime` from
+`grainContext.ActivationServices`, passes both values when constructing the
+object expression, and fails activation if the runtime service is absent. This
+makes inherited `GrainFactory`, reminder registration, and protected
+deactivation APIs valid deterministically.
+
+The actual object need not have the marker CLR type. It must derive from the
+internal base and implement every interface expected by the request and by
+call-filter method mapping. Stock Orleans still supplies its `IGrainContext`;
+the base is not a replacement activation context.
+
+Do not implement a custom `IGrainContext`. Stock Orleans `ActivationData` remains
+responsible for the activation scheduler, request queue, lifecycle, collection,
+migration, activation services, and disposal.
+
+This seam is not yet proven in this repository. Phase 0 is a mandatory stop/go
+gate covering direct calls, global filters, lifecycle, deactivation, and
+disposal. Failure blocks the architecture; it does not authorize a private actor
+runtime.
 
 ### Typed dispatch
 
-The internal wire target has one logical method:
+The target processes an ordinary request in this order:
 
-```fsharp
-IFunctionalGrainTarget<'Actor>.Dispatch :
-    RequestEnvelope * CancellationToken ->
-        ValueTask<ReplyEnvelope>
-```
+1. Validate fixed envelope shape, grain type, contract version, payload size,
+   token length, and absence of unknown admission bits. Do not deserialize user
+   bytes yet.
+2. Resolve the immutable operation descriptor by ordinal operation ID; an
+   unknown ID fails here.
+3. Compare the request protocol token and exact admission flags with that
+   descriptor. This comparison cannot occur before descriptor lookup.
+4. Deserialize bytes in a fresh serializer session to the descriptor's exact
+   argument type.
+5. Create the immutable per-invocation context with this request's target-local
+   cancellation token, then invoke the preclosed typed handler adapter.
+6. Apply the state publication/persistence rule.
+7. Serialize the exact reply type in a fresh session, enforce the silo reply-size
+   limit, and return the descriptor's precomputed reply token plus fresh payload.
 
-The request contains serializable data only:
+The client validates reply shape, exact reply token, and its local reply-size
+limit before deserializing the exact registered reply type. No user payload
+deserialization or handler code runs before step 4; filter-modified envelope
+metadata is revalidated through the same sequence.
 
-- stable actor type ID;
-- stable operation ID;
-- protocol version and schema fingerprint;
-- request flags selected from the trusted registered descriptor;
-- encoded argument bytes;
-- optional idempotency/correlation metadata.
+There is one operation-ID dictionary lookup per wire call. There is no API-record
+reflection, handler search by CLR message type, or caller-selected reply cast.
 
-No F# function, closure, `FSharpFunc`, delegate, `AsyncReplyChannel`, or local
-continuation crosses the network.
+### Persistence and lifecycle ordering
 
-The dispatcher:
+The definition-specific activator must synchronously create
+`IPersistentState<'State>` through `IPersistentStateFactory.Create<'State>` before
+returning the target. The persistent-state object subscribes to Orleans lifecycle
+at `GrainLifecycleStage.SetupState`; creating it later is incorrect.
 
-1. validates actor, operation, version, schema, and payload limits;
-2. resolves the server-side typed operation descriptor;
-3. decodes the argument;
-4. invokes the typed handler under the Orleans turn;
-5. commits/publishes the returned state according to persistence policy, except
-   that an explicitly read-only operation discards the returned replacement
-   state and performs no automatic state write;
-6. encodes the typed reply or returns a stable protocol error.
+`persist providerName` has one exact meaning in v1: enable the primary
+`IPersistentState<'State>` facet with fixed state name `"state"` and the supplied
+non-blank Orleans storage-provider name (the complete example uses
+`"Default"`). The state name is deliberately not configurable in v1. Changing
+grain type/key codec, state name, or provider can address different stored data
+and is a storage-breaking migration concern.
 
-Scheduling and one-way headers are chosen by the trusted generated/precompiled
-client request family before the call reaches the activation. Raw request
-constructors remain internal, and client and silo contract registries are a
-trusted protocol pair. The server still validates actor/operation/schema
-consistency in `Dispatch`, but that validation occurs after scheduling
-admission: it cannot undo a forged `ReadOnly`/`AlwaysInterleave` header or turn
-a forged one-way call back into an acknowledged call.
+Register all custom lifecycle observers before `ActivationData` starts lifecycle
+`OnStart`. Required ordering is:
 
-### Reference and invokable bridge
+1. custom activator creates persistent facets, resolves `IGrainRuntime`, and
+   constructs the target through the context/runtime `Grain` base constructor;
+   only then may it return;
+2. stock lifecycle loads state at SetupState;
+3. actual target's `IGrainBase.OnActivateAsync` initializes missing/ephemeral
+   state after lifecycle start;
+4. functional `onActivate` observes loaded/initialized state and its returned
+   durable state is written before activation continues;
+5. declared reminders are reconciled and declared timers are registered;
+6. activation completes and Orleans may admit ordinary turns;
+7. on deactivation, target hook runs before lifecycle `OnStop` and timers are
+   disposed;
+8. `IGrainActivator.DisposeInstance` disposes the actual target last.
 
-The first implementation uses one handwritten/precompiled F# reference and a
-small family of F# requests/invokables. All of them dispatch to the same target:
+`IPersistentState<'State>.State` is authoritative. Do not maintain a second
+independent state copy which can drift from it.
 
-- ordinary acknowledged request;
-- read-only acknowledged request;
-- one-way/other invocation-option variants as required;
-- transactional request;
-- transactional read-only request.
+Required persistence behavior:
 
-The transaction variants derive from the Orleans transaction request base so
-that ambient transaction context is actually propagated. Merely tagging a
-plain request as “transactional” is not sufficient. `RequestBase.Options` is
-not serialized; a transactional read-only request must restore the `ReadOnly`
-option on the target (for example during deserialization/`SetTarget`) before the
-transaction base decides whether a newly created transaction is read-only.
+- without `persist`, invoke the initial-state factory once for every activation
+  before the functional activate hook;
+- with `persist`, wait for SetupState load; if `RecordExists = false`, invoke the
+  factory once, assign that value, run the optional activate hook, and await one
+  `WriteStateAsync` before activation succeeds, even when no activate hook exists;
+- if `RecordExists = true`, start from loaded state; if an activate hook is
+  configured, publish and persist its returned state before activation succeeds,
+  otherwise do not issue an activation-time write;
+- a mutating acknowledged handler publishes and awaits `WriteStateAsync` before
+  returning success;
+- on a failed write, restore the previous in-memory value if Orleans does not
+  already invalidate/deactivate the activation;
+- read-only/state-neutral operations do not replace or automatically write state;
+- storage/ETag failures flow through Orleans' normal failure path;
+- tests prove deactivation and real silo-restart recovery.
 
-Requests must implement normal Orleans cancellation behavior: target-local
-`CancellationTokenSource` setup, `GetCancellationToken`, `TryCancel`, and
-`IsCancellable`. A `CancellationToken` is not serialized inside the payload.
-
-The reference/request/codec provider registrations are available on clients and
-silos. The bridge must use public Orleans extension points where available and
-be pinned by compatibility tests where the APIs are version-sensitive.
-
-### State and persistence
-
-For ordinary durable state, create `IPersistentState<'State>` through
-`IPersistentStateFactory` using the Orleans activation context. This keeps
-provider selection, ETags, setup ordering, migration participation, and state
-loading in Orleans.
-
-Required semantics:
-
-- state is loaded before application `onActivate`;
-- an acknowledged update is not replied to as durable until its configured
-  write has completed;
-- a failed or ambiguous write does not silently publish a successful reply;
-- named/multiple states remain possible;
-- `readOnly` does not auto-save, auto-retry, or prove no mutation;
-- provider exceptions and unknown outcomes follow documented Orleans/provider
-  semantics.
-
-The initial implementation can persist after every successful updating
-operation. A later explicit write/effect policy may optimize this, but it must
-not alter the typed call contract.
+The durable record therefore exists by the time the first activation completes
+successfully. Factory or initial write failure fails activation through Orleans;
+do not expose a half-initialized target.
 
 ### Serialization and copying
 
-The transport envelope uses stable primitive fields and `byte[]` payloads.
-Argument/reply/state codecs are registered at build time where possible.
+Silo host validation proves serializer availability for every registered
+argument, reply, and durable state type. Contract-free client startup can prove
+only the fixed transport types. On the first `rawRef`/bound-record construction
+for a concrete contract, the custom reference's injected codec provider validates
+all argument and reply types and caches the result per contract shape and
+serializer-service instance. It fails before returning the bound API, with a
+diagnostic naming grain type, operation, direction, and CLR type. Do not claim an
+external client validates application types it was never given.
 
-Correctness requirements:
+The request/reply byte boundary guarantees that even local calls deserialize a
+fresh payload graph. Add tests for F# records, unions, options, and lists which
+contain `byte[]`, ref cells, or mutable objects. Do not depend on the current
+`FSharpBinaryCodec.DeepCopy` behavior which returns outer F# containers unchanged.
 
-- remote and local calls have equivalent copy isolation;
-- F# records, unions, lists, maps, and sets containing mutable values are deeply
-  copied;
-- no generalized copier returns an arbitrary F# value “as-is” solely because
-  its outer type is a record/union;
-- persisted and wire schemas have rolling-version tests;
-- duplicate/unknown field and union-case behavior is defined;
-- generated codecs are preferred to reflection for trimming/NativeAOT;
-- reflection fallback is explicit, diagnosable, and documented.
+Never serialize API records, functions, contracts, definitions, selectors,
+reflection metadata, contexts, services, targets, references, or cancellation
+sources.
+
+## Validation responsibilities
+
+### The F# compiler guarantees
+
+- the key supplied to `RoomApi.ref` has the domain key type;
+- bound field arguments and replies match the API record;
+- handler argument/reply types match the selected field;
+- a selector from an unrelated API cannot satisfy the expected selector type.
+
+### Contract construction guarantees
+
+- the API is a supported record and every field has the exact function shape;
+- grain type, version, and key codec are valid;
+- every policy selector returns exactly one probe sentinel by physical identity;
+- final operation IDs are unique;
+- policy declarations are not duplicated;
+- one-way reply is exactly `unit`;
+- invalid operation-policy combinations are rejected.
+
+### Definition sealing and host startup guarantee
+
+- every operation has exactly one handler;
+- every hosted grain type, actor brand, and stable interface ID is unambiguous;
+- all server argument/reply/state serializers are available; an external client
+  validates its concrete contract types at binding because client startup is
+  contract-free;
+- persistence and named providers exist;
+- marker, interface, manifest properties, definition, and activator agree;
+- the registry is frozen before Orleans consumes it.
+
+### Runtime guarantees
+
+- request metadata is checked before payload deserialization and handler code;
+- payload/reply types come only from the registered descriptor;
+- handler and persistence failures use Orleans' normal exception path;
+- target validation detects a method-family/admission-policy mismatch, while
+  documenting that pre-admission scheduling already assumes a trusted caller.
+
+Errors discoverable during construction/startup must not wait for the first call;
+client application-type errors which require a concrete contract must fail while
+binding that contract, before the bound API is returned.
+
+## Concurrency and policy rules
+
+Reject at least these combinations:
+
+- `oneWay` when reply type is not `unit`;
+- `oneWay + readOnly`;
+- `oneWay + transactional`;
+- `alwaysInterleave` unless the operation is `readOnly` or `oneWay`;
+- durable state/reminders/migration with stateless-worker placement;
+- unsupported transaction or response-streaming metadata;
+- persisted definition without its named storage provider.
+
+The functional handler model returns a whole next state after an await. Two
+interleaved mutating handlers would otherwise produce last-completion-wins state
+and possibly concurrent ETag writes. Therefore the first version makes every
+`alwaysInterleave` operation state-neutral:
+
+- `readOnly` already discards replacement state and skips automatic persistence;
+- `oneWay + alwaysInterleave` also discards replacement state and skips automatic
+  persistence.
+
+The `typing` example is therefore safe: it performs logging/external work and its
+returned state is ignored. A one-way operation without `alwaysInterleave` may
+still mutate/persist state sequentially.
+
+Discarding replacement state cannot prevent in-place mutation of a mutable state
+graph. State-neutral/interleavable handlers must treat state as immutable and
+must not mutate objects reachable from it; this is a documented programming
+contract and must have a deliberately failing/unsafe example in guidance.
+
+Do not implement actor-wide reentrancy or arbitrary `MayInterleave` for mutating
+functional handlers in the core release. They need a separate revision/conflict
+semantic and tests. If selective state-neutral `MayInterleave` is added later,
+the marker can expose one static predicate over serialized request admission
+hints; it must not consult a process-global registry because multiple isolated
+silos can run in one process.
 
 ## Orleans capability mapping
 
-Legend:
-
-- **Native**: stock Orleans mechanism remains in control.
-- **F# adapter**: stock semantics reached through a bounded F# bridge.
-- **Generated F#**: exact parity needs hidden `.g.fs` per-contract/per-operation
-  artifacts.
-- **Deferred**: separate phase; do not claim parity in the first release.
-
-| Capability | Level | Required mapping and boundary |
+| Capability | Required approach | Release |
 |---|---|---|
-| Activation, directory, mailbox, turn scheduler | Native + F# adapter | Closed manifest marker and custom activator; retain stock `ActivationData`/`IGrainContext`. Interleaving still alternates single-threaded turns; it is not parallel state access. |
-| Lifecycle | Native | Actual object expression implements `IGrainBase`; components subscribe to `IGrainContext.ObservableLifecycle`. Definition-level `onLifecycleStage` registers at explicit Orleans lifecycle stages. State facets are initialized before application activation hooks. |
-| Ordinary persistence | Native + F# adapter | Create `IPersistentState<'S>` through `IPersistentStateFactory`, support named providers/states, await writes according to the definition policy. Orleans does not auto-save arbitrary returned values. |
-| Timers | Native + F# wrapper | Register stock grain timers through `IGrainBase`/timer registry and expose `Interleave`/`KeepAlive` options. Timers are activation-local and are recreated after activation. |
-| Reminders | Native + F# adapter | Target/manifest advertise `IRemindable` and route stable reminder names to functions through the stock reminder registry. Reject stateless-worker + reminder combinations. |
-| Explicit streams | Native + F# wrapper | Use `GetStreamProvider` and typed wrappers around `IAsyncStream<'T>` and subscription handles. Delivery guarantees remain provider-specific. |
-| Implicit stream subscriptions | F# adapter, Phase 4 | Publish Orleans stream-binding properties and implement `IStreamSubscriptionObserver`. Require provider-specific multi-silo integration tests before claiming parity. |
-| Broadcast channels | Native + F# wrapper | Resolve the configured Orleans broadcast channel provider through activation/client services and wrap producer/subscription lifetime in typed F# functions. Provider delivery/lifetime semantics remain unchanged. |
-| Cancellation | F# adapter | Implement the Orleans invokable cancellation contract and pass the target-local token to handlers. Cancellation is cooperative and cannot roll back committed state/external effects. |
-| Per-operation response timeout | Native client behavior via F# request | Store the timeout in the operation descriptor and return it from the invokable's `GetDefaultResponseTimeout`. A per-call cancellation/deadline can be layered on top, but a timeout still has an unknown execution outcome. |
-| Response streaming (`IAsyncEnumerable`) | F# adapter or generated F#, Phase 4 | An ordinary byte-array reply envelope cannot model Orleans response-streaming flow control by itself. Add a universal adapter over Orleans' public async-enumerable request shape or generate the matching request/reference shape; until backpressure, cancellation, and early-disposal tests pass, direct callers to Orleans streams. |
-| RequestContext | Native | Standard Orleans message path imports/exports it. Values remain small and serializable; it is not durable actor state. |
-| Key kinds and compound keys | Native identity + F# codec | Support Orleans string, GUID, integer, and compound key forms through typed codecs. Actor GrainType remains separate from key so equal keys across contracts never collide. |
-| DI and grain/runtime services | Native | Expose activation services, `IGrainFactory`, logging, time, storage/stream/reminder registries, and registered grain services through typed `FunctionalGrainContext<'Actor,'Key>`; do not serialize service instances. |
-| Global call filters | Native | Calls pass through normal reference/runtime filter pipelines. Expose logical operation metadata from the envelope. |
-| Grain-level filters | F# adapter | Object expression implements `IIncomingGrainCallFilter`. A functional call context exposes actor/operation metadata. |
-| Per-operation CLR MethodInfo/attributes | Generated F# | Universal dispatch reports one physical `Dispatch` method. Logical policies/telemetry work through descriptors; exact attribute/reflection parity requires per-operation generated interface/request/invokable/target glue. |
-| `ReadOnly` | Native scheduling via F# request + F# state rule | Add `InvokeMethodOptions.ReadOnly` per registered operation. Orleans treats it as scheduling metadata only. The F# dispatcher also discards the returned replacement state/skips automatic persistence, but cannot prevent in-place mutation or direct side effects. Never mark universal `Dispatch` itself read-only. |
-| `OneWay` | Native transport via F# request | Add `InvokeMethodOptions.OneWay` only for an explicitly configured operation. No target reply, exception, or durability acknowledgement reaches the caller. Never infer it from `unit`. |
-| `AlwaysInterleave` | Native scheduling via F# request | Add `InvokeMethodOptions.AlwaysInterleave`. Advanced opt-in: it can interleave with writes and all request kinds. |
-| `Unordered` | Native client-routing optimization via F# request | The attribute is obsolete/no-effect in Orleans 10.x, but `InvokeMethodOptions.Unordered` remains a live low-level option used for client gateway selection. Expose it only as an advanced explicit policy and promise no ordering guarantee either way. |
-| `MayInterleave` | Generated F# marker + native scheduling | Put `[<MayInterleave("CanInterleave")>]` on the mapped hidden marker and generate a public static callback accepting `IInvokable` and inspecting logical operation ID. Do not use an instance predicate: the actual target is a different object. Orleans' component types are internal, so a custom component path is version-pinned, not the default. Do not emulate read-only by `MayInterleave(isQuery)` because its admission semantics can permit read/write interleaving. |
-| `Reentrant` | Native via grain properties | Publish the Orleans reentrant grain property or equivalent type component. Document mutable-state hazards after every await. |
-| Call-chain reentrancy | Native + F# scope wrapper | Expose `RequestContext.AllowCallChainReentrancy()` as a safely disposable/scoped helper for grain-to-grain call cycles. It is a call-site choice, not actor-level `Reentrant` metadata. |
-| Stateless worker | Native placement, restricted model | Publish `StatelessWorkerPlacement` properties/max workers. Reject durable per-key state, reminders, and migration combinations. Multiple activations can serve the same GrainId. |
-| Placement | Native | Convert contract/host policy to stock grain properties and registered `PlacementStrategy`. Custom strategies still require their Orleans DI registrations. |
-| Directory, immovable, collection age, explicit deactivate | Native | Publish corresponding grain properties; expose `DeactivateOnIdle`/`MigrateOnIdle` through the functional context. Deactivation is an intent, not synchronous destruction. |
-| Interface/grain versioning | Native at actor level, F# protocol at operation level | Register stable closed grain/interface IDs and actor version. Orleans sees one dispatch signature, so the registry validates operation additions/removals and schemas and returns `UnsupportedOperation` for incompatible calls. Exact per-method native metadata uses generated F#. |
-| Heterogeneous silos | Native + registry validation | Each silo advertises only installed closed actor definitions and versions. Mixed-version tests cover routing and unsupported operations. |
-| Transactions | F# adapter, Phase 4/high maintenance | Use `TransactionRequestBase` variants, transaction options, and `ITransactionalStateFactory`. A plain universal request is never transactional. A read-only variant starts a read-only transaction only when it creates one; joining an ambient read-write transaction does not downgrade it, so F# operation policy must still forbid writes. Immutable F# state may require an internal mutable `class,new()` box. |
-| Migration | Native + F# adapter | `IPersistentState` already participates. Ephemeral state uses a migration participant and stable codecs. Recreate timers/resources after activation; closures/resources are not migrated. |
-| Grain extensions/observers | F# adapter | Generate/register the required transport interfaces or explicit adapters. Test client disconnect, extension installation, serialization, and lifetime semantics. |
-| Tracing/metrics | Native pipeline + F# naming | Return logical actor/operation activity names and tags. Do not put actor keys in metric labels; keys may be PII/high-cardinality and require explicit trace policy/redaction. |
-| Coexistence with ordinary grains | Native | Both models share silos/providers. Functional handlers can call normal Orleans references. C# callers may use the low-level bridge; an idiomatic C# facade is optional generation. |
-| Journaled grains/log consistency | Deferred second stage | Preserve the existing `eventSourcedGrain` API while investigating a functional log-consistency adapter. See the dedicated section below. |
+| Grain identity/routing | Explicit grain type + native key + exact GrainId/interface ID | Core |
+| Activation/scheduler/collection | Stock context; custom instance activator only | Core |
+| DI and grain-to-grain calls | Activation services and `IGrainFactory` on typed context | Core |
+| Lifecycle | Actual target derives internal `Grain` base; hooks follow stock lifecycle | Core |
+| Ordinary persistence | `IPersistentStateFactory`, SetupState, awaited writes | Core |
+| Read-only/one-way/always-interleave | Dynamic fixed-request options plus state-neutral rules | Core |
+| Global incoming/outgoing filters | Fixed request exposes valid method metadata plus public read-only functional metadata interface | Core |
+| RequestContext/tracing | Let Orleans flow context; tag stable grain/operation/version | Core |
+| Cancellation | Fixed cancellable request and raw cancellable call | Core |
+| Default placement/collection age | Frozen definition to manifest properties | Core |
+| Timers | Stock timer registry; activation-local, recreated, and non-interleaved for whole-state hooks | Core capability increment |
+| Reminders | Marker/target advertise `IRemindable`; stable-name dispatch | Core capability increment |
+| Explicit streams/broadcast channels | Needs a typed public API | Separate proposal |
+| Stateless workers/custom placement | Needs definition API and state/reminder rules | Separate proposal |
+| Activation migration | Needs explicit durable/ephemeral participant semantics | Separate proposal |
+| Reentrancy/arbitrary MayInterleave | Requires explicit state conflict semantics | Deferred |
+| Transactions | Fixed `TransactionRequestBase` subtype + transactional state | Separate proposal |
+| Implicit streams | Binding properties plus observer contract | Deferred |
+| Response streaming | Dedicated async-enumerable request/reference path | Deferred |
+| Grain extensions/observers | Explicit adapters and lifetime tests | Deferred |
+| Journaled/log consistency | Preserve current bridge pending separate replacement | Separate workstream |
 
-## Invalid policy combinations
+“Core capability increment” items can land after identity/transport/persistence,
+but the repository must not claim their parity until their multi-silo tests pass.
 
-Fail host build with actionable diagnostics for at least:
+## Delivery and failure semantics
 
-- stateless worker + persistent per-key state;
-- stateless worker + reminder;
-- stateless worker + migration;
-- one-way operation with non-`unit` reply;
-- one-way + transactional operation (transaction propagation requires a
-  response carrying updated transaction information);
-- duplicate grain/operation IDs;
-- unsupported transaction option/request family;
-- implicit stream binding without required provider/capability registration;
-- definition installed without its contract/codecs;
-- incompatible schema under the same protocol version without a declared
-  compatibility rule.
-
-## Native method fidelity mode
-
-The universal `Dispatch` path is the recommended default because it keeps the
-runtime small and the public API functional. It cannot create a distinct CLR
-`MethodInfo` or physical attribute for every logical operation.
-
-An optional F# fidelity generator may emit, per contract:
-
-- an internal F# transport interface with one method per operation;
-- F# `GrainReference` and `IInvokable` implementations;
-- serializers/copiers and registration metadata;
-- an object-expression target shape implementing that generated interface;
-- per-operation transaction/cancellation/options glue;
-- optional C#-callable facade only as a separate opt-in product.
-
-All generated artifacts remain implementation details and `.g.fs` source. This
-mode is required only for features/tools which fundamentally inspect CLR methods
-or attributes. Business logic still lives in the same typed F# handlers.
-
-## JournaledGrain and log consistency: second stage
-
-The repository already has an `eventSourcedGrain { }` API and currently
-generates a C# `JournaledGrain` bridge. This proposal must not silently delete
-or regress that capability.
-
-It is not part of the first functional-runtime acceptance gate because Orleans
-`JournaledGrain<'State,'Event>` is an inheritance-oriented abstraction with
-protected behavior, lifecycle participation, and provider metadata. An F#
-object expression can derive from a non-sealed CLR base, so this is not a
-language impossibility; it still creates a compiler-generated derived CLR type
-whose lifecycle/provider/reflection behavior must be verified. The second-stage
-design must evaluate two paths:
-
-1. compose the lower-level Orleans log-consistency provider/protocol machinery
-   behind the functional target; or
-2. use an F# object-expression adapter or generate a hidden F# subclass while
-   keeping the public API entirely functional.
-
-The investigation must choose based on correctness and Orleans upgrade cost,
-not on avoiding a small hidden type at the expense of reimplementing the log
-consistency protocol.
-
-The stock log-consistency path also passes the actual derived CLR type name into
-log-view-adaptor/storage setup. An anonymous object-expression subclass has a
-compiler-generated name which is not a stable durable identifier and can change
-between builds. Therefore a named hidden generated F# subclass with a stable CLR
-name is the safer default for a `JournaledGrain`-based path. An anonymous
-object-expression path is acceptable only after an integration proof that its
-selected provider does not persist or otherwise depend on that unstable name.
-
-Second-stage acceptance must cover:
-
-- pure `apply : State -> Event -> State` and typed per-operation decision
-  handlers;
-- raise/confirm semantics and provider selection;
-- replay/recovery after deactivation and silo restart;
-- version/state/event schema evolution;
-- concurrent proposals/conflict resolution as defined by Orleans;
-- lifecycle, migration, snapshots, and heterogeneous deployment;
-- preservation or an explicit migration path for the current
-  `Orleans.FSharp.EventSourcing` package and tests;
-- eventual removal of generated C# from this path if the chosen architecture
-  supports equivalent semantics in F#.
-
-Until this work is complete, documentation must describe JournaledGrain parity
-as deferred, not as provided by ordinary `IPersistentState`.
-
-## Generated F# tooling
-
-The current `Orleans.FSharp.Generator` is a post-compilation assembly reader
-which emits C# event-sourcing stubs. It does not establish pre-`Fsc` `.g.fs`
-generation, F# source ordering, IDE design-time builds, or F# codec generation.
-Those capabilities are new work, not reusable facts to assume.
-
-The phase-zero spike must choose and prove one of these models:
-
-1. a pre-`Fsc` F# Compiler Service/MSBuild task parses designated, statically
-   analyzable contract declarations and emits `.g.fs` before type checking; or
-2. a two-pass/project model compiles the shared contract assembly first, then a
-   tool reads its typed metadata and emits F# bindings into client/server
-   consumer projects.
-
-Arbitrary runtime-computed contract values cannot be treated as generator input.
-The generatable contract subset must use top-level typed operation bindings,
-literal/statically discoverable stable IDs and versions, and policy forms the
-tool can analyze. Dynamic composition remains possible through a lower-level
-runtime API but does not receive generated bound records or build-time protocol
-compatibility guarantees. Roslyn cannot directly emit F# source.
-
-Generated output:
-
-- bound API record and reference binder;
-- contract/operation registration;
-- stable manifest grain/interface metadata;
-- required reference/invokable/request families;
-- codec/copier registrations;
-- optional per-operation fidelity artifacts;
-- deterministic current compatibility manifest used to compare protocol
-  changes.
-
-Compatibility validation requires a previous baseline. Define a checked-in or
-CI-supplied contract manifest (for example
-`orleans-fsharp.contracts.baseline.json`) and a command which compares the
-current generated manifest against that baseline or a released package/tag.
-Without a baseline, the tool can detect duplicates/current-build inconsistency
-but must not claim rolling-schema compatibility.
-
-Tooling requirements:
-
-- incremental and deterministic output;
-- correct F# compile ordering and IDE design-time builds;
-- no need to check generated files into source control;
-- diagnostics point to the authored contract/operation;
-- no public generated names based solely on unstable compiler-generated names;
-- generator output is inspectable for debugging;
-- trimming annotations or generated alternatives for reflection paths;
-- tests on clean clone, package consumption, and both supported Orleans
-  versions.
-
-The public API section is normative. A phase-zero generator spike must prove the
-documented generated `RoomApi.ref` companion-module form and source ordering
-before implementing the rest of the generated surface.
-
-## Migration from the current API
-
-### Compatibility period
-
-Introduce the new API alongside the current `FSharpGrain` module:
-
-- mark `ask<'Result>` as legacy once typed operations ship;
-- provide an adapter from a one-operation `GrainDefinition<'State,'Message>` to
-  contractless simple mode where identity is unambiguous;
-- emit warnings when two legacy definitions can share the same universal
-  GrainId/key;
-- keep old packages available for one deprecation window;
-- do not make the new runtime activate `FSharpGrainImpl`.
-
-### Target end state
-
-- `FSharpGrainImpl` is absent from the public API and never used as an
-  activation target.
-- The functional runtime/transport projects contain no C# source.
-- The C# `Orleans.FSharp.Abstractions` shim and non-event-sourced C# per-grain
-  generation are removed or isolated in an explicitly named legacy
-  compatibility package, then deleted in the final functional-runtime migration
-  milestone.
-- The existing C# event-sourcing/Journaled bridge remains in its legacy package
-  until the separate JournaledGrain workstream supplies a tested F# replacement
-  and migration path; the core release must neither regress nor falsely claim to
-  replace it.
-- Documentation and examples use typed contracts/operations and generated F#
-  API records.
-- Functional actor type is part of `GrainId.Type` so equal keys in different
-  contracts never collide.
-
-## Delivery guarantees and error model
-
-The proposal inherits Orleans delivery semantics:
-
-- timeouts and lost replies can leave the caller uncertain whether an operation
-  executed;
-- one-way calls provide even less feedback;
-- ordinary persistence and transactions do not automatically deduplicate a
-  command whose reply was lost;
-- cancellation is cooperative;
-- retries of mutating operations require an explicit idempotency/deduplication
-  policy.
-
-The protocol defines stable failures for unknown actor, unknown operation,
-unsupported protocol version, schema mismatch, decode failure, and payload
-limits. Application exceptions follow the configured Orleans exception
-serialization policy. Domain failures should normally be typed replies such as
-`Result<'T,'Error>`.
+- A successful acknowledged mutating call means handler completion and awaited
+  automatic primary-state write, not exactly-once external effects.
+- Retries, timeouts, cancellation, and failure after commit can leave the caller
+  uncertain whether execution occurred.
+- One-way means no target acknowledgement.
+- This proposal adds neither deduplication nor an outbox.
+- Protocol failures are distinguishable from application handler exceptions.
+- Cancellation never claims rollback.
 
 ## Security and observability
 
-- Raw envelopes and request constructors are internal.
-- The generated/precompiled client derives pre-admission scheduling/one-way
-  headers from its frozen registry; the silo validates operation metadata
-  against its own frozen registry after admission. This is consistency checking,
-  not a server-side ability to undo forged headers.
-- Payload sizes/depths are limited before allocation-heavy decode.
-- Authorization filters receive logical actor/operation metadata.
-- Trace defaults include actor type, operation ID/name, and protocol version.
-- Actor keys are added to traces only under an explicit redaction policy and
-  never used as default metric labels.
-- Serializer fallback cannot instantiate arbitrary unapproved runtime types.
+- Treat cluster members/application clients as trusted for pre-admission flags,
+  matching ordinary Orleans assumptions.
+- Validate envelope metadata and size before payload deserialization.
+- Do not permit type-name-driven arbitrary activation or permissive type loading.
+- Log/activity dimensions include stable grain type, operation ID, contract
+  version, and outcome; payloads are not logged by default.
+- Preserve source/target grain IDs and RequestContext through stock Orleans.
+- Diagnostics name the public contract/field, not only internal request classes.
 
-## Implementation plan
+## Implementation plan and mandatory gates
 
-### Phase 0: feasibility gates
+Do not begin broad migration before the preceding gate passes.
 
-Before broad API work, implement focused tests/prototypes:
+### Phase 0: prove the Orleans seams
 
-1. a generated non-generic per-actor F# marker is registered in the stock
-   Orleans manifest, with no concrete open generic marker discovered;
-2. a custom activator returns an F# object expression not assignable to the
-   marker;
-3. a handwritten F# request/invokable reaches the target through normal
-   `ActivationData`;
-4. lifecycle, a persisted state facet, and a global filter execute;
-5. a functional and normal grain coexist in a two-silo test;
-6. the build emits/consumes a minimal `.g.fs` bound API with reliable IDE/build
-   ordering;
-7. the same tests pass on Orleans 10.1.0 and 10.2.2.
+Build the smallest internal spike with one API record and two operations.
 
-If a supported Orleans version closes the activation seam, stop and document the
-minimal upstream hook/fork required. Do not silently replace `IGrainContext`.
+Required proofs on Orleans 10.1.0 and 10.2.2:
 
-### Phase 1: identity, contract, and transport core
+1. Closed marker and interface types can be registered with arbitrary stable IDs.
+2. Open generic marker/interface entries are absent from the final manifest.
+3. The last custom grain-properties provider replaces Orleans' normalized open
+   interface with the exact closed interface ID.
+4. The custom reference activator is selected by public
+   `GetGrain(grainId, interfaceType)` and still needs only `IGrainFactory`.
+5. The custom activator returns an object whose CLR type differs from the marker
+   and fixed requests invoke it; its `IGrainBase.GrainContext` is the exact
+   supplied context, so inherited `GrainFactory`, reminder, and deactivation
+   APIs work.
+6. Global filters receive valid interface and implementation `MethodInfo` values.
+7. `ReadOnly`, `OneWay`, and `AlwaysInterleave` options reach stock scheduling;
+   one-way uses the void reference path.
+8. Fixed-request cancellation reaches the target across two silos.
+9. In the isolated spike, persistence facet creation before lifecycle start can
+   observe SetupState load before activate. Production persistence is not a
+   Phase-3 exit gate; it is implemented and repeated in Phase 4.
+10. Same-shaped contracts with equal keys and different grain types have distinct
+    activations; heterogeneous silos advertise only hosted contracts.
 
-- Implement stable actor/key/operation identifiers and frozen registry.
-- Fix actor identity collision by using a distinct GrainType per closed actor
-  contract.
-- Implement `Operation<'Actor,'Argument,'Reply>` and typed handler registry.
-- Implement F# reference/request/invokable/envelope/codecs.
-- Implement acknowledged calls, protocol errors, cancellation, and local/remote
-  deep-copy equivalence.
-- Add contractless one-operation mode only after the minimal pre-compilation
-  tool emits a unique private actor tag/marker for each definition.
+**Stop condition:** if any proof requires a replacement context/scheduler,
+process-global routing registry, per-contract application generation, or public
+generated API, stop and open an architecture issue.
 
-### Phase 2: public DSL and generator
+### Phase 1: compile-only public surface, shapes, and contracts
 
-- Implement `grainContract`, keep `grain { }` for simple mode, and introduce a
-  compile-proven contracted builder expression such as
-  `grainFor Room.contract { }` without colliding with the current auto-open
-  `grain` builder value.
-- Generate bound F# API records and binders.
-- Add compatibility manifest and analyzers.
-- Port the chat sample and normal grain-to-grain calls.
-- Ensure all sample/application projects are F#-only.
+- Add the exact public `.fsi` surface for contracts, definitions, registration,
+  and every custom operation used by the examples. Bodies may still use the fake
+  runtime in this phase.
+- Add contracts and typed key codecs.
+- Implement cached `ApiShape`, sentinel probe, IDs, and policies.
+- Add positive/negative compile fixtures and unit tests.
 
-### Phase 3: core Orleans capabilities
+**Exit gate:** complete compile fixtures (not every contextual snippet) compile
+with no feature-owned/per-contract public generated application source; invalid
+shapes and selectors fail deterministically.
 
-- Ordinary/named persistence and lifecycle.
-- ReadOnly, OneWay, AlwaysInterleave, Unordered, MayInterleave, Reentrant.
-- Placement, directory, collection, stateless worker validation.
-- Timers, reminders, explicit streams, broadcast channels, and explicit
-  lifecycle-stage hooks.
-- Filters, RequestContext, tracing, activation migration.
+### Phase 2: bound records and fake transport
 
-### Phase 4: advanced parity
+- Add raw reference wrapper, bound records, and preclosed generic thunks.
+- Prove the API using an in-memory byte transport.
+- Instrument tests for no ordinary-call reflection/selector work.
 
-- Transaction request families and transactional state.
-- Implicit stream subscriptions and response streaming.
-- Grain extensions/observers.
-- Optional per-operation native fidelity generation.
-- Heterogeneous rolling-upgrade matrix.
+**Exit gate:** typed calls, raw calls, errors, IDs, and policies work over the fake
+transport with fresh byte boundaries.
 
-### Phase 5: compatibility removal
+### Phase 3: manifest, custom reference/request, and activation
 
-- Migrate documentation/examples.
-- Deprecate unsafe `ask<'Result>` and legacy universal references.
-- Remove `FSharpGrainImpl` and C# runtime/code-generation projects used by the
-  non-event-sourced functional path. Retain the legacy Journaled/event-sourcing
-  bridge until its separate migration acceptance gate passes.
-- Complete package/API compatibility notes and a major-version release plan.
+- Add marker/target interface, fixed request/reply, explicit codecs, and custom
+  reference.
+- Add frozen registries and all Orleans providers/configurators.
+- Add the Grain-derived target and typed dispatch.
+- Add dedicated two-silo heterogeneous fixtures.
 
-### Separate second-stage workstream
+**Exit gate:** Phase-0 identity, manifest, reference, activation, filter, policy,
+cancellation, and heterogeneous-routing proofs pass in production code at both
+Orleans versions. The isolated persistence seam proof remains recorded but does
+not pretend persistence is implemented yet.
 
-Design and implement JournaledGrain/log-consistency parity using the acceptance
-criteria above. It may proceed after the core activation/transport architecture
-is stable.
+### Phase 4: definition, ordinary persistence, and lifecycle
+
+- Add typed definition builder and handler completeness validation.
+- Create authoritative persistent state in the activator.
+- Implement publication, state-neutral, write, and lifecycle ordering.
+- Add real deactivation/restart/cross-silo recovery tests.
+
+**Exit gate:** the Phase-0 persistence/lifecycle proof is repeated against
+production code; the core runnable example works without `collectionAge`, and
+durability is proven rather than inferred from two calls on one activation.
+
+### Phase 5: core capability increments
+
+- Collection-age manifest behavior.
+- Timers and reminders through stock registries.
+- RequestContext and tracing tests.
+
+Land each capability only with multi-silo tests. Keep reentrancy, transactions,
+streams/broadcast channels, stateless workers/custom placement, activation
+migration, response streaming, observer synthesis, and Journaled work deferred
+as stated.
+
+**Exit gate:** the full example including `collectionAge` runs, and each claimed
+capability has its own real-cluster evidence.
+
+### Phase 6: migration and cleanup
+
+- Port one representative sample end to end.
+- Add deprecation guidance for caller-selected `ask<'Reply>`.
+- Keep legacy APIs for a compatibility period.
+- Remove only ordinary universal bridge code after downstream migration.
+- Preserve Journaled-related code until its own gate passes.
 
 ## Required tests
 
-### Compile-time API tests
+CI must add a functional-runtime integration matrix with exact Orleans package
+versions `10.1.0` and `10.2.2`; the existing unit-only matrix and floor-version
+quick/full jobs are not sufficient. Add a dedicated non-skipped durable-restart
+job using the repository's Redis integration path and a CI Redis service
+container. That job must stop and recreate a silo process while retaining Redis,
+then verify the same grain ID reloads committed state. Do not mark the required
+functional durability fixture skipped in CI.
 
-- Wrong argument type does not compile.
-- Wrong reply type cannot be selected.
-- An operation for Actor A cannot be called through Actor B.
-- `FunctionalGrainContext<'Actor,'Key>.key` cannot be read as an unrelated key
-  type.
-- `RoomApi.ref` infers and returns `RoomApi` from the typed key.
-- Invalid contract/policy combinations produce source-located diagnostics.
+### Compile fixtures
 
-### Identity and routing
+- Complete `_.join`/`_.say`/`_.history` example succeeds.
+- The annotated `RoomApi.ref` is assignable to
+  `IGrainFactory -> RoomId -> RoomApi`, and downstream `let lobby = ...` infers
+  `RoomApi` without an annotation.
+- Wrong key, argument, handler argument, and handler reply fail.
+- Caller cannot select a reply type; selector from another API fails.
+- No feature-owned/per-contract public generated API source is present; stock
+  Orleans SDK serializer/proxy/manifest glue remains allowed.
 
-- Two actor contracts with the same string/GUID/integer/compound key create
-  distinct activations and state.
-- Two same-shaped contractless definitions receive distinct generated actor
-  tags, marker types, GrainTypes, activations, and state.
-- Only silos with a definition advertise/support its GrainType.
-- Auto-discovery never advertises a concrete open universal functional marker.
-- Mixed actor versions route according to configured Orleans version policy.
-- Unsupported operation/version returns a deterministic protocol failure.
+### Shape and selector tests
 
-### Activation and lifecycle
+- Declaration order is preserved.
+- `_.join` and `fun api -> api.join` resolve.
+- Identically typed fields resolve by sentinel identity.
+- Eta-expanded, composed, unrelated constant, invoking, and throwing selectors
+  which do not return a sentinel fail clearly.
+- A branch/helper/side effect which still returns an original same-typed sentinel
+  may resolve; tests document this deliberate semantic limit and prove the
+  selector executes exactly once during construction, never per ordinary call.
+- Non-record, struct record, non-function, `Async`, `ValueTask`, plain `Task`, and
+  curried shapes fail.
+- Shape, constructor, probe, and generic-thunk caches are reused.
 
-- The actual `GrainInstance` is the F# target object, not
-  `FSharpGrainImpl`/marker.
-- OnActivate occurs after persistent state load.
-- OnDeactivate/disposal execute on collection, shutdown, and failure paths
-  supported by Orleans.
-- Definition hooks registered at explicit Orleans lifecycle stages execute in
-  the expected order around state setup and application activation.
-- Rehydration/migration order is correct.
+### Contract, identity, and registry tests
 
-### Persistence
+- Default and overridden operation IDs behave exactly as specified.
+- Duplicate IDs/policies, invalid version, missing/duplicate grain type fail.
+- Version defaults to `1` and rejects non-positive values.
+- Actor/module/API CLR renames do not change explicit grain/interface IDs.
+- Same-shaped contracts with different grain types remain isolated.
+- String, Guid, int64, and compound wrapper keys round-trip through context.
+- Shipped/sample codecs pass deterministic, injective, domain round-trip, and
+  canonical native round-trip property tests, including malformed inputs.
+- A changed key codec produces a different GrainId.
+- Mutation after registry freeze fails.
+- Final manifest contains only closed functional marker/interface entries and
+  fixed transport version `1`/correct default-grain properties on 10.1.0 and
+  10.2.2.
+- The custom provider coexists with stock Orleans SDK-generated serializer,
+  proxy, and manifest glue; its descriptor precedes stock providers, exact-ID
+  `GetGrain` returns `FunctionalGrainReference`, and only the narrow functional
+  prefix/suffix predicate selects the custom path on both Orleans versions.
 
-- State survives deactivation, silo restart, and activation on another silo.
-- Named multiple states use the correct providers.
-- ETag conflict/write failure does not produce a false successful reply.
-- Read-only operation does not publish/persist a replacement state.
+### Binding, request, and transport tests
 
-### Scheduling
+- `IGrainFactory` alone produces the custom reference through exact IDs.
+- A contract-free client has no application interface in its manifest yet binds
+  successfully; bad prefix/suffix IDs are declined by the custom provider.
+- First binding validates concrete argument/reply serializers before returning
+  the API and caches that validation per serializer-service instance.
+- Every bound field sends correct operation/version/token/flags.
+- Fixed-codec golden vectors prove field IDs, raw 32-byte tokens, every admitted
+  flag bit, reserved-bit rejection, and missing/duplicate/wrong-type rejection.
+- Raw call uses the same path; `.api` returns the cached record instance.
+- Ordinary calls do no selector/shape/generic-close work.
+- Arguments and successful replies round-trip locally and remotely through the
+  custom byte envelopes; handler exceptions round-trip through Orleans' normal
+  response-exception serialization path.
+- Unknown operation, bad version/token/flags, oversized payload, and corrupt bytes
+  fail before handler code with precise diagnostics.
+- One-way returns after local send and does not surface target failure.
+- Cancellation propagates remotely; one-way cancellation limitations are tested.
+- Global filters can inspect and short-circuit valid fixed-request metadata.
+- Fresh/reset serializer sessions are never shared across concurrent calls.
+- Unattributed F# records and unions round-trip on both external client and silo,
+  proving idempotent codec/type-filter registration without the generalized
+  copier.
+- Enabling the functional runtime beside an ordinary Orleans grain does not add
+  aliasing for an F# container holding nested `byte[]`/mutable objects; the
+  functional registration itself never installs the unsafe legacy copier.
 
-- Serialized default, ReadOnly read/read admission, AlwaysInterleave, static
-  MayInterleave, Reentrant, and OneWay are tested against stock Orleans
-  behavior. `InvokeMethodOptions.Unordered` is tested only for its documented
-  client-routing optimization; no ordering guarantee is asserted.
-- A client/registry policy mismatch is rejected by dispatch, while tests also
-  demonstrate that a forged pre-admission header cannot be retroactively undone
-  by the target.
-- MayInterleave(readOnly-operation) is not used as a substitute for ReadOnly.
-- Stateful-invalid stateless worker combinations are rejected.
+### Activation, persistence, and lifecycle tests
 
-### Runtime services
+- Actual target differs from marker and is invokable/disposed correctly.
+- Custom activation passes the exact supplied context/runtime through the
+  protected `Grain` constructor before lifecycle callbacks; the get-only
+  `IGrainBase.GrainContext` is reference-equal afterward.
+- The actual target derives the internal Grain base; both deactivation wrappers,
+  including protected `DelayDeactivation`, exhibit stock behavior.
+- Context time uses `TimeProvider.System` by default and a pre-registered custom
+  `TimeProvider` override deterministically.
+- OnActivate sees loaded state; OnDeactivate and disposal run once in order.
+- DeactivateOnIdle, collection, reactivation, silo join/leave, and heterogeneous
+  placement use stock Orleans behavior.
+- Initial state applies only when no record exists.
+- Primary state uses exact name `"state"` and configured provider; the first
+  successful durable activation creates the record even without an activate
+  hook, while existing records do not trigger an unnecessary activation write.
+- Mutating reply follows awaited write; handler/storage failure does not publish
+  a returned replacement.
+- Read-only and one-way+always-interleave discard replacement and do not write.
+- State survives deactivation, real silo restart, and activation on another silo.
+- ETag behavior remains Orleans behavior.
 
-- Timers are activation-local; reminders survive deactivation.
-- Explicit streams and broadcast channels work across silos; implicit streams
-  have provider-specific tests before release.
-- Cancellation reaches target handlers and does not claim rollback.
-- Global/grain-level filters and RequestContext see logical operation metadata.
-- Normal grains and functional grains call each other.
+### Isolation and capability tests
 
-### Serialization and compatibility
+- F# containers containing byte arrays, ref cells, and mutable objects are
+  isolated equally on local and remote calls.
+- API records/closures/contracts/definitions never enter serializer/storage.
+- Scheduling behavior is demonstrated under concurrency, not just flag inspection.
+- Timer lifecycle, reminder recovery, RequestContext, and tracing pass multi-silo
+  tests before their capability is claimed.
+- Declarative reminder due/period values are validated, registered before
+  activation completes, and idempotently reconciled after reactivation; rename/
+  removal guidance is tested as an explicit migration, not silent cleanup.
+- Whole-state functional timers reject `Interleave = true`; concurrent invocation
+  contexts never leak cancellation tokens or RequestContext values.
+- Every invalid policy combination fails before first call.
 
-- Local and remote calls isolate nested mutable arrays/ref cells/objects.
-- Contract schemas are compatible across supported rolling versions.
-- CI compatibility verification compares the current manifest with an explicit
-  released/checked-in baseline; without one it reports compatibility as
-  unverified instead of passing vacuously.
-- Trimming publish test avoids unrooted reflection paths where generated codecs
-  are expected.
-- Malformed/oversized envelopes fail safely.
+The existing shared `ClusterFixture` starts one silo and is insufficient. Add
+dedicated multi-silo, heterogeneous-hosting, and restart fixtures.
 
-### Transactions
+## Definition of done
 
-- Create, Join, CreateOrJoin, Supported, NotAllowed, and Suppress options match
-  Orleans behavior where exposed.
-- Transaction context crosses functional calls.
-- A transaction created by the read-only request family is read-only; joining an
-  ambient read-write transaction remains read-write, while the F# operation
-  policy still prevents state publication/automatic writes.
-- One-way + transactional operation is rejected at build time.
-- Timeout/unknown-outcome tests do not claim automatic deduplication.
+The contracted functional runtime is complete when:
 
-## Core functional-runtime definition of done (Phases 0–3)
+1. The examples compile as written.
+2. No public/user-referenced generated symbol or per-contract generator exists.
+3. Bound APIs are user records and ordinary calls have no reflection/selector or
+   caller-selected reply cast.
+4. Every contract receives exact stable grain and interface IDs with native key
+   identity in a real cluster.
+5. Orleans owns context, scheduling, lifecycle, placement, collection, storage,
+   filters, cancellation transport, and RequestContext.
+6. Durable state survives deactivation and silo restart with write-before-ack.
+7. Invalid shapes, selectors, IDs, policies, handler coverage, serializers, and
+   registrations fail before first application call.
+8. Local and remote mutable-graph isolation is equivalent.
+9. Tests pass at Orleans 10.1.0 and 10.2.2.
+10. Samples/docs lead with `RoomApi.ref ...; lobby.join ...`.
+11. Legacy and Journaled bridges remain functional until separate migration.
+12. Deferred capabilities are documented and not falsely claimed.
 
-The first supported functional-runtime release is complete when:
+## Migration constraints
 
-1. a user can build and run the chat sample with only F# application projects;
-2. no application grain class/interface implementation is authored;
-3. the activation target is an F# object expression and `FSharpGrainImpl` is not
-   used;
-4. typed API records make wrong argument/reply/actor combinations compile-time
-   errors;
-5. distinct contracts sharing the same key cannot collide;
-6. the Phase 1–3 feature matrix is covered by multi-silo integration tests;
-7. persistence survives deactivation/restart and follows provider failure
-   semantics;
-8. the new transport uses correct copying, cancellation, filters, and protocol
-   validation;
-9. generated build artifacts are F#, deterministic, and work in IDE/CI/package
-   consumption;
-10. Phase 4 gaps (transactions, implicit streams, native method fidelity,
-    JournaledGrain) are labeled experimental/deferred until their own acceptance
-    suites pass.
+- Add the new path beside existing `FSharpGrain.ref/send/ask/post`.
+- Do not reinterpret existing universal identities as explicit grain types.
+- Do not migrate durable data automatically when grain type/key encoding changes.
+- Obsolete caller-selected result APIs only after a working replacement sample.
+- Do not delete all of Abstractions or CodeGen; they contain Journaled and other
+  compatibility code.
+- Preserve `FSharpEventSourcedGrain`, `FSharpEventSourcedGrainImpl`, wrappers, and
+  generated subclasses as a separate surface.
+- Keep Orleans 10.1.0 as the minimum unless separately decided.
 
-Completing Phase 4 removes the corresponding deferred labels only after its
-transaction, streaming, extension, fidelity, and rolling-upgrade suites pass.
-The separate JournaledGrain workstream retains its own acceptance gate.
+## Hard prohibitions
 
-## Hard boundaries and implementation warnings
+Do not:
 
-1. **No C# is feasible; no CLR type is not.** The hidden marker and compiled
-   object expression remain CLR types.
-2. **Do not instantiate a delegate as the target.** A direct `Func` or
-   `FSharpFunc` is technically dispatchable but loses `IGrainBase` lifecycle,
-   reminder/filter interfaces, and normal target contract mapping. The object
-   expression is the compatibility membrane.
-3. **Do not replace Orleans activation context.** That becomes a runtime rewrite.
-4. **Do not advertise one open universal marker everywhere.** Register closed
-   installed actor types.
-5. **Do not expose raw client flags.** The trusted generated request family
-   chooses scheduling/one-way headers from the client registry before target
-   admission. The silo registry validates consistency after admission but
-   cannot undo a forged header; client and silo are a trusted protocol pair.
-6. **Do not infer wire identity from CLR names.**
-7. **Do not treat F# outer shape as deep immutability.**
-8. **Do not equate ReadOnly with isolation or OneWay with reliable delivery.**
-9. **Do not claim all Orleans features through one Dispatch without naming the
-   MethodInfo/attribute gap.**
-10. **Pin and test Orleans versions.** Manual reference/request APIs are public
-    seams but are close to the transport.
+1. generate `RoomApi`, `RoomApi.ref`, operation witnesses, or any application
+   symbol;
+2. add `operation "join"` or explicit registration for every record field;
+3. infer grain/interface IDs from assembly-qualified CLR names;
+4. parse selector IL or require quotations;
+5. reflect, resolve selectors, or close generics on each ordinary call;
+6. serialize API records, closures, contracts, definitions, contexts, or services;
+7. expose caller-selected result APIs on the new path;
+8. use the universal message-type registry for new dispatch;
+9. use one grain/interface ID for all contracts;
+10. use `obj` as the transport payload instead of validated bytes;
+11. implement a custom context/mailbox/scheduler/directory/storage lifecycle;
+12. use a plain request plus flag for transactions;
+13. permit interleaved whole-state mutation without explicit conflict semantics;
+14. delete Journaled bridges in this work;
+15. claim compile-time handler exhaustiveness, NativeAOT, mixed-version routing,
+    exactly-once delivery, or untested parity.
 
-## Primary implementation references
+## Repository-specific references
 
-- Orleans activator contract:
-  [`IGrainActivator`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Runtime/Activation/IGrainActivator.cs)
-- Default marker/class-map activation requirement:
-  [`ActivationDataActivatorProvider`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Runtime/Activation/ActivationDataActivatorProvider.cs)
-- Grain-type component configuration/custom activator hook:
-  [`IGrainContextActivator.cs`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Runtime/Activation/IGrainContextActivator.cs)
-- Activation instance, lifecycle, scheduling, and migration:
-  [`ActivationData`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Runtime/Catalog/ActivationData.cs)
-- Manifest class/interface inputs:
-  [`GrainTypeOptions`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Core/Configuration/GrainTypeOptions.cs)
-- Stable CLR type → GrainType provider seam:
-  [`IGrainTypeProvider`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Core.Abstractions/Manifest/IGrainTypeProvider.cs)
-- Stable interface ID provider seam:
-  [`IGrainInterfaceTypeProvider`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Core.Abstractions/IDs/GrainInterfaceType.cs)
-- Interface version/default-grain-type properties:
-  [`IGrainInterfacePropertiesProvider`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Core.Abstractions/Manifest/GrainInterfaceProperties.cs)
-- Grain base lifecycle surface:
-  [`IGrainBase`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Core.Abstractions/Core/IGrainBase.cs)
-- Reference/request options and cancellation base:
-  [`GrainReference`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Core.Abstractions/Runtime/GrainReference.cs)
-- Invokable cancellation, logical naming, and default response timeout:
-  [`IInvokable`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Serialization/Invocation/IInvokable.cs)
-- Invocation option definitions:
-  [`InvokeMethodOptions`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Core.Abstractions/CodeGeneration/InvokeMethodOptions.cs)
-- Target assignment/incoming invocation path:
-  [`InsideRuntimeClient`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Runtime/Core/InsideRuntimeClient.cs)
-- Generated invokable target-cast behavior used as a design reference:
-  [`InvokableGenerator`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.CodeGenerator/InvokableGenerator.cs)
-- Persistence setup/factory:
-  [`PersistentStateStorageFactory`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.Runtime/Facet/Persistent/PersistentStateStorageFactory.cs)
-- Journaled-grain base:
-  [`JournaledGrain`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.EventSourcing/JournaledGrain.cs)
-- Log-view-adaptor setup and derived CLR type-name use:
-  [`LogConsistentGrain`](https://github.com/dotnet/orleans/blob/v10.2.2/src/Orleans.EventSourcing/LogConsistency/LogConsistentGrain.cs)
-- Orleans request scheduling:
-  [official scheduling documentation](https://learn.microsoft.com/en-us/dotnet/orleans/grains/request-scheduling)
-- Orleans delivery guarantees:
-  [official delivery-guarantee documentation](https://learn.microsoft.com/en-us/dotnet/orleans/implementation/messaging-delivery-guarantees)
-- Orleans code generation:
-  [official code-generation documentation](https://github.com/dotnet/orleans/blob/main/docs/site/src/content/docs/grains/code-generation.md)
-- Current F# event-sourcing API:
-  [`docs/event-sourcing.md`](../../docs/event-sourcing.md)
+Read before editing:
 
-## Review questions for the implementation PR
+- `src/Orleans.FSharp/FSharpGrainRef.fs` — current reference and selected-reply
+  problem.
+- `src/Orleans.FSharp/GrainBuilder.fs` — reusable state/context/lifecycle concepts.
+- `src/Orleans.FSharp.Runtime/GrainDiscovery.fs` — legacy universal registry which
+  must not define new identity.
+- `src/Orleans.FSharp.Abstractions/IFSharpGrainInterfaces.cs` — universal and
+  Journaled bridges; modify surgically.
+- `src/Orleans.FSharp/FSharpBinaryCodec.fs` — unsafe generalized deep-copy
+  assumptions to avoid/fix.
+- `src/Orleans.FSharp.Generator` and CodeGen project — existing post-build
+  event-sourcing/sample path, not this API mechanism.
+- `tests/Orleans.FSharp.Tests` and `tests/Orleans.FSharp.Integration` — current
+  suites; shared fixture is single-silo.
 
-The reviewer should explicitly answer:
+Relevant public Orleans/FSharp seams:
 
-1. Is any `FSharpGrainImpl` or C# grain class still instantiated on the new path?
-2. Is the actual target compatible with lifecycle, filters, reminders, and
-   cancellation?
-3. Can two contracts with the same key collide?
-4. Can the caller choose a wrong reply type?
-5. Are pre-admission operation flags sourced from the trusted generated client
-   registry, and does review avoid claiming that target validation can undo
-   them?
-6. Is persistent state loaded/committed at the correct lifecycle points?
-7. Does local invocation preserve the same deep-copy isolation as remote
-   invocation?
-8. Are logical operation names visible without high-cardinality/PII metric
-   labels?
-9. Are native MethodInfo/attribute limitations documented or covered by
-   generated F# fidelity artifacts?
-10. Are all supported Orleans versions exercised in integration tests?
-11. Are JournaledGrain/log-consistency claims kept separate until their dedicated
-    suite passes?
+- `GrainTypeOptions.Classes` and `.Interfaces`;
+- `IGrainTypeProvider`, `IGrainInterfaceTypeProvider`,
+  `IGrainPropertiesProvider`, and `IGrainInterfacePropertiesProvider`;
+- `IConfigureGrainTypeComponents` and `IGrainActivator`;
+- `IGrainReferenceActivatorProvider`, `GrainReference`, and request bases;
+- `IPersistentStateFactory`;
+- `IGrainFactory.GetGrain(GrainId, GrainInterfaceType)`;
+- `FSharpType` and `FSharpValue` reflection APIs.
+
+Use official source/docs for these seams. Do not copy Orleans internal runtime
+classes into this repository.
+
+## Implementation PR checklist
+
+The PR description must answer each item with a test or source pointer:
+
+1. Where are stable grain and interface IDs put into the final manifest?
+2. How are open generic marker/interface entries removed and the normalization
+   quirk corrected?
+3. What proves the custom reference path needs only `IGrainFactory`?
+4. What proves the activation target can differ from the marker?
+5. What proves global filters receive valid method metadata?
+6. Where are dynamic request options selected, serialized as hints, and checked?
+7. What proves ordinary bound calls perform no selector/reflection work?
+8. Where is handler coverage sealed before startup?
+9. What proves persistence is created before lifecycle and written before ack?
+10. What proves local/remote mutable payload isolation?
+11. Which tests run at Orleans 10.1.0 and 10.2.2?
+12. Which legacy/Journaled paths remain intact and which capabilities are deferred?
+
+An implementation which cannot answer one of these questions is not ready to
+merge.
