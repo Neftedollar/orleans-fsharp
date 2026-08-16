@@ -229,6 +229,7 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 |---|---|
 | [Getting Started](docs/getting-started.md) | Zero to working grain in 15 minutes |
 | [Grain Definition](docs/grain-definition.md) | Complete `grain { }` CE reference |
+| [Functional Grain Runtime](docs/functional-grains.md) | User-authored API records: contracts, key codecs, delivery semantics, immutable state |
 | [Silo Configuration](docs/silo-configuration.md) | Complete `siloConfig { }` CE reference |
 | [Client Configuration](docs/client-configuration.md) | `clientConfig { }` CE reference |
 | [Serialization](docs/serialization.md) | 3 modes: F# Binary, JSON, Orleans Native |

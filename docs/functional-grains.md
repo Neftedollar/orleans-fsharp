@@ -1,0 +1,290 @@
+# Functional Grain Runtime
+
+**A second, complete authoring model: user-authored API records instead of C# CodeGen interfaces.**
+
+## What you'll learn
+
+- Key-codec identity rules: what changes a grain's routing/storage identity, what does not
+- Operation rename via `operationId`, and the exact contract-version matching rule
+- Delivery semantics: acknowledged vs. one-way, what a successful call does *not* imply, and cancellation without rollback
+- Immutable-state guidance -- deep mutation is unguarded by design
+- Reminder rename/removal migration -- the explicit unregister step
+- Why the point-free `let ref = FunctionalGrain.ref contract` binding infers its complete type
+
+## Overview
+
+The functional grain runtime is a second, independent way to author and call grains, alongside
+the `grain { }` CE / CodeGen path described in [Grain Definition](grain-definition.md). Instead of
+a C# interface generated at build time, you write a plain F# record of functions -- the **API
+record** -- and a **contract** that gives it a stable wire identity:
+
+```fsharp
+namespace Chat.Contracts
+
+open System
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type RoomActor = private RoomActor of unit
+
+[<NoEquality; NoComparison>]
+type RoomApi =
+    { join: UserId -> Task<unit>
+      say: PostMessage -> Task<Result<int64, PostError>>
+      history: HistoryRequest -> Task<ChatMessage list>
+      typing: Typing -> Task<unit> }
+
+[<RequireQualifiedAccess>]
+module RoomApi =
+    let contract =
+        grainContract<RoomActor, RoomId, RoomApi> () {
+            grainType "chat.room"
+            version 1
+            stringKeyMapped RoomId.value RoomId.create
+
+            readOnly (_.history)
+            oneWay (_.typing)
+            alwaysInterleave (_.typing)
+        }
+
+    let ref = FunctionalGrain.ref contract
+    let rawRef = FunctionalGrain.rawRef contract
+```
+
+Server-side, a `grainFor` definition attaches handlers and persistent state to the contract, and
+`AddFunctionalGrain` / `AddFunctionalGrainClient` register it on the silo / client builders. See
+`src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` for the complete, runnable version of this
+example (contract, definition, registration, and a driven call sequence), which is the same
+source spec 003's "Public authoring model" section shows.
+
+## Key-codec identity rules
+
+A grain's Orleans identity is:
+
+```text
+GrainId(GrainType(contract.grainType), keyCodec.encode(domainKey))
+```
+
+**Changes identity** (routing *and* storage -- a different `GrainId` means a different
+activation, and for persistent state, a different durable record):
+
+- the `grainType` string;
+- the key codec's encoding -- switching between `stringKey`/`guidKey`/`int64Key`/compound
+  variants, or changing a *mapped* codec's encode/decode pair so it produces different native
+  values for the same domain key.
+
+**Does not change identity:**
+
+- renaming the F# module, the API record type, or the actor-brand type (`RoomActor` above) --
+  identity is carried by the explicit `grainType` string and the encoded key, never by CLR names;
+- the contract `version` or any operation ID -- both are **application protocol metadata carried
+  in every request**, not storage-key components.
+
+Every mapped key codec (`stringKeyMapped`, `guidKeyMapped`, `int64KeyMapped`, and their compound
+forms) must satisfy, for its whole domain:
+
+- deterministic, injective encoding into the selected Orleans key space;
+- `decode (encode key) = key` under domain equality (round-trip);
+- `encode (decode native) = native` in canonical Orleans representation (canonicalization);
+- rejection of malformed or non-canonical native values.
+
+Native keys (`stringKey`, `guidKey`, `int64Key`, and their compound forms) need no conversion
+functions at all -- the domain key type *is* the Orleans key type.
+
+## Operation rename and contract version
+
+**Operation IDs** default to the API record's field name, ordinal and case-sensitive. Renaming a
+handler's *source field* would otherwise silently change every caller's wire ID along with it;
+`operationId` decouples the two, so a refactor of the F# field name never touches the wire:
+
+```fsharp
+grainContract<RoomActor, RoomId, RoomApi> () {
+    grainType "chat.room"
+    // the record field is `enter`, but the wire ID stays "join" across the rename
+    operationId "join" (_.enter)
+}
+```
+
+Final operation IDs must be unique, non-blank, NUL-free ordinal strings within a contract.
+
+**Contract version matching is exact, with no rolling-upgrade tolerance.** Every request carries
+the caller's contract version; the target compares it against its own hosted version with `=`,
+not `>=` or a compatibility range. A version mismatch fails the call before any handler runs, with
+no negotiation and no automatic fallback. This means:
+
+- a version bump is a **breaking wire change** for every caller still on the old version -- there
+  is no in-place, mixed-version rolling deployment for a single contract version bump;
+- if you need callers on two versions to coexist during a rollout, host **two contracts** (one
+  per version, e.g. two different `grainType` strings, or two definitions selected by
+  deployment), migrate traffic explicitly, then retire the old one -- the runtime gives you no
+  automatic compatibility bridge to lean on instead.
+
+Contract version is independent of `GrainId`, storage identity, and the fixed Orleans interface
+version (which this transport family pins to `1` internally, regardless of your contract's
+`version`).
+
+## Delivery semantics
+
+| Call kind | What a successful `Task` completion means |
+|---|---|
+| Default (acknowledged, sequential) | The target's handler ran to completion and its reply was received. |
+| `readOnly` | Same as default, but the handler's returned state replacement is **discarded**, and Orleans schedules it to interleave with other read-only calls. |
+| `oneWay` | The message **entered the local Orleans send path** -- nothing more. The caller's `Task<unit>` completes at that local acknowledgement, before the target has necessarily even started, let alone finished. |
+
+**What a successful call does *not* imply**, in every case:
+
+- that any storage write happened -- writes are only what the handler explicitly issued through
+  `context.persistentState`, never automatic;
+- for `oneWay`, that the target has run at all, or that it succeeded -- a one-way target failure
+  is logged and traced on the target side, but is **never returned to that caller**; the caller
+  already completed;
+- that a retry, reload, or rollback occurred on failure -- there are none, by design (see
+  [Immutable-state guidance](#immutable-state-guidance-deep-mutation-is-unguarded-by-design)
+  below).
+
+**Cancellation is cooperative and never rolls anything back.** `callCancellable` on an
+acknowledged call propagates a target-local `CancellationToken` that a long-running handler may
+observe (e.g. inside a `Task.Delay` or another cancellable await) -- but cancelling it does not
+undo any explicit write or external effect the handler already performed, and does not stop the
+handler from running to completion if it doesn't check the token. For a one-way
+`callCancellable`, an *already-cancelled* token short-circuits to a cancelled `Task` locally, but
+once sent, a later cancellation has no remote effect at all -- the delivered one-way context
+always uses `CancellationToken.None`.
+
+## Immutable-state guidance: deep mutation is unguarded by design
+
+State-neutral handlers (`readOnly`, `alwaysInterleave`) and every handler's discarded-on-failure
+replacement all rely on one assumption: **the state graph is immutable**. The runtime enforces
+this only at the outermost level --
+
+- the persistent-state facade can reject its `State` **setter** in a `readOnly`/`alwaysInterleave`
+  callback;
+- a handler that fails contributes no return-value publication;
+
+-- but it **cannot intercept in-place mutation of an object reachable from state**, whether that
+object came from the primary `state` argument, an additional holder's `.State` getter, or
+anywhere else. If your state record holds a mutable field, a `ref` cell, an array, or any other
+mutable .NET object, and a `readOnly` handler mutates it directly instead of returning a new
+value, that mutation is real and visible immediately -- discarding the handler's return value does
+not undo it, because there was never a copy to discard *from*.
+
+**Use immutable F# state** -- records, `Set`, `Map`, and immutable lists, as the sample and every
+shipped example do -- and this hazard never arises. If you must hold a mutable value, treat it as
+an explicit, deliberate exception and document why it's safe under concurrent read-only/interleave
+scheduling.
+
+## Reminder rename and removal: the explicit unregister migration
+
+Reminder reconciliation (`RegisterOrUpdateReminder`, run per declared reminder on every successful
+activation) keeps an **added** reminder or a **changed** due-time/period in sync automatically --
+the next activation updates the durable registration in place.
+
+**Renaming or removing a reminder declaration is different, and nothing automatic happens.** The
+registration lives in Orleans' reminder table, not in your definition, so it survives the
+deployment that dropped (or renamed) the declaration and keeps firing on schedule. Every tick then
+arrives at a name the current definition no longer declares, which fails that callback and is
+logged with the grain and reminder identity (`Grain {GrainId} of functional grain type {GrainType}
+received unknown reminder {ReminderName}`) -- for as long as the stale registration exists.
+Nothing retires it on its own, deliberately: the runtime cannot distinguish a genuine rename from
+a grain type that is only temporarily not deployed, and guessing wrong would silently destroy a
+durable schedule.
+
+The migration is an explicit, idempotent application step through the stock `IReminderRegistry`,
+resolved from `context.services` (the functional context intentionally exposes no reminder API of
+its own):
+
+```fsharp
+handle (_.retireStaleReminder) (fun context state () ->
+    task {
+        let registry = context.services.GetRequiredService<IReminderRegistry>()
+        let! stale = registry.GetReminder(context.grainId, "old-name")
+
+        if not (obj.ReferenceEquals(stale, null)) then
+            do! registry.UnregisterReminder(context.grainId, stale)
+
+        return state, ()
+    })
+```
+
+Operationally:
+
+1. Deploy the new definition -- the stale name starts failing, and each failure is visible in the
+   logs, keyed by grain id.
+2. Drive the retiring operation (above) over every grain that carried the old name.
+   `registry.GetReminders context.grainId` enumerates what one grain still has registered, which
+   also tells you when a given grain is done.
+3. Keep the retiring operation deployed until every affected grain has been visited.
+
+A **rename** is this removal, plus the new `onReminder` declaration in the same or a later
+deployment -- there is no in-place rename operation.
+
+## The `FunctionalGrain` static-class inference rule
+
+The spec's point-free binding --
+
+```fsharp
+let ref = FunctionalGrain.ref contract
+```
+
+-- infers the complete concrete type `IGrainFactory -> 'Key -> 'Api` with **no annotation
+anywhere**, and callers use it as `ref factory key`. This works because of a specific interaction
+between how F# handles member parameters and the value restriction, worth knowing before you hit
+it:
+
+`FunctionalGrain.ref` declares `contract` as its **only** formal parameter and returns the
+remaining `factory -> key -> api` function as its result, rather than declaring `factory` as a
+second curried parameter. F# inserts *flexibility* (implicit upcasting, so any `IGrainFactory`
+implementation such as `IClusterClient` is accepted) only for a member's **declared** parameters.
+If `factory: IGrainFactory` were a second declared parameter, every partial application
+(`FunctionalGrain.ref contract`) would need to stay generic in a flexible `'_a :> IGrainFactory`,
+which hits the value restriction (`FS0030`) for a `let`-bound point-free value like `ref` above.
+Keeping `contract` as the only declared parameter avoids that: the partial application is
+concrete, and ordinary argument subsumption still lets any `IGrainFactory` be applied to the
+*returned* function at a normal call site.
+
+One consequence follows directly, and is worth knowing at call sites: because the factory is
+applied to the *returned* function rather than to a declared parameter, F# does **not** insert
+subtype flexibility for it there. Annotate a caller's factory parameter as plain `IGrainFactory` --
+any implementation, `IClusterClient` included, is accepted by ordinary subsumption. A flexible
+`#IGrainFactory` annotation buys nothing at that position and is reported as `FS0064` ("less
+generic than indicated by its type annotations"), which is a hard error under
+`TreatWarningsAsErrors`.
+
+If your own code must stay generic over the factory type -- for example a class with an
+`'F when 'F :> IGrainFactory` type parameter, which would otherwise fail to compile with
+`FS0660`/`FS0663` -- there are two diagnostic-free forms:
+
+```fsharp
+// 1. Call through an application-owned point-free binding: flexibility is inserted at every
+//    use of a named binding, even when the compiler has to look through its function type.
+let ref = FunctionalGrain.ref RoomApi.contract
+let api = ref factory key
+
+// 2. Or upcast once at the call site.
+let api = FunctionalGrain.ref RoomApi.contract (factory :> IGrainFactory) key
+```
+
+`FunctionalGrain.rawRef` follows the identical rule and returns the typed
+`FunctionalGrainRef<'Actor, 'Key, 'Api>` wrapper (`key`, the cached `api` record, selector-based
+`call`, and `callCancellable`) instead of the bare API record.
+
+## See also
+
+- [Grain Definition](grain-definition.md) -- the original `grain { }` CE / CodeGen authoring model
+- [Silo Configuration](silo-configuration.md) / [Client Configuration](client-configuration.md) --
+  `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
+  there
+- `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the complete runnable sample this guide's
+  examples are drawn from
+- `specs/003-functional-grain-runtime/spec.md` -- the full normative specification
+
+## A build note for contributors: codegen and cold caches
+
+If you build this repository from a completely clean NuGet cache, run `dotnet build` (or
+`dotnet restore`) once before `dotnet test`, and before running any sample directly, on the whole
+solution. The functional-runtime package pipeline relies on Orleans' own source-generated codegen
+running as part of a normal compile; the very first compile after a clean cache can, in rare
+cases, complete without that codegen having been applied to every assembly in the same MSBuild
+invocation. A second build (or `dotnet restore` first) is unaffected. CI is not exposed to this --
+every job runs `dotnet build` before any `dotnet test` step, exactly to establish a warm,
+consistent build state first.

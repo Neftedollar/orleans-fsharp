@@ -38,6 +38,14 @@ let counterGrain = grain {
 | `Orleans.FSharp.EventSourcing` | Event-sourced grains via `eventSourcedGrain {}` CE |
 | `Orleans.FSharp.Analyzers` | F# analyzer detecting `async {}` usage |
 
+## Functional grain runtime
+
+A second, independent authoring model lives alongside the `grain {}` CE: user-authored API
+records (`grainContract` / `grainFor` / `FunctionalGrain.ref`) instead of a CodeGen-generated C#
+interface. See [Functional Grain Runtime](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md)
+for key-codec identity rules, operation rename and contract versioning, delivery semantics,
+immutable-state guidance, and the reminder rename/removal migration.
+
 ## Documentation
 
 Full docs and examples: <https://github.com/Neftedollar/orleans-fsharp>
