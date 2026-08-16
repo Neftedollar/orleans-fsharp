@@ -89,6 +89,7 @@
     <Compile Include="FunctionalContractTests.fs" />
     <Compile Include="FunctionalKeyCodecTests.fs" />
     <Compile Include="FunctionalDefinitionTests.fs" />
+    <Compile Include="FunctionalSurfaceTests.fs" />
     <Compile Include="FunctionalCompileFailureTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>

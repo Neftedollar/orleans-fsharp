@@ -586,3 +586,61 @@ module RoomApiBindings =
 [<Fact>]
 let ``the definition preamble used by the handler fixtures compiles`` () =
     test <@ compileErrors definitionPreamble = Array.empty @>
+
+[<Fact>]
+let ``the specification's exact grainContract spelling compiles`` () =
+    // The spec writes `grainContract<RoomActor, RoomId, RoomApi>() { ... }` with no space
+    // before the unit argument; the repo's formatter writes `... > () { ... }`. Both must work.
+    let noSpace =
+        """
+let tight =
+    grainContract<RoomActor, RoomId, RoomApi>() {
+        grainType "chat.tight"
+        stringKeyMapped RoomId.value RoomId
+    }
+"""
+
+    let withSpace =
+        """
+let spaced =
+    grainContract<RoomActor, RoomId, RoomApi> () {
+        grainType "chat.spaced"
+        stringKeyMapped RoomId.value RoomId
+    }
+"""
+
+    test <@ compileErrors noSpace = Array.empty @>
+    test <@ compileErrors withSpace = Array.empty @>
+
+[<Fact>]
+let ``a definition declares exactly one state operation`` () =
+    let accepted =
+        """
+let ok =
+    grainFor roomContract {
+        defaultState (fun () -> { count = 0 })
+    }
+"""
+
+    let bothOperations =
+        """
+let bad =
+    grainFor roomContract {
+        defaultState (fun () -> { count = 0 })
+        initialState (fun (RoomId name) -> { count = name.Length })
+    }
+"""
+
+    let noStateOperation =
+        """
+let alsoBad =
+    grainFor roomContract {
+        collectionAge (TimeSpan.FromMinutes 1.0)
+    }
+"""
+
+    // Type-checking only: handler coverage is a sealing-time (runtime) rule, so the accepted
+    // snippet compiles even though constructing it would fail.
+    test <@ compileErrors accepted = Array.empty @>
+    test <@ compileErrors bothOperations <> Array.empty @>
+    test <@ compileErrors noStateOperation <> Array.empty @>

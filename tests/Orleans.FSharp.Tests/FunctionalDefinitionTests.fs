@@ -176,6 +176,21 @@ let ``the same state name with a different provider fails definition sealing`` (
     test <@ error.Message.Contains "is attached more than once" @>
 
 [<Fact>]
+let ``the primary descriptor must not be repeated with usePersistentState`` () =
+    let error =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                stateFrom primary
+                usePersistentState primary (fun _ -> { count = 0 })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "is attached more than once" @>
+
+[<Fact>]
 let ``persistent descriptors reject blank and NUL names`` () =
     let blankState =
         throws (fun () -> PersistentState.create<RoomState> "  " "Default" |> ignore)
