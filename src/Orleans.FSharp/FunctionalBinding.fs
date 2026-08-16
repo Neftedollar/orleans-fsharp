@@ -3,6 +3,8 @@ namespace Orleans.FSharp
 open System.Threading
 open System.Threading.Tasks
 open Orleans
+open Orleans.Runtime
+open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>
 /// A bound functional reference: the domain key, the cached API record instance, and
@@ -10,7 +12,29 @@ open Orleans
 /// </summary>
 [<Sealed>]
 type FunctionalGrainRef<'Actor, 'Key, 'Api>
-    internal (key: 'Key, api: 'Api, contract: GrainContract<'Actor, 'Key, 'Api>) =
+    internal
+    (
+        key: 'Key,
+        api: 'Api,
+        contract: GrainContract<'Actor, 'Key, 'Api>,
+        grainId: GrainId,
+        bound: BoundCall[]
+    ) =
+
+    /// <summary>Resolve one explicit selector against the cached shape for a raw call.</summary>
+    member private _.Resolve<'Argument, 'Reply>
+        (entry: string, selector: OperationSelector<'Api, 'Argument, 'Reply>)
+        : BoundCall =
+        let operation = contract.Resolve(entry, selector)
+
+        // Defensive: the selector's inferred types always match the descriptor it resolved to,
+        // so a mismatch here means the API record was reflected against a different shape.
+        if operation.ArgumentType <> typeof<'Argument> || operation.ReplyType <> typeof<'Reply> then
+            fail
+                BindingStage
+                $"the '{entry}' selector of grain type '{contract.GrainTypeName}' resolved to operation '{operation.OperationId}', whose argument and reply types are '{operation.ArgumentType.FullName}' and '{operation.ReplyType.FullName}', but the call site supplied '{typeof<'Argument>.FullName}' and '{typeof<'Reply>.FullName}'."
+
+        bound.[operation.Index]
 
     /// <summary>The domain key this reference addresses.</summary>
     member _.key = key
@@ -21,22 +45,87 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
     /// <summary>The contract this reference was bound from.</summary>
     member internal _.Contract = contract
 
+    /// <summary>The exact Orleans identity this reference addresses.</summary>
+    member internal _.GrainId = grainId
+
+    /// <summary>The preclosed client closures, in API-record declaration order.</summary>
+    member internal _.Bound = bound
+
     /// <summary>Call one operation identified by an explicit selector.</summary>
-    member _.call (selector: OperationSelector<'Api, 'Argument, 'Reply>) (argument: 'Argument) : Task<'Reply> =
-        ignore selector
-        ignore argument
-        FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrainRef.call"
+    member this.call (selector: OperationSelector<'Api, 'Argument, 'Reply>) (argument: 'Argument) : Task<'Reply> =
+        let call = this.Resolve("call", selector)
+        (unbox<'Argument -> Task<'Reply>> call.Field) argument
 
     /// <summary>Call one operation with cooperative remote cancellation.</summary>
-    member _.callCancellable
+    member this.callCancellable
         (selector: OperationSelector<'Api, 'Argument, 'Reply>)
         (argument: 'Argument)
         (cancellationToken: CancellationToken)
         : Task<'Reply> =
-        ignore selector
-        ignore argument
-        ignore cancellationToken
-        FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrainRef.callCancellable"
+        let call = this.Resolve("callCancellable", selector)
+        (unbox<'Argument -> CancellationToken -> Task<'Reply>> call.Cancellable) argument cancellationToken
+
+/// <summary>
+/// Reference binding: encode the key, resolve the transport, validate serializers, and create
+/// one preclosed typed closure per API-record field.
+/// </summary>
+[<RequireQualifiedAccess>]
+module internal FunctionalBinding =
+
+    /// <summary>
+    /// Bind one contract to one domain key. Every reflective step (API shape, selectors,
+    /// generic closing) has already happened while the contract was sealed; binding only
+    /// encodes the key, resolves services, validates serializers, and instantiates the
+    /// preclosed closures.
+    /// </summary>
+    let bind
+        (contract: GrainContract<'Actor, 'Key, 'Api>)
+        (factory: IGrainFactory)
+        (key: 'Key)
+        : FunctionalGrainRef<'Actor, 'Key, 'Api> =
+        let grainTypeName = contract.GrainTypeName
+
+        // 1. Encode the domain key and construct the exact grain identity.
+        let grainId = contract.GrainIdOf key
+
+        // 2-4. Resolve the functional transport of this process. Phase 3 replaces the fallback
+        //      of this seam with GetGrain over the stable actor-specific GrainInterfaceType and
+        //      the FunctionalGrainReference type check.
+        let source = FunctionalTransportSource.resolve factory grainTypeName
+        let services = source.Services
+
+        // 5. Validate that every exact argument and reply type has a registered codec.
+        let provider = SerializerPreflight.providerOf services grainTypeName
+        SerializerPreflight.ensure provider grainTypeName contract.ApiType contract.DeclaredTypes
+
+        let codec = FunctionalTransportConfiguration.payloadCodec services grainTypeName
+        let maxPayloadBytes = FunctionalTransportConfiguration.maxPayloadBytes services
+        let sender = source.CreateSender(grainId, contract.TargetMetadata)
+
+        // 6. One call site and one preclosed closure pair per descriptor.
+        let bound =
+            contract.Operations
+            |> Array.map (fun operation ->
+                let site =
+                    FunctionalCallSite(
+                        sender,
+                        codec,
+                        grainTypeName,
+                        contract.Version,
+                        operation.OperationId,
+                        operation.RequestToken,
+                        operation.ReplyToken,
+                        operation.AdmissionFlags,
+                        maxPayloadBytes
+                    )
+
+                operation.ClosureFactory.Invoke site)
+
+        // 7. Build the API record with the cached record constructor and retain that instance.
+        let api =
+            unbox<'Api> (contract.Shape.Constructor(bound |> Array.map (fun call -> call.Field)))
+
+        FunctionalGrainRef<'Actor, 'Key, 'Api>(key, api, contract, grainId, bound)
 
 /// <summary>Binding of a contract to an Orleans grain reference.</summary>
 /// <remarks>
@@ -87,11 +176,7 @@ type FunctionalGrain =
     /// </summary>
     /// <param name="contract">The sealed contract.</param>
     static member ref(contract: GrainContract<'Actor, 'Key, 'Api>) : IGrainFactory -> 'Key -> 'Api =
-        fun factory key ->
-            ignore contract
-            ignore factory
-            ignore key
-            FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrain.ref"
+        fun factory key -> (FunctionalBinding.bind contract factory key).api
 
     /// <summary>
     /// Bind the contract to the grain addressed by the domain key and return the typed wrapper
@@ -103,8 +188,4 @@ type FunctionalGrain =
     static member rawRef
         (contract: GrainContract<'Actor, 'Key, 'Api>)
         : IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor, 'Key, 'Api> =
-        fun factory key ->
-            ignore contract
-            ignore factory
-            ignore key
-            FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrain.rawRef"
+        fun factory key -> FunctionalBinding.bind contract factory key

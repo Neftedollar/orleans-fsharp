@@ -30,6 +30,15 @@ type internal FunctionalOperation =
         IsOneWay: bool
         /// Always-interleave admission; valid only with read-only or one-way.
         IsAlwaysInterleave: bool
+        /// The precomputed request-direction protocol token.
+        RequestToken: byte[]
+        /// The precomputed reply-direction protocol token.
+        ReplyToken: byte[]
+        /// The precomputed admission-flag byte carried by every request for this operation.
+        AdmissionFlags: byte
+        /// The typed client-closure factory, closed over this operation's exact argument and
+        /// reply types while the contract was sealed.
+        ClosureFactory: Func<FunctionalCallSite, BoundCall>
     }
 
 /// <summary>
@@ -57,6 +66,15 @@ type GrainContract<'Actor, 'Key, 'Api>
 
         map
 
+    /// The closed actor-specific Orleans target metadata, constructed once per contract.
+    let targetMetadata =
+        lazy (FunctionalTarget.metadataFor typeof<'Actor> grainTypeName)
+
+    /// The declared argument and reply types, in the shape the serializer preflight consumes.
+    let declaredTypes =
+        operations
+        |> Array.map (fun operation -> operation.OperationId, operation.ArgumentType, operation.ReplyType)
+
     /// <summary>The explicit Orleans grain type name.</summary>
     member internal _.GrainTypeName = grainTypeName
 
@@ -77,6 +95,15 @@ type GrainContract<'Actor, 'Key, 'Api>
 
     /// <summary>The Orleans grain type value derived from the explicit grain type name.</summary>
     member internal _.GrainType = grainType
+
+    /// <summary>
+    /// The closed actor-specific Orleans target interface and its dispatch method, built once
+    /// per contract and reused by every reference bound from it.
+    /// </summary>
+    member internal _.TargetMetadata = targetMetadata.Value
+
+    /// <summary>Operation ID, argument type, and reply type of every operation.</summary>
+    member internal _.DeclaredTypes = declaredTypes
 
     /// <summary>Encode a domain key into the exact Orleans grain identity of this contract.</summary>
     member internal _.GrainIdOf(key: 'Key) = GrainId.Create(grainType, keyCodec.EncodeKey key)
@@ -213,7 +240,11 @@ module internal ContractDraft =
                   ReplyType = field.ReplyType
                   IsReadOnly = isReadOnly
                   IsOneWay = isOneWay
-                  IsAlwaysInterleave = isAlwaysInterleave })
+                  IsAlwaysInterleave = isAlwaysInterleave
+                  RequestToken = ProtocolToken.request grainTypeName version operationId
+                  ReplyToken = ProtocolToken.reply grainTypeName version operationId
+                  AdmissionFlags = AdmissionFlags.compose isReadOnly isOneWay isAlwaysInterleave
+                  ClosureFactory = BoundClosure.precompute field.ArgumentType field.ReplyType })
 
         let seen = Dictionary<string, string>(StringComparer.Ordinal)
 

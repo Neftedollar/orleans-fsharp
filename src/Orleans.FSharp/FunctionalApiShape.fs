@@ -31,6 +31,14 @@ module internal FunctionalDiagnostics =
     [<Literal>]
     let PersistentStage = "Orleans.FSharp persistent state"
 
+    /// <summary>Prefix identifying the validation stage in every reference-binding diagnostic.</summary>
+    [<Literal>]
+    let BindingStage = "Orleans.FSharp functional binding"
+
+    /// <summary>Prefix identifying the stage in every fixed-transport diagnostic.</summary>
+    [<Literal>]
+    let TransportStage = "Orleans.FSharp functional transport"
+
     /// <summary>Raise a construction-stage diagnostic.</summary>
     let fail<'T> (stage: string) (message: string) : 'T =
         raise (InvalidOperationException(stage + ": " + message))
@@ -112,6 +120,8 @@ module internal ApiShape =
         )
 
     let private build (apiType: Type) : ApiShape =
+        FunctionalInstrumentation.countApiShapeBuild ()
+
         if apiType.IsValueType then
             fail
                 ContractStage
@@ -223,6 +233,8 @@ module internal ApiShape =
             fail
                 ContractStage
                 $"the '{entry}' entry of '{describeType shape.ApiType}' supplied a null selector. {SelectorGuidance}"
+
+        FunctionalInstrumentation.countSelectorEvaluation ()
 
         let returned =
             try
