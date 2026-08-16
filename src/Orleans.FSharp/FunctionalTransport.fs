@@ -197,6 +197,12 @@ module internal SerializerPreflight =
             let check (operationId: string) (role: string) (declaredType: Type) =
                 try
                     codecs.GetCodec declaredType |> ignore
+
+                    // Exact-type payload serialization makes Orleans elide the field type, so
+                    // the F# binary codec has to resolve a top-level payload type by name.
+                    // Declaring it here keeps that resolution working for application
+                    // assemblies without widening the codec's assembly allow-list.
+                    FSharpBinaryFormat.declareType declaredType
                 with
                 | :? CodecNotFoundException as cause ->
                     failCause

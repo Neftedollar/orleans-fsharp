@@ -4,90 +4,115 @@ open System.Collections.Concurrent
 open System.Threading
 
 /// <summary>
-/// Process-wide counters for the functional grain runtime, used by the test suite to prove
-/// structural properties that a wall-clock measurement cannot establish: that reflection,
-/// selector evaluation, and generic closing happen while caching a shape or binding a
-/// reference and never on a bound call, and that no two concurrent calls share a serializer
-/// session.
+/// Counters of the structural properties the functional runtime promises: that API-shape
+/// reflection, selector evaluation, and generic closing happen while a contract is sealed or a
+/// reference is bound and never on a bound call, and that no two concurrent calls share a
+/// serializer session.
 /// </summary>
-/// <remarks>
-/// The counters are unconditional interlocked increments on construction-time paths only, so
-/// a bound call never touches them. Session tracking is the one hot-path observation, and it
-/// is off unless a test switches it on.
-/// </remarks>
-module internal FunctionalInstrumentation =
+[<Sealed; AllowNullLiteral>]
+type internal FunctionalCounters() =
 
-    let mutable private apiShapeBuilds = 0
-    let mutable private selectorEvaluations = 0
-    let mutable private genericClosings = 0
-    let mutable private payloadSerializations = 0
-    let mutable private payloadDeserializations = 0
-    let mutable private sessionRentals = 0
-    let mutable private sessionConflicts = 0
-    let mutable private sessionTracking = 0
+    /// <summary>Number of <c>ApiShape</c> reflections.</summary>
+    [<DefaultValue>]
+    val mutable ApiShapeBuilds: int
 
-    /// <summary>Sessions currently rented, keyed by reference identity.</summary>
-    let private activeSessions = ConcurrentDictionary<obj, int>(HashIdentity.Reference)
+    /// <summary>Number of selector executions against a probe record.</summary>
+    [<DefaultValue>]
+    val mutable SelectorEvaluations: int
 
-    /// <summary>One <c>ApiShape</c> was reflected and cached.</summary>
-    let countApiShapeBuild () = Interlocked.Increment &apiShapeBuilds |> ignore
+    /// <summary>Number of reflective generic method or type closings.</summary>
+    [<DefaultValue>]
+    val mutable GenericClosings: int
 
-    /// <summary>One selector was executed against a probe record.</summary>
-    let countSelectorEvaluation () = Interlocked.Increment &selectorEvaluations |> ignore
+    /// <summary>Number of top-level payload serializations.</summary>
+    [<DefaultValue>]
+    val mutable PayloadSerializations: int
 
-    /// <summary>One generic method or type was closed by reflection.</summary>
-    let countGenericClosing () = Interlocked.Increment &genericClosings |> ignore
+    /// <summary>Number of top-level payload deserializations.</summary>
+    [<DefaultValue>]
+    val mutable PayloadDeserializations: int
 
-    /// <summary>One top-level payload value was serialized.</summary>
-    let countPayloadSerialization () = Interlocked.Increment &payloadSerializations |> ignore
-
-    /// <summary>One top-level payload value was deserialized.</summary>
-    let countPayloadDeserialization () = Interlocked.Increment &payloadDeserializations |> ignore
-
-    /// <summary>Number of <c>ApiShape</c> builds so far.</summary>
-    let apiShapeBuildCount () = Volatile.Read &apiShapeBuilds
-
-    /// <summary>Number of selector evaluations so far.</summary>
-    let selectorEvaluationCount () = Volatile.Read &selectorEvaluations
-
-    /// <summary>Number of reflective generic closings so far.</summary>
-    let genericClosingCount () = Volatile.Read &genericClosings
-
-    /// <summary>Number of top-level payload serializations so far.</summary>
-    let payloadSerializationCount () = Volatile.Read &payloadSerializations
-
-    /// <summary>Number of top-level payload deserializations so far.</summary>
-    let payloadDeserializationCount () = Volatile.Read &payloadDeserializations
-
-    /// <summary>Number of serializer sessions rented while tracking was enabled.</summary>
-    let sessionRentalCount () = Volatile.Read &sessionRentals
+    /// <summary>Number of serializer sessions rented from the pool.</summary>
+    [<DefaultValue>]
+    val mutable SessionRentals: int
 
     /// <summary>
     /// Number of times a session was rented while another rental of the very same session
-    /// object was still outstanding. Any value above zero means concurrent calls shared a
-    /// session.
+    /// object was still outstanding. Any value above zero means concurrent calls shared one.
     /// </summary>
-    let sessionConflictCount () = Volatile.Read &sessionConflicts
+    [<DefaultValue>]
+    val mutable SessionConflicts: int
 
-    /// <summary>Start observing serializer-session rentals.</summary>
-    let beginSessionTracking () =
-        activeSessions.Clear()
-        Volatile.Write(&sessionRentals, 0)
-        Volatile.Write(&sessionConflicts, 0)
-        Volatile.Write(&sessionTracking, 1)
+    /// <summary>Sessions currently rented, keyed by reference identity.</summary>
+    member val ActiveSessions = ConcurrentDictionary<obj, int>(HashIdentity.Reference) with get
 
-    /// <summary>Stop observing serializer-session rentals.</summary>
-    let endSessionTracking () = Volatile.Write(&sessionTracking, 0)
+/// <summary>
+/// Ambient, flow-scoped instrumentation of the functional runtime.
+/// </summary>
+/// <remarks>
+/// The counters live in an <see cref="T:System.Threading.AsyncLocal`1" />, so one test observes
+/// exactly the work its own call flow performed even while the rest of the suite runs in
+/// parallel. Nothing is counted unless a scope is open, which keeps a bound call free of any
+/// observation cost beyond one ambient read.
+/// </remarks>
+module internal FunctionalInstrumentation =
 
-    /// <summary>Record that a session was rented from the pool.</summary>
+    let private current = AsyncLocal<FunctionalCounters>()
+
+    /// <summary>Start counting in the current call flow and return the fresh counters.</summary>
+    let start () =
+        let counters = FunctionalCounters()
+        current.Value <- counters
+        counters
+
+    /// <summary>Stop counting in the current call flow.</summary>
+    let stop () = current.Value <- null
+
+    /// <summary>The counters of the current call flow, if any.</summary>
+    let counters () = current.Value
+
+    /// <summary>One <c>ApiShape</c> was reflected and cached.</summary>
+    let countApiShapeBuild () =
+        match current.Value with
+        | null -> ()
+        | counters -> Interlocked.Increment &counters.ApiShapeBuilds |> ignore
+
+    /// <summary>One selector was executed against a probe record.</summary>
+    let countSelectorEvaluation () =
+        match current.Value with
+        | null -> ()
+        | counters -> Interlocked.Increment &counters.SelectorEvaluations |> ignore
+
+    /// <summary>One generic method or type was closed by reflection.</summary>
+    let countGenericClosing () =
+        match current.Value with
+        | null -> ()
+        | counters -> Interlocked.Increment &counters.GenericClosings |> ignore
+
+    /// <summary>One top-level payload value was serialized.</summary>
+    let countPayloadSerialization () =
+        match current.Value with
+        | null -> ()
+        | counters -> Interlocked.Increment &counters.PayloadSerializations |> ignore
+
+    /// <summary>One top-level payload value was deserialized.</summary>
+    let countPayloadDeserialization () =
+        match current.Value with
+        | null -> ()
+        | counters -> Interlocked.Increment &counters.PayloadDeserializations |> ignore
+
+    /// <summary>Record that a serializer session was rented from the pool.</summary>
     let trackSessionRented (session: obj) =
-        if Volatile.Read &sessionTracking <> 0 then
-            Interlocked.Increment &sessionRentals |> ignore
+        match current.Value with
+        | null -> ()
+        | counters ->
+            Interlocked.Increment &counters.SessionRentals |> ignore
 
-            if not (activeSessions.TryAdd(session, 1)) then
-                Interlocked.Increment &sessionConflicts |> ignore
+            if not (counters.ActiveSessions.TryAdd(session, 1)) then
+                Interlocked.Increment &counters.SessionConflicts |> ignore
 
-    /// <summary>Record that a session was returned to the pool.</summary>
+    /// <summary>Record that a serializer session was returned to the pool.</summary>
     let trackSessionReturned (session: obj) =
-        if Volatile.Read &sessionTracking <> 0 then
-            activeSessions.TryRemove session |> ignore
+        match current.Value with
+        | null -> ()
+        | counters -> counters.ActiveSessions.TryRemove session |> ignore

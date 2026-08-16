@@ -509,6 +509,38 @@ module internal FSharpBinaryFormat =
         codec.Read br
 
     /// <summary>
+    /// Types an upper layer has declared as a top-level payload type, keyed by
+    /// <c>Type.FullName</c>.
+    /// </summary>
+    /// <remarks>
+    /// Orleans elides the field-type header when the actual type equals the expected type,
+    /// which is exactly what exact-type payload serialization produces. In that case
+    /// <c>ReadValue</c> receives no field type and has to resolve the embedded FullName
+    /// itself, and <c>Type.GetType</c> can only see this assembly and the framework — never an
+    /// application assembly. Registering the declared types keeps that resolution working
+    /// without widening the assembly allow-list to arbitrary loaded types.
+    /// </remarks>
+    let private declaredTypes = ConcurrentDictionary<string, Type>(StringComparer.Ordinal)
+
+    /// <summary>
+    /// Declare one closed type as a top-level payload type so an elided field type can be
+    /// resolved by name. Idempotent.
+    /// </summary>
+    let internal declareType (declared: Type) =
+        if
+            not (isNull declared)
+            && not declared.ContainsGenericParameters
+            && not (isNull declared.FullName)
+        then
+            declaredTypes.[declared.FullName] <- declared
+
+    /// <summary>True when the type was declared by an upper layer.</summary>
+    let internal isDeclaredType (declared: Type) =
+        not (isNull declared)
+        && not (isNull declared.FullName)
+        && declaredTypes.ContainsKey declared.FullName
+
+    /// <summary>
     /// Serializes a value to a codec-level byte array that embeds the type's FullName.
     /// Used by WriteField/ReadValue so deserialization can recover the type even when
     /// Orleans omits the field-type header (SchemaType.Expected optimization).
@@ -554,6 +586,10 @@ module internal FSharpBinaryFormat =
 
         let actualType =
             if isNull hintType then
+                match declaredTypes.TryGetValue typeName with
+                | true, declared -> declared
+                | _ ->
+
                 match Type.GetType(typeName, throwOnError = false) with
                 | null ->
                     invalidOp $"FSharpBinaryCodec: type '{typeName}' not found. Ensure the type is in a loaded assembly."
