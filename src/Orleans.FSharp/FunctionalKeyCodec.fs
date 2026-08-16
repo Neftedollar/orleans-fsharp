@@ -56,13 +56,30 @@ module internal KeyCodecs =
 
     // ── native string ────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Orleans' own <c>GrainId.Create(GrainType, string)</c> rejects a null, empty, or
+    /// white-space string key, so the string codec follows the same validation rule.
+    /// </summary>
     let private encodeStringKey (value: string) =
         if isNull value then
             fail ContractStage "a string grain key must not be null."
 
+        if isBlank value then
+            fail
+                ContractStage
+                "a string grain key must not be empty or white-space, matching Orleans' own string key validation."
+
         IdSpan.Create value
 
-    let private decodeStringKey (grainId: GrainId) = grainId.Key.ToString()
+    let private decodeStringKey (grainId: GrainId) =
+        let value = grainId.Key.ToString()
+
+        if isBlank value then
+            fail
+                ContractStage
+                $"the key '{value}' of grain '{grainId.Type.ToString()}' is not a valid stringKey key: it is empty or white-space."
+
+        value
 
     // ── native Guid ──────────────────────────────────────────────────────────
 
