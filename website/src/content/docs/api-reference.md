@@ -15,6 +15,91 @@ description: "Quick reference for all public modules, types, and functions in Or
 
 ---
 
+## Functional Grain Runtime
+
+**The current grain authoring model.** User-authored API records instead of C# CodeGen interfaces.
+See [Functional Grain Runtime](/orleans-fsharp/functional-grains/) for the full guide.
+
+### Contract builder — `grainContract<'Actor, 'Key, 'Api> ()`
+
+| Keyword | Signature | Description |
+|---|---|---|
+| `grainType` | `string -> ...` | The wire `GrainType` string — routing and storage identity |
+| `version` | `int -> ...` | Contract version — every call is matched exactly, no rolling tolerance |
+| `stringKey` / `guidKey` / `int64Key` | `unit -> ...` | Native key codec — the domain key type *is* the Orleans key type |
+| `stringKeyMapped` / `guidKeyMapped` / `int64KeyMapped` | `encode -> decode -> ...` | Mapped key codec over a domain key type |
+| `guidCompoundKey` / `int64CompoundKey` | `unit -> ...` | Native compound key (Guid/int64 + string extension) |
+| `guidCompoundKeyMapped` / `int64CompoundKeyMapped` | `encode -> decode -> ...` | Mapped compound key |
+| `readOnly` | `selector -> ...` | Handler's returned state is discarded; interleaves with other read-only calls |
+| `oneWay` | `selector -> ...` | Caller's `Task` completes once the message enters the local send path |
+| `alwaysInterleave` | `selector -> ...` | Interleaves regardless of `readOnly`/`oneWay` |
+| `operationId` | `string -> selector -> ...` | Override an operation's wire ID, decoupling it from the F# field name |
+
+### Definition builder — `grainFor contract { }`
+
+| Keyword | Handler signature | Description |
+|---|---|---|
+| `defaultState` | `unit -> 'State` | Ephemeral state factory, called once per activation |
+| `initialState` | `'Key -> 'State` | Key-aware ephemeral state factory |
+| `handle` | `selector -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> 'Arg -> Task<'State * 'Reply>)` | Attach a handler to one API operation |
+| `stateFrom` | `PersistentStateRef<'State>` | Attach the primary persistent-state descriptor |
+| `usePersistentState` | `PersistentStateRef<'S> -> ('Key -> 'S)` | Attach an additional named persistent-state descriptor (repeatable) |
+| `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
+| `onActivate` | `FunctionalGrainContext<'Actor,'Key> -> 'State -> Task<'State>` | Activation hook |
+| `onDeactivate` | `FunctionalGrainContext<'Actor,'Key> -> DeactivationReason -> 'State -> Task<unit>` | Deactivation hook |
+| `onReminder` | `string -> TimeSpan -> TimeSpan -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> TickStatus -> Task<'State>)` | Declare a reminder: name, due time, period, handler |
+| `onTimer` | `string -> GrainTimerCreationOptions -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> Task<'State>)` | Declare a timer: name, creation options, handler |
+
+### Types
+
+| Type | Description |
+|---|---|
+| `GrainContract<'Actor, 'Key, 'Api>` | Sealed result of `grainContract { }` |
+| `FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>` | Sealed result of `grainFor { }` |
+| `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context passed to every handler/hook/timer/reminder callback |
+| `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed wrapper: `key`, `api`, `call(selector, arg)`, `callCancellable(selector, arg, ct)` |
+| `PersistentStateRef<'State>` | Immutable descriptor returned by `PersistentState.create` |
+| `Handler<'Actor,'Key,'State,'Argument,'Reply>` | `FunctionalGrainContext<'Actor,'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>` |
+| `ActivateHook` / `DeactivateHook` / `ReminderHook` / `TimerHook` | Hook type aliases used by `onActivate` / `onDeactivate` / `onReminder` / `onTimer` |
+
+#### `FunctionalGrainContext<'Actor, 'Key>` members
+
+| Member | Type | Description |
+|---|---|---|
+| `key` | `'Key` | The domain key decoded from the grain identity |
+| `grainId` | `GrainId` | The Orleans identity of this activation |
+| `grainFactory` | `IGrainFactory` | Bind further grain references |
+| `services` | `IServiceProvider` | Resolve DI services registered on the silo |
+| `logger` | `ILogger` | Logger scoped to this activation |
+| `timeProvider` | `TimeProvider` | The registered time provider |
+| `utcNow` | `DateTimeOffset` | Frozen at context creation — stable across the whole callback |
+| `cancellationToken` | `CancellationToken` | Selected by callback kind |
+| `deactivateOnIdle()` / `delayDeactivation(ts)` | `unit -> unit` / `TimeSpan -> unit` | Lifetime control |
+| `persistentState(descriptor)` | `PersistentStateRef<'State> -> IPersistentState<'State>` | Look up an attached persistent-state facet |
+| `tryGetRequestContext` / `setRequestContext` / `removeRequestContext` | — | Typed Orleans request-context access |
+
+### `FunctionalGrain`
+
+| Function | Signature | Description |
+|---|---|---|
+| `FunctionalGrain.ref` | `contract -> IGrainFactory -> 'Key -> 'Api` | Bind a typed API record |
+| `FunctionalGrain.rawRef` | `contract -> IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor,'Key,'Api>` | Bind the typed wrapper |
+
+### `PersistentState`
+
+| Function | Signature | Description |
+|---|---|---|
+| `PersistentState.create<'State>` | `string -> string -> PersistentStateRef<'State>` | `stateName -> providerName -> descriptor` |
+
+### Hosting extensions
+
+| Method | Signature | Description |
+|---|---|---|
+| `AddFunctionalGrain` | `ISiloBuilder -> FunctionalGrainDefinition<...> -> ISiloBuilder` | Register a hosted definition (`Orleans.FSharp.Runtime`) |
+| `AddFunctionalGrainClient` | `IClientBuilder -> IClientBuilder` | Register the client-side transport on a client-only process (`Orleans.FSharp`) |
+
+---
+
 ## Orleans.FSharp (Core)
 
 ### Types
