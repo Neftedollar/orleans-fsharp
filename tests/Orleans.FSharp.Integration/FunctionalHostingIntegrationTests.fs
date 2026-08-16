@@ -146,6 +146,51 @@ type InvalidLimitSiloConfigurator() =
                 options.MaxPayloadBytes <- 0)
             |> ignore
 
+// ──────────────────────────────────────────────────────────────────────────────
+// A definition whose declared reminder period violates ReminderOptions.MinimumReminderPeriod
+// ──────────────────────────────────────────────────────────────────────────────
+
+type TooFastReminderActor = private TooFastReminderActor of unit
+
+[<NoEquality; NoComparison>]
+type TooFastReminderApi = { touch: unit -> Task<unit> }
+
+type TooFastReminderState = { ticks: int }
+
+let private tooFastReminderDefinition =
+    let contract =
+        grainContract<TooFastReminderActor, string, TooFastReminderApi> () {
+            grainType "functional.toofastreminder"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { ticks = 0 })
+
+        onReminder "too-fast" TimeSpan.Zero (TimeSpan.FromSeconds 1.0) (fun _ state _ ->
+            task { return { state with ticks = state.ticks + 1 } })
+
+        handle (_.touch) (fun _ state () -> task { return state, () })
+    }
+
+/// <summary>
+/// A silo whose configured <c>ReminderOptions.MinimumReminderPeriod</c> (2 seconds) exceeds the
+/// declared reminder's own period (1 second). Silo startup validation must catch this instead of
+/// letting it surface only when the reminder is first registered at activation.
+/// </summary>
+type TooFastReminderSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.UseInMemoryReminderService() |> ignore
+
+            siloBuilder.Services.Configure<Orleans.Hosting.ReminderOptions>(fun
+                                                                                  (options:
+                                                                                      Orleans.Hosting.ReminderOptions) ->
+                options.MinimumReminderPeriod <- TimeSpan.FromSeconds 2.0)
+            |> ignore
+
+            siloBuilder.AddFunctionalGrain tooFastReminderDefinition |> ignore
+
 let private deploy<'Configurator when 'Configurator :> ISiloConfigurator and 'Configurator: (new: unit -> 'Configurator)>
     ()
     =
@@ -333,3 +378,19 @@ let ``a non-positive payload limit fails silo startup`` () =
     let reported = deployExpectingFailure<InvalidLimitSiloConfigurator> ()
 
     Assert.Contains(reported, (fun message -> message.Contains "MaxPayloadBytes must be positive"))
+
+/// <remarks>
+/// Spec "Lifecycle hooks, timers, and reminders": "Silo startup validates every declared period
+/// against its configured ReminderOptions.MinimumReminderPeriod." The real reminder service also
+/// enforces this floor, but only lazily at the first RegisterOrUpdateReminder call during
+/// activation; this proves the silo fails fast at startup instead.
+/// </remarks>
+[<Fact>]
+let ``a reminder period below the configured MinimumReminderPeriod fails silo startup`` () =
+    let reported = deployExpectingFailure<TooFastReminderSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "Orleans.FSharp functional silo startup"))
+    Assert.Contains(reported, (fun message -> message.Contains "'too-fast'"))
+    Assert.Contains(reported, (fun message -> message.Contains "functional.toofastreminder"))
+    Assert.Contains(reported, (fun message -> message.Contains "00:00:01"))
+    Assert.Contains(reported, (fun message -> message.Contains "00:00:02"))
