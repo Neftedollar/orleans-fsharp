@@ -15,7 +15,13 @@
     <Compile Include="SerilogIntegration.fs" />
     <Compile Include="GrainDiscovery.fs" />
     <Compile Include="TransactionalGrainDiscovery.fs" />
+    <Compile Include="FunctionalMarker.fs" />
+    <Compile Include="FunctionalRegistry.fs" />
+    <Compile Include="FunctionalManifest.fs" />
+    <Compile Include="FunctionalDispatch.fs" />
+    <Compile Include="FunctionalActivation.fs" />
     <Compile Include="FunctionalSiloHosting.fs" />
+    <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>
 

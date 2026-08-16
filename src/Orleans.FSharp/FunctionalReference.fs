@@ -1,0 +1,172 @@
+namespace Orleans.FSharp
+
+open System
+open System.Threading
+open System.Threading.Tasks
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.DependencyInjection.Extensions
+open Orleans
+open Orleans.CodeGeneration
+open Orleans.GrainReferences
+open Orleans.Runtime
+open Orleans.Serialization
+open Orleans.Serialization.Cloning
+open Orleans.Serialization.Serializers
+open Orleans.FSharp.FunctionalDiagnostics
+
+/// <summary>
+/// Creates <c>FunctionalGrainReference</c> instances for one already-validated
+/// <c>(grainType, interfaceType)</c> pair. The shared reference state is built once by the
+/// provider; only the key varies per reference.
+/// </summary>
+[<Sealed>]
+type internal FunctionalGrainReferenceActivator
+    (shared: GrainReferenceShared, payloadCodec: IFunctionalPayloadCodec, services: IServiceProvider) =
+
+    interface IGrainReferenceActivator with
+        member _.CreateReference(grainId: GrainId) =
+            FunctionalGrainReference(shared, grainId.Key, payloadCodec, services) :> GrainReference
+
+/// <summary>
+/// The functional reference activator provider. It accepts only the reserved functional
+/// interface ID <c>orleans.fsharp.functional/&lt;grainType&gt;</c> whose non-empty, NUL-free
+/// suffix exactly equals the supplied <c>GrainId.Type</c>, and declines every other ID so the
+/// stock Orleans providers keep serving generated references.
+/// </summary>
+[<Sealed>]
+type internal FunctionalGrainReferenceActivatorProvider(services: IServiceProvider) =
+
+    let runtime = lazy services.GetRequiredService<IGrainReferenceRuntime>()
+    let codecProvider = lazy services.GetRequiredService<CodecProvider>()
+    let copyContextPool = lazy services.GetRequiredService<CopyContextPool>()
+
+    let payloadCodec =
+        lazy (services.GetRequiredService<FunctionalPayloadCodec>() :> IFunctionalPayloadCodec)
+
+    interface IGrainReferenceActivatorProvider with
+        member _.TryGet
+            (grainType: GrainType, interfaceType: GrainInterfaceType, activator: byref<IGrainReferenceActivator>)
+            =
+            let id = interfaceType.ToString()
+
+            if isNull id || not (id.StartsWith(FunctionalIds.Prefix, StringComparison.Ordinal)) then
+                false
+            else
+                let suffix = id.Substring FunctionalIds.Prefix.Length
+
+                if String.IsNullOrEmpty suffix || suffix.IndexOf '\000' >= 0 then
+                    false
+                elif not (String.Equals(suffix, grainType.ToString(), StringComparison.Ordinal)) then
+                    false
+                else
+                    let shared =
+                        GrainReferenceShared(
+                            grainType,
+                            interfaceType,
+                            FunctionalIds.InterfaceVersion,
+                            runtime.Value,
+                            InvokeMethodOptions.None,
+                            codecProvider.Value,
+                            copyContextPool.Value,
+                            services
+                        )
+
+                    activator <- FunctionalGrainReferenceActivator(shared, payloadCodec.Value, services)
+                    true
+
+/// <summary>
+/// The production request sender: it turns the fixed envelope of one bound operation into an
+/// Orleans send through the custom reference, carrying the contract's CLOSED target-interface
+/// metadata so call filters see stable, actor-specific method metadata.
+/// </summary>
+[<Sealed>]
+type internal FunctionalReferenceSender(reference: FunctionalGrainReference, metadata: FunctionalTargetMetadata) =
+
+    interface IFunctionalRequestSender with
+        member _.SendAsync(envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
+            reference.SendAsync(envelope, metadata.InterfaceType, metadata.DispatchMethod, cancellationToken)
+
+        member _.SendOneWay(envelope: FunctionalRequestEnvelope) =
+            reference.SendOneWay(envelope, metadata.InterfaceType, metadata.DispatchMethod)
+
+/// <summary>Presence marker making the client-service registration idempotent.</summary>
+[<Sealed>]
+type internal FunctionalClientServicesMarker() =
+    class
+    end
+
+/// <summary>
+/// The single idempotent client-side registration routine. <c>AddFunctionalGrainClient</c> and
+/// <c>AddFunctionalGrain</c> both run it before adding anything of their own.
+/// </summary>
+[<RequireQualifiedAccess>]
+module internal FunctionalClientServices =
+
+    /// <summary>
+    /// Insert the functional reference activator provider immediately before the first existing
+    /// one. Orleans installs its default providers before a builder extension runs, so their
+    /// absence means the extension was applied to something which is not an Orleans builder.
+    /// </summary>
+    let private insertReferenceActivatorProvider (services: IServiceCollection) =
+        let index =
+            services
+            |> Seq.tryFindIndex (fun descriptor -> descriptor.ServiceType = typeof<IGrainReferenceActivatorProvider>)
+
+        match index with
+        | None ->
+            fail
+                BindingStage
+                "no existing IGrainReferenceActivatorProvider registration was found, so the functional reference provider cannot be ordered before the stock providers. Apply AddFunctionalGrainClient/AddFunctionalGrain to an Orleans client or silo builder."
+        | Some position ->
+            let descriptor =
+                ServiceDescriptor.Singleton<IGrainReferenceActivatorProvider>(fun (provider: IServiceProvider) ->
+                    FunctionalGrainReferenceActivatorProvider provider :> IGrainReferenceActivatorProvider)
+
+            services.Insert(position, descriptor)
+
+    /// <summary>True once this service collection carries the functional client services.</summary>
+    let isRegistered (services: IServiceCollection) =
+        services
+        |> Seq.exists (fun descriptor -> descriptor.ServiceType = typeof<FunctionalClientServicesMarker>)
+
+    /// <summary>Register the fixed functional transport on a service collection. Idempotent.</summary>
+    let addTo (services: IServiceCollection) : IServiceCollection =
+        if isNull (box services) then
+            fail BindingStage "the functional client transport requires a service collection."
+
+        if isRegistered services then
+            services
+        else
+            services.AddSingleton<FunctionalClientServicesMarker>() |> ignore
+
+            // 1. The custom reference activator provider, ahead of every stock provider.
+            insertReferenceActivatorProvider services
+
+            // 2. Fixed request/reply serializers, copiers, and activators plus their type filter.
+            FunctionalTransportSerialization.AddFunctionalTransport services |> ignore
+
+            // 3. Exact-type payload codec services.
+            services.TryAddSingleton<FunctionalPayloadCodec>(fun (provider: IServiceProvider) ->
+                let serializer = provider.GetRequiredService<Serializer>()
+                FunctionalPayloadCodec(serializer, serializer.SessionPool))
+
+            // 4. Transport options with startup validation.
+            services
+                .AddOptions<FunctionalGrainTransportOptions>()
+                .Validate(
+                    (fun options -> options.MaxPayloadBytes > 0),
+                    "FunctionalGrainTransportOptions.MaxPayloadBytes must be positive."
+                )
+                .ValidateOnStart()
+            |> ignore
+
+            // 5. The F# generalized codec and its type filter (no generalized copier: functional
+            //    payloads cross an explicit byte boundary, which already isolates the graph).
+            ServiceCollectionExtensions.AddSerializer(
+                services,
+                Action<ISerializerBuilder>(fun builder ->
+                    FSharpBinaryCodecRegistration.addCodecToSerializerBuilder builder |> ignore)
+            )
+            |> ignore
+
+            services

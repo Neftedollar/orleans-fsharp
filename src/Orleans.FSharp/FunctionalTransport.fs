@@ -100,21 +100,25 @@ type internal IFunctionalTransportSource =
 [<RequireQualifiedAccess>]
 module internal FunctionalTransportSource =
 
+    /// <summary>The guidance every "no functional transport in this process" diagnostic ends with.</summary>
+    [<Literal>]
+    let Guidance =
+        "Call AddFunctionalGrainClient() on the client builder (or AddFunctionalGrain() on the silo builder) before binding a functional reference."
+
     /// <summary>
-    /// Resolve the functional transport of a grain factory, failing with a configuration
-    /// diagnostic when the process never installed the functional client transport.
+    /// Resolve an explicitly supplied transport override. Production binding goes through
+    /// <c>IGrainFactory.GetGrain</c> and the real <c>FunctionalGrainReference</c>; a factory
+    /// which also implements this interface (the in-memory unit-test transport) short-circuits
+    /// that path while exercising the same binding and call code.
     /// </summary>
-    let resolve (factory: IGrainFactory) (grainTypeName: string) : IFunctionalTransportSource =
+    let tryResolve (factory: IGrainFactory) (grainTypeName: string) : IFunctionalTransportSource option =
         match box factory with
         | null ->
             fail
                 BindingStage
                 $"binding the contract '{grainTypeName}' requires a grain factory, but none was supplied."
-        | :? IFunctionalTransportSource as source -> source
-        | other ->
-            fail
-                BindingStage
-                $"the grain factory '{other.GetType().FullName}' cannot bind the contract '{grainTypeName}' because this process has no functional client transport. Call AddFunctionalGrainClient() on the client builder (or AddFunctionalGrain() on the silo builder) before binding a functional reference."
+        | :? IFunctionalTransportSource as source -> Some source
+        | _ -> None
 
 /// <summary>
 /// Exact-type payload serialization. Arguments and replies cross the transport boundary as
@@ -154,6 +158,10 @@ type internal FunctionalPayloadCodec(serializer: Serializer, sessionPool: Serial
         finally
             FunctionalInstrumentation.trackSessionReturned session
             session.Dispose()
+
+    interface IFunctionalPayloadCodec with
+        member this.Serialize<'T>(value: 'T) = this.Serialize<'T> value
+        member this.Deserialize<'T>(payload: byte[]) : 'T = this.Deserialize<'T> payload
 
 /// <summary>
 /// Serializer preflight: the injected codec provider must resolve an Orleans codec for every

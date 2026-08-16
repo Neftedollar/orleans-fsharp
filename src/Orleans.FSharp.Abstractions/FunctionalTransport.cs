@@ -1,5 +1,4 @@
 using System.Globalization;
-using Orleans.Runtime;
 
 namespace Orleans.FSharp;
 
@@ -302,23 +301,16 @@ internal interface IFunctionalGrainTarget<TActor> : IGrain
 }
 
 /// <summary>
-/// The concrete manifest grain type of one actor brand. It exists so Orleans can build a
-/// default activator during component configuration; the functional
-/// <c>IGrainActivator</c> replaces the instance before any call is delivered, so receiving a
-/// call on this type is a configuration error.
+/// Exact-type payload serialization, as seen by the fixed transport. The implementation lives
+/// in <c>Orleans.FSharp</c> (spec 003 project ownership: "payload codec"); the reference only
+/// carries the injected instance so the layer above it can serialize an argument and
+/// deserialize a reply as the descriptor's exact CLR type.
 /// </summary>
-/// <typeparam name="TActor">The application's actor brand.</typeparam>
-internal sealed class FunctionalGrainMarker<TActor> : Grain, IFunctionalGrainTarget<TActor>
+internal interface IFunctionalPayloadCodec
 {
-    /// <summary>Orleans requires a public parameterless constructor on the marker.</summary>
-    public FunctionalGrainMarker()
-    {
-    }
+    /// <summary>Serialize one value as its exact declared type into a fresh byte array.</summary>
+    byte[] Serialize<T>(T value);
 
-    /// <inheritdoc />
-    public ValueTask<FunctionalReply> DispatchAsync(
-        FunctionalRequestEnvelope envelope,
-        CancellationToken cancellationToken) =>
-        throw FunctionalTransportDiagnostics.Fail(
-            $"the manifest marker for actor brand '{typeof(TActor).FullName}' received a call, which means the functional grain activator was not installed on this silo.");
+    /// <summary>Deserialize one value as its exact declared type.</summary>
+    T Deserialize<T>(byte[] payload);
 }

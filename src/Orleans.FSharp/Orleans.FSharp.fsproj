@@ -43,8 +43,10 @@
     <Compile Include="FunctionalKeyCodec.fs" />
     <Compile Include="FunctionalContext.fs" />
     <Compile Include="FunctionalTransport.fs" />
+    <Compile Include="FunctionalReference.fs" />
     <Compile Include="FunctionalContract.fs" />
     <Compile Include="FunctionalDefinition.fs" />
+    <Compile Include="FunctionalHosted.fs" />
     <Compile Include="FunctionalBinding.fs" />
     <Compile Include="FunctionalBuilders.fs" />
     <Compile Include="FunctionalHosting.fs" />

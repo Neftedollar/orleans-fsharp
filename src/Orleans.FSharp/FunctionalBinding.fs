@@ -85,19 +85,56 @@ module internal FunctionalBinding =
         // 1. Encode the domain key and construct the exact grain identity.
         let grainId = contract.GrainIdOf key
 
-        // 2-4. Resolve the functional transport of this process. Phase 3 replaces the fallback
-        //      of this seam with GetGrain over the stable actor-specific GrainInterfaceType and
-        //      the FunctionalGrainReference type check.
-        let source = FunctionalTransportSource.resolve factory grainTypeName
-        let services = source.Services
+        // 2. The stable actor-specific GrainInterfaceType, built once per contract.
+        let metadata = contract.TargetMetadata
+
+        // 3-4. Obtain the exact custom reference and verify its type. A grain factory which
+        //      also implements the internal transport seam (the in-memory unit-test transport)
+        //      short-circuits the Orleans send path while running the same binding code.
+        let services, codec, sender =
+            match FunctionalTransportSource.tryResolve factory grainTypeName with
+            | Some source ->
+                let services = source.Services
+
+                services,
+                FunctionalTransportConfiguration.payloadCodec services grainTypeName,
+                source.CreateSender(grainId, metadata)
+            | None ->
+                let addressable =
+                    try
+                        factory.GetGrain(grainId, metadata.GrainInterfaceType)
+                    with cause ->
+                        failCause
+                            BindingStage
+                            $"the grain factory '{factory.GetType().FullName}' could not create a reference for grain type '{grainTypeName}' through the functional interface ID '{metadata.InterfaceId}'. {FunctionalTransportSource.Guidance}"
+                            cause
+
+                match box addressable with
+                | :? FunctionalGrainReference as reference ->
+                    let codec =
+                        match reference.PayloadCodec with
+                        | :? FunctionalPayloadCodec as payloadCodec -> payloadCodec
+                        | _ -> FunctionalTransportConfiguration.payloadCodec reference.Services grainTypeName
+
+                    reference.Services,
+                    codec,
+                    (FunctionalReferenceSender(reference, metadata) :> IFunctionalRequestSender)
+                | other ->
+                    let actual =
+                        if isNull other then
+                            "<null>"
+                        else
+                            other.GetType().FullName
+
+                    fail
+                        BindingStage
+                        $"binding grain type '{grainTypeName}' returned '{actual}' instead of the functional grain reference. {FunctionalTransportSource.Guidance}"
 
         // 5. Validate that every exact argument and reply type has a registered codec.
         let provider = SerializerPreflight.providerOf services grainTypeName
         SerializerPreflight.ensure provider grainTypeName contract.ApiType contract.DeclaredTypes
 
-        let codec = FunctionalTransportConfiguration.payloadCodec services grainTypeName
         let maxPayloadBytes = FunctionalTransportConfiguration.maxPayloadBytes services
-        let sender = source.CreateSender(grainId, contract.TargetMetadata)
 
         // 6. One call site and one preclosed closure pair per descriptor.
         let bound =
