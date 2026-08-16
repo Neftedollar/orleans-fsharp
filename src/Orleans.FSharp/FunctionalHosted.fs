@@ -222,9 +222,6 @@ type internal FunctionalHostedDefinition
     /// </summary>
     member _.PrimaryFacet = primaryFacet
 
-    /// <summary>Additional attached facets in declaration order.</summary>
-    member _.AdditionalFacets = additionalFacets
-
     /// <summary>Every attached facet: the primary one first, then the additional ones.</summary>
     member _.Facets = facets
 
