@@ -2,6 +2,7 @@ module Orleans.FSharp.Integration.SiloConfigTests
 
 open Xunit
 open Swensen.Unquote
+open Microsoft.Extensions.Hosting
 open Orleans.Hosting
 open Orleans.TestingHost
 open Orleans.FSharp
@@ -97,3 +98,31 @@ type SiloConfigIntegrationTests(fixture: SiloConfigClusterFixture) =
             let status = unbox<OrderStatus> result
             test <@ status = Completed "Order confirmed: Widget" @>
         }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Manifest pre-load ordering
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <remarks>
+/// Why <c>applyToHost</c> keeps its own pre-load instead of relying on the one
+/// <c>applyToSiloBuilder</c> now performs: Orleans snapshots the grain manifest the first time
+/// <c>AddSerializer</c> runs, and <c>UseOrleans</c> runs it while constructing the silo builder —
+/// before it hands that builder to the configuration delegate. Anything the delegate loads is
+/// therefore already too late on that path. This test pins the ordering fact rather than the
+/// comment restating it.
+/// </remarks>
+[<Fact>]
+let ``UseOrleans registers the serializer before it runs the configuration delegate`` () =
+    let builder = Host.CreateApplicationBuilder()
+    let mutable serializerAlreadyRegistered = None
+
+    builder.UseOrleans(fun (siloBuilder: ISiloBuilder) ->
+        serializerAlreadyRegistered <-
+            Some(
+                siloBuilder.Services
+                |> Seq.exists (fun descriptor ->
+                    descriptor.ServiceType = typeof<Orleans.Serialization.Serializer>)
+            ))
+    |> ignore
+
+    test <@ serializerAlreadyRegistered = Some true @>

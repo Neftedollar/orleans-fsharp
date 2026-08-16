@@ -249,7 +249,34 @@ module SiloConfig =
             invalidOp
                 $"Extension method '{methodName}' not found. Install the NuGet package '{packageHint}' and ensure it is referenced in your project."
 
+    /// <summary>
+    /// Loads the assemblies Orleans has to see before it snapshots the grain manifest.
+    /// </summary>
+    /// <remarks>
+    /// Orleans builds its grain manifest from assemblies carrying the code-generated
+    /// [assembly: ApplicationPart] / [assembly: TypeManifestProvider] attributes, and takes that
+    /// snapshot the FIRST time AddSerializer runs. Orleans' generators are Roslyn generators, so
+    /// an F# assembly never carries those attributes and an assembly reached only through an F#
+    /// hop is invisible to that first scan. In a standalone F# host that means MemoryStorageGrain
+    /// (Orleans.Persistence.Memory) and FSharpGrainImpl / the functional transport proxies
+    /// (Orleans.FSharp.Abstractions) are missing from the manifest, and the first call needing
+    /// one dies with "Could not find an implementation for interface ...". Touching them loads
+    /// them before the snapshot. Cheap (two already-referenced assemblies) and idempotent, which
+    /// is why both entry points run it rather than only the one that owns the host.
+    /// See docs/functional-grains.md, "Running a silo from a standalone F# process".
+    /// </remarks>
+    let private preloadManifestAssemblies () =
+        typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore
+        // deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+        typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore
+#warnon "44"
+
     let applyToSiloBuilder (config: SiloConfig) (siloBuilder: ISiloBuilder) : unit =
+        // A consumer who composes an ISiloBuilder directly — the shape both shipped examples
+        // use — never runs applyToHost, so the pre-load has to happen on this path too.
+        preloadManifestAssemblies ()
+
         // Apply clustering
         match config.ClusteringMode with
         | Some Localhost -> siloBuilder.UseLocalhostClustering() |> ignore
@@ -422,22 +449,11 @@ module SiloConfig =
     /// <param name="config">The silo configuration to apply.</param>
     /// <param name="builder">The HostApplicationBuilder to configure.</param>
     let applyToHost (config: SiloConfig) (builder: HostApplicationBuilder) : unit =
-        // Orleans builds its grain manifest from assemblies carrying the code-generated
-        // [assembly: ApplicationPart] / [assembly: TypeManifestProvider] attributes, and takes that
-        // snapshot the FIRST time AddSerializer runs — which is inside UseOrleans below. Orleans'
-        // generators are Roslyn generators, so an F# assembly never carries those attributes and
-        // an assembly reached only through an F# hop is invisible to that first scan. In a
-        // standalone F# host that means MemoryStorageGrain (Orleans.Persistence.Memory) and
-        // FSharpGrainImpl / the functional transport proxies (Orleans.FSharp.Abstractions) are
-        // missing from the manifest, and the first call needing one dies with
-        // "Could not find an implementation for interface ...". Touching them here loads them
-        // before the snapshot. Cheap (two already-referenced assemblies) and idempotent.
-        // See docs/functional-grains.md, "Running a silo from a standalone F# process".
-        typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore
-        // deprecated API self-reference (spec-003 deprecation pass)
-#nowarn "44"
-        typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore
-#warnon "44"
+        // Before UseOrleans, not inside it: the manifest snapshot is taken while UseOrleans
+        // constructs the silo builder, so applyToSiloBuilder's own pre-load runs a step too
+        // late on this path. It stays there for the standalone ISiloBuilder consumers, and the
+        // touch is idempotent, so running it twice costs nothing.
+        preloadManifestAssemblies ()
 
         builder.UseOrleans(fun siloBuilder -> applyToSiloBuilder config siloBuilder)
         |> ignore

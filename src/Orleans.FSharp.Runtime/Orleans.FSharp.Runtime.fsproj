@@ -28,6 +28,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Orleans.Reminders" />
+    <!-- SiloConfigBuilder names Orleans.Storage.MemoryGrainStorage unconditionally (both the
+         AddMemoryGrainStorage calls and the manifest pre-load touch), so the dependency is
+         declared here rather than ridden in transitively through Microsoft.Orleans.Server. -->
+    <PackageReference Include="Microsoft.Orleans.Persistence.Memory" />
     <PackageReference Include="Microsoft.Orleans.Transactions" />
     <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" />
     <PackageReference Include="Microsoft.Orleans.Server" />
