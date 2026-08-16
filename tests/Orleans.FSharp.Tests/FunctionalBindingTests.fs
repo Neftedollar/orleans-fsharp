@@ -27,10 +27,15 @@ type Item =
     | Plain of string
     | Binary of byte[]
 
+/// <summary>A mutable object, deliberately not an immutable F# value.</summary>
+type Cursor() =
+    member val Position = 0 with get, set
+
 type Basket =
     { items: Item list
       tags: string option
-      counter: int ref }
+      counter: int ref
+      cursor: Cursor }
 
 [<NoEquality; NoComparison>]
 type BindApi =
@@ -500,10 +505,13 @@ let ``a local call isolates the argument graph exactly like a remote one`` () =
     let bytes = [| 1uy; 2uy; 3uy |]
     let counter = ref 7
 
+    let cursor = Cursor(Position = 3)
+
     let argument =
         { items = [ Plain "one"; Binary bytes ]
           tags = Some "tag"
-          counter = counter }
+          counter = counter
+          cursor = cursor }
 
     task {
         let! reply = reference.api.echo argument
@@ -513,9 +521,13 @@ let ``a local call isolates the argument graph exactly like a remote one`` () =
         test <@ not (obj.ReferenceEquals(observed.counter, counter)) @>
         test <@ observed.counter.Value = 7 @>
 
+        test <@ not (obj.ReferenceEquals(observed.cursor, cursor)) @>
+        test <@ observed.cursor.Position = 3 @>
+
         // Mutating the caller's argument after the call cannot reach the target's copy.
         bytes.[0] <- 99uy
         counter.Value <- 42
+        cursor.Position <- 99
 
         let observedBytes =
             observed.items
@@ -525,14 +537,17 @@ let ``a local call isolates the argument graph exactly like a remote one`` () =
 
         test <@ observedBytes = [| 1uy; 2uy; 3uy |] @>
         test <@ observed.counter.Value = 7 @>
+        test <@ observed.cursor.Position = 3 @>
 
         // The reply is an independent graph too.
         test <@ not (obj.ReferenceEquals(reply, observed)) @>
         test <@ not (obj.ReferenceEquals(reply.counter, observed.counter)) @>
 
         reply.counter.Value <- 1000
+        reply.cursor.Position <- 1000
 
         test <@ observed.counter.Value = 7 @>
+        test <@ observed.cursor.Position = 3 @>
     }
 
 [<Fact>]
