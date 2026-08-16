@@ -11,6 +11,8 @@ description: "A second, complete authoring model: user-authored API records inst
 
 - Key-codec identity rules: what changes a grain's routing/storage identity, what does not
 - Operation rename via `operationId`, and the exact contract-version matching rule
+- The persistence model: explicit writes only, unique state names, and multi-provider non-atomicity
+- Lifecycle hooks, timers, reminders, and collection age
 - Delivery semantics: acknowledged vs. one-way, what a successful call does *not* imply, and cancellation without rollback
 - Immutable-state guidance -- deep mutation is unguarded by design
 - Reminder rename/removal migration -- the explicit unregister step
@@ -128,6 +130,124 @@ Contract version is independent of `GrainId`, storage identity, and the fixed Or
 version (which this transport family pins to `1` internally, regardless of your contract's
 `version`).
 
+## Persistence model
+
+Persistent state is opt-in and explicit at every step -- nothing about the functional runtime writes
+storage on your behalf.
+
+`PersistentState.create<'State> stateName providerName` builds an immutable logical descriptor.
+`providerName` names an `IGrainStorage` registration already configured on the silo (a provider name,
+not a connection string); creation rejects a blank or NUL-containing `stateName` immediately.
+
+```fsharp
+let roomState = PersistentState.create<RoomState> "state" "Default"
+```
+
+`stateFrom roomState` in `grainFor { }` attaches that descriptor as the definition's **primary**
+holder -- the loaded `IPersistentState<RoomState>.State` supplies the handler's `state` argument, and
+it is also reachable through `context.persistentState roomState`. `usePersistentState descriptor
+initializer` attaches an *additional*, independently typed holder and is repeatable; its
+`'Key -> 'StoredState` initializer runs only when that holder has no stored record yet. Neither
+operation writes anything by itself.
+
+Every write is a handler calling `WriteStateAsync()` (or `ReadStateAsync()` / `ClearStateAsync()`)
+on the facet `context.persistentState descriptor` returns -- exactly as in the chat-room `join` and
+`say` handlers above. Returning a new `state` from a handler publishes it **in memory** for the rest
+of the activation; it does **not** imply a storage write -- the same rule the
+[Delivery semantics](#delivery-semantics) section below states from the caller's side: a successful
+call means the handler ran, not that anything was persisted.
+
+### Unique state names, and why
+
+Every attached descriptor -- whether `stateFrom` or one of the repeated `usePersistentState`
+attachments -- needs a **unique `stateName` within the definition**, even when two descriptors use
+different providers. Definition sealing rejects a repeat. This is not an arbitrary restriction:
+Orleans derives a grain's per-facet **activation-migration key** from the state name, so two
+differently-provided facets sharing one name would collide on that key instead of addressing two
+independent durable records.
+
+### Multiple providers, and why they are not atomic
+
+A definition can attach more than one provider -- for example a primary store plus a replica, or a
+primary store plus an independently named audit trail:
+
+```fsharp
+let postgres = PersistentState.create<RoomState> "primary" "Postgres"
+let redis = PersistentState.create<RoomState> "replica" "Redis"
+
+let joinHandler context state userId =
+    task {
+        let next = { state with members = Set.add userId state.members }
+
+        let primary = context.persistentState postgres
+        primary.State <- next
+        do! primary.WriteStateAsync()
+
+        let replica = context.persistentState redis
+        replica.State <- next
+        do! replica.WriteStateAsync()
+
+        return next, ()
+    }
+```
+
+**Writes across descriptors are not atomic.** If the second `WriteStateAsync()` fails, the first
+remains committed -- there is no two-phase commit or rollback across providers. If your application
+needs coherent mirroring, failover, or repair across providers, register **one composite
+`IGrainStorage`** that implements those semantics itself and address it through a single descriptor,
+rather than relying on the functional runtime to coordinate two independent writes.
+
+### Activation ordering and lifecycle hooks
+
+Every attached facet loads before your code runs, in this order:
+
+1. The activator creates every attached persistent facet and constructs the target.
+2. Orleans' `SetupState` lifecycle stage loads durable state for each facet.
+3. `OnActivateAsync` initializes ephemeral state, and every facet whose `RecordExists` is `false`
+   receives its declared initializer's result **without writing it**.
+4. The `onActivate` hook runs, if declared.
+5. Declared reminders are reconciled, in declaration order.
+6. Declared timers are created.
+7. The activation is live; ordinary calls are admitted.
+
+```fsharp
+onActivate (fun _context state ->
+    task {
+        // observe or extend state after durable loading; the result is published in memory only
+        return state
+    })
+
+onDeactivate (fun _context _reason _state ->
+    task {
+        // cleanup; no replacement state -- an explicit WriteStateAsync here is the only way
+        // this hook persists anything
+        return ()
+    })
+```
+
+`onDeactivate` runs before Orleans' `OnStop` lifecycle stage. Deactivation performs **no implicit
+write**: if you need the hook's observations persisted, call `WriteStateAsync()` explicitly inside
+it. Process or silo failure cannot guarantee the hook runs at all, and neither hook nor storage
+exceptions get a library-level retry -- a failure surfaces to the Orleans stop lifecycle, which logs
+it and continues the remaining stop stages.
+
+### Resolving services from a handler
+
+Every callback -- handler, hook, timer, or reminder -- receives the same
+`FunctionalGrainContext<'Actor, 'Key>`, so dependency injection is one member away:
+`context.services : IServiceProvider`. Resolve anything registered on the silo exactly as you would
+in ASP.NET Core:
+
+```fsharp
+let registry = context.services.GetRequiredService<IReminderRegistry>()
+```
+
+(the reminder-retirement example
+[below](#reminder-rename-and-removal-the-explicit-unregister-migration) does exactly this).
+`context.grainFactory` binds further grain references from inside a handler; `context.grainId` and
+`context.key` expose the activation's identity; `context.logger` is a logger already scoped to the
+activation.
+
 ## Delivery semantics
 
 | Call kind | What a successful `Task` completion means |
@@ -177,6 +297,54 @@ not undo it, because there was never a copy to discard *from*.
 shipped example do -- and this hazard never arises. If you must hold a mutable value, treat it as
 an explicit, deliberate exception and document why it's safe under concurrent read-only/interleave
 scheduling.
+
+## Timers, reminders, and collection age
+
+`onTimer` and `onReminder` in `grainFor { }` declare recurring work directly on the definition --
+no `Grain.RegisterGrainTimer` / `RegisterOrUpdateReminder` calls of your own, and no separate class
+grain:
+
+```fsharp
+onTimer
+    "poll"
+    (GrainTimerCreationOptions(DueTime = TimeSpan.Zero, Period = TimeSpan.FromSeconds 5.0, KeepAlive = false))
+    (fun _context state ->
+        task {
+            return { state with polls = state.polls + 1 }
+        })
+
+onReminder "tick" TimeSpan.Zero (TimeSpan.FromMinutes 5.0) (fun _context state _status ->
+    task {
+        return { state with ticks = state.ticks + 1 }
+    })
+```
+
+Both hooks replace the whole state with their return value, under Orleans' normal (non-interleaving)
+turn scheduling for that callback. `onTimer` takes a `GrainTimerCreationOptions` -- `DueTime`,
+`Period`, `Interleave`, and `KeepAlive` are copied into the definition's immutable metadata at
+sealing time. A definition may declare at most one `collectionAge`, `stateFrom`, `onActivate`, and
+`onDeactivate`, but any number of `onTimer` / `onReminder` declarations, each under its own name.
+Declared reminders are reconciled once per successful activation, in declaration order: an **added**
+reminder or a **changed** due-time/period updates the durable registration automatically on the next
+activation. Renaming or removing one is different and needs an explicit migration step -- see
+[below](#reminder-rename-and-removal-the-explicit-unregister-migration).
+
+`collectionAge age` sets the Orleans idle-deactivation threshold for this definition's activations:
+
+```fsharp
+collectionAge (TimeSpan.FromMinutes 30.0)
+```
+
+Once an activation has received no activity for at least `age`, a periodic collection scan may
+deactivate it and release its memory -- an eligibility threshold, not an exact timer. Incoming calls,
+reminders, and stream events count as activity; outgoing calls, arbitrary I/O, and a timer declared
+with `KeepAlive = false` do not extend it. A timer declared with `KeepAlive = true` does, under stock
+Orleans timer semantics. A later call creates a fresh activation: durable state reloads from storage,
+and ephemeral state runs its initializer again. `collectionAge` is *not* a data TTL -- it never
+deletes storage and never selects when state is written; it only governs when the in-memory
+activation itself may be collected. Omitting it leaves the host's stock Orleans collection policy in
+effect, and any state change the application did not explicitly write is lost when that activation
+ends.
 
 ## Reminder rename and removal: the explicit unregister migration
 
@@ -317,6 +485,31 @@ needs no per-project C# bridge assembly at all. The legacy per-grain-interface d
 `src/Orleans.FSharp.CodeGen`, which *references* the sample project and therefore cannot be
 referenced back from it; the sample prints an explicit note and skips them, and they are exercised
 by `tests/Orleans.FSharp.Integration`, which does load that bridge assembly.
+
+## Wire validation diagnostics (stricter since the fix-wave hardening pass)
+
+The F# binary codec now validates every wire-supplied length, element count, union case tag, and
+record/POCO arity **against the bytes actually remaining in the stream and the real shape of the
+target type**, before allocating or indexing anything. A malformed or truncated payload now fails
+with a protocol diagnostic naming the stage and the field, instead of an `IndexOutOfRangeException`,
+an oversized allocation attempt, or (for a short POCO field count) a silent partial read. The binary
+format was never version-tolerant across arity changes -- this closes a failure mode, it does not add
+one; nothing that decoded correctly before is affected.
+
+Two more validations that are user-visible if you hit them:
+
+- **Wire text fields are capped.** The grain type and operation ID carried on every request are each
+  limited to 512 characters and may not contain a C0 control character (`< 0x20`, which subsumes the
+  NUL check). Both are dotted identifiers you choose at the contract; the longest in this repository
+  is well under 40 characters, so 512 is headroom, not a practical constraint.
+- **Wire-embedded type names are resolved through an allow-list before `Type.GetType` ever runs**,
+  matched on whole dotted segments (so `Orleans.FSharpHostile` does not pass an
+  `Orleans.FSharp`-prefixed check). An unlisted assembly is rejected with a diagnostic naming it,
+  whether it appears as the payload's own qualifier or only inside a generic argument's.
+
+None of this changes any documented public API -- it changes what a malformed or hostile payload
+receives back, from an unhelpful low-level exception to a diagnostic that names the stage and the
+field.
 
 ## Migrating from the grain { } CE (Task 8 deprecation pass)
 
