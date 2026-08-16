@@ -86,9 +86,12 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
 
     /// <summary>
     /// Dispose every timer created for this activation. Every handle is attempted even when an
-    /// earlier one throws while disposing, and the caller decides how failures are reported.
+    /// earlier one throws while disposing, and the caller decides how failures are reported. Once
+    /// every handle has been attempted, <see cref="P:Orleans.FSharp.FunctionalGrainTargetBase.OnTimersDisposed"/> fires exactly once, which is
+    /// what makes "timer disposal" a distinct, independently observable stage of deactivation
+    /// ordering rather than an implementation detail invisible outside this type.
     /// </summary>
-    member private _.DisposeTimers(onError: exn -> unit) =
+    member private this.DisposeTimers(onError: exn -> unit) =
         let snapshot = lock timersGate (fun () -> timers.ToArray())
 
         for timer in snapshot do
@@ -97,12 +100,23 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
             with error ->
                 onError error
 
+        this.OnTimersDisposed()
+
     /// <summary>
     /// Observes a timer-disposal failure. Set once by the activator right after construction, so
     /// a disposal failure reaches the same scoped logger every other functional diagnostic uses;
     /// defaults to a silent no-op so this base type has no hard logging dependency of its own.
     /// </summary>
     member val internal OnTimerDisposalError: exn -> unit = ignore with get, set
+
+    /// <summary>
+    /// Fires once, after every timer of this activation has been attempted for disposal (whether
+    /// or not any individual disposal failed). This is the deactivation-ordering "timer disposal"
+    /// stage: it runs inside <c>Dispose</c>'s <c>finally</c>, strictly after the functional
+    /// <c>onDeactivate</c> hook and the remaining Orleans stop stages have already completed, and
+    /// strictly before <c>IGrainActivator.DisposeInstance</c> observes <c>Dispose</c> returning.
+    /// </summary>
+    member val internal OnTimersDisposed: unit -> unit = ignore with get, set
 
     /// <summary>
     /// How often this target has actually been disposed: <c>0</c> before teardown and exactly

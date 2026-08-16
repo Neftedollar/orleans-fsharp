@@ -154,6 +154,18 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                         error.Message
                     )
 
+            // Deactivation ordering, made independently observable: this fires once every
+            // declared timer of this activation has been attempted for disposal, which is the
+            // "timer disposal" stage between the remaining Orleans stop stages and DisposeInstance
+            // observing Dispose returning.
+            target.OnTimersDisposed <-
+                fun () ->
+                    logger.LogDebug(
+                        "Functional timers of grain type {GrainType} disposed for {GrainId}",
+                        definition.GrainTypeName,
+                        grainContext.GrainId
+                    )
+
             if not (obj.ReferenceEquals((target :> IGrainBase).GrainContext, grainContext)) then
                 fail
                     StartupStage
@@ -161,10 +173,24 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
 
             box target
 
-        member _.DisposeInstance(_grainContext: IGrainContext, instance: obj) =
+        member _.DisposeInstance(grainContext: IGrainContext, instance: obj) =
             match instance with
             | :? IDisposable as disposable ->
                 disposable.Dispose()
+
+                // Deactivation ordering, made independently observable: DisposeInstance observing
+                // Dispose() return is the last of the four ordered stages (onDeactivate hook →
+                // lifecycle OnStop → timer disposal → DisposeInstance).
+                match grainContext.ActivationServices.GetService typeof<ILoggerFactory> with
+                | :? ILoggerFactory as loggerFactory ->
+                    loggerFactory
+                        .CreateLogger("Orleans.FSharp.Functional.DisposeInstance")
+                        .LogDebug(
+                            "Functional DisposeInstance completed for grain {GrainId}",
+                            grainContext.GrainId
+                        )
+                | _ -> ()
+
                 ValueTask.CompletedTask
             | _ -> ValueTask.CompletedTask
 

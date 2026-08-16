@@ -51,6 +51,8 @@
     <Compile Include="FunctionalStateFixture.fs" />
     <Compile Include="FunctionalStateIntegrationTests.fs" />
     <Compile Include="FunctionalStateRestartTests.fs" />
+    <Compile Include="FunctionalPhase5Fixture.fs" />
+    <Compile Include="FunctionalPhase5IntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
