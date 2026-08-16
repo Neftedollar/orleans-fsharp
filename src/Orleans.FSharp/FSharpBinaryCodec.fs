@@ -622,13 +622,26 @@ module internal FSharpBinaryFormat =
     /// Declare one closed type as a top-level payload type so an elided field type can be
     /// resolved by name. Idempotent.
     /// </summary>
+    /// <remarks>
+    /// A second declaration of the same <c>FullName</c> with a DIFFERENT CLR type is rejected
+    /// rather than silently overwritten: the table is the authority for resolving an elided
+    /// top-level payload type, so last-writer-wins would make deserialization pick a type by
+    /// registration order and hand the wrong object to a handler. Declaration happens during
+    /// binding preflight and silo startup, never on the hot path, so failing here converts a
+    /// silent cross-assembly type confusion into a configuration diagnostic.
+    /// </remarks>
     let internal declareType (declared: Type) =
         if
             not (isNull declared)
             && not declared.ContainsGenericParameters
             && not (isNull declared.FullName)
         then
-            declaredTypes.[declared.FullName] <- declared
+            let existing =
+                declaredTypes.GetOrAdd(declared.FullName, declared)
+
+            if not (obj.ReferenceEquals(existing, declared)) then
+                invalidOp
+                    $"FSharpBinaryCodec: the type name '{declared.FullName}' is already declared as a top-level payload type by '{existing.AssemblyQualifiedName}' and cannot be redeclared by '{declared.AssemblyQualifiedName}'. Two distinct types sharing one FullName cannot both be resolved when Orleans elides the field type."
 
     /// <summary>
     /// Serializes a value to a codec-level byte array that embeds the type's FullName.
@@ -756,6 +769,18 @@ type FSharpBinaryCodec() =
             else
                 Nullable<bool>()
 
+/// <summary>Presence marker: the F# generalized codec and its type filter are registered.</summary>
+[<Sealed>]
+type internal FSharpBinaryCodecMarker() =
+    class
+    end
+
+/// <summary>Presence marker: the F# generalized copier is registered.</summary>
+[<Sealed>]
+type internal FSharpBinaryCopierMarker() =
+    class
+    end
+
 /// <summary>
 /// Registration helpers for FSharpBinaryCodec.
 /// </summary>
@@ -765,22 +790,59 @@ module FSharpBinaryCodecRegistration =
     open Microsoft.Extensions.DependencyInjection
 
     /// <summary>
+    /// The codec, its singleton, and the type filter — registered at most once per service
+    /// collection, whichever entry point asks for them first.
+    /// </summary>
+    let private ensureCodec (services: IServiceCollection) =
+        let registered =
+            services
+            |> Seq.exists (fun descriptor -> descriptor.ServiceType = typeof<FSharpBinaryCodecMarker>)
+
+        if not registered then
+            services.AddSingleton<FSharpBinaryCodecMarker>() |> ignore
+            services.AddSingleton<FSharpBinaryCodec>() |> ignore
+
+            services.AddSingleton<IGeneralizedCodec>(
+                Func<IServiceProvider, IGeneralizedCodec>(fun sp -> sp.GetRequiredService<FSharpBinaryCodec>()))
+            |> ignore
+
+            services.AddSingleton<ITypeFilter>(
+                Func<IServiceProvider, ITypeFilter>(fun sp -> sp.GetRequiredService<FSharpBinaryCodec>()))
+            |> ignore
+
+    /// <summary>The generalized copier — registered at most once per service collection.</summary>
+    let private ensureCopier (services: IServiceCollection) =
+        let registered =
+            services
+            |> Seq.exists (fun descriptor -> descriptor.ServiceType = typeof<FSharpBinaryCopierMarker>)
+
+        if not registered then
+            services.AddSingleton<FSharpBinaryCopierMarker>() |> ignore
+
+            services.AddSingleton<IGeneralizedCopier>(
+                Func<IServiceProvider, IGeneralizedCopier>(fun sp -> sp.GetRequiredService<FSharpBinaryCodec>()))
+            |> ignore
+
+    /// <summary>
     /// Registers the FSharpBinaryCodec as a generalized codec, copier, and type filter
     /// with the Orleans serializer builder.
     /// </summary>
     let addToSerializerBuilder (builder: ISerializerBuilder) : ISerializerBuilder =
-        builder.Services.AddSingleton<FSharpBinaryCodec>() |> ignore
+        ensureCodec builder.Services
+        ensureCopier builder.Services
+        builder
 
-        builder.Services.AddSingleton<IGeneralizedCodec>(
-            Func<IServiceProvider, IGeneralizedCodec>(fun sp -> sp.GetRequiredService<FSharpBinaryCodec>()))
-        |> ignore
-
-        builder.Services.AddSingleton<IGeneralizedCopier>(
-            Func<IServiceProvider, IGeneralizedCopier>(fun sp -> sp.GetRequiredService<FSharpBinaryCodec>()))
-        |> ignore
-
-        builder.Services.AddSingleton<ITypeFilter>(
-            Func<IServiceProvider, ITypeFilter>(fun sp -> sp.GetRequiredService<FSharpBinaryCodec>()))
-        |> ignore
-
+    /// <summary>
+    /// Registers the FSharpBinaryCodec as a generalized codec together with its type filter,
+    /// and deliberately no generalized copier: the functional grain runtime carries every
+    /// argument and reply across an explicit byte boundary, which already gives a local call
+    /// the same object-graph isolation as a remote one.
+    /// </summary>
+    /// <remarks>
+    /// Codec registration is shared with <see cref="addToSerializerBuilder"/>: using both entry
+    /// points on one builder keeps a single codec registration and still adds the compatibility
+    /// entry point's generalized copier.
+    /// </remarks>
+    let addCodecToSerializerBuilder (builder: ISerializerBuilder) : ISerializerBuilder =
+        ensureCodec builder.Services
         builder
