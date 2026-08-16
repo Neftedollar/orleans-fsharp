@@ -1,5 +1,11 @@
 // Orleans.FSharp Quick Start Script
 // Run with: dotnet fsi quickstart.fsx
+//
+// Note: IHelloGrain below is a hand-written Orleans interface (the third, non-deprecated
+// authoring style -- see docs/functional-grains.md's "Migrating from the grain { } CE" section).
+// It is unaffected by the grain{} / FSharpGrain.ref deprecation. For a grain defined entirely in
+// plain F# (contract + API record, no interface to write), see the functional grain runtime in
+// docs/functional-grains.md.
 #r "nuget: Orleans.FSharp"
 #r "nuget: Orleans.FSharp.Runtime"
 
