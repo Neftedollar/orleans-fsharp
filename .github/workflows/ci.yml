@@ -6,9 +6,11 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
-  schedule:
-    # Nightly full integration at 02:00 UTC
-    - cron: '0 2 * * *'
+  # No schedule. Pushes and pull requests already cover our own changes; the
+  # nightly build existed only to catch toolchain and transitive-package drift
+  # and produced ~365 runs a year that nobody read. Run the full integration
+  # on demand from the Actions tab when a dependency bump needs verifying.
+  workflow_dispatch:
 
 jobs:
   build-and-test:
