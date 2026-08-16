@@ -15,8 +15,10 @@ open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
-// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} attribute-scan
-// registration path on purpose.
+// Task 8 deprecation pass: every declaration in this file exercises the pre-functional-runtime
+// grain{} attribute-scan registration path on purpose, so the suppression is file-wide. F# 10 does
+// support scoped #nowarn "44" ... #warnon "44" brackets (used elsewhere in this suite); here they
+// would wrap the whole file, so they would add noise without narrowing anything.
 #nowarn "44"
 
 /// A user-defined marker deriving from the built-in one. Orleans.FSharp must treat it
