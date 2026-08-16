@@ -83,10 +83,49 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
 
     default _.OnDeactivating(_reason: DeactivationReason, _cancellationToken: CancellationToken) = Task.CompletedTask
 
-    override this.OnActivateAsync(cancellationToken: CancellationToken) = this.OnActivating cancellationToken
+    /// <remarks>
+    /// <para>
+    /// The stock <c>Grain</c> implementation is awaited as well rather than replaced, so a
+    /// future Orleans version which gives it a body keeps working. It is called first on the way
+    /// in and last on the way out, which keeps the functional deactivation hook ahead of
+    /// everything Orleans does when stopping.
+    /// </para>
+    /// <para>
+    /// A failing functional deactivation hook propagates immediately, so the stock deactivation
+    /// — a no-op on Orleans 10.1.0 and 10.2.2 — is skipped. That is deliberate: the hook failure
+    /// must reach the Orleans stop lifecycle unaltered, and swallowing it to run a no-op would
+    /// be the wrong trade.
+    /// </para>
+    /// </remarks>
+    override this.OnActivateAsync(cancellationToken: CancellationToken) =
+        let stock = base.OnActivateAsync cancellationToken
+
+        if stock.IsCompletedSuccessfully then
+            this.OnActivating cancellationToken
+        else
+            task {
+                do! stock
+                do! this.OnActivating cancellationToken
+            }
+            :> Task
 
     override this.OnDeactivateAsync(reason: DeactivationReason, cancellationToken: CancellationToken) =
-        this.OnDeactivating(reason, cancellationToken)
+        let functional = this.OnDeactivating(reason, cancellationToken)
+
+        if functional.IsCompletedSuccessfully then
+            base.OnDeactivateAsync(reason, cancellationToken)
+        else
+            let stock () = this.StockDeactivateAsync(reason, cancellationToken)
+
+            task {
+                do! functional
+                do! stock ()
+            }
+            :> Task
+
+    /// <summary>The stock <c>Grain</c> deactivation, reachable from inside a closure.</summary>
+    member private this.StockDeactivateAsync(reason: DeactivationReason, cancellationToken: CancellationToken) : Task =
+        base.OnDeactivateAsync(reason, cancellationToken)
 
     interface IDisposable with
         member this.Dispose() =

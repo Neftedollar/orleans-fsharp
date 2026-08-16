@@ -269,6 +269,22 @@ module internal FunctionalLifecycle =
         task {
             match env.Definition.OnDeactivate with
             | None -> ()
+            | Some _ when not env.State.IsInitialized ->
+                // The activation never reached state initialization — its storage read,
+                // initializer, or activation hook failed — so there is no primary state value to
+                // hand the hook. Running it with an absent state would turn a clear activation
+                // failure into an unrelated one inside application code.
+                //
+                // Orleans 10.1.0 and 10.2.2 do not invoke OnDeactivateAsync for an activation
+                // whose OnActivateAsync failed (proven by the integration test "a failing
+                // activation hook fails the call and skips the deactivation hook"), so this is
+                // defence in depth against a version which does, not a live path.
+                env.Logger.LogWarning(
+                    "Skipping the functional onDeactivate hook of grain type {GrainType} on {GrainId} (reason {Reason}): the activation failed before its state was initialized.",
+                    env.Definition.GrainTypeName,
+                    env.GrainContext.GrainId,
+                    reason.ReasonCode
+                )
             | Some hook ->
                 let scope =
                     FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", true)

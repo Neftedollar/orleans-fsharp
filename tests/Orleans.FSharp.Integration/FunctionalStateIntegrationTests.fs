@@ -507,6 +507,40 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
             Assert.Equal("v1:[activated,survives,activated]", snapshot)
         }
 
+    /// <remarks>
+    /// "Storage read, initializer, or hook failure fails activation." An activation which never
+    /// reached its state has no primary value, so the functional deactivation hook must not run
+    /// with one: the runtime logs that it skipped the hook instead of handing application code
+    /// an absent state and converting a clear activation failure into an unrelated one.
+    /// </remarks>
+    [<Fact>]
+    member _.``a failing activation hook fails the call and skips the deactivation hook``() =
+        task {
+            let name = key "failactivate"
+            let grainId = fixture.LedgerId name
+            let api = fixture.Ledger name
+
+            do! api.armFailingActivation ()
+            do! api.goAway ()
+            StateProbe.observations.TryRemove $"deactivate:{grainId}" |> ignore
+            StateLogCapture.clear ()
+
+            // Every later activation of this grain fails, so every call fails.
+            let! error = Assert.ThrowsAnyAsync<exn>(fun () -> api.snapshot () :> Task)
+            Assert.Contains("failed on purpose", error.Message)
+
+            // The deactivation hook of the failed activation never observed a state. On Orleans
+            // 10.1.0 and 10.2.2 that is because a failed OnActivateAsync never reaches
+            // OnDeactivateAsync at all — the runtime never even had to log its skip, which the
+            // absence of that warning records here.
+            Assert.Equal(None, StateProbe.tryGet $"deactivate:{grainId}")
+
+            Assert.False(
+                StateLogCapture.contains "Skipping the functional onDeactivate hook",
+                "on these Orleans versions the hook is not reached at all, so nothing is skipped"
+            )
+        }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Durability across activations
     // ──────────────────────────────────────────────────────────────────────────

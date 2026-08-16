@@ -46,9 +46,16 @@ type internal FunctionalActivationState
         map
 
     let mutable ephemeral: obj = null
+    let mutable initialized = false
 
     /// <summary>Every attached facet of this activation, primary first.</summary>
     member _.Facets = facets
+
+    /// <summary>
+    /// True once activation step 3 has run. An activation whose storage read, initializer, or
+    /// activation hook failed never reaches it, and then no primary state value exists.
+    /// </summary>
+    member _.IsInitialized = initialized
 
     /// <summary>True when the definition selected a primary persistent holder.</summary>
     member _.HasPrimaryFacet = primary.IsSome
@@ -83,3 +90,5 @@ type internal FunctionalActivationState
 
         if primary.IsNone then
             ephemeral <- definition.CreateState key
+
+        initialized <- true

@@ -138,6 +138,8 @@ type LedgerApi =
       whereAmI: unit -> Task<string>
       /// Arms the deactivation hook of this activation to fail.
       armFailingDeactivation: unit -> Task<unit>
+      /// Arms the ACTIVATION hook of every later activation of this grain to fail.
+      armFailingActivation: unit -> Task<unit>
       /// Requests deactivation once this turn completes.
       goAway: unit -> Task<unit> }
 
@@ -159,6 +161,7 @@ module StateProbe =
     let tick () = Interlocked.Increment ticks
     let activations = ConcurrentDictionary<string, int>()
     let failingDeactivations = ConcurrentDictionary<string, bool>()
+    let failingActivations = ConcurrentDictionary<string, bool>()
 
     /// <summary>The facade one handler deliberately let escape its invocation.</summary>
     let escaped = ConcurrentDictionary<string, IPersistentState<LedgerState>>()
@@ -179,6 +182,7 @@ module StateProbe =
         observations.Clear()
         activations.Clear()
         failingDeactivations.Clear()
+        failingActivations.Clear()
         escaped.Clear()
 
 let private describe (state: LedgerState) =
@@ -290,6 +294,10 @@ let ledgerDefinition =
 
                 StateProbe.activations.AddOrUpdate(key, 1, fun _ current -> current + 1)
                 |> ignore
+
+                match StateProbe.failingActivations.TryGetValue key with
+                | true, true -> raise (ApplicationException $"activation hook of {key} failed on purpose")
+                | _ -> ()
 
                 // The hook observes the state AFTER durable loading…
                 StateProbe.record $"activate:{key}" (describe state)
@@ -501,6 +509,12 @@ let ledgerDefinition =
                 return state, ()
             })
 
+        handle (_.armFailingActivation) (fun context state () ->
+            task {
+                StateProbe.failingActivations.[string context.grainId] <- true
+                return state, ()
+            })
+
         handle (_.goAway) (fun context state () ->
             task {
                 context.deactivateOnIdle ()
@@ -572,6 +586,7 @@ let ephemeralDefinition =
         handle (_.createFacetNow) (fun _ state () -> task { return state, notAttached () })
         handle (_.whereAmI) (fun context state () -> task { return state, siloOf context })
         handle (_.armFailingDeactivation) (fun _ state () -> task { return state, () })
+        handle (_.armFailingActivation) (fun _ state () -> task { return state, () })
 
         handle (_.goAway) (fun context state () ->
             task {
@@ -620,7 +635,10 @@ type StopStageWitness() =
 // Silo log capture
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// <summary>Errors the functional runtime logs; a failing deactivation hook lands here.</summary>
+/// <summary>
+/// Warnings and errors the functional runtime logs. A failing deactivation hook and a skipped
+/// one both land here, which is how the tests tell the two apart.
+/// </summary>
 [<RequireQualifiedAccess>]
 module StateLogCapture =
     let entries = ConcurrentQueue<string>()
@@ -637,10 +655,10 @@ type private StateCaptureLogger(category: string) =
             { new IDisposable with
                 member _.Dispose() = () }
 
-        member _.IsEnabled(level: LogLevel) = level >= LogLevel.Error
+        member _.IsEnabled(level: LogLevel) = level >= LogLevel.Warning
 
         member _.Log<'TState>(level, _eventId, state: 'TState, error: exn, formatter: Func<'TState, exn, string>) =
-            if level >= LogLevel.Error then
+            if level >= LogLevel.Warning then
                 let rendered = formatter.Invoke(state, error)
 
                 StateLogCapture.entries.Enqueue(
