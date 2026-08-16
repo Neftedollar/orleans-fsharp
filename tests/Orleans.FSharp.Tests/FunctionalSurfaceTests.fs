@@ -139,41 +139,56 @@ let ``the context reads, writes, and removes request context values`` () =
 // Bound reference wrapper
 // ──────────────────────────────────────────────────────────────────────────────
 
-let private probeApi () =
-    (ApiShape.of'<SurfaceApi> ()).Probe :?> SurfaceApi
+let private surfaceServices =
+    lazy (FunctionalTransportHarness.buildServices true None)
+
+let private surfaceTransport () =
+    let services = surfaceServices.Value
+    let target = FunctionalTransportHarness.InMemoryTarget(services, "surface.test", 1)
+    target.Handle<int, unit>("first", fun _ -> ())
+    target.Handle<int, unit>("second", fun _ -> ())
+    FunctionalTransportHarness.InMemoryTransport(services, target.Dispatch)
 
 [<Fact>]
 let ``the reference wrapper exposes the key and the cached API instance`` () =
-    let api = probeApi ()
-    let reference = FunctionalGrainRef<SurfaceActor, string, SurfaceApi>("general", api, contract)
+    let transport = surfaceTransport ()
+    let reference = FunctionalGrain.rawRef contract transport "general"
 
     test <@ reference.key = "general" @>
-    test <@ obj.ReferenceEquals(reference.api, api) @>
     test <@ obj.ReferenceEquals(reference.api, reference.api) @>
+    test <@ obj.ReferenceEquals(reference.api, (reference :> obj :?> FunctionalGrainRef<SurfaceActor, string, SurfaceApi>).api) @>
 
 [<Fact>]
-let ``selector-based calls report that they arrive in Phase 2`` () =
-    let reference =
-        FunctionalGrainRef<SurfaceActor, string, SurfaceApi>("general", probeApi (), contract)
+let ``selector-based calls reach the bound closure of the selected field`` () =
+    let transport = surfaceTransport ()
+    let reference = FunctionalGrain.rawRef contract transport "general"
 
-    let call =
-        Assert.Throws<NotSupportedException>(fun () -> reference.call (_.first) 1 |> ignore)
+    task {
+        do! reference.call (_.first) 1
+        do! reference.callCancellable (_.second) 2 CancellationToken.None
 
-    let cancellable =
-        Assert.Throws<NotSupportedException>(fun () ->
-            reference.callCancellable (_.first) 1 CancellationToken.None |> ignore)
-
-    test <@ call.Message.Contains "FunctionalGrainRef.call" @>
-    test <@ cancellable.Message.Contains "FunctionalGrainRef.callCancellable" @>
+        let sent = transport.Calls |> Array.map (fun call -> call.Envelope.OperationId)
+        test <@ sent = [| "first"; "second" |] @>
+    }
 
 [<Fact>]
-let ``rawRef reports that it arrives in Phase 2`` () =
+let ``rawRef through a factory without the functional transport fails with a configuration diagnostic`` () =
     let error =
-        Assert.Throws<NotSupportedException>(fun () ->
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalGrain.rawRef contract (FunctionalTransportHarness.UnconfiguredFactory()) "general"
+            |> ignore)
+
+    test <@ error.Message.Contains "AddFunctionalGrainClient" @>
+    test <@ error.Message.Contains "surface.test" @>
+
+[<Fact>]
+let ``rawRef without a grain factory fails with a binding diagnostic`` () =
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
             FunctionalGrain.rawRef contract Unchecked.defaultof<IGrainFactory> "general"
             |> ignore)
 
-    test <@ error.Message.Contains "FunctionalGrain.rawRef" @>
+    test <@ error.Message.Contains "requires a grain factory" @>
 
 /// <remarks>
 /// Cross-file pin for the specification's point-free bindings. <c>Chat.PointFree.Lobby.ref</c>
@@ -199,14 +214,14 @@ let ``the point-free bindings infer the specification's concrete types`` () =
     test <@ not refType.ContainsGenericParameters @>
     test <@ not rawRefType.ContainsGenericParameters @>
 
-    // Applying any IGrainFactory implementation reaches the Phase 2 placeholder rather than a
-    // type error; `null` stands in for a factory the placeholder never touches.
+    // Applying any IGrainFactory implementation reaches the binding path rather than a type
+    // error; `null` stands in for a factory, which the binding stage rejects by name.
     let error =
-        Assert.Throws<NotSupportedException>(fun () ->
+        Assert.Throws<InvalidOperationException>(fun () ->
             inferredRef Unchecked.defaultof<IClusterClient> (Chat.PointFree.LobbyId "general")
             |> ignore)
 
-    test <@ error.Message.Contains "FunctionalGrain.ref" @>
+    test <@ error.Message.Contains "chat.lobby" @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Hosting stubs

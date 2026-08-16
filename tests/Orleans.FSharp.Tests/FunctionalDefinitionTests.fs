@@ -443,10 +443,10 @@ let ``the specification example contract and definition are constructed`` () =
     test <@ keyText = "general" @>
 
 [<Fact>]
-let ``the Phase 1 binding surface reports that it is not available yet`` () =
+let ``binding without a grain factory fails with a binding diagnostic`` () =
     let error =
-        Assert.Throws<NotSupportedException>(fun () ->
+        Assert.Throws<InvalidOperationException>(fun () ->
             FunctionalGrain.ref contract Unchecked.defaultof<IGrainFactory> "general"
             |> ignore)
 
-    test <@ error.Message.Contains "not available until Phase 2" @>
+    test <@ error.Message.Contains "requires a grain factory" @>
