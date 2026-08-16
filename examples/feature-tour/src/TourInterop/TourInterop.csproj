@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- Orleans' Roslyn source generators emit serializer/proxy code without XML docs. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft.Orleans.Sdk is the whole point of this project: it runs the Orleans Roslyn
+         source generators, which never run on an F# project. The observer proxy and the
+         broadcast-channel consumer grain below therefore have to be declared here. -->
+    <PackageReference Include="Microsoft.Orleans.Sdk" />
+    <PackageReference Include="Microsoft.Orleans.BroadcastChannel" />
+  </ItemGroup>
+
+</Project>

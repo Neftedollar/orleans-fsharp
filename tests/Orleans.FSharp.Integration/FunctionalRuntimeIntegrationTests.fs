@@ -104,6 +104,24 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
             Assert.NotEqual<string>("<null>", captured.GrainInstanceType)
         }
 
+    /// <remarks>
+    /// The curried spelling over the real Orleans transport: the client field is curried, the
+    /// silo handler is tupled, and both arguments are strings so a tuple assembled in the wrong
+    /// order would still type-check and still be caught here.
+    /// </remarks>
+    [<Fact>]
+    member _.``a curried field crosses the real wire in declaration order``() =
+        task {
+            let probe = fixture.Probe $"curried-{Guid.NewGuid():N}"
+            let! reply = probe.api.tag "region" "eu-west"
+            Assert.Equal<string>("region=eu-west", reply)
+
+            // The handler stored its FIRST tuple element, which must be the first curried
+            // argument and not the second.
+            let! last = probe.api.stateRead ()
+            Assert.Equal<string>("region", last)
+        }
+
     [<Fact>]
     member _.``a marker instance refuses to serve a call``() =
         let marker =

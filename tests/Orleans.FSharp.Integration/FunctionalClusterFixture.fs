@@ -85,7 +85,11 @@ type ProbeApi =
       boom: string -> Task<string>
       big: int -> Task<string>
       sink: byte[] -> Task<int>
-      note: Note -> Task<NoteResult> }
+      note: Note -> Task<NoteResult>
+      /// A CURRIED field. Both arguments are strings on purpose: a closure that assembled
+      /// the canonical tuple in the wrong order would still type-check, so only the value
+      /// the silo observes can prove the order survives the real wire.
+      tag: string -> string -> Task<string> }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cross-activation observation table
@@ -218,6 +222,10 @@ let private definitionFor (contract: GrainContract<'Actor, ProbeId, ProbeApi>) =
         defaultState (fun () -> { last = "" })
 
         handle (_.echo) (fun _ state (argument: string) -> task { return state, argument })
+
+        // The curried spelling end to end: the client field is curried, the wire argument is
+        // the canonical tuple, and the handler is tupled.
+        handle2 (_.tag) (fun _ state (name, value) -> task { return { last = name }, $"{name}={value}" })
 
         handle (_.identity) (fun context state () ->
             task {
