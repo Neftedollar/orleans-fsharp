@@ -173,7 +173,7 @@ let roomDefinition =
               messages = [] })
 
         stateFrom roomState
-        collectionAge (TimeSpan.FromMinutes 30)
+        collectionAge (TimeSpan.FromMinutes 30.0)
 
         handle (_.join) (fun context state userId ->
             task {
@@ -390,19 +390,15 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api> =
         cancellationToken: CancellationToken ->
         Task<'Reply>
 
-[<RequireQualifiedAccess>]
-module FunctionalGrain =
-    val ref :
+[<AbstractClass; Sealed>]
+type FunctionalGrain =
+    static member ref :
         contract: GrainContract<'Actor, 'Key, 'Api> ->
-        factory: IGrainFactory ->
-        key: 'Key ->
-        'Api
+        (IGrainFactory -> 'Key -> 'Api)
 
-    val rawRef :
+    static member rawRef :
         contract: GrainContract<'Actor, 'Key, 'Api> ->
-        factory: IGrainFactory ->
-        key: 'Key ->
-        FunctionalGrainRef<'Actor, 'Key, 'Api>
+        (IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor, 'Key, 'Api>)
 
 [<Sealed>]
 type GrainContractDraft<'Actor, 'Key, 'Api>
@@ -648,6 +644,18 @@ metadata. `onReminder` stores explicit due time and period.
 `CancellationToken.None`; `callCancellable` supplies remote cooperative
 cancellation for advanced calls.
 
+`FunctionalGrain` is a static class whose members take `contract` as their only
+declared parameter and return the remaining curried function. This form is
+load-bearing, not stylistic: F# inserts subtype flexibility for non-sealed
+types at declared parameter positions of the member being used, so declaring
+`factory: IGrainFactory` as a second curried parameter makes every point-free
+partial application (`let ref = FunctionalGrain.ref contract`) generic in a
+flexible `'_a :> IGrainFactory` and fail the value restriction (FS0030). With
+the factory in the result type the partial application stays concrete, the
+example's point-free bindings infer their complete types with no annotation and
+no use site, and ordinary subsumption still accepts any `IGrainFactory`
+implementation (such as `IClusterClient`) at application sites.
+
 ## API records, selectors, and contracts
 
 ### API-record shape
@@ -734,8 +742,11 @@ operationId "join" (_.enter)
 ```
 
 The first parameter becomes the wire ID and the selector identifies the current
-field. Final IDs are unique, non-blank, NUL-free ordinal strings. A policy or ID
-override occurs at most once per field.
+field. Final IDs are unique, non-blank, NUL-free ordinal strings. Each kind of
+policy operation and the ID override occurs at most once per field; distinct
+policy kinds may combine on one field within the valid combinations defined
+under "Operation policies" (the example's `oneWay` + `alwaysInterleave` pair on
+`_.typing` is such a combination).
 
 Contract version is application protocol metadata in every request. Requests
 must match the hosted version exactly. Version is independent of `GrainId`,
