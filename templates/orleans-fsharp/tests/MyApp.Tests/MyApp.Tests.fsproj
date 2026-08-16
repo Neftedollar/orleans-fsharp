@@ -2,6 +2,10 @@
 
   <PropertyGroup>
     <IsPackable>false</IsPackable>
+    <!-- Task 8 deprecation pass (ruling 6): these tests assert on the grain{} demo definition
+         (CounterGrainDef.counter), which is [<Obsolete>] beside its functional-runtime twin.
+         Same suppression as MyApp.Grains / MyApp.Silo, for the same reason. -->
+    <NoWarn>$(NoWarn);FS0044</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
