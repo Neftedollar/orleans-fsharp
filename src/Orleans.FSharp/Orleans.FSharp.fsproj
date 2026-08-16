@@ -36,6 +36,15 @@
     <Compile Include="FSharpBinaryCodec.fs" />
     <Compile Include="Scripting.fs" />
     <Compile Include="FSharpGrainRef.fs" />
+    <Compile Include="FunctionalApiShape.fs" />
+    <Compile Include="FunctionalPersistentState.fs" />
+    <Compile Include="FunctionalKeyCodec.fs" />
+    <Compile Include="FunctionalContext.fs" />
+    <Compile Include="FunctionalContract.fs" />
+    <Compile Include="FunctionalDefinition.fs" />
+    <Compile Include="FunctionalBinding.fs" />
+    <Compile Include="FunctionalBuilders.fs" />
+    <Compile Include="FunctionalHosting.fs" />
     <Compile Include="AssemblyInfo.fs" />
   </ItemGroup>
 

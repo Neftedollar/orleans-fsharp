@@ -15,6 +15,7 @@
     <Compile Include="SerilogIntegration.fs" />
     <Compile Include="GrainDiscovery.fs" />
     <Compile Include="TransactionalGrainDiscovery.fs" />
+    <Compile Include="FunctionalSiloHosting.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>
 
