@@ -17,6 +17,19 @@ let config =
         useJsonFallbackSerialization
     }
 
+// Force-load before the silo's first UseOrleans/AddSerializer pass, not inside it.
+// WebApplicationBuilder has no applyToHost-equivalent wrapper (applyToHost targets
+// HostApplicationBuilder specifically), so this app calls SiloConfig.applyToSiloBuilder from
+// inside builder.Host.UseOrleans(...) below -- and applyToSiloBuilder's own internal
+// preloadManifestAssemblies() call then runs a step too late for the same reason
+// SiloConfigBuilder.fs's applyToHost comment documents: "the manifest snapshot is taken while
+// UseOrleans constructs the silo builder". Without this, activating any grain that touches
+// addMemoryStorage's memory storage grain fails with:
+// System.ArgumentException: Could not find an implementation for interface Orleans.Storage.IMemoryStorageGrain
+// See docs/functional-grains.md, "Running a silo from a standalone F# process".
+typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore
+typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore
+
 let builder = WebApplication.CreateBuilder()
 
 builder.Host.UseOrleans(fun siloBuilder ->
@@ -32,34 +45,56 @@ builder.Host.UseOrleans(fun siloBuilder ->
 
 let app = builder.Build()
 
+(*
+    Classic grain { } model -- cannot run standalone.
+
+    F# assemblies carry none of Orleans' source-generated
+    [assembly: ApplicationPart] / [assembly: TypeManifestProvider] attributes (Roslyn generators
+    never run on an F# project), so a bare `factory.GetGrain<ITodoGrain>(...)` fails with
+    "Could not find an implementation for interface ITodoGrain" the moment it runs -- every call to
+    /api/ITodoApi/* would 500. This example's C# CodeGen bridge project was removed once it became
+    unnecessary. See docs/functional-grains.md, "Running a silo from a standalone F# process" for
+    the exact mechanism, and "Migrating from the grain { } CE" for the rewrite this file
+    demonstrates.
+
+    let todoApi (ctx: Microsoft.AspNetCore.Http.HttpContext) : ITodoApi =
+        let factory = ctx.RequestServices.GetRequiredService<IGrainFactory>()
+        let todoRef = GrainRef.ofString<ITodoGrain> factory "global"
+
+        {
+            getTodos =
+                fun () ->
+                    async {
+                        let! result = GrainRef.invoke todoRef (fun g -> g.HandleMessage(GetTodos)) |> Async.AwaitTask
+                        return result :?> Todo list
+                    }
+            addTodo =
+                fun text ->
+                    async {
+                        let! result = GrainRef.invoke todoRef (fun g -> g.HandleMessage(AddTodo text)) |> Async.AwaitTask
+                        return result :?> Todo
+                    }
+            toggleTodo =
+                fun id ->
+                    async {
+                        let! result = GrainRef.invoke todoRef (fun g -> g.HandleMessage(ToggleTodo id)) |> Async.AwaitTask
+                        return result :?> Todo option
+                    }
+        }
+*)
+
 /// <summary>
-/// Creates the Fable.Remoting API implementation that delegates to the Orleans todo grain.
-/// Each API method gets a grain reference and invokes the appropriate command.
+/// Creates the Fable.Remoting API implementation that delegates to the functional-runtime todo
+/// twin. Each API method calls the twin's matching typed operation directly -- no boxing/unboxing,
+/// unlike the old GrainRef.invoke + downcast pattern kept above as reference.
 /// </summary>
 let todoApi (ctx: Microsoft.AspNetCore.Http.HttpContext) : ITodoApi =
     let factory = ctx.RequestServices.GetRequiredService<IGrainFactory>()
-    let todoRef = GrainRef.ofString<ITodoGrain> factory "global"
+    let todoRef = TodoApi.ref factory "global"
 
-    {
-        getTodos =
-            fun () ->
-                async {
-                    let! result = GrainRef.invoke todoRef (fun g -> g.HandleMessage(GetTodos)) |> Async.AwaitTask
-                    return result :?> Todo list
-                }
-        addTodo =
-            fun text ->
-                async {
-                    let! result = GrainRef.invoke todoRef (fun g -> g.HandleMessage(AddTodo text)) |> Async.AwaitTask
-                    return result :?> Todo
-                }
-        toggleTodo =
-            fun id ->
-                async {
-                    let! result = GrainRef.invoke todoRef (fun g -> g.HandleMessage(ToggleTodo id)) |> Async.AwaitTask
-                    return result :?> Todo option
-                }
-    }
+    { getTodos = fun () -> todoRef.getTodos () |> Async.AwaitTask
+      addTodo = fun text -> todoRef.addTodo text |> Async.AwaitTask
+      toggleTodo = fun id -> todoRef.toggleTodo id |> Async.AwaitTask }
 
 let remotingApi =
     Remoting.createApi ()
@@ -75,18 +110,19 @@ app.MapGet(
         "Fable Fullstack Server is running. API available at /api/ITodoApi/*"))
 |> ignore
 
-// Functional-runtime equivalent of the todoApi grain calls above (same todos domain),
-// exercised once at startup alongside the old grain.
+// Seeds one todo through the same "global" grain key /api/ITodoApi/* serves, so the functional
+// twin's persistence is visible immediately to the first curl call too.
 let exerciseFunctionalTwin () =
     task {
         let factory = app.Services.GetRequiredService<IGrainFactory>()
-        let todoRef = TodoApi.ref factory "global-functional"
-        let! _ = todoRef.addTodo "Try the functional grain runtime"
+        let todoRef = TodoApi.ref factory "global"
+        let! seeded = todoRef.addTodo "Try the functional grain runtime"
         let! todos = todoRef.getTodos ()
-        printfn "Functional-runtime todos twin: %d todo(s)" todos.Length
+        let! toggled = todoRef.toggleTodo seeded.Id
+        printfn "Functional-runtime todos twin: %d todo(s) seeded, toggled %A" todos.Length toggled
     }
 
-printfn "--- Fable Fullstack: Server-side Demo ---"
+printfn "--- Fable Fullstack: Server-side Demo (Functional Grain Runtime) ---"
 printfn "Fable.Remoting API available at http://localhost:5000/api/ITodoApi/*"
 printfn "Press Ctrl+C to stop."
 
