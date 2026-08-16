@@ -2,6 +2,12 @@
 
 **Complete guide to the `grain { }` computation expression.**
 
+> **Deprecated authoring model.** Everything on this page -- the `grain { }` CE, `GrainDefinition`,
+> the old `GrainContext`, `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, `Reminder`,
+> and the `FSharpGrain.*` handle module -- now carries `[<Obsolete>]` (warning, not error). It keeps
+> compiling and running; new code should use the functional grain runtime described in
+> [functional-grains.md](functional-grains.md), which also carries the before/after mapping table.
+
 ## What you'll learn
 
 - Every keyword in the `grain { }` CE
