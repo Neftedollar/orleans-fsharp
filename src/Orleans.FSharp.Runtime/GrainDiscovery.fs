@@ -87,6 +87,10 @@ type NamedPersistentState<'T>(storage: IGrainStorage, grainId: GrainId, stateNam
 /// </summary>
 /// <typeparam name="'State">The type of the grain's state.</typeparam>
 /// <typeparam name="'Message">The type of messages the grain handles.</typeparam>
+// NOT [<Obsolete>]: its own member bodies reference the type by name for static calls
+// (FSharpGrain<'State,'Message>.ExtractPrimaryKey) and typeof<FSharpGrain<'State,'Message>>,
+// which would trip FS0044 inside this same library file (Orleans.FSharp.Runtime, no
+// suppression permitted). See task8-report.md "Attribution placements skipped".
 type FSharpGrain<'State, 'Message>
     (
         definition: GrainDefinition<'State, 'Message>,
@@ -628,6 +632,7 @@ Use distinct command/message types for each grain."
         /// </summary>
         /// <param name="definition">The grain definition to register.</param>
         /// <returns>The service collection for chaining.</returns>
+        [<Obsolete("AddFSharpGrain (grain{} / FSharpGrain.ref message-passing registration) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and register it with AddFunctionalGrain. See docs/functional-grains.md for the migration.", false)>]
         member services.AddFSharpGrain<'State, 'Message>(definition: GrainDefinition<'State, 'Message>) : IServiceCollection =
             let key = $"{typeof<'State>.FullName}+{typeof<'Message>.FullName}"
 
@@ -701,9 +706,14 @@ Use distinct command/message types for each grain."
         /// closed generic instantiation of <c>GrainDefinition&lt;,&gt;</c> and that carry
         /// <c>[&lt;FSharpGrain&gt;]</c>, then calls the typed registration path for each one.
         /// </remarks>
+        [<Obsolete("AddFSharpGrainsFromAssembly ([<FSharpGrain>] attribute-scan registration) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and register it with AddFunctionalGrain. See docs/functional-grains.md for the migration.", false)>]
         member services.AddFSharpGrainsFromAssembly(assembly: Reflection.Assembly) : IServiceCollection =
             let grainDefOpenType = typedefof<GrainDefinition<_, _>>
-            let attrType = typeof<FSharpGrainAttribute>
+            // Matched by full type name (not typeof<FSharpGrainAttribute>) so this deprecated
+            // scan path does not itself trip FS0044 on the marker attribute it is scanning for
+            // -- deprecation pass, see docs/functional-grains.md. Behaviorally identical to the
+            // prior typeof/IsDefined identity check for this reflection-only marker lookup.
+            let attrFullName = "Orleans.FSharp.FSharpGrainAttribute"
             let flags = Reflection.BindingFlags.Static ||| Reflection.BindingFlags.Public
 
             // Resolve or create the shared registries once, outside the loop.
@@ -742,7 +752,8 @@ Use distinct command/message types for each grain."
                     let pt = prop.PropertyType
                     if pt.IsGenericType
                        && pt.GetGenericTypeDefinition() = grainDefOpenType
-                       && prop.IsDefined(attrType, false) then
+                       && prop.GetCustomAttributesData()
+                          |> Seq.exists (fun ad -> ad.AttributeType.FullName = attrFullName) then
                         let definition = prop.GetValue(null)
                         let typeArgs = pt.GetGenericArguments()
                         let stateType = typeArgs.[0]

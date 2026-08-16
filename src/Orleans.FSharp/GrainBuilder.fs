@@ -23,6 +23,7 @@ open Orleans.Runtime
 /// </code>
 /// </example>
 [<AttributeUsage(AttributeTargets.Property ||| AttributeTargets.Field)>]
+[<Obsolete("FSharpGrainAttribute + AddFSharpGrainsFromAssembly (grain{} attribute-scan registration) are superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and register it with AddFunctionalGrain (or AddFunctionalGrainClient on the client). See docs/functional-grains.md for the migration.", false)>]
 type FSharpGrainAttribute() =
     inherit Attribute()
 
@@ -1182,4 +1183,5 @@ module GrainBuilderInstance =
     /// additionalState, onActivate, onDeactivate, onReminder, onTimer,
     /// interleaveMessage, onLifecycleStage.
     /// </summary>
+    [<Obsolete("The grain { } CE (GrainBuilder, GrainDefinition, the old GrainContext, and the universal FSharpGrain.* message-passing surface) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and call it via FunctionalGrain.ref, registering it with AddFunctionalGrain. Timers -> onTimer in grainFor { } (or Grain.RegisterGrainTimer directly on a class grain); Reminders -> onReminder in grainFor { } (or Grain.RegisterOrUpdateReminder directly on a class grain). See docs/functional-grains.md for the before/after mapping.", false)>]
     let grain = GrainBuilder()
