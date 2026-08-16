@@ -97,6 +97,29 @@ let private definitionFor (contract: GrainContract<'Actor, string, RuntimeApi>) 
             })
     }
 
+// A minimal, independent contract used only to prove that `collectionAge` is frozen into the
+// well-known Orleans idle-duration manifest property. Its own actor brand keeps it out of the
+// registry-collision rule (one contract per actor brand) with `runtimeContract`.
+type CollectionAgeActor = private CollectionAgeActor of unit
+
+[<NoEquality; NoComparison>]
+type TinyApi = { touch: unit -> Task<unit> }
+
+type TinyState = { touched: bool }
+
+let private collectionAgeContract =
+    grainContract<CollectionAgeActor, string, TinyApi> () {
+        grainType "runtime.collectionage"
+        stringKey
+    }
+
+let private collectionAgeDefinition =
+    grainFor collectionAgeContract {
+        defaultState (fun () -> { touched = false })
+        collectionAge (TimeSpan.FromMinutes 5.0)
+        handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+    }
+
 let private runtimeContract = contractFor<RuntimeActor> "runtime.probe"
 let private otherContract = contractFor<OtherRuntimeActor> "runtime.other"
 let private clashingContract = contractFor<RuntimeActor> "runtime.clash"
@@ -368,6 +391,42 @@ let ``the properties provider replaces exactly the normalized functional entry``
     test <@ properties.["interface.1"] = "Orleans.IRemindable" @>
     test <@ properties.["interface.2"] = "Contoso.IFunctionalGrainTargetAudit" @>
     test <@ properties.["type.full"] = markerType.FullName @>
+
+/// <remarks>
+/// Spec "Persistence and activation lifecycle": "Collection age is frozen into manifest
+/// properties." Orleans' own <c>GrainTypeSharedContext.GetCollectionAgeLimit</c> reads exactly
+/// <c>WellKnownGrainTypeProperties.IdleDeactivationPeriod</c> ("idle-duration") off the grain
+/// manifest via <c>TimeSpan.TryParse</c>, before falling back to the host's stock
+/// <c>GrainCollectionOptions.CollectionAge</c> — found and verified by decompiling
+/// Orleans.Runtime.dll rather than assumed. This test proves both halves: an override publishes
+/// the property in the exact invariant format that round-trips through <c>TimeSpan.Parse</c>,
+/// and an omitted override publishes no property at all, so the host default applies untouched.
+/// </remarks>
+[<Fact>]
+let ``the properties provider freezes collectionAge into the idle-duration manifest property`` () =
+    let registry = FunctionalGrainRegistry()
+    registry.Add(hosted runtimeDefinition) // no collectionAge configured
+    registry.Add(FunctionalHosted.create collectionAgeDefinition) // collectionAge = 5 minutes
+    registry.Freeze() |> ignore
+
+    let provider = FunctionalGrainPropertiesProvider registry :> IGrainPropertiesProvider
+
+    let noAgeMarker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<RuntimeActor>
+    let noAgeProperties = Dictionary<string, string>()
+    noAgeProperties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(noAgeMarker, GrainType.Create "runtime.probe", noAgeProperties)
+
+    test <@ not (noAgeProperties.ContainsKey WellKnownGrainTypeProperties.IdleDeactivationPeriod) @>
+
+    let ageMarker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<CollectionAgeActor>
+    let ageProperties = Dictionary<string, string>()
+    ageProperties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(ageMarker, GrainType.Create "runtime.collectionage", ageProperties)
+
+    test <@ ageProperties.ContainsKey WellKnownGrainTypeProperties.IdleDeactivationPeriod @>
+
+    let parsed = TimeSpan.Parse ageProperties.[WellKnownGrainTypeProperties.IdleDeactivationPeriod]
+    test <@ parsed = TimeSpan.FromMinutes 5.0 @>
 
 [<Fact>]
 let ``the properties provider fails startup on zero or multiple normalized entries`` () =

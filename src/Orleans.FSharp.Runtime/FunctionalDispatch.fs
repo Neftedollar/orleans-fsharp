@@ -184,44 +184,77 @@ module internal FunctionalDispatch =
 
         let work =
             task {
+                // "Logs and activities contain grain type, operation ID, version, grain ID, and
+                // outcome; payload bytes and deserialized application values are excluded by
+                // default." One trace line covers every dispatched request — acknowledged and
+                // one-way, success and failure alike — with exactly those fields and nothing
+                // application-shaped. It is logged in the outermost `finally` so it fires on
+                // every exit path, success or failure.
+                let mutable outcome = "success"
+
                 try
-                    let! nextState, payload =
-                        task {
-                            try
-                                return! operation.Adapter.Invoke invocation
-                            finally
-                                scope.Expire()
-                        }
+                    try
+                        try
+                            let! nextState, payload =
+                                task {
+                                    try
+                                        return! operation.Adapter.Invoke invocation
+                                    finally
+                                        scope.Expire()
+                                }
 
-                    // Read-only and state-neutral interleaved operations discard their replacement.
-                    if not stateNeutral then
-                        env.State.Publish nextState
+                            // Read-only and state-neutral interleaved operations discard their
+                            // replacement.
+                            if not stateNeutral then
+                                env.State.Publish nextState
 
-                    // 7. The silo reply limit, then the descriptor's reply token and fresh payload.
-                    PayloadLimit.ensure
-                        SiloReplySend
-                        grainTypeName
-                        operation.OperationId
-                        payload.Length
-                        env.MaxPayloadBytes
+                            // 7. The silo reply limit, then the descriptor's reply token and
+                            //    fresh payload.
+                            PayloadLimit.ensure
+                                SiloReplySend
+                                grainTypeName
+                                operation.OperationId
+                                payload.Length
+                                env.MaxPayloadBytes
 
-                    return FunctionalReply(operation.ReplyToken, payload)
-                with error when operation.IsOneWay ->
-                    // A one-way target failure is never returned to that caller: the caller's
-                    // send completed at the local acknowledgement. It is recorded here so the
-                    // failure is not silent, then rethrown onto the ordinary Orleans path so
-                    // tracing and the runtime's own one-way logging still observe it.
-                    env.Logger.LogError(
-                        error,
-                        "Functional one-way operation {OperationId} on grain type {GrainType} failed on target {GrainId}: {Message}",
-                        operation.OperationId,
+                            return FunctionalReply(operation.ReplyToken, payload)
+                        with error when operation.IsOneWay ->
+                            // A one-way target failure is never returned to that caller: the
+                            // caller's send completed at the local acknowledgement. It is
+                            // recorded here so the failure is not silent, then rethrown onto the
+                            // ordinary Orleans path so the runtime's own one-way logging still
+                            // observes it.
+                            env.Logger.LogError(
+                                error,
+                                "Functional one-way operation {OperationId} on grain type {GrainType} failed on target {GrainId}: {Message}",
+                                operation.OperationId,
+                                grainTypeName,
+                                env.GrainContext.GrainId,
+                                error.Message
+                            )
+
+                            ExceptionDispatchInfo.Capture(error).Throw()
+                            return Unchecked.defaultof<FunctionalReply>
+                    with error ->
+                        // Covers the acknowledged-call arm of the same rule directly, and the
+                        // rethrown one-way exception a second time — either way the application
+                        // exception still follows Orleans' ordinary response-exception path
+                        // unaltered; only the traced outcome changes here. `reraise()` cannot be
+                        // used here: F#'s task computation expression desugars `with` into a
+                        // continuation call rather than a literal try-with, which is the one
+                        // context `reraise()` requires.
+                        outcome <- "failed"
+                        ExceptionDispatchInfo.Capture(error).Throw()
+                        return Unchecked.defaultof<FunctionalReply>
+                finally
+                    env.Logger.LogDebug(
+                        "Functional dispatch grainType={GrainType} operationId={OperationId} version={Version} grainId={GrainId} outcome={Outcome}",
                         grainTypeName,
+                        operation.OperationId,
+                        definition.Version,
                         env.GrainContext.GrainId,
-                        error.Message
+                        outcome
                     )
-
-                    ExceptionDispatchInfo.Capture(error).Throw()
-                    return Unchecked.defaultof<FunctionalReply>
             }
 
         ValueTask<FunctionalReply> work
