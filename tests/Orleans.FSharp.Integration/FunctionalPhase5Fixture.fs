@@ -706,9 +706,11 @@ let private contextContract =
         readOnly (_.clock)
         readOnly (_.echoRequestContext)
         readOnly (_.roundTripRequestContext)
-        // Read-only requests interleave with each other (proven in SeamProof item 7), which is
-        // what lets several waitCancel calls be genuinely in flight on ONE activation at once —
-        // the only arrangement in which a cancellation could leak between invocation contexts.
+        // Read-only requests interleave with each other (proven in
+        // FunctionalRuntimeIntegrationTests."read-only requests interleave with each other"),
+        // which is what lets several waitCancel calls be genuinely in flight on ONE activation
+        // at once — the only arrangement in which a cancellation could leak between invocation
+        // contexts.
         readOnly (_.waitCancel)
     }
 

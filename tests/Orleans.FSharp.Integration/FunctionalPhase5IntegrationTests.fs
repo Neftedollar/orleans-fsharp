@@ -718,6 +718,46 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
                     && tag activity "outcome" = Some "success")
             )
 
+            // Task 8 close-out E5: assert the EXACT set of dispatch-owned tag keys (five), not
+            // just that those five are present with the right values. A `forall` over expected
+            // keys (as above) cannot catch an accidental sixth, application-shaped tag riding
+            // along on the same Activity -- only comparing the full observed key set to the
+            // fixed five-key set the spec names can.
+            let ownTagKeySet =
+                set [ "grainType"; "operationId"; "version"; "grainId"; "outcome" ]
+
+            for activity in successActivities do
+                // TagObjects (not the older string-only Tags property, which silently drops
+                // non-string-valued tags such as the int-typed "version") is what GetTagItem
+                // above reads from, and is the authoritative superset of everything any
+                // SetTag call -- ours or Orleans' own instrumentation -- added to this Activity.
+                //
+                // This is the SAME Activity Orleans' own "Microsoft.Orleans.Runtime" source
+                // started and tagged (per the ActivityListener above), so the observed set also
+                // carries Orleans' own dotted OpenTelemetry RPC semantic-convention tags
+                // (rpc.method, rpc.system, rpc.service, rpc.orleans.source_id,
+                // rpc.orleans.target_id). Those are namespaced with a "." and are never present
+                // among our five dispatch-owned keys (grainType/operationId/version/grainId/
+                // outcome, all bare identifiers), so filtering them out before the exact-set
+                // comparison isolates dispatch's own contribution without hard-coding Orleans'
+                // exact tag list (which is Orleans' implementation detail, not ours to pin).
+                let observedKeys =
+                    activity.TagObjects
+                    |> Seq.map (fun kv -> kv.Key)
+                    |> Seq.filter (fun key -> not (key.Contains '.'))
+                    |> set
+
+                let isExactlyTheOwnedKeySet = observedKeys = ownTagKeySet
+                let unexpected = Set.difference observedKeys ownTagKeySet
+                let missing = Set.difference ownTagKeySet observedKeys
+
+                let join (s: Set<string>) = String.concat ", " s
+
+                let message =
+                    $"expected dispatch to set exactly the five keys [{join ownTagKeySet}]; unexpected extra keys: [{join unexpected}]; missing keys: [{join missing}]; full observed (non-namespaced) set: [{join observedKeys}]"
+
+                Assert.True(isExactlyTheOwnedKeySet, message)
+
             let failureActivities = taggedFor grainId "boom"
 
             Assert.True(failureActivities.Length >= 1, "the failing call must be tagged too")

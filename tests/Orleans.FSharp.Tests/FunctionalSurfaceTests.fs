@@ -40,7 +40,23 @@ let private unattached = PersistentState.create<SurfaceState> "missing" "Default
 // Per-invocation context
 // ──────────────────────────────────────────────────────────────────────────────
 
-let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: CancellationToken) =
+/// Returns a strictly increasing UtcNow on every call (one tick later each time), so a test
+/// asserting "not recomputed" cannot pass by accident on a clock whose granularity happens to
+/// be coarser than the gap between two reads -- unlike TimeProvider.System + Thread.Sleep,
+/// this is deterministic regardless of the host clock's resolution.
+type private StrictlyIncreasingTimeProvider(start: DateTimeOffset) =
+    inherit TimeProvider()
+    let mutable current = start
+
+    override _.GetUtcNow() =
+        current <- current.AddTicks 1L
+        current
+
+let private makeContextWith
+    (timeProvider: TimeProvider)
+    (resolve: PersistentStateDescriptor -> obj)
+    (token: CancellationToken)
+    =
     let mutable deactivated = 0
     let mutable delayed = TimeSpan.Zero
 
@@ -49,8 +65,8 @@ let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: Canc
           GrainFactory = Unchecked.defaultof<IGrainFactory>
           Services = ServiceCollection().BuildServiceProvider() :> IServiceProvider
           Logger = NullLogger.Instance
-          TimeProvider = TimeProvider.System
-          UtcNow = TimeProvider.System.GetUtcNow()
+          TimeProvider = timeProvider
+          UtcNow = timeProvider.GetUtcNow()
           CancellationToken = token
           DeactivateOnIdle = fun () -> deactivated <- deactivated + 1
           DelayDeactivation = fun span -> delayed <- span
@@ -58,6 +74,9 @@ let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: Canc
 
     let context = FunctionalGrainContext<SurfaceActor, string>("general", core)
     context, (fun () -> deactivated), (fun () -> delayed)
+
+let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: CancellationToken) =
+    makeContextWith TimeProvider.System resolve token
 
 [<Fact>]
 let ``the context exposes the decoded key, grain identity, and clock`` () =
@@ -76,14 +95,18 @@ let ``the context exposes the decoded key, grain identity, and clock`` () =
 /// <remarks>
 /// Task-7 close-out A.3: <c>utcNow</c> is frozen once at context creation ("contains
 /// <c>utcNow = timeProvider.GetUtcNow()</c>" — a value, not a re-evaluated property), so two
-/// reads through the same context must be byte-for-byte identical even though real wall-clock
-/// time keeps advancing between them.
+/// reads through the same context must be byte-for-byte identical even though the
+/// TimeProvider itself advances on every call. Uses a stub TimeProvider that returns a
+/// strictly increasing value per call (task 8 close-out E4) rather than TimeProvider.System +
+/// Thread.Sleep, so the assertion is clock-granularity-independent: were <c>utcNow</c>
+/// re-read instead of frozen, <c>first</c> and <c>second</c> would differ on every run, not
+/// just on a coarse-clocked CI runner.
 /// </remarks>
 [<Fact>]
 let ``utcNow is a single frozen value, not recomputed on each read`` () =
-    let context, _, _ = makeContext (fun _ -> null) CancellationToken.None
+    let timeProvider = StrictlyIncreasingTimeProvider(DateTimeOffset.UtcNow)
+    let context, _, _ = makeContextWith timeProvider (fun _ -> null) CancellationToken.None
     let first = context.utcNow
-    Thread.Sleep 5
     let second = context.utcNow
 
     test <@ first = second @>
