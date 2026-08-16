@@ -15,7 +15,7 @@ description: Comparison of Orleans.FSharp, raw C# Microsoft Orleans, Akkling (Ak
 | | Orleans.FSharp | C# Orleans (from F#) | Akkling (Akka.NET) | Proto.Actor |
 |---|---|---|---|---|
 | **Actor model** | Virtual actors | Virtual actors | Classic actors | Virtual + classic |
-| **F# API** | Native CEs (`grain {}`, `siloConfig {}`) | Manual interop (class inheritance) | Native CEs (`actorOf`, `spawnAnonymous`) | None (C# API) |
+| **F# API** | Functional runtime (`grainContract`/`grainFor`, current) + native CEs (`siloConfig {}`; `grain {}` deprecated) | Manual interop (class inheritance) | Native CEs (`actorOf`, `spawnAnonymous`) | None (C# API) |
 | **State persistence** | Automatic (CE keyword) | Automatic (attribute) | Manual | Manual |
 | **Type safety** | DU state machines, compile-time checks | Runtime errors | Typed messages | Runtime errors |
 | **Clustering** | Built-in (Redis, Azure, Kubernetes) | Built-in | Akka.Cluster | Built-in |
