@@ -5,6 +5,7 @@
 module Orleans.FSharp.Integration.FunctionalPhase5IntegrationTests
 
 open System
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Orleans.Configuration
@@ -118,6 +119,76 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
             Assert.True(keptFiring, "the reminder must keep firing after reactivation")
         }
 
+    /// <remarks>
+    /// <para>
+    /// "Renamed/removed reminders: implement nothing automatic... a reminder declared once and
+    /// then absent in a redeployed definition keeps firing into the unknown-name failure path
+    /// (that IS the documented behavior motivating the migration)."
+    /// </para>
+    /// <para>
+    /// <c>phase5.reminder.stale</c> declares no reminder at all — the redeployed definition. The
+    /// durable registration a previous deployment made is recreated here through the stock
+    /// <c>IReminderRegistry</c>, because that registration lives in the reminder table, not in
+    /// the definition, and outlives the code that declared it. The reminder then fires into the
+    /// unknown-name failure path on every period until the DOCUMENTED migration —
+    /// <c>IReminderRegistry.GetReminder</c> + <c>UnregisterReminder</c> from
+    /// <c>context.services</c> — removes it, which is what this test also exercises.
+    /// </para>
+    /// </remarks>
+    [<Fact>]
+    member _.``a reminder absent from the redeployed definition keeps failing until the documented unregister migration runs``
+        ()
+        =
+        task {
+            let name = key "stale-reminder"
+            let grainId = fixture.StaleReminderId name
+            let api = fixture.StaleReminder name
+
+            do! api.ping ()
+
+            let unknownFor (entries: string list) =
+                entries
+                |> List.filter (fun entry ->
+                    entry.Contains(grainId, StringComparison.Ordinal)
+                    && entry.Contains(GhostReminderName, StringComparison.Ordinal))
+
+            Phase5LogCapture.clear ()
+            do! api.registerGhost ()
+
+            // The registration really is in the reminder table even though the definition never
+            // declared it — this is the situation a redeploy leaves behind.
+            let! registered = api.registeredNames ()
+            Assert.Equal<string list>([ GhostReminderName ], registered)
+
+            // Twice, not once: "keeps firing" is the whole point — the stale registration is
+            // durable and nothing in the runtime retires it.
+            let! failed =
+                poll 30.0 (fun () ->
+                    Phase5LogCapture.entriesContaining "received unknown reminder"
+                    |> unknownFor
+                    |> List.length >= 2)
+
+            Assert.True(
+                failed,
+                "a reminder the redeployed definition no longer declares must keep firing into the unknown-name failure path"
+            )
+
+            // The documented migration: unregister the stale name explicitly. Nothing automatic
+            // does this — the runtime cannot tell "renamed" from "temporarily undeployed".
+            let! removed = api.unregisterGhost ()
+            Assert.True(removed, "the stale reminder must still have been registered before the migration")
+
+            let! remaining = api.registeredNames ()
+            Assert.Empty(remaining)
+
+            // Let any tick already in flight settle, then prove the failures have stopped.
+            do! Task.Delay(Phase5Timing.ReminderPeriod + Phase5Timing.ReminderPeriod)
+            Phase5LogCapture.clear ()
+            do! Task.Delay(Phase5Timing.ReminderPeriod + Phase5Timing.ReminderPeriod + Phase5Timing.ReminderPeriod)
+
+            Assert.Empty(Phase5LogCapture.entriesContaining "received unknown reminder" |> unknownFor)
+        }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Timers
     // ──────────────────────────────────────────────────────────────────────────
@@ -148,11 +219,21 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
         }
 
     /// <remarks>
+    /// <para>
     /// Task 5 only proved deactivation hooks ran "once"; the spec's required-test bullet says
     /// "execute once in the specified order": functional onDeactivate hook → lifecycle OnStop →
-    /// timer disposal → IGrainActivator.DisposeInstance. Stages 3 and 4 are opaque runtime
-    /// internals with no typed observation point, so this test reads them from the runtime's own
-    /// Debug-level trace lines (Phase5LogCapture), which is the only way to observe them at all.
+    /// timer disposal → IGrainActivator.DisposeInstance. Stage 2 is observed by
+    /// <c>Phase5StopStageWitness</c> (a lifecycle stop callback subscribed at SetupState, which
+    /// stop-stage reversal places after the stage invoking the functional hook); stages 3 and 4
+    /// are opaque runtime internals with no typed observation point, so they are read from the
+    /// runtime's own Debug-level trace lines, which is the only way to observe them at all.
+    /// </para>
+    /// <para>
+    /// Every stage is attributed to THIS grain's identity, never recorded cluster-wide: the
+    /// shared silo tears other activations down throughout (collection ages here are 1.5 s and
+    /// 6 s), and every functional activation emits both disposal traces, so a stage-name-only
+    /// probe would be satisfiable by an unrelated grain and would break "exactly once".
+    /// </para>
     /// </remarks>
     [<Fact>]
     member _.``onDeactivate, lifecycle OnStop, timer disposal, and DisposeInstance run once and in order``
@@ -160,29 +241,43 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
         =
         task {
             let name = key "order"
+            let grainId = fixture.TimerId name
             let api = fixture.Timer name
 
             do! api.touch ()
-            let! _ = poll 15.0 (fun () -> Phase5Probe.timerTickCount (fixture.TimerId name) "poll" >= 1)
+
+            // The declared timer must really exist before deactivation, otherwise the timer-
+            // disposal stage below would prove nothing about disposing anything.
+            let! ticked = poll 15.0 (fun () -> Phase5Probe.timerTickCount grainId "poll" >= 1)
+            Assert.True(ticked, "the declared timer must have ticked before the activation is torn down")
+
             Phase5Probe.resetStages ()
             Phase5LogCapture.clear ()
 
             do! api.goAway ()
 
+            let stages = [ "deactivate-hook"; "lifecycle-stop"; "timers-disposed"; "dispose-instance" ]
+
             let! allObserved =
                 poll 30.0 (fun () ->
-                    [ "deactivate-hook"; "timers-disposed"; "dispose-instance" ]
-                    |> List.forall (fun stage -> Phase5Probe.stageTick stage |> Option.isSome))
+                    stages
+                    |> List.forall (fun stage -> Phase5Probe.stageTick stage grainId |> Option.isSome))
 
-            Assert.True(allObserved, "all deactivation-ordering stages must be observed")
+            Assert.True(allObserved, "all four deactivation-ordering stages must be observed for this grain")
 
-            let hookTick = Phase5Probe.stageTick "deactivate-hook" |> Option.get
-            let timersTick = Phase5Probe.stageTick "timers-disposed" |> Option.get
-            let disposeTick = Phase5Probe.stageTick "dispose-instance" |> Option.get
+            let hookTick = Phase5Probe.stageTick "deactivate-hook" grainId |> Option.get
+            let stopTick = Phase5Probe.stageTick "lifecycle-stop" grainId |> Option.get
+            let timersTick = Phase5Probe.stageTick "timers-disposed" grainId |> Option.get
+            let disposeTick = Phase5Probe.stageTick "dispose-instance" grainId |> Option.get
 
             Assert.True(
-                hookTick < timersTick,
-                $"onDeactivate hook (tick {hookTick}) must run before timer disposal (tick {timersTick})"
+                hookTick < stopTick,
+                $"onDeactivate hook (tick {hookTick}) must run before the lifecycle stop stages (tick {stopTick})"
+            )
+
+            Assert.True(
+                stopTick < timersTick,
+                $"lifecycle OnStop (tick {stopTick}) must run before timer disposal (tick {timersTick})"
             )
 
             Assert.True(
@@ -190,10 +285,22 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
                 $"timer disposal (tick {timersTick}) must run before DisposeInstance (tick {disposeTick})"
             )
 
-            // Each stage exactly once.
-            Assert.Equal(1, Phase5Probe.stageCount "deactivate-hook")
-            Assert.Equal(1, Phase5Probe.stageCount "timers-disposed")
-            Assert.Equal(1, Phase5Probe.stageCount "dispose-instance")
+            // Each stage exactly once, for this grain.
+            for stage in stages do
+                Assert.Equal(1, Phase5Probe.stageCount stage grainId)
+
+            // The disposal stage is not vacuous: the runtime reports the handle count, and this
+            // activation owned exactly the one declared timer. (The stage itself fires for every
+            // functional activation, including those which never created a timer.)
+            Assert.Equal(1, Phase5Probe.disposedTimerCount grainId)
+
+            // "Timers are... disposed with the activation": no further tick arrives once the
+            // activation is gone. No call is made here — a call would reactivate the grain and
+            // create a fresh timer.
+            let ticksAtDeactivation = Phase5Probe.timerTickCount grainId "poll"
+            do! Task.Delay(Phase5Timing.TimerPeriod + Phase5Timing.TimerPeriod + TimeSpan.FromSeconds 1.0)
+
+            Assert.Equal(ticksAtDeactivation, Phase5Probe.timerTickCount grainId "poll")
         }
 
     /// <remarks>
@@ -418,6 +525,66 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
 
             for expected, observed in results do
                 Assert.Equal(expected, observed)
+        }
+
+    /// <remarks>
+    /// The other half of the same spec bullet: "concurrent contexts never leak cancellation...
+    /// between activations/calls". Several read-only (hence interleaving) calls are genuinely in
+    /// flight on ONE activation — gated on the handlers actually having entered, not on a sleep
+    /// — when one caller's token is cancelled. Only that invocation's context token may fire;
+    /// every sibling must run to completion.
+    /// </remarks>
+    [<Fact>]
+    member _.``cancelling one concurrent call never cancels its siblings``() =
+        task {
+            let name = key "cancel-concurrent"
+            let grainId = fixture.ContextId name
+            let reference = fixture.ContextRaw name
+            let siblings = 5
+
+            use source = new CancellationTokenSource()
+            let victim = reference.callCancellable (_.waitCancel) 20000 source.Token
+
+            let siblingCalls =
+                [| for _ in 1..siblings -> reference.callCancellable (_.waitCancel) 3000 CancellationToken.None |]
+
+            let! allInFlight = poll 30.0 (fun () -> Phase5Probe.inFlightCount grainId >= siblings + 1)
+            Assert.True(allInFlight, "every concurrent call must be in flight before the cancellation")
+
+            source.Cancel()
+
+            let! victimOutcome =
+                task {
+                    try
+                        let! reply = victim
+                        return reply
+                    with :? OperationCanceledException ->
+                        return "caller-cancelled"
+                }
+
+            // Either the caller observes cancellation or the target's cooperative reply arrives
+            // first; both mean the victim's own token fired.
+            Assert.True(
+                victimOutcome = "cancelled" || victimOutcome = "caller-cancelled",
+                $"the cancelled call must observe its own cancellation, got '{victimOutcome}'"
+            )
+
+            let! siblingOutcomes = Task.WhenAll siblingCalls
+
+            for outcome in siblingOutcomes do
+                Assert.Equal<string>("completed", outcome)
+
+            // Judged from inside the handlers, which is the only place that can distinguish "the
+            // target's own token fired" from "the caller stopped waiting": exactly one context
+            // token was cancelled — the victim's — and every sibling ran to completion.
+            let! settled =
+                poll 30.0 (fun () ->
+                    Phase5Probe.callOutcomeCount grainId "completed"
+                    + Phase5Probe.callOutcomeCount grainId "cancelled" >= siblings + 1)
+
+            Assert.True(settled, "every concurrent handler must have recorded an outcome")
+            Assert.Equal(1, Phase5Probe.callOutcomeCount grainId "cancelled")
+            Assert.Equal(siblings, Phase5Probe.callOutcomeCount grainId "completed")
         }
 
     // ──────────────────────────────────────────────────────────────────────────

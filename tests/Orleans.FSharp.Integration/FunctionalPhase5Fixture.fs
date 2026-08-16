@@ -23,6 +23,7 @@ open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.Runtime
 open Orleans.TestingHost
+open Orleans.Timers
 open Orleans.FSharp
 open Xunit
 
@@ -39,30 +40,82 @@ module Phase5Probe =
 
     let private stageTicks = ConcurrentDictionary<string, int>()
     let private stageCounts = ConcurrentDictionary<string, int>()
+    let private disposedTimers = ConcurrentDictionary<string, int>()
     let private reminderCounts = ConcurrentDictionary<string, int>()
     let private reminderTokens = ConcurrentDictionary<string, bool>()
     let private activations = ConcurrentDictionary<string, int>()
     let private timerTicks = ConcurrentDictionary<string, int>()
     let private timerTokens = ConcurrentDictionary<string, bool>()
+    let private inFlight = ConcurrentDictionary<string, int>()
+    let private callOutcomes = ConcurrentDictionary<string, int>()
 
-    /// <summary>Record one occurrence of a named ordering stage, keeping its first tick and a count.</summary>
-    let recordStage (name: string) =
-        stageTicks.TryAdd(name, tick ()) |> ignore
-        stageCounts.AddOrUpdate(name, 1, fun _ current -> current + 1) |> ignore
+    /// <summary>
+    /// Record one occurrence of a named ordering stage <b>for one specific grain</b>, keeping its
+    /// first tick and a count.
+    /// </summary>
+    /// <remarks>
+    /// Keying on the stage name alone would make every ordering assertion cluster-wide rather
+    /// than grain-scoped: this fixture's silo is shared by every test in the collection, the
+    /// runtime emits its timer-disposal and DisposeInstance traces for <b>every</b> functional
+    /// activation it tears down (including collected grains from other tests, and including
+    /// activations that own no timers at all), and the deactivation hook fires for every instance
+    /// of the timer grain type. A background collection landing inside another test's poll window
+    /// would then both break "exactly once" and be able to satisfy stage presence and ordering
+    /// without the grain under test doing anything. Both trace lines already carry the grain id,
+    /// so every stage is recorded under it.
+    /// </remarks>
+    let recordStage (name: string) (grainId: string) =
+        let key = $"{name}|{grainId}"
+        stageTicks.TryAdd(key, tick ()) |> ignore
+        stageCounts.AddOrUpdate(key, 1, fun _ current -> current + 1) |> ignore
 
-    let stageTick (name: string) =
-        match stageTicks.TryGetValue name with
+    let stageTick (name: string) (grainId: string) =
+        match stageTicks.TryGetValue $"{name}|{grainId}" with
         | true, value -> Some value
         | _ -> None
 
-    let stageCount (name: string) =
-        match stageCounts.TryGetValue name with
+    let stageCount (name: string) (grainId: string) =
+        match stageCounts.TryGetValue $"{name}|{grainId}" with
         | true, value -> value
         | _ -> 0
 
     let resetStages () =
         stageTicks.Clear()
         stageCounts.Clear()
+        disposedTimers.Clear()
+
+    /// <summary>How many timer handles the runtime reported disposing for one grain.</summary>
+    let recordDisposedTimers (grainId: string) (count: int) =
+        disposedTimers.AddOrUpdate(grainId, count, fun _ current -> current + count) |> ignore
+
+    let disposedTimerCount (grainId: string) =
+        match disposedTimers.TryGetValue grainId with
+        | true, value -> value
+        | _ -> 0
+
+    /// <summary>Count one handler entry, used to gate on "every concurrent call is really in flight".</summary>
+    let enterCall (grainId: string) =
+        inFlight.AddOrUpdate(grainId, 1, fun _ current -> current + 1) |> ignore
+
+    let inFlightCount (grainId: string) =
+        match inFlight.TryGetValue grainId with
+        | true, value -> value
+        | _ -> 0
+
+    /// <summary>
+    /// What one handler invocation observed on its own context token, recorded server-side.
+    /// The caller's own task cannot tell "the target's token fired" from "my client-side wait
+    /// was abandoned", so cancellation propagation and cancellation isolation are both judged
+    /// from what the handlers themselves saw.
+    /// </summary>
+    let recordCallOutcome (grainId: string) (outcome: string) =
+        callOutcomes.AddOrUpdate($"{grainId}:{outcome}", 1, fun _ current -> current + 1)
+        |> ignore
+
+    let callOutcomeCount (grainId: string) (outcome: string) =
+        match callOutcomes.TryGetValue $"{grainId}:{outcome}" with
+        | true, value -> value
+        | _ -> 0
 
     let recordActivation (grainId: string) =
         activations.AddOrUpdate(grainId, 1, fun _ current -> current + 1) |> ignore
@@ -124,6 +177,35 @@ module Phase5LogCapture =
     let entriesContaining (fragment: string) =
         entries |> Seq.filter (fun entry -> entry.Contains(fragment, StringComparison.Ordinal)) |> Seq.toList
 
+/// <summary>
+/// Both runtime trace lines this fixture reads stages from end with the grain identity
+/// ("... for grain {GrainId}"), which is what lets an ordering stage be attributed to the grain
+/// under test instead of to whatever else the shared silo happened to tear down at the time.
+/// </summary>
+[<RequireQualifiedAccess>]
+module Phase5Trace =
+    [<Literal>]
+    let private GrainMarker = "for grain "
+
+    let tryGrainId (rendered: string) =
+        match rendered.LastIndexOf(GrainMarker, StringComparison.Ordinal) with
+        | -1 -> None
+        | index -> Some(rendered.Substring(index + GrainMarker.Length).Trim())
+
+    /// <summary>The handle count out of "... disposed: {TimerCount} handle(s) for grain ...".</summary>
+    let tryDisposedCount (rendered: string) =
+        let opening = rendered.IndexOf("disposed: ", StringComparison.Ordinal)
+        let closing = rendered.IndexOf(" handle(s)", StringComparison.Ordinal)
+
+        if opening < 0 || closing <= opening then
+            None
+        else
+            let start = opening + "disposed: ".Length
+
+            match Int32.TryParse(rendered.Substring(start, closing - start)) with
+            | true, value -> Some value
+            | _ -> None
+
 [<Sealed>]
 type private Phase5CaptureLogger(category: string) =
     interface ILogger with
@@ -140,17 +222,62 @@ type private Phase5CaptureLogger(category: string) =
 
                 // Deactivation-ordering stages 3 and 4 are otherwise opaque runtime internals:
                 // this is the only place outside the runtime itself that can observe them, since
-                // they are not exposed through any typed API.
+                // they are not exposed through any typed API. Both are attributed to the grain
+                // named in the trace line, never recorded cluster-wide.
                 if rendered.Contains("Functional timers of grain type", StringComparison.Ordinal) then
-                    Phase5Probe.recordStage "timers-disposed"
+                    match Phase5Trace.tryGrainId rendered with
+                    | Some grainId ->
+                        Phase5Probe.recordStage "timers-disposed" grainId
+
+                        match Phase5Trace.tryDisposedCount rendered with
+                        | Some count -> Phase5Probe.recordDisposedTimers grainId count
+                        | None -> ()
+                    | None -> ()
                 elif rendered.Contains("Functional DisposeInstance completed for grain", StringComparison.Ordinal) then
-                    Phase5Probe.recordStage "dispose-instance"
+                    match Phase5Trace.tryGrainId rendered with
+                    | Some grainId -> Phase5Probe.recordStage "dispose-instance" grainId
+                    | None -> ()
 
 [<Sealed>]
 type Phase5LogProvider() =
     interface ILoggerProvider with
         member _.CreateLogger(category: string) = Phase5CaptureLogger category :> ILogger
         member _.Dispose() = ()
+
+// ──────────────────────────────────────────────────────────────────────────────
+// A stop-stage witness: the "lifecycle OnStop" stage of the deactivation order
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// A grain-lifecycle observer subscribed at <c>GrainLifecycleStage.SetupState</c>. Stop stages
+/// run in reverse order, so its stop callback runs AFTER the stage which invokes
+/// <c>IGrainBase.OnDeactivateAsync</c> — which is where the functional <c>onDeactivate</c> hook
+/// lives — and before <c>IGrainActivator.DisposeInstance</c> disposes the instance. That makes
+/// it the observation point for stage 2 of the four-stage deactivation order, which is otherwise
+/// invisible to the Phase 5 suite (the Task-5 witness lives on a different fixture, whose cluster
+/// hosts no timers at all, so the "OnStop before timer disposal" link has no observer there).
+/// </summary>
+[<Sealed>]
+type Phase5StopStageWitness() =
+
+    interface IConfigureGrainContextProvider with
+        member this.TryGetConfigurator
+            (_grainType: GrainType, _properties: Orleans.Metadata.GrainProperties, configurator: byref<IConfigureGrainContext>)
+            =
+            configurator <- this
+            true
+
+    interface IConfigureGrainContext with
+        member _.Configure(context: IGrainContext) =
+            context.ObservableLifecycle.Subscribe(
+                "Orleans.FSharp.Integration.Phase5StopStageWitness",
+                GrainLifecycleStage.SetupState,
+                Func<CancellationToken, Task>(fun _ -> Task.CompletedTask),
+                Func<CancellationToken, Task>(fun _ ->
+                    Phase5Probe.recordStage "lifecycle-stop" (string context.GrainId)
+                    Task.CompletedTask)
+            )
+            |> ignore
 
 // ──────────────────────────────────────────────────────────────────────────────
 // A settable TimeProvider: proves a custom application clock stays authoritative
@@ -211,6 +338,17 @@ module Phase5GrainTypes =
 
     [<Literal>]
     let Context = "phase5.context"
+
+    /// <summary>
+    /// A definition that declares no reminders at all — the "redeployed definition which dropped
+    /// the declaration" half of the rename/removal migration.
+    /// </summary>
+    [<Literal>]
+    let StaleReminder = "phase5.reminder.stale"
+
+/// <summary>The reminder name a previous deployment is imagined to have declared.</summary>
+[<Literal>]
+let GhostReminderName = "ghost"
 
 /// <summary>Every declared reminder period on this fixture; short enough to observe fast.</summary>
 [<RequireQualifiedAccess>]
@@ -276,6 +414,86 @@ let private reminderDefinition =
     }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Stale-reminder grain: the rename/removal migration
+// ──────────────────────────────────────────────────────────────────────────────
+
+type StaleReminderActor = private StaleReminderActor of unit
+
+[<NoEquality; NoComparison>]
+type StaleReminderApi =
+    { ping: unit -> Task<unit>
+      /// Registers the durable reminder the *previous* deployment declared.
+      registerGhost: unit -> Task<unit>
+      /// The documented migration: unregister the stale name explicitly.
+      unregisterGhost: unit -> Task<bool>
+      /// The reminder names still registered for this grain in the reminder table.
+      registeredNames: unit -> Task<string list> }
+
+type StaleReminderState = { pings: int }
+
+let private staleReminderContract =
+    grainContract<StaleReminderActor, string, StaleReminderApi> () {
+        grainType Phase5GrainTypes.StaleReminder
+        stringKey
+        readOnly (_.registeredNames)
+    }
+
+/// <remarks>
+/// This definition declares NO reminder, which is exactly the state of the world after a
+/// redeployment that dropped an <c>onReminder</c> declaration: the durable registration in the
+/// reminder table outlives the code that declared it. The functional context surface exposes no
+/// reminder API by design, so the migration goes through the stock
+/// <see cref="T:Orleans.Timers.IReminderRegistry"/> resolved from <c>context.services</c> — the
+/// same registry the runtime's own <c>RegisterOrUpdateReminder</c> reconciliation uses.
+/// </remarks>
+let private staleReminderDefinition =
+    grainFor staleReminderContract {
+        defaultState (fun () -> { pings = 0 })
+
+        onActivate (fun context state ->
+            task {
+                Phase5Probe.recordActivation (string context.grainId)
+                return state
+            })
+
+        handle (_.ping) (fun _ state () -> task { return { pings = state.pings + 1 }, () })
+
+        handle (_.registerGhost) (fun context state () ->
+            task {
+                let registry = context.services.GetRequiredService<IReminderRegistry>()
+
+                let! _ =
+                    registry.RegisterOrUpdateReminder(
+                        context.grainId,
+                        GhostReminderName,
+                        TimeSpan.Zero,
+                        Phase5Timing.ReminderPeriod
+                    )
+
+                return state, ()
+            })
+
+        handle (_.unregisterGhost) (fun context state () ->
+            task {
+                let registry = context.services.GetRequiredService<IReminderRegistry>()
+                let! existing = registry.GetReminder(context.grainId, GhostReminderName)
+
+                if obj.ReferenceEquals(existing, null) then
+                    return state, false
+                else
+                    do! registry.UnregisterReminder(context.grainId, existing)
+                    return state, true
+            })
+
+        handle (_.registeredNames) (fun context state () ->
+            task {
+                let registry = context.services.GetRequiredService<IReminderRegistry>()
+                let! reminders = registry.GetReminders context.grainId
+                return state, [ for reminder in reminders -> reminder.ReminderName ]
+            })
+    }
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Timer grains: creation, whole-state replacement, KeepAlive, and 4-stage deactivation order
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -307,8 +525,8 @@ let private timerDefinition =
                 return state
             })
 
-        onDeactivate (fun _context _reason _state ->
-            task { Phase5Probe.recordStage "deactivate-hook" })
+        onDeactivate (fun context _reason _state ->
+            task { Phase5Probe.recordStage "deactivate-hook" (string context.grainId) })
 
         onTimer
             "poll"
@@ -450,6 +668,8 @@ type ContextApi =
     { clock: unit -> Task<DateTimeOffset>
       echoRequestContext: unit -> Task<string>
       roundTripRequestContext: unit -> Task<string * string>
+      /// Waits for the supplied number of milliseconds on the invocation's own token.
+      waitCancel: int -> Task<string>
       boom: unit -> Task<unit> }
 
 type ContextState = { touched: bool }
@@ -461,6 +681,10 @@ let private contextContract =
         readOnly (_.clock)
         readOnly (_.echoRequestContext)
         readOnly (_.roundTripRequestContext)
+        // Read-only requests interleave with each other (proven in SeamProof item 7), which is
+        // what lets several waitCancel calls be genuinely in flight on ONE activation at once —
+        // the only arrangement in which a cancellation could leak between invocation contexts.
+        readOnly (_.waitCancel)
     }
 
 let private contextDefinition =
@@ -497,15 +721,32 @@ let private contextDefinition =
                 return state, (before, after)
             })
 
+        handle (_.waitCancel) (fun context state (milliseconds: int) ->
+            task {
+                Phase5Probe.enterCall (string context.grainId)
+
+                try
+                    do! Task.Delay(milliseconds, context.cancellationToken)
+                    Phase5Probe.recordCallOutcome (string context.grainId) "completed"
+                    return state, "completed"
+                with :? OperationCanceledException ->
+                    Phase5Probe.recordCallOutcome (string context.grainId) "cancelled"
+                    return state, "cancelled"
+            })
+
         handle (_.boom) (fun _ state () -> task { return raise (ApplicationException "boom-for-tracing") })
     }
 
 let reminderRef = FunctionalGrain.ref reminderContract
+let staleReminderRef = FunctionalGrain.ref staleReminderContract
 let timerRef = FunctionalGrain.ref timerContract
 let timerKeepAliveRef = FunctionalGrain.ref timerKeepAliveContract
 let collectionRef = FunctionalGrain.ref collectionContract
 let collectionEphemeralRef = FunctionalGrain.ref collectionEphemeralContract
 let contextRef = FunctionalGrain.ref contextContract
+
+/// <summary>The raw reference exposes <c>callCancellable</c>, which the cancellation-leak test needs.</summary>
+let contextRawRef = FunctionalGrain.rawRef contextContract
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cluster
@@ -535,6 +776,7 @@ type Phase5SiloConfigurator() =
             |> ignore
 
             siloBuilder.AddFunctionalGrain reminderDefinition |> ignore
+            siloBuilder.AddFunctionalGrain staleReminderDefinition |> ignore
             siloBuilder.AddFunctionalGrain timerDefinition |> ignore
             siloBuilder.AddFunctionalGrain timerKeepAliveDefinition |> ignore
             siloBuilder.AddFunctionalGrain collectionDefinition |> ignore
@@ -542,6 +784,11 @@ type Phase5SiloConfigurator() =
             siloBuilder.AddFunctionalGrain contextDefinition |> ignore
 
             siloBuilder.Services.AddSingleton<ILoggerProvider, Phase5LogProvider>() |> ignore
+
+            // Stage 2 of the deactivation order: a per-activation lifecycle observer whose stop
+            // callback runs after the stage that invokes the functional onDeactivate hook.
+            siloBuilder.Services.AddSingleton<IConfigureGrainContextProvider, Phase5StopStageWitness>()
+            |> ignore
 
             // Debug-level messages are filtered out by the default Information minimum, and
             // Phase5LogCapture specifically needs the runtime's Debug-level dispatch/timer-
@@ -569,13 +816,17 @@ type Phase5ClusterFixture() =
     member _.Client = cluster.Client
 
     member _.Reminder(key: string) = reminderRef cluster.Client key
+    member _.StaleReminder(key: string) = staleReminderRef cluster.Client key
     member _.Timer(key: string) = timerRef cluster.Client key
     member _.TimerKeepAlive(key: string) = timerKeepAliveRef cluster.Client key
     member _.Collection(key: string) = collectionRef cluster.Client key
     member _.CollectionEphemeral(key: string) = collectionEphemeralRef cluster.Client key
     member _.Context(key: string) = contextRef cluster.Client key
+    member _.ContextRaw(key: string) = contextRawRef cluster.Client key
 
     member _.ReminderId(key: string) = $"{Phase5GrainTypes.Reminder}/{key}"
+    member _.StaleReminderId(key: string) = $"{Phase5GrainTypes.StaleReminder}/{key}"
+    member _.ContextId(key: string) = $"{Phase5GrainTypes.Context}/{key}"
     member _.TimerId(key: string) = $"{Phase5GrainTypes.Timer}/{key}"
     member _.TimerKeepAliveId(key: string) = $"{Phase5GrainTypes.TimerKeepAlive}/{key}"
     member _.CollectionId(key: string) = $"{Phase5GrainTypes.Collection}/{key}"
