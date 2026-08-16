@@ -2,6 +2,11 @@
 
 Orleans.FSharp offers three serialization modes. Choose based on your needs — you can switch at any time.
 
+> **Note.** `AddFSharpGrain`, the `grain { }` CE and `GrainDefinition<_,_>` referenced below now
+> carry `[<Obsolete>]` (warning, not error). Codec registration works the same way under the
+> functional grain runtime -- `AddFunctionalGrain` also registers `FSharpBinaryCodec` -- see
+> [functional-grains.md](functional-grains.md).
+
 ## Quick Comparison
 
 | Mode | CE Keyword | Speed | C# Project Needed? | Attributes? | Best For |

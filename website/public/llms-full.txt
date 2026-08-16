@@ -8,8 +8,15 @@ License: MIT
 
 ## Summary
 Orleans.FSharp provides an idiomatic F# developer surface over Microsoft Orleans.
-It emphasizes computation-expression based authoring (`grain {}`, `siloConfig {}`, `clientConfig {}`, `eventSourcedGrain {}`),
+It emphasizes computation-expression based authoring (`siloConfig {}`, `clientConfig {}`, `eventSourcedGrain {}`),
 immutable state transitions, typed message flows, and reduced C# boilerplate.
+
+Grain authoring has two models. The current one is the functional grain runtime
+(`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`).
+The original `grain {}` computation expression and its `FSharpGrain.*` handle module still compile
+and run, but their public surface now carries `[<Obsolete>]` (warning, not error); new code should
+use the functional runtime. See https://neftedollar.com/orleans-fsharp/functional-grains/ for the
+before/after mapping of every deprecated entry point.
 
 ## Key Claims
 - Orleans 10 parity
@@ -18,15 +25,16 @@ immutable state transitions, typed message flows, and reduced C# boilerplate.
 
 ## Recommended Navigation
 1. Getting Started: https://neftedollar.com/orleans-fsharp/getting-started/
-2. Grain Definition: https://neftedollar.com/orleans-fsharp/grain-definition/
-3. Silo Configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
-4. Client Configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
-5. Serialization: https://neftedollar.com/orleans-fsharp/serialization/
-6. Streaming: https://neftedollar.com/orleans-fsharp/streaming/
-7. Event Sourcing: https://neftedollar.com/orleans-fsharp/event-sourcing/
-8. Testing: https://neftedollar.com/orleans-fsharp/testing/
-9. API Reference: https://neftedollar.com/orleans-fsharp/api-reference/
-10. FAQ: https://neftedollar.com/orleans-fsharp/faq/
+2. Functional Grain Runtime (current grain authoring model): https://neftedollar.com/orleans-fsharp/functional-grains/
+3. Grain Definition (deprecated `grain {}` model): https://neftedollar.com/orleans-fsharp/grain-definition/
+4. Silo Configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
+5. Client Configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
+6. Serialization: https://neftedollar.com/orleans-fsharp/serialization/
+7. Streaming: https://neftedollar.com/orleans-fsharp/streaming/
+8. Event Sourcing: https://neftedollar.com/orleans-fsharp/event-sourcing/
+9. Testing: https://neftedollar.com/orleans-fsharp/testing/
+10. API Reference: https://neftedollar.com/orleans-fsharp/api-reference/
+11. FAQ: https://neftedollar.com/orleans-fsharp/faq/
 
 ## External Links
 - GitHub repository: https://github.com/Neftedollar/orleans-fsharp

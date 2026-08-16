@@ -7,6 +7,12 @@ description: Step-by-step guide to building distributed systems with Orleans.FSh
 
 Orleans.FSharp provides idiomatic F# computation expressions for Microsoft Orleans, the virtual actor framework. This guide walks you through the entire process — from installing the .NET SDK to running a production-ready silo with grains, state persistence, and property-based tests.
 
+> **Note.** This tutorial is written against the `grain { }` CE, which now carries `[<Obsolete>]`
+> (warning, not error) -- every step still works exactly as written. For the current grain authoring
+> model (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) see
+> [functional-grains.md](functional-grains.md); the silo, persistence and testing steps are the same
+> under both models.
+
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) or later
@@ -181,13 +187,13 @@ Orleans.FSharp supports all Microsoft Orleans production features:
 - **Security**: TLS/mTLS, call filters, request context propagation
 - **Observability**: OpenTelemetry, health checks, Orleans Dashboard
 
-See the [Silo Configuration](/orleans-fsharp/guides/silo-configuration/) and [Security](/orleans-fsharp/guides/security/) guides for production setup.
+See the [Silo Configuration](/orleans-fsharp/silo-configuration/) and [Security](/orleans-fsharp/security/) guides for production setup.
 
 ## Next steps
 
-- [Grain Definition](/orleans-fsharp/guides/grain-definition/) -- all 31 keywords in the `grain {}` CE
-- [Event Sourcing](/orleans-fsharp/guides/event-sourcing/) -- CQRS with `eventSourcedGrain {}`
-- [Testing](/orleans-fsharp/guides/testing/) -- TestHarness, GrainMock, and property tests
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- all 31 keywords in the `grain {}` CE
+- [Event Sourcing](/orleans-fsharp/event-sourcing/) -- CQRS with `eventSourcedGrain {}`
+- [Testing](/orleans-fsharp/testing/) -- TestHarness, GrainMock, and property tests
 - [API Reference](/orleans-fsharp/api-reference/) -- complete module and function reference
 
 <script type="application/ld+json">
@@ -222,8 +228,8 @@ See the [Silo Configuration](/orleans-fsharp/guides/silo-configuration/) and [Se
     },
     {
       "@type": "HowToStep",
-      "name": "Implement the grain with the grain {} computation expression",
-      "text": "Use the grain {} CE with defaultState, handle, and persist keywords to define grain behavior declaratively.",
+      "name": "Implement the grain with the grain {} computation expression (deprecated; see the functional grain runtime)",
+      "text": "Use the grain {} CE with defaultState, handle, and persist keywords to define grain behavior declaratively. This CE is deprecated; new code should use the functional grain runtime (grainContract / grainFor / AddFunctionalGrain).",
       "position": 4
     },
     {

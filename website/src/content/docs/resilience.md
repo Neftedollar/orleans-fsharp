@@ -7,6 +7,11 @@ description: "Polly v8 retry, circuit-breaker, and timeout patterns for grain ca
 
 **Retry, circuit-breaker, and timeout strategies for Orleans grain calls, powered by Polly v8.**
 
+> **Note.** The "Wrapping typed `FSharpGrain.ask` calls" section uses the deprecated
+> `FSharpGrain.*` handle module, which now carries `[<Obsolete>]` (warning, not error). The
+> resilience policies themselves are model-agnostic and wrap functional-runtime calls the same way;
+> see [functional-grains.md](functional-grains.md).
+
 ## What you'll learn
 
 - How to retry transient grain failures automatically

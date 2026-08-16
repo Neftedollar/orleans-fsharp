@@ -5,6 +5,11 @@ description: Comparison of Orleans.FSharp, raw C# Microsoft Orleans, Akkling (Ak
 
 **Choosing an actor framework for F# distributed systems?** This page compares Orleans.FSharp with the main alternatives: using Microsoft Orleans directly from C#/F#, Akkling (F# API for Akka.NET), and Proto.Actor.
 
+> **Note.** The `grain { }` CE used in the F#-API comparisons below now carries `[<Obsolete>]`
+> (warning, not error); the current grain authoring model is the functional grain runtime described
+> in [functional-grains.md](functional-grains.md). Both ship in the same packages, so the
+> package-level comparison is unchanged.
+
 ## Quick comparison
 
 | | Orleans.FSharp | C# Orleans (from F#) | Akkling (Akka.NET) | Proto.Actor |
@@ -167,4 +172,4 @@ Orleans.FSharp adds no measurable overhead to Microsoft Orleans. The computation
 - [Getting Started](/orleans-fsharp/getting-started/) -- zero to working grain in 15 minutes
 - [How To](/orleans-fsharp/how-to/) -- step-by-step distributed system tutorial
 - [FAQ](/orleans-fsharp/faq/) -- common questions about Orleans.FSharp
-- [Grain Definition](/orleans-fsharp/guides/grain-definition/) -- complete `grain {}` CE reference
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- complete `grain {}` CE reference

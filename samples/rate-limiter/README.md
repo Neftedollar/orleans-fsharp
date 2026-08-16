@@ -4,6 +4,11 @@ A distributed rate limiter using the token bucket algorithm, implemented as
 an Orleans grain. Each grain instance manages rate limiting for a specific key
 (e.g., user ID, API key, IP address).
 
+> **Note.** This sample is written against the `grain { }` CE, which now carries `[<Obsolete>]`
+> (warning, not error) -- it still compiles and runs as described. The pattern it demonstrates is
+> independent of the authoring model; for the current one see
+> [docs/functional-grains.md](../../docs/functional-grains.md).
+
 ## Algorithm
 
 The token bucket works as follows:

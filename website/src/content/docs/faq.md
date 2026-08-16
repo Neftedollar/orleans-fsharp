@@ -3,6 +3,12 @@ title: Frequently Asked Questions
 description: Common questions about Orleans.FSharp — the idiomatic F# API for Microsoft Orleans
 ---
 
+> **Note.** Grain authoring has two models. The `grain { }` CE shown on this page still compiles and
+> runs, but its public surface now carries `[<Obsolete>]` (warning, not error); new code should use
+> the functional grain runtime (`grainContract` / `grainFor` / `FunctionalGrain.ref` /
+> `AddFunctionalGrain`). See [functional-grains.md](functional-grains.md). `siloConfig { }`,
+> `clientConfig { }` and `eventSourcedGrain { }` are unaffected.
+
 ## What is Orleans.FSharp?
 
 Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (`grain {}`, `siloConfig {}`, `eventSourcedGrain {}`) that let you define distributed actors using pure F# — no C# boilerplate needed. It has Orleans 10 parity and 1500+ tests across unit and integration suites.
@@ -154,7 +160,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What is Orleans.FSharp?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (grain {}, siloConfig {}, eventSourcedGrain {}) that let you define distributed actors using pure F# — no C# boilerplate needed. It has Orleans 10 parity and 1500+ tests."
+        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (siloConfig {}, eventSourcedGrain {}) and the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) that let you define distributed actors using pure F# — no C# boilerplate needed. The original grain {} computation expression still works but is deprecated. It has Orleans 10 parity and 1500+ tests."
       }
     },
     {
@@ -162,7 +168,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "How do I use Microsoft Orleans with F#?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the grain {} computation expression to define grains declaratively. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.Abstractions provides the C# shim for Orleans proxy generation."
+        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) to define grains declaratively; the older grain {} computation expression still works but is deprecated. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.Abstractions provides the C# shim for Orleans proxy generation."
       }
     },
     {

@@ -7,6 +7,12 @@ description: "TestHarness, GrainMock, GrainArbitrary, FsCheck, and log capture."
 
 **Guide to testing Orleans.FSharp grains.**
 
+> **Note.** The `FSharpGrain.ref`/`send` sections below, and the `getFSharpGrain*` /
+> `GrainMock.withFSharpGrain*` helpers they use, test the deprecated `grain { }` model and now carry
+> `[<Obsolete>]` (warning, not error). Functional-runtime grains are tested against a TestingHost
+> silo with `AddFunctionalGrain` + `FunctionalGrain.ref harness.Client`; see
+> [functional-grains.md](functional-grains.md).
+
 ## What you'll learn
 
 - How to test grain handler logic directly (pure function testing)

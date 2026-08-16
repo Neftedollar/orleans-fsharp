@@ -3,6 +3,12 @@
 Distributed transactions across multiple grains using an orchestrator grain
 that coordinates compensating actions on failure.
 
+
+> **Note.** This sample is written against the `grain { }` CE, which now carries `[<Obsolete>]`
+> (warning, not error) -- it still compiles and runs as described. The pattern it demonstrates is
+> independent of the authoring model; for the current one see
+> [docs/functional-grains.md](../../docs/functional-grains.md).
+
 ## Architecture
 
 ```

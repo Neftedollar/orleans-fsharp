@@ -1,3 +1,8 @@
+---
+title: "Functional Grain Runtime"
+description: "A second, complete authoring model: user-authored API records instead of C# CodeGen interfaces."
+---
+
 # Functional Grain Runtime
 
 **A second, complete authoring model: user-authored API records instead of C# CodeGen interfaces.**

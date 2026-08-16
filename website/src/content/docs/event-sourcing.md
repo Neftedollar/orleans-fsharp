@@ -334,6 +334,6 @@ let config = siloConfig {
 
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- standard `grain { }` CE for non-event-sourced grains
+- [Grain Definition](grain-definition.md) -- standard `grain { }` CE for non-event-sourced grains (deprecated; see [functional-grains.md](functional-grains.md))
 - [Testing](testing.md) -- property testing of event-sourced grains
 - [Advanced](advanced.md) -- transactions, state migration, and more

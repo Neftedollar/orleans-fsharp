@@ -195,6 +195,37 @@ jobs:
       - name: Run all integration tests
         run: dotnet test tests/Orleans.FSharp.Integration --verbosity quiet
 
+  # ── Documentation invariants ──────────────────────────────────────
+  docs-deprecation-signal:
+    name: Docs Deprecation Signal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      # spec 003: a doc that teaches the deprecated grain{} model without naming its
+      # replacement is a shipped false signal. This re-derives the affected file set on
+      # every run instead of asserting a count, so a NEW un-signalled doc fails the PR —
+      # two earlier rounds each claimed "the N docs that still teach grain{}" and each
+      # claim was wrong. See scripts/check-deprecation-signal.py for the exemption list.
+      - name: Every doc teaching grain{} points at the functional runtime
+        run: python3 scripts/check-deprecation-signal.py
+      # docs/ and website/src/content/docs/ are hand-maintained twins with nothing keeping
+      # them in sync, which is how four deprecation banners landed in docs/ only while the
+      # live site kept teaching the deprecated model unmarked.
+      - name: docs/ and its published mirror agree
+        run: python3 scripts/check-docs-mirror.py
+      # The published site is what ships; docs.yml only builds it on push to main, so a
+      # PR that adds a page, a sidebar entry or a cross-doc link gets no feedback there.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Build the docs site
+        working-directory: website
+        run: npm ci && npm run build
+      - name: No broken internal links in the built site
+        run: python3 scripts/check-docs-links.py
+
   # ── Security scanning ─────────────────────────────────────────────
   secrets-scan:
     name: Secrets Detection

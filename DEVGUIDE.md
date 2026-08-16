@@ -251,6 +251,13 @@ test "handleState should auto-box state in result" {
 
 ## Understanding the Universal Grain Pattern
 
+> **Deprecated authoring model.** This section describes the `grain { }` / `AddFSharpGrain` cluster,
+> whose public surface now carries `[<Obsolete>]` (warning, not error). The internal pieces named
+> below -- `FSharpGrainImpl` and `UniversalGrainHandlerRegistry` -- are reachable only through those
+> already-obsolete entry points, so they are not attributed themselves; see
+> [docs/functional-grains.md](docs/functional-grains.md) for the replacement authoring model and the
+> before/after mapping table. The section is kept because contributors still maintain this code.
+
 ### Traditional Orleans Pattern
 
 ```csharp

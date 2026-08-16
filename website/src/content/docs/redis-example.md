@@ -7,6 +7,12 @@ description: "End-to-end shopping cart with Redis storage, clustering, and remin
 
 **End-to-end guide — Redis storage, clustering, and reminders for a real-world shopping cart.**
 
+> **Note.** This walkthrough is written against the `grain { }` CE, `AddFSharpGrain` and the
+> `FSharpGrain.ref`/`send`/`post`/`ask` handle module, which now carry `[<Obsolete>]` (warning, not
+> error) -- the example still compiles and runs exactly as described. The Redis storage and
+> clustering configuration is unaffected. For the current grain authoring model see
+> [functional-grains.md](functional-grains.md).
+
 ## What you'll build
 
 A shopping cart service where each cart is a durable Orleans grain backed by Redis.

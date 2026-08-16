@@ -7,6 +7,11 @@ description: "Zero to working grain in 15 minutes."
 
 **Zero to working grain in 15 minutes.**
 
+> **Note.** This guide uses the `grain { }` CE and the universal `FSharpGrain.ref`/`send` pattern,
+> which now carry `[<Obsolete>]` (warning, not error) -- they still work exactly as described. For
+> the current authoring model (`grainContract` / `grainFor` / `FunctionalGrain.ref` /
+> `AddFunctionalGrain`), see [functional-grains.md](functional-grains.md).
+
 ## What you'll learn
 
 - How to define a grain with plain F# types — no attributes, no C# stubs

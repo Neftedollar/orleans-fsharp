@@ -2,6 +2,10 @@
 
 **Complete guide to the `siloConfig { }` computation expression.**
 
+> **Note.** `siloConfig { }` itself is current and not deprecated. The few `grain { persist ... }`
+> snippets on this page illustrate the deprecated `grain { }` CE, which now carries `[<Obsolete>]`
+> (warning, not error); see [functional-grains.md](functional-grains.md) for its replacement.
+
 ## What you'll learn
 
 - How to configure clustering, storage, streaming, and reminders
