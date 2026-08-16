@@ -728,7 +728,7 @@ its custom operations.
 
 | Setting | Rule |
 |---|---|
-| `grainType` | Required once; non-blank and NUL-free. |
+| `grainType` | Optional; defaults to the actor brand's CLR simple name. Non-blank and NUL-free when explicit. |
 | `version` | Defaults to `1`; positive `int`. |
 | operation ID | Record-field name by default; ordinal and case-sensitive. |
 | key | Exactly one native or mapped key operation. |
@@ -826,9 +826,25 @@ GrainId(GrainType(contract.grainType), keyCodec.encode(domainKey))
 ```
 
 Changing `grainType` or key encoding changes routing and storage identity.
-Changing F# module, record, or actor-brand CLR names leaves identity unchanged
-when the explicit grain type and encoded key remain unchanged. Contract version
-and operation ID are not storage-key components.
+When the grain type is explicit, changing F# module, record, or actor-brand
+CLR names leaves identity unchanged, provided the explicit grain type and
+encoded key remain unchanged. Contract version and operation ID are not
+storage-key components.
+
+When `grainType` is omitted, it defaults to the actor brand's CLR simple name,
+so renaming the brand type changes the *derived* `grainType` string and
+therefore changes routing and storage identity exactly as editing an explicit
+`grainType` would -- the CLR-rename independence above holds only for an
+explicit grain type. This is why a definition that attaches `stateFrom`,
+`usePersistentState`, or declares `onReminder` requires its contract to carry
+an explicit `grainType`: a brand rename would otherwise silently move routing
+and storage identity, orphaning persisted state and losing durable reminders
+registered under the old name. Ephemeral definitions (none of the three) have
+nothing durable to orphan and may rely on the derived default. The derived
+name is also unqualified by namespace: two actor brands with the same CLR
+simple name in different namespaces derive the same grain type and collide
+under the same grain-type-uniqueness rule that already rejects two explicit
+contracts sharing a `grainType` (see "Silo registry and manifest").
 
 ## Construction and invocation stages
 
@@ -904,7 +920,11 @@ Definition sealing requires:
   and one stored CLR type per name;
 - a strictly positive `collectionAge` when configured;
 - unique non-blank reminder names;
-- unique non-blank timer names; and
+- unique non-blank timer names;
+- an explicit contract `grainType` whenever the definition attaches `stateFrom`,
+  `usePersistentState`, or declares `onReminder` -- a derived grain type moves
+  when the actor brand is renamed, which would silently orphan persisted state
+  or lose durable reminders; and
 - valid policy and timer combinations.
 
 A repeated singleton operation is a definition error rather than a replacement
@@ -1714,16 +1734,24 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 
 ### Contract, identity, and manifest tests
 
-- Default/overridden operation IDs, duplicate IDs/policies, required grain type,
-  positive version, and policy combinations behave as specified.
+- Default/overridden operation IDs, duplicate IDs/policies, an omitted grain
+  type deriving the actor brand's CLR simple name (with a generic or nested
+  brand rejected), positive version, and policy combinations behave as
+  specified.
 - Native string, Guid, int64, and compound operations produce the same `GrainId`
   representations as the corresponding stock Orleans key helpers.
 - Mapped key operations pass domain/native round-trip, canonicalization,
   injectivity, and malformed-input tests; compound native keys are exactly
   `Guid * string` or `int64 * string`.
 - Missing or repeated native/mapped key operations fail contract construction.
-- Explicit grain/interface IDs survive CLR/module renames; a changed grain type
-  or key codec changes `GrainId`.
+- Explicit grain/interface IDs survive CLR/module renames, while a derived
+  grain type moves with an actor-brand rename; a changed grain type or key
+  codec changes `GrainId`.
+- A definition that attaches `stateFrom`, `usePersistentState`, or declares
+  `onReminder` fails sealing and fails silo registration when its contract's
+  grain type is derived rather than explicit; two actor brands that derive the
+  same grain type from a colliding CLR simple name fail registration under the
+  existing grain-type-uniqueness rule.
 - Equal keys under different grain types select distinct activations.
 - Different definitions with the same actor brand fail registration; different
   contracts or definitions with the same explicit grain type also fail.
