@@ -313,6 +313,51 @@ needs no per-project C# bridge assembly at all. The legacy per-grain-interface d
 referenced back from it; the sample prints an explicit note and skips them, and they are exercised
 by `tests/Orleans.FSharp.Integration`, which does load that bridge assembly.
 
+## Migrating from the grain { } CE (Task 8 deprecation pass)
+
+The universal message-passing surface built on the `grain { }` CE -- the builder itself, the
+`GrainDefinition`/`GrainContext` types it produces, `FSharpGrainAttribute`,
+`AddFSharpGrain(sFromAssembly)`, the `FSharpGrain.*` handle module, `Timers`, and `Reminder` --
+is superseded by this functional runtime and now carries `[<Obsolete>]` (warning, not error).
+Old code keeps compiling and running unchanged; every example under `examples/`, the sample
+under `src/Orleans.FSharp.Sample`, `testbed/`, and the `orleans-fsharp` template carry a small
+functional-runtime twin grain beside the old one so the two authoring styles can be compared
+side by side in a real project.
+
+Before/after mapping:
+
+| Old (`grain { }` CE) | New (functional runtime) |
+|---|---|
+| `grain { defaultState ...; handle ...; persist "Default" }` | `grainFor contract { defaultState (fun () -> ...); handle (_.op) handler; usePersistentState ... }` |
+| `GrainDefinition<'State,'Message>` / hand-written grain interface | `grainContract<'Actor,'Key,'Api> () { grainType ...; version ...; <key op> }` defining an `'Api` record of functions |
+| `[<FSharpGrain>]` + `AddFSharpGrainsFromAssembly` | `AddFunctionalGrain definition` (no attribute-scan step) |
+| `AddFSharpGrain<'State,'Message>(definition)` | `AddFunctionalGrain definition` on the silo builder; `AddFunctionalGrainClient` on a client-only process |
+| `FSharpGrain.ref<'State,'Message> factory key` + `FSharpGrain.send/post/ask` | `FunctionalGrain.ref contract factory key`, then call the typed API record's function directly |
+| `onTimer "name" dueTime period handler` (in `grain { }`) | `onTimer` operation in `grainFor { }` |
+| `onReminder "name" handler` (in `grain { }`) | `onReminder` operation in `grainFor { }` |
+| `Timers.register` / `Timers.registerWithState` (class grain) | `Grain.RegisterGrainTimer` directly -- unchanged, this is a class-grain-native Orleans API, not something the functional runtime replaces |
+| `Reminder.register` / `.unregister` / `.get` (class grain) | `Grain.RegisterOrUpdateReminder` / `.UnregisterReminder` / `.GetReminder` directly -- likewise class-grain-native |
+| `persist "Default"` | `usePersistentState` with a `PersistentState.create<'State> "name" "provider"` descriptor |
+| one-way `FSharpGrain.post` | `oneWay (_.op)` in the contract |
+| `handleWithContext` / `GrainContext.getService` etc. | the `context` parameter passed to every `handle` callback (`context.services`, `context.grainFactory`, ...) |
+
+**Capability gap -- no migration path today:** `grain { }`'s `onLifecycleStage` operation let a
+grain hook an *arbitrary* `GrainLifecycleStage` (`First`/`SetupState`/`Activate`/`Last`/any other
+int) with a `CancellationToken -> Task<unit>` callback. `grainFor { }` has `onActivate` /
+`onDeactivate` (fixed points in the lifecycle) but no equivalent for hooking an arbitrary
+numbered stage. A grain that genuinely needs a specific lifecycle stage (not just "on
+activate"/"on deactivate") has no functional-runtime equivalent yet and must stay on the
+`grain { }` CE, or hook the stage on a class grain directly via `ILifecycleParticipant<IGrainLifecycle>`.
+`InterleaveMessage` has no separate capability gap: it dies with the builder, since the
+functional runtime's `alwaysInterleave (_.op)` contract operation covers the same need per
+operation rather than per message type.
+
+Two other `grain { }`-adjacent pieces are **not** part of this deprecation and are unaffected:
+`GrainRef.fs` (the hand-written-interface style used by `ICounterGrain`, `IOrderGrain`, etc. --
+a third authoring style, not superseded by anything here) and `RequestCtx.set/get/getOrDefault/remove`
+(same-static wrappers that work unchanged inside functional handlers; `RequestCtx.withValue` has
+no functional-runtime equivalent).
+
 ## See also
 
 - [Grain Definition](grain-definition.md) -- the original `grain { }` CE / CodeGen authoring model
