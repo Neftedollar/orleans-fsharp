@@ -12,7 +12,7 @@ persistence
 Implement a functional-grain runtime in which an application contract consists
 of:
 
-1. a phantom actor type;
+1. a phantom actor type, called the actor brand;
 2. a domain key type with an explicit Orleans key codec;
 3. a public F# record whose fields are remote operations;
 4. immutable contract metadata; and
@@ -96,30 +96,56 @@ type RoomApi =
 
 [<RequireQualifiedAccess>]
 module RoomApi =
-    let contract : GrainContract<RoomActor, RoomId, RoomApi> =
+    let contract =
         grainContract<RoomActor, RoomId, RoomApi>() {
             grainType "chat.room"
             version 1
-            stringKey RoomId.value RoomId.create
+            stringKeyMapped RoomId.value RoomId.create
 
             readOnly (_.history)
             oneWay (_.typing)
             alwaysInterleave (_.typing)
         }
 
-    let ref : IGrainFactory -> RoomId -> RoomApi =
-        FunctionalGrain.ref contract
-
-    let rawRef :
-        IGrainFactory ->
-        RoomId ->
-        FunctionalGrainRef<RoomActor, RoomId, RoomApi> =
-        FunctionalGrain.rawRef contract
+    let ref = FunctionalGrain.ref contract
+    let rawRef = FunctionalGrain.rawRef contract
 ```
 
 `[<NoEquality; NoComparison>]` is recommended for records of functions, but is
 not required by the runtime. Contract policies and handlers identify operations
 with ordinary record-field projections such as `_.history` and `_.join`.
+
+`stringKeyMapped` keeps `RoomId` as the public key type and supplies its two-way
+mapping to Orleans' native string key. `readOnly` selects read-only scheduling;
+`oneWay` requires a `Task<unit>` field and acknowledges only the local send;
+`alwaysInterleave` permits that state-neutral one-way request to interleave.
+
+The compiler infers these complete types without annotations:
+
+```fsharp
+contract : GrainContract<RoomActor, RoomId, RoomApi>
+ref : IGrainFactory -> RoomId -> RoomApi
+rawRef :
+    IGrainFactory ->
+    RoomId ->
+    FunctionalGrainRef<RoomActor, RoomId, RoomApi>
+```
+
+`contract`, `ref`, and `rawRef` are ordinary values. Their module and parameter
+order are application choices. For example, this binding remains fully
+inferred and presents the key before the factory:
+
+```fsharp
+module RoomClient =
+    let ref roomId factory = FunctionalGrain.ref RoomApi.contract factory roomId
+    let rawRef roomId factory =
+        FunctionalGrain.rawRef RoomApi.contract factory roomId
+```
+
+Application calls normally use `ref`. `rawRef` returns the typed wrapper which
+exposes `key`, the same cached `api` record, selector-based `call`, and
+`callCancellable` for cooperative remote cancellation. Both functions address
+the same grain identity and use the same transport path.
 
 ### Server definition
 
@@ -136,6 +162,9 @@ type RoomState =
       members : Set<UserId>
       messages : ChatMessage list }
 
+let roomState =
+    PersistentState.create<RoomState> "state" "Default"
+
 let roomDefinition =
     grainFor RoomApi.contract {
         defaultState (fun () ->
@@ -143,15 +172,19 @@ let roomDefinition =
               members = Set.empty
               messages = [] })
 
-        persist "Default"
+        stateFrom roomState
         collectionAge (TimeSpan.FromMinutes 30)
 
-        handle (_.join) (fun _context state userId ->
+        handle (_.join) (fun context state userId ->
             task {
-                return
+                let next =
                     { state with
-                        members = Set.add userId state.members },
-                    ()
+                        members = Set.add userId state.members }
+
+                let storage = context.persistentState roomState
+                storage.State <- next
+                do! storage.WriteStateAsync()
+                return next, ()
             })
 
         handle (_.say) (fun context state post ->
@@ -168,11 +201,15 @@ let roomDefinition =
 
                     let id = state.nextMessageId
 
-                    return
+                    let next =
                         { state with
                             nextMessageId = id + 1L
-                            messages = message :: state.messages },
-                        Ok id
+                            messages = message :: state.messages }
+
+                    let storage = context.persistentState roomState
+                    storage.State <- next
+                    do! storage.WriteStateAsync()
+                    return next, Ok id
             })
 
         handle (_.history) (fun _context state request ->
@@ -195,6 +232,13 @@ let roomDefinition =
             })
     }
 ```
+
+`stateFrom` selects the loaded primary holder; it does not enable an automatic
+save policy. `context.persistentState roomState` returns its typed
+`IPersistentState<RoomState>`. Returning `next` publishes it for the activation,
+while the two explicit `WriteStateAsync` calls above are the only storage writes
+in those handlers. `collectionAge` controls when an idle in-memory activation
+becomes eligible for Orleans collection; it does not control storage writes.
 
 ### Registration and calls
 
@@ -251,6 +295,16 @@ open Orleans.Hosting
 open Orleans.Runtime
 
 [<Sealed>]
+type PersistentStateRef<'State>
+
+[<RequireQualifiedAccess>]
+module PersistentState =
+    val create<'State> :
+        stateName: string ->
+        providerName: string ->
+        PersistentStateRef<'State>
+
+[<Sealed>]
 type FunctionalGrainContext<'Actor, 'Key> =
     member key : 'Key
     member grainId : GrainId
@@ -262,6 +316,9 @@ type FunctionalGrainContext<'Actor, 'Key> =
     member cancellationToken : CancellationToken
     member deactivateOnIdle : unit -> unit
     member delayDeactivation : TimeSpan -> unit
+    member persistentState<'State> :
+        state: PersistentStateRef<'State> ->
+        IPersistentState<'State>
     member tryGetRequestContext<'Value> : name: string -> 'Value option
     member setRequestContext<'Value> : name: string -> value: 'Value -> unit
     member removeRequestContext : name: string -> unit
@@ -373,6 +430,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> =
 
     [<CustomOperation("stringKey")>]
     member StringKey :
+        state: GrainContractDraft<'Actor, string, 'Api> ->
+        GrainContractDraft<'Actor, string, 'Api>
+
+    [<CustomOperation("stringKeyMapped")>]
+    member StringKeyMapped :
         state: GrainContractDraft<'Actor, 'Key, 'Api> *
         encode: ('Key -> string) *
         decode: (string -> 'Key) ->
@@ -380,6 +442,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> =
 
     [<CustomOperation("guidKey")>]
     member GuidKey :
+        state: GrainContractDraft<'Actor, Guid, 'Api> ->
+        GrainContractDraft<'Actor, Guid, 'Api>
+
+    [<CustomOperation("guidKeyMapped")>]
+    member GuidKeyMapped :
         state: GrainContractDraft<'Actor, 'Key, 'Api> *
         encode: ('Key -> Guid) *
         decode: (Guid -> 'Key) ->
@@ -387,6 +454,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> =
 
     [<CustomOperation("int64Key")>]
     member Int64Key :
+        state: GrainContractDraft<'Actor, int64, 'Api> ->
+        GrainContractDraft<'Actor, int64, 'Api>
+
+    [<CustomOperation("int64KeyMapped")>]
+    member Int64KeyMapped :
         state: GrainContractDraft<'Actor, 'Key, 'Api> *
         encode: ('Key -> int64) *
         decode: (int64 -> 'Key) ->
@@ -394,6 +466,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> =
 
     [<CustomOperation("guidCompoundKey")>]
     member GuidCompoundKey :
+        state: GrainContractDraft<'Actor, Guid * string, 'Api> ->
+        GrainContractDraft<'Actor, Guid * string, 'Api>
+
+    [<CustomOperation("guidCompoundKeyMapped")>]
+    member GuidCompoundKeyMapped :
         state: GrainContractDraft<'Actor, 'Key, 'Api> *
         encode: ('Key -> Guid * string) *
         decode: (Guid -> string -> 'Key) ->
@@ -401,6 +478,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> =
 
     [<CustomOperation("int64CompoundKey")>]
     member Int64CompoundKey :
+        state: GrainContractDraft<'Actor, int64 * string, 'Api> ->
+        GrainContractDraft<'Actor, int64 * string, 'Api>
+
+    [<CustomOperation("int64CompoundKeyMapped")>]
+    member Int64CompoundKeyMapped :
         state: GrainContractDraft<'Actor, 'Key, 'Api> *
         encode: ('Key -> int64 * string) *
         decode: (int64 -> string -> 'Key) ->
@@ -413,9 +495,9 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> =
         GrainContractDraft<'Actor, 'Key, 'Api>
 
     [<CustomOperation("oneWay")>]
-    member OneWay<'Argument, 'Reply> :
+    member OneWay<'Argument> :
         state: GrainContractDraft<'Actor, 'Key, 'Api> *
-        selector: OperationSelector<'Api, 'Argument, 'Reply> ->
+        selector: OperationSelector<'Api, 'Argument, unit> ->
         GrainContractDraft<'Actor, 'Key, 'Api>
 
     [<CustomOperation("alwaysInterleave")>]
@@ -465,10 +547,17 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> =
         handler: Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> ->
         FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
 
-    [<CustomOperation("persist")>]
-    member Persist<'State> :
+    [<CustomOperation("stateFrom")>]
+    member StateFrom<'State> :
         state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
-        providerName: string ->
+        persistentState: PersistentStateRef<'State> ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("usePersistentState")>]
+    member UsePersistentState<'State, 'StoredState> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        persistentState: PersistentStateRef<'StoredState> *
+        initializer: ('Key -> 'StoredState) ->
         FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
 
     [<CustomOperation("collectionAge")>]
@@ -542,10 +631,17 @@ definition expression is `defaultState` or `initialState`; it introduces
 `'State`, and all later operations retain that state type. `Run` seals the value
 and validates completeness.
 
-Compound key encoders return ordinary F# reference tuples. Compound key decoders
-are curried. Definition construction copies `DueTime`, `Period`, `Interleave`,
-and `KeepAlive` from `GrainTimerCreationOptions` into immutable metadata.
-`onReminder` stores explicit due time and period.
+`stateFrom` accepts only a descriptor whose stored type is the definition's
+primary `'State`. `usePersistentState` is repeatable, retains each independent
+stored type, and takes a key-aware initializer used only when that holder has no
+record. Neither operation implies a storage write.
+
+Native key operations take no arguments and constrain `'Key` to their exact
+native type. Mapped key operations retain the domain `'Key` and take an encoder
+and decoder. Mapped compound encoders return ordinary F# reference tuples and
+their decoders are curried. Definition construction copies `DueTime`, `Period`,
+`Interleave`, and `KeepAlive` from `GrainTimerCreationOptions` into immutable
+metadata. `onReminder` stores explicit due time and period.
 
 `FunctionalGrain.ref contract factory key` returns
 `(FunctionalGrain.rawRef contract factory key).api`. Bound record calls use
@@ -626,7 +722,7 @@ its custom operations.
 | `grainType` | Required once; non-blank and NUL-free. |
 | `version` | Defaults to `1`; positive `int`. |
 | operation ID | Record-field name by default; ordinal and case-sensitive. |
-| key | Exactly one explicit key codec. |
+| key | Exactly one native or mapped key operation. |
 | invocation | Acknowledged, sequential, and state-replacing by default. |
 
 `operationId` preserves a stable operation identity across a source-field
@@ -647,16 +743,55 @@ storage identity, and the internal Orleans interface version, which is fixed at
 
 ### Key codecs and identity
 
-Support string, `Guid`, `int64`, and Orleans compound forms. Wrapper codecs use
-the custom operations from the public API:
+The contract supports five native Orleans key shapes and mapped domain-key
+variants of each shape:
+
+| Custom operation | Required domain `'Key` | Arguments |
+|---|---|---|
+| `stringKey` | `string` | none |
+| `guidKey` | `Guid` | none |
+| `int64Key` | `int64` | none |
+| `guidCompoundKey` | `Guid * string` | none |
+| `int64CompoundKey` | `int64 * string` | none |
+| `stringKeyMapped` | any closed `'Key` | `'Key -> string`, `string -> 'Key` |
+| `guidKeyMapped` | any closed `'Key` | `'Key -> Guid`, `Guid -> 'Key` |
+| `int64KeyMapped` | any closed `'Key` | `'Key -> int64`, `int64 -> 'Key` |
+| `guidCompoundKeyMapped` | any closed `'Key` | `'Key -> Guid * string`, `Guid -> string -> 'Key` |
+| `int64CompoundKeyMapped` | any closed `'Key` | `'Key -> int64 * string`, `int64 -> string -> 'Key` |
+
+Native keys require no conversion functions:
 
 ```fsharp
-stringKey RoomId.value RoomId.create
-guidKey CustomerId.value CustomerId.create
-int64Key OrderId.value OrderId.create
+grainContract<SessionActor, string, SessionApi>() {
+    grainType "session"
+    stringKey
+}
+
+grainContract<TenantItemActor, Guid * string, TenantItemApi>() {
+    grainType "tenant.item"
+    guidCompoundKey
+}
 ```
 
-For every accepted domain and native key, a codec satisfies:
+An ordinary domain wrapper uses its unwrap and construct functions:
+
+```fsharp
+stringKeyMapped RoomId.value RoomId.create
+```
+
+When the application uses the optional `FSharp.UMX` package, an erased tagged
+key has the same mapping without an allocated wrapper:
+
+```fsharp
+[<Measure>]
+type roomId
+
+type TaggedRoomId = string<roomId>
+
+stringKeyMapped UMX.untag UMX.tag
+```
+
+For every mapped key, its conversion pair satisfies:
 
 - deterministic, injective encoding in its selected Orleans key space;
 - `decode (encode key) = key` under domain equality;
@@ -664,11 +799,11 @@ For every accepted domain and native key, a codec satisfies:
 - rejection of malformed or non-canonical native values.
 
 Compound extensions follow Orleans key validity rules. Shipped and sample
-codecs require property tests for these laws.
+mapped codecs require property tests for these laws.
 
 A key codec produces and reads the same canonical `IdSpan` representation as the
 stock Orleans string, Guid, int64, and compound-key helpers. Native-key codecs
-use identity domain conversion. Wrapper codecs compose their domain conversion
+use identity domain conversion. Mapped codecs compose their domain conversion
 with that stock representation. Null, empty, malformed, and non-canonical keys
 follow the corresponding Orleans validation rules.
 
@@ -692,7 +827,7 @@ and operation ID are not storage-key components.
 | Reference binding | Encode the key, obtain the exact custom reference, validate serializers, and create one typed closure per record field. |
 | Client invocation | Serialize the exact argument, construct and send the fixed request, then validate and deserialize the exact reply. |
 | Target dispatch | Validate metadata, resolve the descriptor, deserialize the exact argument type, invoke the typed handler, publish state, and serialize the exact reply. |
-| Activation lifecycle | For a durable definition, create the persistent facet; then load or initialize state, run activation hooks, reconcile reminders, and create timers. |
+| Activation lifecycle | Create every attached persistent facet; then load or initialize in-memory state, run activation hooks, reconcile reminders, and create timers. |
 
 Reflection, selector evaluation, and generic-method closing occur while caching
 the shape or binding a reference. A bound field invokes its cached typed closure
@@ -750,8 +885,11 @@ Definition sealing requires:
 
 - exactly one `defaultState` or `initialState` operation;
 - exactly one handler for every API-record field;
-- at most one `persist`, `collectionAge`, `onActivate`, and `onDeactivate`
+- at most one `stateFrom`, `collectionAge`, `onActivate`, and `onDeactivate`
   operation;
+- zero or more `usePersistentState` operations;
+- a unique `stateName` for every attached persistent state, with one provider
+  and one stored CLR type per name;
 - a strictly positive `collectionAge` when configured;
 - unique non-blank reminder names;
 - unique non-blank timer names; and
@@ -762,8 +900,10 @@ of the earlier value.
 
 Initialization is normalized to `'Key -> 'State`. `defaultState` accepts a fresh
 `unit -> 'State` factory; `initialState` accepts `'Key -> 'State`. The factory is
-called once for each ephemeral activation, or once when durable state reports
-`RecordExists = false`.
+called once for each ephemeral activation, or when the primary `stateFrom`
+holder reports `RecordExists = false`. Each additional persistent-state
+initializer is also normalized to `'Key -> 'StoredState` and is called when that
+holder reports no record. Initializers populate memory and never write storage.
 
 ### Functional context
 
@@ -774,6 +914,7 @@ activation hook, deactivation hook, reminder, and timer callback. It contains:
 - `GrainId`, `IGrainFactory`, activation services, and a scoped logger;
 - the registered `TimeProvider` and `utcNow = timeProvider.GetUtcNow()`;
 - the current target-local cancellation token;
+- typed lookup of every persistent state attached to the definition;
 - wrappers for Orleans deactivation methods; and
 - `RequestContext` accessors.
 
@@ -796,48 +937,85 @@ The context cancellation token is selected by callback kind:
 | Policy | Required behavior |
 |---|---|
 | Default | Sequential, acknowledged; returned state is published. |
-| `readOnly` | Orleans read-only scheduling; returned replacement is discarded; automatic primary-state write is skipped. |
-| `oneWay` | Reply type is `unit`; the task acknowledges local send; target execution and persistence continue without a caller response. |
-| `alwaysInterleave` | Combined with `readOnly` or `oneWay`; returned replacement is discarded and automatic primary-state write is skipped. |
+| `readOnly` | Orleans read-only scheduling; returned replacement is discarded; persistent-state setters and storage calls are rejected. |
+| `oneWay` | Its selector is `OperationSelector<'Api,'Argument,unit>`; the bound `Task<unit>` acknowledges local send, while target execution and any explicit storage work continue without a caller response. |
+| `alwaysInterleave` | Combined with `readOnly` or `oneWay`; returned replacement is discarded; persistent-state setters and storage calls are rejected. |
 | Timer hook | Whole-state replacement under `Interleave = false`. |
 | Reminder hook | Whole-state replacement under ordinary Orleans scheduling. |
 
-The contract rejects `oneWay + readOnly`, a non-`unit` one-way reply, and
-`alwaysInterleave` without `readOnly` or `oneWay`. A one-way operation without
-`alwaysInterleave` may publish and persist state sequentially.
+The F# compiler rejects a `oneWay` selector whose API field does not return
+`Task<unit>`. Contract construction defensively checks the same invariant. The
+contract rejects `oneWay + readOnly` and `alwaysInterleave` without `readOnly`
+or `oneWay`. A sequential one-way operation may perform explicit storage work,
+but its caller cannot observe a target-side storage failure.
 
 State-neutral handlers treat the state graph as immutable. Discarding the
 returned record cannot undo in-place mutation of an object reachable from state.
-Examples use immutable F# state.
+The persistent-state facade can reject its `State` setter but cannot intercept
+deep mutation through a value returned by its getter, whether the holder is
+primary or additional. Examples use immutable F# state.
 
 ### State publication
 
-For an acknowledged mutating operation:
+The primary in-memory state is either an activation-local cell or, when
+`stateFrom` is configured, the selected `IPersistentState<'State>.State` holder.
+A successful sequential handler return assigns its returned state to that
+holder. This publication never calls `WriteStateAsync`.
 
-1. Await the handler.
-2. Preserve authoritative state when the handler fails.
-3. For ephemeral state, publish the returned state and then return the reply.
-4. For durable state, retain the previous value, assign the returned value to
-   `IPersistentState.State`, and await `WriteStateAsync` within the Orleans turn.
-5. Restore the previous in-memory value after a failed write when the activation
-   remains alive, then propagate the storage failure.
-6. Return the reply after a successful write.
+After Orleans' automatic SetupState load, every application-triggered reload,
+write, and clear is explicit. Additional holders are reached only through
+`context.persistentState`; the primary holder is also supplied as the handler's
+`state` value:
 
-`readOnly` and state-neutral interleaved operations discard the returned state
-and skip the automatic write. Handler failure cannot undo in-place mutations or
-external effects, so application guidance uses immutable state and explicit
+```fsharp
+let storage = context.persistentState roomState
+storage.State <- next
+do! storage.WriteStateAsync()
+```
+
+`ReadStateAsync`, `WriteStateAsync`, and `ClearStateAsync` retain their ordinary
+Orleans semantics. A read replaces that facet's `State`; for the primary facet
+this changes the authoritative in-memory holder immediately, although the
+handler's already-bound `state` argument remains its turn-entry value. A later
+successful handler return can assign the holder again. A clear affects the
+backing record and provider metadata but does not define a replacement primary
+state. The application decides what the handler returns.
+
+Explicit effects happen in program order, and successful return publication is
+last. A handler can therefore write value `A`, return value `B`, and finish with
+`A` in durable storage and `B` in the primary in-memory holder. Activate, timer,
+and reminder replacements follow the same ordering. If the callback fails,
+there is no final return publication.
+
+There are no automatic writes, retries, reloads, rollbacks, ETag-conflict
+repairs, or deactivation flushes. If a handler fails, its unreturned replacement
+is not assigned, but any explicit `State` setter, successful storage call, or
+external effect which already occurred remains. Storage exceptions propagate
+through the callback task. Applications use immutable state and explicit
 idempotency where required.
 
+`context.persistentState` resolves by the descriptor's logical
+`(stateName, providerName, storedType)` identity and fails deterministically for
+an unattached descriptor. It returns an invocation-bound `IPersistentState`
+facade. The facade rejects use after its callback has completed; in `readOnly`
+and `alwaysInterleave` callbacks it permits getters but rejects `State` mutation
+and both the parameterless and `CancellationToken` overloads of
+`ReadStateAsync`, `WriteStateAsync`, and `ClearStateAsync`.
+
 One-way completion means the message entered the local Orleans send path. Target
-failures are recorded through logging and tracing and are not returned to that
-caller.
+execution still awaits the complete handler task inside its Orleans turn. A
+successful sequential one-way handler publishes its returned primary state and
+then completes the target turn; `oneWay + alwaysInterleave` discards that
+replacement. Target failures are recorded through logging and tracing and are
+not returned to that caller.
 
 ### Lifecycle hooks, timers, and reminders
 
 The hook type aliases in the public API are normative. `onActivate` runs after
-persistent-state setup and its returned state follows the durable publication
-rule. `onDeactivate` performs cleanup and returns no replacement. Timer and
-reminder replacements follow the mutating publication rule.
+persistent-state setup and its returned state is published only in memory.
+`onDeactivate` performs cleanup and returns no replacement. Timers, reminders,
+and lifecycle hooks use the same explicit persistence capability; the runtime
+adds no storage calls around them.
 
 Definition sealing validates:
 
@@ -934,9 +1112,10 @@ or deserialization rents or creates a fresh/reset `SerializerSession` and
 returns it in `finally`; sessions are never shared by concurrent calls.
 
 The serialization graph for a call consists of the fixed request/reply types and
-exact typed payload bytes. Durable storage serializes only `'State`. Contracts,
-API facades, selectors, reflection metadata, services, references, targets, and
-cancellation resources stay process-local.
+exact typed payload bytes. Durable storage serializes the application state
+value of each attached facet. Contracts, API facades, selectors, reflection
+metadata, `PersistentStateRef` values, invocation facades, services, references,
+targets, and cancellation resources stay process-local.
 
 ### Protocol token
 
@@ -1222,40 +1401,127 @@ identity and fails that callback.
 
 ## Persistence and activation lifecycle
 
-`persist providerName` enables one `IPersistentState<'State>` with state name
-`"state"` and the supplied non-blank Orleans provider name.
+`PersistentState.create<'State> stateName providerName` creates an immutable
+logical descriptor. `providerName` selects an `IGrainStorage` registration
+already configured on every silo which can host the definition; it is not a
+connection string or storage type. Creation immediately rejects blank or
+NUL-containing names. Definition sealing checks unique state-name attachment;
+silo startup checks that every named provider is available.
 
-For a definition configured with `persist`, the custom activator synchronously
-creates the persistent facet through `IPersistentStateFactory.Create<'State>`
-before returning the target. This lets the facet subscribe at
-`GrainLifecycleStage.SetupState`. The `IPersistentState<'State>.State` property
-is the authoritative durable-state holder.
+`stateFrom descriptor` attaches one `PersistentStateRef<'State>` as the source
+and holder of the handler's primary state. `usePersistentState descriptor
+initializer` attaches an additional named state of any closed type and is
+repeatable. The primary descriptor is also available through
+`context.persistentState` and must not be repeated with
+`usePersistentState`.
+
+For example, one complete definition can use `stateFrom postgres` for its
+primary state and `usePersistentState redis (fun _ -> emptyRoom ())` for a
+second provider:
+
+```fsharp
+let postgres = PersistentState.create<RoomState> "primary" "Postgres"
+let redis = PersistentState.create<RoomState> "replica" "Redis"
+
+let emptyRoom () =
+    { nextMessageId = 1L
+      members = Set.empty
+      messages = [] }
+
+let joinHandler
+    (context: FunctionalGrainContext<RoomActor, RoomId>)
+    (state: RoomState)
+    (userId: UserId) =
+    task {
+        let next =
+            { state with
+                members = Set.add userId state.members }
+
+        let primary = context.persistentState postgres
+        primary.State <- next
+        do! primary.WriteStateAsync()
+
+        let replica = context.persistentState redis
+        replica.State <- next
+        do! replica.WriteStateAsync()
+
+        return next, ()
+    }
+```
+
+Each descriptor has its own unique state name plus its own `State`, `Etag`,
+`RecordExists`, and provider. State names are unique within a definition even
+when providers differ, because Orleans activation-migration keys are based on
+the state name. Writes across descriptors are not atomic: if the second call
+fails, the first remains committed. An application which requires coherent
+mirroring, failover, or repair registers one composite `IGrainStorage` with
+those semantics and addresses it through one descriptor.
+
+The custom activator synchronously creates every attached facet through the
+closed generic `IPersistentStateFactory.Create<'StoredState>` before returning
+the target. This lets every facet subscribe at
+`GrainLifecycleStage.SetupState`. The primary `IPersistentState<'State>.State`
+is the authoritative in-memory holder when `stateFrom` is present; an ephemeral
+definition uses an activation-local holder.
 
 Activation ordering is:
 
 1. The activator creates persistent facets, resolves `IGrainRuntime`, constructs
    the target, and registers its custom lifecycle observers.
 2. Orleans lifecycle SetupState loads durable state.
-3. `IGrainBase.OnActivateAsync` initializes missing or ephemeral state.
+3. `IGrainBase.OnActivateAsync` initializes ephemeral state and every attached
+   holder whose `RecordExists` is false.
 4. The functional `onActivate` hook runs.
-5. Required durable initialization or activate-hook state is written.
-6. Declared reminders are reconciled in declaration order.
-7. Declared timers are created.
-8. Activation completes and ordinary turns are admitted.
+5. Declared reminders are reconciled in declaration order.
+6. Declared timers are created.
+7. Activation completes and ordinary turns are admitted.
 
 Deactivation invokes the functional hook before lifecycle `OnStop`, disposes
 activation-local timers, and finally reaches `IGrainActivator.DisposeInstance`.
+It performs no implicit storage write. An `onDeactivate` hook may explicitly
+write, but process or silo failure cannot guarantee that hook runs. Hook and
+storage exceptions receive no library retry. The task failure reaches the
+Orleans stop lifecycle, which observes and logs it while continuing remaining
+stop stages; activation-local cleanup runs in `finally`.
 
 State initialization rules are:
 
 - ephemeral definitions invoke the state factory once per activation;
-- durable definitions with `RecordExists = false` invoke the factory, run the
-  optional activate hook, and await one initial `WriteStateAsync` before
-  activation succeeds;
-- durable definitions with `RecordExists = true` use loaded state; an activate
-  hook replacement is written before activation succeeds, while an activation
-  without that hook performs no extra write;
-- factory, hook, or initial-write failure fails activation.
+- a primary holder with `RecordExists = true` supplies the loaded primary state;
+- a primary holder with `RecordExists = false` receives the primary initializer
+  result without writing it;
+- an additional holder with `RecordExists = false` receives its declared
+  initializer result without writing it;
+- an `onActivate` replacement is published in memory and is not written unless
+  the hook explicitly calls `WriteStateAsync`; and
+- storage read, initializer, or hook failure fails activation.
+
+If no record is ever written, a later activation runs the corresponding
+initializer again. Orleans performs the normal SetupState read for each attached
+facet before activation. After that load, reloads, writes, and clears occur only
+when application callbacks explicitly call `ReadStateAsync`, `WriteStateAsync`,
+or `ClearStateAsync`. No handler return, activation hook, deactivation, or
+collection event adds a hidden write or clear.
+
+`collectionAge age` sets the normal Orleans idle-age threshold for the in-memory
+activation. Once the activation has received no activity for at least `age`, a
+periodic collection scan may deactivate it and release its memory; this is an
+eligibility threshold, not an exact timer. A later call creates another
+activation. Durable state is loaded again, while ephemeral state is initialized
+again. Incoming calls, reminders, and stream events count as activity; outgoing
+calls, timers configured with `KeepAlive = false`, and arbitrary I/O do not.
+An active timer configured with `KeepAlive = true` extends the activation's
+lifetime according to stock Orleans timer semantics.
+
+When `collectionAge` is absent, the definition publishes no per-grain override
+and the host's stock Orleans collection policy applies. Any primary or
+additional state change which the application did not explicitly write is lost
+when the activation ends. Reactivation loads the last successfully written
+record, or runs the initializer again when no record exists.
+
+`collectionAge` is not a data TTL, does not delete storage, and does not select
+when state is written. Explicit deactivation, shutdown, silo failure, and memory
+pressure remain separate lifecycle events.
 
 Collection age is frozen into manifest properties. Storage providers, lifecycle,
 ETags, reminder registrations, timer registry, activation collection, and
@@ -1267,8 +1533,9 @@ Validation occurs at the earliest stage with enough information:
 
 | Stage | Validates |
 |---|---|
+| Persistent descriptor construction | Non-blank, NUL-free state and provider names plus a closed stored type. |
 | Contract construction | API shape, grain type, version, key codec, selectors, IDs, policies. |
-| Definition sealing | Initializer, complete handler coverage, persistence configuration, hook/timer/reminder names and values. |
+| Definition sealing | Initializer, complete handler coverage, persistent attachment identity/types, hook/timer/reminder names and values. |
 | Silo startup | Registry uniqueness, serializer and storage availability, manifest consistency, marker/interface/provider/activator agreement. |
 | Reference binding | Key encoding, custom reference type, concrete client argument/reply serializers. |
 | Dispatch | Envelope shape, version, operation, token, flags, payload limit, typed deserialization. |
@@ -1279,12 +1546,17 @@ limit. Version errors include expected and received versions. Logs and activitie
 contain grain type, operation ID, version, grain ID, and outcome; payload bytes
 and deserialized application values are excluded by default.
 
+Persistent descriptor, attachment, lookup, and provider errors include
+`stateName`, `providerName`, and the stored CLR type. They never log the stored
+state value.
+
 Protocol validation errors are distinguishable from application handler and
 storage exceptions. A successful acknowledged mutating call means handler
-completion and successful automatic primary-state write. It does not imply
-exactly-once external effects. Timeout, retry, cancellation, or failure after a
-commit can leave the caller uncertain whether execution occurred. One-way has no
-target acknowledgement, and cancellation has no rollback semantics.
+completion, including any storage tasks which that handler explicitly awaited.
+It does not imply that the returned state was persisted, nor exactly-once
+external effects. Timeout, retry, cancellation, or failure after a commit can
+leave the caller uncertain whether execution occurred. One-way has no target
+acknowledgement, and cancellation has no rollback semantics.
 
 Orleans remains the trust boundary for pre-admission scheduling flags. Target
 dispatch compares serialized flags with the hosted descriptor and rejects a
@@ -1311,7 +1583,7 @@ Build one minimal record contract with two operations and prove on Orleans
 6. valid global-filter interface and implementation method metadata;
 7. stock `ReadOnly`, `OneWay`, and `AlwaysInterleave` scheduling behavior;
 8. cross-silo target cancellation through the fixed request;
-9. persistent-facet creation early enough for SetupState load;
+9. creation of every attached persistent facet early enough for SetupState load;
 10. `ICodecProvider.GetCodec(Type)` preflight on both supported versions without
     trial serialization; and
 11. isolation of equal keys under different grain types plus heterogeneous silo
@@ -1324,7 +1596,7 @@ runtime layers are implemented.
 
 - Add the normative public signatures and computation-expression builders.
 - Implement API-shape caching, sentinel resolution, operation descriptors,
-  policy validation, and key codecs.
+  policy validation, and all five native plus five mapped key operations.
 - Add compile fixtures and shape/contract unit tests.
 
 **Exit:** the public example compiles and the compile, shape, selector, ID, and
@@ -1354,13 +1626,15 @@ versions, including filters, policy scheduling, and cancellation.
 ### Phase 4: state and lifecycle
 
 - Implement definition sealing and typed handler adapters.
-- Implement ephemeral and durable state publication.
-- Create persistent facets in the activator and wire activation/deactivation
-  ordering.
+- Implement ephemeral publication, `stateFrom`, repeatable
+  `usePersistentState`, and invocation-bound typed state lookup.
+- Create every attached persistent facet in the activator and wire
+  activation/deactivation ordering without implicit writes.
 - Add real deactivation, restart, and cross-silo recovery tests.
 
-**Exit:** write-before-reply, activation ordering, ETag behavior, and durable
-recovery tests pass.
+**Exit:** explicit read/write/clear, multi-provider, activation ordering, ETag,
+and durable recovery tests pass with instrumentation proving that the runtime
+adds no write or clear and no reload beyond stock SetupState reads.
 
 ### Phase 5: collection, reminders, timers, and context
 
@@ -1397,8 +1671,20 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 ### Compile fixtures
 
 - The complete contract, definition, registration, and client examples compile.
+- Unannotated `RoomApi.contract`, `RoomApi.ref`, and `RoomApi.rawRef` infer their
+  complete concrete types; reordered application-owned bindings do as well.
 - `RoomApi.ref` has type `IGrainFactory -> RoomId -> RoomApi`, and a bound value
   infers `RoomApi` without annotation.
+- All five native key operations compile without arguments only for their exact
+  native key type; a mismatched native key fails to compile.
+- All five mapped key operations preserve the domain key type; reversed or
+  otherwise mismatched encoder/decoder types fail to compile.
+- `oneWay (_.typing)` compiles, while selecting a field whose reply is not
+  `Task<unit>` fails to compile.
+- `stateFrom` accepts only `PersistentStateRef<'State>` for the definition's
+  primary state; `usePersistentState` preserves each independent stored type,
+  and `context.persistentState` returns the corresponding exact
+  `IPersistentState<'StoredState>`.
 - Wrong key, field argument, handler argument, and handler reply fail to compile.
 - A selector from another API record fails to compile.
 
@@ -1418,8 +1704,12 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 
 - Default/overridden operation IDs, duplicate IDs/policies, required grain type,
   positive version, and policy combinations behave as specified.
-- String, Guid, int64, and compound codecs pass round-trip, canonicalization,
-  injectivity, and malformed-input tests.
+- Native string, Guid, int64, and compound operations produce the same `GrainId`
+  representations as the corresponding stock Orleans key helpers.
+- Mapped key operations pass domain/native round-trip, canonicalization,
+  injectivity, and malformed-input tests; compound native keys are exactly
+  `Guid * string` or `int64 * string`.
+- Missing or repeated native/mapped key operations fail contract construction.
 - Explicit grain/interface IDs survive CLR/module renames; a changed grain type
   or key codec changes `GrainId`.
 - Equal keys under different grain types select distinct activations.
@@ -1467,8 +1757,8 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 - F# records, unions, options, and lists containing `byte[]`, ref cells, and
   mutable objects have equivalent local/remote isolation.
 - Serializer instrumentation proves that API facades, contracts, definitions,
-  selectors, reflection metadata, and services enter neither request bytes nor
-  durable storage.
+  selectors, persistent-state descriptors/facades, reflection metadata, and
+  services enter neither request bytes nor durable storage.
 
 ### Activation, state, and lifecycle tests
 
@@ -1479,18 +1769,47 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 - `onActivate` observes state after durable loading.
 - `onDeactivate`, lifecycle `OnStop`, timer disposal, and `DisposeInstance`
   execute once in the specified order.
+- A failing deactivation hook or explicit storage call is observed and logged
+  without library retry; activation-local cleanup and remaining Orleans stop
+  stages still run.
 - Handler coverage, duplicate hooks, and invalid reminder/timer configuration
   fail before the first call.
-- Primary persistent state uses exact name `"state"` and the configured provider.
-- Missing durable state is initialized and written; existing state is loaded
-  without an unnecessary activation write.
-- Activate-hook and mutating-handler state is written before success; a failed
-  write restores the prior in-memory replacement when the activation survives.
+- Persistent descriptors validate names, providers, stored types, duplicate
+  logical identities, and attachment before the first call.
+- The same `stateName` attached with a different provider still fails sealing,
+  preserving unique Orleans activation-migration keys.
+- `stateFrom` uses the selected holder as primary state; repeatable
+  `usePersistentState` loads independently typed holders from independently
+  named providers before `onActivate`.
+- Missing attached state is initialized but not written; existing state is
+  loaded by the expected SetupState read without an activation write.
+- Handler, timer, reminder, activate, and deactivate returns never write
+  storage. Instrumented providers observe the expected automatic SetupState
+  reads; after activation they observe only application-issued reads, writes,
+  and clears, with no runtime-issued write or clear.
+- A successful handler return publishes its primary replacement in memory. An
+  explicit setter or storage effect remains when a later handler step fails;
+  the runtime performs no rollback, retry, reload, or ETag repair.
+- A handler which enters with `A`, explicitly writes snapshot `X`, and returns
+  `Y` leaves `X` in storage and `Y` as the next call's primary state. Returning
+  `Y` without a setter/write performs zero writes.
+- Explicit reads replace only the selected holder, explicit clears follow the
+  provider's state-buffer semantics, and an unattached or expired invocation
+  facade fails deterministically.
+- Two providers can hold independent states or receive explicitly ordered
+  writes; partial success is observable and no cross-provider transaction is
+  claimed.
 - Read-only and state-neutral interleaved calls discard replacement state and
-  skip automatic writes.
-- State survives deactivation, full silo restart with retained Redis, and
-  activation on another silo.
-- Collection age produces stock collection and reactivation behavior.
+  reject the setter plus parameterless and cancellation-token overloads of
+  read/write/clear through their state facades. Expired facades reject the same
+  complete surface.
+- State which the application explicitly writes survives deactivation, full
+  silo restart with retained Redis, and activation on another silo.
+- An omitted collection age uses the host default; an override produces stock
+  collection eligibility and reactivation behavior. Unwritten in-memory changes
+  disappear on deactivation, while the last explicit write reloads.
+- Timers with `KeepAlive = false` do not extend collection lifetime; timers with
+  `KeepAlive = true` do so according to stock Orleans behavior.
 - Heterogeneous routing invokes a definition only on a silo which advertises it,
   including silo join and leave.
 - Scheduling behavior is demonstrated under concurrency rather than by flags
