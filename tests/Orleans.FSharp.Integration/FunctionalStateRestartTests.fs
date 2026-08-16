@@ -136,19 +136,9 @@ let ``explicitly written state reloads on a silo which never saw the write`` () 
 // ──────────────────────────────────────────────────────────────────────────────
 // Redis-gated full-cluster restart
 // ──────────────────────────────────────────────────────────────────────────────
-
-/// <summary>
-/// Marks a test as requiring a running Redis instance, following the suite's existing gate:
-/// without <c>ORLEANS_FSHARP_REDIS</c> the test is reported as skipped.
-/// </summary>
-type RequiresRedisRestartAttribute() =
-    inherit FactAttribute()
-
-    do
-        if String.IsNullOrEmpty(Environment.GetEnvironmentVariable "ORLEANS_FSHARP_REDIS") then
-            base.Skip <-
-                "Set ORLEANS_FSHARP_REDIS env var (e.g., localhost:6379) to enable the functional Redis restart test. "
-                + "Start Redis with: docker run -d -p 6379:6379 redis:7-alpine"
+// The Redis gate itself is `RequiresRedisAttribute` from RedisIntegrationTests.fs (same
+// namespace, compiled first): one gate, one env var (ORLEANS_FSHARP_REDIS), one skip text. A
+// second near-identical attribute type used to live here (Task-6 close-out 6).
 
 type RedisFunctionalSiloConfigurator() =
     interface ISiloConfigurator with
@@ -192,7 +182,7 @@ let private deployRedisCluster (serviceId: string) =
 /// also asserts the negative half — an in-memory change which was never written does not come
 /// back — so a provider which silently wrote everything would fail this test too.
 /// </remarks>
-[<RequiresRedisRestart>]
+[<RequiresRedis>]
 let ``functional state committed to Redis reloads after the cluster is recreated`` () =
     task {
         let name = $"redis-{Guid.NewGuid():N}"

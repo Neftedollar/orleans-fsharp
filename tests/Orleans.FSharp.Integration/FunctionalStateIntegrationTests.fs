@@ -368,6 +368,45 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
         }
 
     /// <remarks>
+    /// Task-6 close-out 4: a dedicated <c>oneWay + alwaysInterleave</c> facade-rejection test.
+    /// This is the only policy combination where <c>alwaysInterleave</c> alone (without
+    /// <c>readOnly</c>) drives state-neutrality: <c>IsReadOnly</c> is false, so it is purely
+    /// <c>IsAlwaysInterleave</c> that must reject the facade's mutation surface. One-way has no
+    /// reply, so the report travels through <c>StateProbe</c> instead of a return value.
+    /// </remarks>
+    [<Fact>]
+    member _.``a oneWay plus always-interleave callback rejects the same complete surface``() =
+        task {
+            let name = key "onewayinterleave"
+            let grainId = fixture.LedgerId name
+            let api = fixture.Ledger name
+
+            let! _ = api.append "in-memory"
+            do! api.oneWayInterleavedProbe ()
+
+            let deadline = DateTime.UtcNow.AddSeconds 30.0
+            let mutable report = None
+
+            while report.IsNone && DateTime.UtcNow < deadline do
+                report <- StateProbe.tryGet $"onewayinterleaved:{grainId}"
+                if report.IsNone then
+                    do! Task.Delay 100
+
+            let report =
+                match report with
+                | Some value -> value
+                | None -> failwith "the oneWay + alwaysInterleave probe never recorded its report"
+
+            for member' in [ "set"; "read"; "write"; "clear"; "readToken"; "writeToken"; "clearToken" ] do
+                Assert.Equal("InvalidOperationException", field report member')
+
+            // Its replacement (irrelevant here, since one-way discards) never reached storage.
+            let! snapshot = api.snapshot ()
+            Assert.Equal("v1:[activated,in-memory]", snapshot)
+            Assert.Equal(0, StorageLog.countFor grainId "write")
+        }
+
+    /// <remarks>
     /// "The facade rejects use after its callback has completed." A handler which lets its
     /// facade escape must find every member closed afterwards, getters included.
     /// </remarks>
@@ -531,6 +570,66 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
             Assert.Equal(Some "v1:[activated,survives]", StateProbe.tryGet $"activate:{grainId}")
             let! snapshot = api.snapshot ()
             Assert.Equal("v1:[activated,survives,activated]", snapshot)
+        }
+
+    /// <remarks>
+    /// Task-6 close-out 3: the DEACTIVATION-HOOK EXPLICIT STORAGE-CALL failure arm. Unlike the
+    /// test above, the hook itself does not raise — its explicit <c>WriteStateAsync</c> call
+    /// fails inside real storage. The failure must still be observed and logged with no retry,
+    /// and activation-local cleanup plus the remaining Orleans stop stages must still run.
+    /// </remarks>
+    [<Fact>]
+    member _.``a deactivation hook's failing explicit storage call is logged once and does not block the stop path``
+        ()
+        =
+        task {
+            let name = key "faildeactivatewrite"
+            let grainId = fixture.LedgerId name
+            let api = fixture.Ledger name
+
+            do! api.writeNow "durable"
+            do! api.armWritingDeactivation "written-on-stop"
+            StateLogCapture.clear ()
+            StateProbe.observations.TryRemove $"stop-tick:{grainId}" |> ignore
+            StorageLog.failingWrites.[FunctionalStateProviders.Ledger] <- true
+
+            try
+                do! fixture.Recycle name
+            finally
+                StorageLog.failingWrites.TryRemove FunctionalStateProviders.Ledger |> ignore
+
+            // The failure was observed and logged as a hook failure, even though it originated
+            // from the explicit storage call the hook made rather than an application `raise`…
+            Assert.True(
+                StateLogCapture.contains "onDeactivate hook of grain type",
+                "the failing explicit storage call inside the hook must be logged as a hook failure"
+            )
+
+            Assert.True(
+                StateLogCapture.contains "configured to fail writes",
+                "the storage provider's own diagnostic must be logged"
+            )
+
+            // …exactly once: no library retry.
+            let attempts =
+                StateLogCapture.entries
+                |> Seq.filter (fun entry -> entry.Contains("onDeactivate hook of grain type", StringComparison.Ordinal))
+                |> Seq.length
+
+            Assert.Equal(1, attempts)
+
+            // …the remaining Orleans stop stages still ran after the storage call threw…
+            let hookTick = int (Option.get (StateProbe.tryGet $"deactivate-tick:{grainId}"))
+            let stopTick = int (Option.get (StateProbe.tryGet $"stop-tick:{grainId}"))
+
+            Assert.True(
+                hookTick < stopTick,
+                $"the stop stage at tick {stopTick} must still run after the failing storage call at tick {hookTick}"
+            )
+
+            // …and nothing durable came from the failed write: the reactivation loads only the
+            // previously committed "durable" record, never "written-on-stop".
+            Assert.Equal(Some "v1:[activated,durable]", StateProbe.tryGet $"activate:{grainId}")
         }
 
     /// <remarks>

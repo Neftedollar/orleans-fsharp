@@ -189,9 +189,16 @@ module internal DefinitionDraft =
         for descriptor in attached do
             match seenStates.TryGetValue descriptor.StateName with
             | true, existing ->
+                // The full logical identity, not the state name alone: the collision at hand
+                // already shares its name with the primary descriptor (that is how it reached
+                // this branch), but it is the SAME attachment as 'stateFrom' only when its
+                // provider and stored type match too. A same-named 'usePersistentState' under a
+                // different provider or stored type is a genuine name collision, not a repeat of
+                // the primary, and must not get the "already attached as the primary state"
+                // sentence appended to its message.
                 let repeatsPrimary =
                     match state.Primary with
-                    | Some primary -> primary.Descriptor.StateName = descriptor.StateName
+                    | Some primary -> primary.Descriptor = descriptor
                     | None -> false
 
                 let detail =

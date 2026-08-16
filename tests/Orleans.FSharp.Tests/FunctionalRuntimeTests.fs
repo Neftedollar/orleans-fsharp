@@ -227,9 +227,6 @@ let private createInactiveTargetIn
     context.Instance <- instance
     activator, context, instance
 
-let private createInactiveTarget (definition: FunctionalHostedDefinition) (key: string) =
-    createInactiveTargetIn (activationServices ()) definition key
-
 /// <summary>
 /// Create the target and run the functional half of activation, which is where the ephemeral
 /// primary state is initialized (activation-order step 3). Dispatch is only ever reached on an

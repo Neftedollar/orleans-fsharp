@@ -158,6 +158,14 @@ let ``a repeated stateFrom fails definition sealing`` () =
 
     test <@ error.Message.Contains "'stateFrom' is declared more than once" @>
 
+/// <remarks>
+/// Task-6 close-out 1: this is the counter-case for `repeatsPrimary` — 'sameName' shares
+/// 'primary's stateName but NOT its provider, so this is a genuine name collision between two
+/// DIFFERENT attachments, not a repeat of the 'stateFrom' descriptor. Before the fix,
+/// `repeatsPrimary` compared StateName alone (trivially true inside this branch, since the
+/// dictionary key IS the shared StateName) and wrongly appended the "already attached as the
+/// primary state" sentence to this message.
+/// </remarks>
 [<Fact>]
 let ``the same state name with a different provider fails definition sealing`` () =
     let sameName = PersistentState.create<AuditState> "state" "Other"
@@ -174,6 +182,7 @@ let ``the same state name with a different provider fails definition sealing`` (
             |> ignore)
 
     test <@ error.Message.Contains "is attached more than once" @>
+    test <@ not (error.Message.Contains "already attached as the primary state") @>
 
 [<Fact>]
 let ``the primary descriptor must not be repeated with usePersistentState`` () =

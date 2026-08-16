@@ -192,6 +192,10 @@ type LedgerApi =
       readOnlyProbe: unit -> Task<string>
       /// The same probe under readOnly + alwaysInterleave.
       interleavedProbe: unit -> Task<string>
+      /// The same probe under oneWay + alwaysInterleave WITHOUT readOnly — the only combination
+      /// where alwaysInterleave alone drives state-neutrality. One-way has no reply, so its
+      /// report travels through StateProbe instead of a return value.
+      oneWayInterleavedProbe: unit -> Task<unit>
       /// Captures its facade so a later call can prove the facade expired.
       escapeFacade: unit -> Task<unit>
       /// Uses the captured facade and reports what happened.
@@ -303,6 +307,9 @@ let ledgerContract =
 
         readOnly (_.interleavedProbe)
         alwaysInterleave (_.interleavedProbe)
+
+        oneWay (_.oneWayInterleavedProbe)
+        alwaysInterleave (_.oneWayInterleavedProbe)
     }
 
 let private siloOf (context: FunctionalGrainContext<'Actor, string>) =
@@ -570,6 +577,14 @@ let ledgerDefinition =
                 return { state with version = 999 }, mutations
             })
 
+        handle (_.oneWayInterleavedProbe) (fun context state () ->
+            task {
+                let facade = context.persistentState ledgerState
+                let! mutations = probeMutations facade
+                StateProbe.record $"onewayinterleaved:{context.grainId}" mutations
+                return state, ()
+            })
+
         handle (_.escapeFacade) (fun context state () ->
             task {
                 StateProbe.escaped.[string context.grainId] <- context.persistentState ledgerState
@@ -702,6 +717,7 @@ let ephemeralDefinition =
         handle (_.conflictingWrite) (fun _ state (_: string) -> task { return state, notAttached () })
         handle (_.readOnlyProbe) (fun _ state () -> task { return state, notAttached () })
         handle (_.interleavedProbe) (fun _ state () -> task { return state, notAttached () })
+        handle (_.oneWayInterleavedProbe) (fun _ state () -> task { return state, notAttached () })
         handle (_.escapeFacade) (fun _ state () -> task { return state, notAttached () })
         handle (_.useEscapedFacade) (fun _ state () -> task { return state, notAttached () })
 
