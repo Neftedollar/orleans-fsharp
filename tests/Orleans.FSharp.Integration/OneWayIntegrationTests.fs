@@ -26,7 +26,6 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 // ── Interface-shape tests (no cluster needed — pure reflection) ───────────────
 
@@ -41,6 +40,8 @@ let private assertOneWayShape (t: Type) =
     // Carries Orleans' [OneWay] so the proxy fires-and-forgets (no response message).
     test <@ m.IsDefined(typeof<Orleans.Concurrency.OneWayAttribute>, false) @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``IFSharpGrain declares [OneWay] HandleMessageOneWay returning non-generic Task`` () =
     assertOneWayShape typeof<IFSharpGrain>
@@ -55,9 +56,12 @@ let ``IFSharpGrainWithIntKey declares [OneWay] HandleMessageOneWay returning non
 
 // ── End-to-end behaviour tests (real in-memory cluster via ClusterFixture) ────
 
+#warnon "44"
 [<Collection("ClusterCollection")>]
 type OneWayBehaviorTests(fixture: ClusterFixture) =
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``post (string key) is one-way and mutates grain state`` () =
         task {
@@ -85,11 +89,14 @@ type OneWayBehaviorTests(fixture: ClusterFixture) =
             test <@ state.Count = 1 @>
         }
 
+#warnon "44"
     [<Fact>]
     member _.``postInt is one-way and mutates grain state`` () =
         task {
             let key = 900_000L + int64 (Random.Shared.Next(1_000_000))
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
             let handle =
                 FSharpGrain.refInt<PingState, PingCommand> fixture.GrainFactory key
 
@@ -112,3 +119,5 @@ type OneWayBehaviorTests(fixture: ClusterFixture) =
             let! state = Eventually.until (fun s -> s.Count >= 3) (fun () -> handle |> FSharpGrain.send GetCount)
             test <@ state.Count = 3 @>
         }
+
+#warnon "44"

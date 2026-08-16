@@ -8,7 +8,6 @@ open Orleans
 open Orleans.FSharp
 open Orleans.FSharp.Testing
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 /// <summary>Tests for GrainMock.fs — MockGrainFactory and GrainMock module.</summary>
 
@@ -244,6 +243,8 @@ let ``withGrain overrides previous registration for same type and key`` () =
 type MockPingState = { Count: int }
 type MockPingCmd = | MockPing | MockGetCount
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``withFSharpGrain creates a working string-keyed mock`` () =
     task {
@@ -339,9 +340,12 @@ let ``withFSharpGrain works with post (fire-and-forget)`` () =
         test <@ state.Count = 1 @>
     }
 
+#warnon "44"
 type MockGuidState = { Name: string }
 type MockGuidCmd = | SetName of string | GetName
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``withFSharpGrainGuid creates a working GUID-keyed mock`` () =
     task {
@@ -366,9 +370,12 @@ let ``withFSharpGrainGuid creates a working GUID-keyed mock`` () =
         test <@ state.Name = "Orleans" @>
     }
 
+#warnon "44"
 type MockIntState = { Total: int64 }
 type MockIntCmd = | AddAmount of int64 | GetTotal
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``withFSharpGrainInt creates a working int-keyed mock`` () =
     task {
@@ -394,6 +401,7 @@ let ``withFSharpGrainInt creates a working int-keyed mock`` () =
         test <@ s2.Total = 15L @>
     }
 
+#warnon "44"
 [<Fact>]
 let ``withFSharpGrain methods exist on GrainMock module`` () =
     let moduleType =
@@ -412,6 +420,8 @@ open FsCheck.Xunit
 
 type AccumulatorCmd = | AddAcc of int | SubAcc of int | ZeroAcc
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Property>]
 let ``withFSharpGrain: state after n pings equals n`` (n: PositiveInt) =
     let def =
@@ -457,3 +467,5 @@ let ``withFSharpGrain: ask result equals handler computation`` (a: PositiveInt) 
     let r1 = (handle |> FSharpGrain.ask<int, AccumulatorCmd, int> (AddAcc a.Get)).GetAwaiter().GetResult()
     let r2 = (handle |> FSharpGrain.ask<int, AccumulatorCmd, int> (AddAcc b.Get)).GetAwaiter().GetResult()
     r1 = a.Get && r2 = a.Get + b.Get
+
+#warnon "44"

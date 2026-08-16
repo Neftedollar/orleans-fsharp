@@ -5,7 +5,6 @@ open System.Diagnostics
 open System.Threading.Tasks
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 /// <summary>
 /// Performance benchmarks measuring F# grain definition dispatch overhead
@@ -59,14 +58,19 @@ module Benchmarks =
             let newState = state + msg.Length
             Task.FromResult(newState, box newState)
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let definition =
             grain {
                 defaultState 0
                 handle handler
             }
 
+#warnon "44"
         let directCall () = handler 42 "hello"
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let dispatchCall () =
             let h = GrainDefinition.getHandler definition
             h 42 "hello"
@@ -79,6 +83,7 @@ module Benchmarks =
         let directTime = runBenchmark measureIterations directCall
         let dispatchTime = runBenchmark measureIterations dispatchCall
 
+#warnon "44"
         let overheadPercent =
             if directTime.TotalMilliseconds > 0.0 then
                 ((dispatchTime.TotalMilliseconds - directTime.TotalMilliseconds)
@@ -97,6 +102,8 @@ module Benchmarks =
         let handler (state: int) (_msg: string) : Task<int * obj> =
             Task.FromResult(state + 1, box (state + 1))
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let definition =
             grain {
                 defaultState 0
@@ -140,6 +147,7 @@ module Benchmarks =
 
         (grainRefAllocPerCall, getHandlerAllocPerCall, handlerInvokeAllocPerCall)
 
+#warnon "44"
     /// <summary>
     /// Runs all benchmarks including allocation measurements and prints results.
     /// </summary>

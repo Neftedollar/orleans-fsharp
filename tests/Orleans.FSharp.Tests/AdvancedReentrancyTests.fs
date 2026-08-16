@@ -12,7 +12,6 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 type private ReentState = { N: int }
 
@@ -22,6 +21,8 @@ type ReadQuery =
 type WriteCmd =
     | Write
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``grain CE default has empty InterleaveMessageTypes`` () =
     let def =
@@ -55,3 +56,5 @@ let ``grain CE interleaveMessage can record several types`` () =
 
     test <@ def.InterleaveMessageTypes |> List.contains typeof<ReadQuery> @>
     test <@ def.InterleaveMessageTypes |> List.contains typeof<WriteCmd> @>
+
+#warnon "44"

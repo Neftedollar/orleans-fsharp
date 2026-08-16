@@ -9,10 +9,11 @@ open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 // --- handleCancellable CE keyword tests ---
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``grain CE handleCancellable stores cancellable handler`` () =
     let def =
@@ -45,12 +46,15 @@ let ``grain CE handleCancellable handler produces correct result`` () =
         test <@ unbox<int> result = 15 @>
     }
 
+#warnon "44"
 [<Fact>]
 let ``grain CE handleCancellable receives CancellationToken`` () =
     task {
         let mutable receivedCt = CancellationToken.None
         let cts = new CancellationTokenSource()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -67,12 +71,15 @@ let ``grain CE handleCancellable receives CancellationToken`` () =
         test <@ receivedCt = cts.Token @>
     }
 
+#warnon "44"
 [<Fact>]
 let ``grain CE handleCancellable handler throws when token is cancelled`` () =
     task {
         let cts = new CancellationTokenSource()
         cts.Cancel()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -103,6 +110,7 @@ let ``grain CE handleWithContextCancellable stores cancellable context handler``
 
     test <@ def.CancellableContextHandler |> Option.isSome @>
 
+#warnon "44"
 [<Fact>]
 let ``grain CE handleWithContextCancellable handler receives context and token`` () =
     task {
@@ -110,6 +118,8 @@ let ``grain CE handleWithContextCancellable handler receives context and token``
         let mutable receivedCtx = false
         let cts = new CancellationTokenSource()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -156,11 +166,14 @@ let ``grain CE handleWithServicesCancellable stores cancellable context handler`
 
 // --- GrainDefinition accessor fallback tests ---
 
+#warnon "44"
 [<Fact>]
 let ``getHandler falls back to CancellableHandler with None token`` () =
     task {
         let mutable receivedCt = CancellationToken.None
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -178,11 +191,14 @@ let ``getHandler falls back to CancellableHandler with None token`` () =
         test <@ receivedCt = CancellationToken.None @>
     }
 
+#warnon "44"
 [<Fact>]
 let ``getContextHandler falls back to CancellableContextHandler with None token`` () =
     task {
         let mutable receivedCt = CancellationToken.None
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -239,12 +255,15 @@ let ``getCancellableContextHandler falls back through all handler variants`` () 
         test <@ newState = 15 @>
     }
 
+#warnon "44"
 [<Fact>]
 let ``getCancellableContextHandler passes token to cancellable handler`` () =
     task {
         let mutable receivedCt = CancellationToken.None
         let cts = new CancellationTokenSource()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -301,16 +320,20 @@ let ``hasAnyHandler returns true for cancellable context handler`` () =
 let ``GrainDefinition has CancellableHandler field`` () =
     let defType = typeof<GrainDefinition<int, string>>
 
+#warnon "44"
     let field =
         defType.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
         |> Array.tryFind (fun p -> p.Name = "CancellableHandler")
 
     test <@ field.IsSome @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``GrainDefinition has CancellableContextHandler field`` () =
     let defType = typeof<GrainDefinition<int, string>>
 
+#warnon "44"
     let field =
         defType.GetProperties(System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.Instance)
         |> Array.tryFind (fun p -> p.Name = "CancellableContextHandler")
@@ -321,6 +344,8 @@ let ``GrainDefinition has CancellableContextHandler field`` () =
 // FsCheck property tests
 // ---------------------------------------------------------------------------
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 /// Shared empty GrainContext for unit tests.
 let private emptyCtx = GrainContext.empty
 
@@ -377,3 +402,5 @@ let ``handleWithContextCancellable: result correct for any initial and delta`` (
         |> Async.AwaitTask
         |> Async.RunSynchronously
     newState = initial + delta
+
+#warnon "44"

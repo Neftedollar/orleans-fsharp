@@ -13,7 +13,6 @@ open Swensen.Unquote
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 // ── Test types ──────────────────────────────────────────────────────────────
 
@@ -64,10 +63,13 @@ let ``FSharpGrainImpl is a sealed non-abstract class`` () =
     test <@ not t.IsAbstract @>
     test <@ t.IsSealed @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``FSharpGrainImpl implements IFSharpGrain`` () =
     test <@ typeof<IFSharpGrain>.IsAssignableFrom(typeof<FSharpGrainImpl>) @>
 
+#warnon "44"
 [<Fact>]
 let ``FSharpGrainImpl extends Orleans.Grain`` () =
     test <@ typeof<Orleans.Grain>.IsAssignableFrom(typeof<FSharpGrainImpl>) @>
@@ -92,10 +94,13 @@ let ``FSharpGrainGuidImpl is a sealed non-abstract class`` () =
     test <@ not t.IsAbstract @>
     test <@ t.IsSealed @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``FSharpGrainGuidImpl implements IFSharpGrainWithGuidKey`` () =
     test <@ typeof<IFSharpGrainWithGuidKey>.IsAssignableFrom(typeof<FSharpGrainGuidImpl>) @>
 
+#warnon "44"
 [<Fact>]
 let ``FSharpGrainGuidImpl extends Orleans.Grain`` () =
     test <@ typeof<Orleans.Grain>.IsAssignableFrom(typeof<FSharpGrainGuidImpl>) @>
@@ -116,10 +121,13 @@ let ``FSharpGrainIntImpl is a sealed non-abstract class`` () =
     test <@ not t.IsAbstract @>
     test <@ t.IsSealed @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``FSharpGrainIntImpl implements IFSharpGrainWithIntKey`` () =
     test <@ typeof<IFSharpGrainWithIntKey>.IsAssignableFrom(typeof<FSharpGrainIntImpl>) @>
 
+#warnon "44"
 [<Fact>]
 let ``FSharpGrainIntImpl extends Orleans.Grain`` () =
     test <@ typeof<Orleans.Grain>.IsAssignableFrom(typeof<FSharpGrainIntImpl>) @>
@@ -155,6 +163,8 @@ let ``IUniversalGrainHandler.Handle takes nullable object and object`` () =
 
 // ── UniversalGrainHandlerRegistry — dispatch ─────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``Registry dispatches handler and returns updated state`` () =
     task {
@@ -172,12 +182,15 @@ let ``Registry dispatches handler and returns updated state`` () =
             }
         registry.Register<CountState, CountMsg>(def)
 
+#warnon "44"
         let handler = registry :> IUniversalGrainHandler
         let! result = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
         let ns = result.NewState :?> CountState
         test <@ ns.N = 1 @>
     }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``Registry uses default state on first call (null current)`` () =
     task {
@@ -190,12 +203,15 @@ let ``Registry uses default state on first call (null current)`` () =
             }
         registry.Register<CountState, CountMsg>(def)
 
+#warnon "44"
         let handler = registry :> IUniversalGrainHandler
         let! result = handler.Handle(null, box GetN, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
         let ns = result.NewState :?> CountState
         test <@ ns.N = 10 @>
     }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``Registry passes current state when non-null`` () =
     task {
@@ -212,6 +228,7 @@ let ``Registry passes current state when non-null`` () =
             }
         registry.Register<CountState, CountMsg>(def)
 
+#warnon "44"
         let handler = registry :> IUniversalGrainHandler
         let existingState = box { N = 5 }
         let! result = handler.Handle(existingState, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
@@ -219,6 +236,8 @@ let ``Registry passes current state when non-null`` () =
         test <@ ns.N = 6 @>
     }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``Registry GetDefaultState returns boxed default for registered type`` () =
     let registry = UniversalGrainHandlerRegistry()
@@ -229,6 +248,7 @@ let ``Registry GetDefaultState returns boxed default for registered type`` () =
         }
     registry.Register<CountState, CountMsg>(def)
 
+#warnon "44"
     let handler = registry :> IUniversalGrainHandler
     let d = handler.GetDefaultState(typeof<CountMsg>)
     test <@ (d :?> CountState).N = 99 @>
@@ -251,6 +271,8 @@ let ``Registry throws InvalidOperationException for unregistered message type`` 
         test <@ ex.Message.Contains("CountMsg") @>
     }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``Registry throws InvalidOperationException on duplicate message type registration`` () =
     let registry = UniversalGrainHandlerRegistry()
@@ -265,11 +287,14 @@ let ``Registry throws InvalidOperationException on duplicate message type regist
         registry.Register<CountState, CountMsg>(def))
     test <@ ex.Message.Contains("CountMsg") @>
 
+#warnon "44"
 [<Fact>]
 let ``Registry supports multiple distinct (State, Message) pairs`` () =
     task {
         let registry = UniversalGrainHandlerRegistry()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let countDef =
             grain {
                 defaultState { N = 0 }
@@ -295,6 +320,7 @@ let ``Registry supports multiple distinct (State, Message) pairs`` () =
         registry.Register<CountState, CountMsg>(countDef)
         registry.Register<StringState, StringMsg>(stringDef)
 
+#warnon "44"
         let handler = registry :> IUniversalGrainHandler
         let! r1 = handler.Handle(null, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
         let! r2 = handler.Handle(null, box (Append "hello"), Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
@@ -303,6 +329,8 @@ let ``Registry supports multiple distinct (State, Message) pairs`` () =
         test <@ (r2.NewState :?> StringState).Text = "hello" @>
     }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``Registry state is accumulated across multiple Handle calls`` () =
     task {
@@ -348,6 +376,7 @@ let ``Registry dispatch is deterministic for same (state, message) inputs`` () =
             }
         registry.Register<CountState, CountMsg>(def)
 
+#warnon "44"
         let handler = registry :> IUniversalGrainHandler
         let state = box { N = 7 }
         let! r1 = handler.Handle(state, box Inc, Unchecked.defaultof<IServiceProvider>, Unchecked.defaultof<IGrainFactory>, Unchecked.defaultof<Orleans.IGrainBase>)
@@ -361,6 +390,8 @@ let ``Registry dispatch is deterministic for same (state, message) inputs`` () =
 open FsCheck
 open FsCheck.Xunit
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Property>]
 let ``Repeated Inc operations produce monotonically increasing N`` (n: PositiveInt) =
     let count = n.Get
@@ -377,6 +408,7 @@ let ``Repeated Inc operations produce monotonically increasing N`` (n: PositiveI
         }
     registry.Register<CountState, CountMsg>(def)
 
+#warnon "44"
     let handler = registry :> IUniversalGrainHandler
     let mutable st: obj = null
     for _ in 1..count do
@@ -386,6 +418,8 @@ let ``Repeated Inc operations produce monotonically increasing N`` (n: PositiveI
     let final = (st :?> CountState).N
     final = count
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Property>]
 let ``GetDefaultState returns the value set via defaultState CE keyword`` (seed: int) =
     let registry = UniversalGrainHandlerRegistry()
@@ -446,6 +480,7 @@ let ``Registry propagates exceptions without swallowing cause`` () =
 
 // ── GrainDispatchResult edge cases ───────────────────────────────────────────
 
+#warnon "44"
 [<Fact>]
 let ``GrainDispatchResult preserves reference equality for boxed state`` () =
     let state = box { N = 42 }
@@ -465,6 +500,8 @@ let ``Inc/Dec sequences maintain correct net count`` (ops: PositiveInt * Positiv
     let incCount = (fst ops).Get
     let decCount = (snd ops).Get
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let registry = UniversalGrainHandlerRegistry()
     let def =
         grain {
@@ -480,6 +517,7 @@ let ``Inc/Dec sequences maintain correct net count`` (ops: PositiveInt * Positiv
     registry.Register<CountState, CountMsg>(def)
     let handler = registry :> IUniversalGrainHandler
 
+#warnon "44"
     let mutable st: obj = null
 
     for _ in 1..incCount do

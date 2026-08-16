@@ -8,7 +8,12 @@ open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+// Task 8 deprecation pass: every declaration in this file exercises the pre-functional-runtime
+// grain{} / FSharpGrain.* API on purpose, so the suppression is file-wide. F# 10 does support
+// scoped #nowarn "44" ... #warnon "44" brackets (used elsewhere in this suite); here they would
+// wrap essentially the whole file, so they would add noise without narrowing anything.
+#nowarn "44"
+
 
 // --- additionalState CE keyword tests ---
 

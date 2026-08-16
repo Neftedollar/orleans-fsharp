@@ -16,13 +16,14 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 [<Collection("ClusterCollection")>]
 type HandleTypedCancellableIntegrationTests(fixture: ClusterFixture) =
 
     // ── typed result access via ask ───────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     let ``TypedCancAdd: returns correct int result`` () =
         task {
@@ -107,3 +108,5 @@ type HandleTypedCancellableIntegrationTests(fixture: ClusterFixture) =
                     g |> FSharpGrain.ask<TypedCancState, TypedCancCommand, int> GetTypedCancLastResult)
             test <@ last = 30 @>
         }
+
+#warnon "44"

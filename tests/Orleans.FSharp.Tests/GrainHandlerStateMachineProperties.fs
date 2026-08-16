@@ -24,7 +24,6 @@ open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 // ── Domain ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +44,8 @@ type ScoreTrackerCommand =
 
 // ── Grain definitions ──────────────────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 /// Score-tracker defined with <c>handleState</c>.
 let private scoreTrackerHandleState =
     grain {
@@ -115,6 +116,7 @@ let private applyViaHandler
 
 // ── Properties: handleState ───────────────────────────────────────────────────
 
+#warnon "44"
 [<Property>]
 let ``handleState score-tracker: total games = Wins + Losses + Draws`` (cmds: ScoreTrackerCommand list) =
     let s = applyViaHandler scoreTrackerHandleState cmds
@@ -164,6 +166,8 @@ let ``handleState score-tracker: Win then Lose returns to prior NetScore`` (pref
 
 // ── Properties: handleTyped ───────────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Property>]
 let ``handleTyped score-tracker: typed result equals state.NetScore`` (cmds: ScoreTrackerCommand list) =
     let handler = GrainDefinition.getCancellableContextHandler scoreTrackerHandleTyped
@@ -176,6 +180,7 @@ let ``handleTyped score-tracker: typed result equals state.NetScore`` (cmds: Sco
         lastResult <- unbox<int> boxedResult
     lastResult = state.NetScore
 
+#warnon "44"
 [<Property>]
 let ``handleTyped score-tracker: net score invariant holds`` (cmds: ScoreTrackerCommand list) =
     let s = applyViaHandler scoreTrackerHandleTyped cmds

@@ -17,7 +17,6 @@ open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 // ── Test domain types ─────────────────────────────────────────────────────────
 
@@ -37,6 +36,8 @@ type GadgetCommand =
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 /// Creates a minimal GrainDefinition with a no-op handler.
 let private makeWidgetDef () : GrainDefinition<WidgetState, WidgetCommand> =
     grain {
@@ -69,18 +70,22 @@ let ``AddFSharpGrain registers FSharpBinaryCodec in DI`` () =
     let services = ServiceCollection()
     services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
 
+#warnon "44"
     let registered =
         services
         |> Seq.exists (fun sd -> sd.ServiceType = typeof<FSharpBinaryCodec>)
 
     test <@ registered @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain registers FSharpBinaryCodec exactly once for two registrations`` () =
     let services = ServiceCollection()
     services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
     services.AddFSharpGrain<GadgetState, GadgetCommand>(makeGadgetDef()) |> ignore
 
+#warnon "44"
     let codecRegistrations =
         services
         |> Seq.filter (fun sd -> sd.ServiceType = typeof<FSharpBinaryCodec>)
@@ -90,23 +95,29 @@ let ``AddFSharpGrain registers FSharpBinaryCodec exactly once for two registrati
 
 // ── GrainRegistry registration ────────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain registers GrainRegistry singleton`` () =
     let services = ServiceCollection()
     services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
 
+#warnon "44"
     let registered =
         services
         |> Seq.exists (fun sd -> sd.ServiceType = typeof<GrainRegistry>)
 
     test <@ registered @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain shares single GrainRegistry across calls`` () =
     let services = ServiceCollection()
     services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
     services.AddFSharpGrain<GadgetState, GadgetCommand>(makeGadgetDef()) |> ignore
 
+#warnon "44"
     let registryCount =
         services
         |> Seq.filter (fun sd -> sd.ServiceType = typeof<GrainRegistry>)
@@ -116,34 +127,43 @@ let ``AddFSharpGrain shares single GrainRegistry across calls`` () =
 
 // ── UniversalGrainHandlerRegistry registration ────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain registers UniversalGrainHandlerRegistry singleton`` () =
     let services = ServiceCollection()
     services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
 
+#warnon "44"
     let registered =
         services
         |> Seq.exists (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
 
     test <@ registered @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain registers IUniversalGrainHandler singleton`` () =
     let services = ServiceCollection()
     services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
 
+#warnon "44"
     let registered =
         services
         |> Seq.exists (fun sd -> sd.ServiceType = typeof<IUniversalGrainHandler>)
 
     test <@ registered @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain shares single UniversalGrainHandlerRegistry across calls`` () =
     let services = ServiceCollection()
     services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
     services.AddFSharpGrain<GadgetState, GadgetCommand>(makeGadgetDef()) |> ignore
 
+#warnon "44"
     let handlerRegistryCount =
         services
         |> Seq.filter (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
@@ -153,6 +173,8 @@ let ``AddFSharpGrain shares single UniversalGrainHandlerRegistry across calls`` 
 
 // ── GrainDefinition registration ──────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain registers GrainDefinition as singleton`` () =
     let services = ServiceCollection()
@@ -203,6 +225,7 @@ let ``AddFSharpGrain wires handler so registry can dispatch Widget messages`` ()
         let services = ServiceCollection()
         services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
 
+#warnon "44"
         let handlerSd =
             services |> Seq.find (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
 
@@ -214,6 +237,8 @@ let ``AddFSharpGrain wires handler so registry can dispatch Widget messages`` ()
         test <@ state.Count = 1 @>
     }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain wires multiple handlers on same registry`` () =
     task {
@@ -221,6 +246,7 @@ let ``AddFSharpGrain wires multiple handlers on same registry`` () =
         services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
         services.AddFSharpGrain<GadgetState, GadgetCommand>(makeGadgetDef()) |> ignore
 
+#warnon "44"
         let handlerSd =
             services |> Seq.find (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
 
@@ -234,12 +260,15 @@ let ``AddFSharpGrain wires multiple handlers on same registry`` () =
         test <@ (gadgetResult.NewState :?> GadgetState).Active = true @>
     }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain SetName command works end-to-end through registry`` () =
     task {
         let services = ServiceCollection()
         services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef()) |> ignore
 
+#warnon "44"
         let handlerSd =
             services |> Seq.find (fun sd -> sd.ServiceType = typeof<UniversalGrainHandlerRegistry>)
 
@@ -251,6 +280,8 @@ let ``AddFSharpGrain SetName command works end-to-end through registry`` () =
 
 // ── Return value of AddFSharpGrain ────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``AddFSharpGrain returns the same IServiceCollection for chaining`` () =
     let services = ServiceCollection() :> IServiceCollection
@@ -273,3 +304,5 @@ let ``AddFSharpGrain always returns the same IServiceCollection instance for any
     let services = ServiceCollection() :> IServiceCollection
     let returned = services.AddFSharpGrain<WidgetState, WidgetCommand>(makeWidgetDef())
     obj.ReferenceEquals(services, returned)
+
+#warnon "44"

@@ -12,13 +12,14 @@ open Orleans.FSharp.Testing
 open Swensen.Unquote
 open Xunit
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 type CompanyState = { Count: int }
 type CompanyCommand =
     | Increment
     | GetCount
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 let private companyDefinition =
     grain {
         defaultState { Count = 0 }
@@ -80,6 +81,7 @@ let ``createWithMockFactory supports fluent GrainMock registration`` () =
             harness.HttpClient.Dispose()
     }
 
+#warnon "44"
 [<Fact>]
 let ``createWithFactory fails fast when configureWeb already registers IGrainFactory`` () =
     task {

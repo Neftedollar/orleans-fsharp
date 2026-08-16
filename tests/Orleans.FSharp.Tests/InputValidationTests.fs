@@ -9,12 +9,13 @@ open FsCheck.Xunit
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 // ---------------------------------------------------------------------------
 // GrainBuilder: persist
 // ---------------------------------------------------------------------------
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``persist with empty string throws ArgumentException`` () =
     raises<ArgumentException>
@@ -71,6 +72,7 @@ let ``onTimer with empty name throws ArgumentException`` () =
 // SiloConfigBuilder: clusterId
 // ---------------------------------------------------------------------------
 
+#warnon "44"
 [<Fact>]
 let ``siloConfig clusterId with empty string throws ArgumentException`` () =
     raises<ArgumentException>
@@ -433,6 +435,8 @@ let ``clientConfig addMemoryStreams with empty name throws ArgumentException`` (
 // FsCheck property tests
 // ---------------------------------------------------------------------------
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 /// Helper: create a minimal grain definition, run an action, return whether an
 /// ArgumentException was thrown.
 let private grainPersistThrows (providerName: string) =
@@ -448,6 +452,7 @@ let private grainPersistThrows (providerName: string) =
         threw <- true
     threw
 
+#warnon "44"
 [<Property>]
 let ``persist throws for any string consisting only of spaces`` (n: NonNegativeInt) =
     let ws = String(' ', n.Get)

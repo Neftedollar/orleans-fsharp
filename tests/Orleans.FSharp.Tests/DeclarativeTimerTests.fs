@@ -9,20 +9,24 @@ open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp
 
-#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
 
 // --- GrainDefinition.TimerHandlers field tests ---
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``GrainDefinition has TimerHandlers field`` () =
     let defType = typeof<GrainDefinition<int, string>>
 
+#warnon "44"
     let field =
         defType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
         |> Array.tryFind (fun p -> p.Name = "TimerHandlers")
 
     test <@ field.IsSome @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``TimerHandlers defaults to empty map`` () =
     let def: GrainDefinition<int, string> =
@@ -62,11 +66,14 @@ let ``multiple onTimer calls register multiple handlers`` () =
     test <@ def.TimerHandlers |> Map.containsKey "cleanup" @>
     test <@ def.TimerHandlers |> Map.containsKey "heartbeat" @>
 
+#warnon "44"
 [<Fact>]
 let ``onTimer stores correct dueTime and period`` () =
     let dueTime = TimeSpan.FromMinutes 1.
     let period = TimeSpan.FromMinutes 5.
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState 0
@@ -78,10 +85,13 @@ let ``onTimer stores correct dueTime and period`` () =
     test <@ storedDueTime = dueTime @>
     test <@ storedPeriod = period @>
 
+#warnon "44"
 [<Fact>]
 let ``onTimer handler has correct signature and executes`` () =
     let mutable handlerCalled = false
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState 42
@@ -182,3 +192,5 @@ let ``onTimer handler increments state correctly for any initial state`` (initia
         }
     let (_, _, handler) = def.TimerHandlers.["inc"]
     handler initial |> _.GetAwaiter().GetResult() = initial + 1
+
+#warnon "44"
