@@ -132,6 +132,8 @@ type LedgerApi =
       useEscapedFacade: unit -> Task<string>
       /// Looks up a descriptor which is not attached to this definition.
       unattached: unit -> Task<string>
+      /// Tries to create a brand-new persistent facet after activation has started.
+      createFacetNow: unit -> Task<string>
       /// The silo hosting this activation.
       whereAmI: unit -> Task<string>
       /// Arms the deactivation hook of this activation to fail.
@@ -469,6 +471,28 @@ let ledgerDefinition =
                     return state, $"{error.GetType().Name}:{error.Message}"
             })
 
+        handle (_.createFacetNow) (fun context state () ->
+            task {
+                // The decisive negative control for activation-order step 1: Orleans rejects
+                // IPersistentStateFactory.Create once the activation lifecycle has started, so
+                // the functional activator has to create every facet before it returns.
+                let factory = context.services.GetRequiredService<IPersistentStateFactory>()
+
+                match context.services.GetService typeof<IGrainContext> with
+                | :? IGrainContext as grainContext ->
+                    try
+                        factory.Create<AuditState>(
+                            grainContext,
+                            FunctionalPersistentStateConfiguration("too-late", FunctionalStateProviders.Audit)
+                        )
+                        |> ignore
+
+                        return state, "created"
+                    with error ->
+                        return state, $"rejected:{error.GetType().Name}:{error.Message}"
+                | _ -> return state, "no grain context in the activation services"
+            })
+
         handle (_.whereAmI) (fun context state () -> task { return state, siloOf context })
 
         handle (_.armFailingDeactivation) (fun context state () ->
@@ -545,6 +569,7 @@ let ephemeralDefinition =
                     return state, $"{error.GetType().Name}:{error.Message}"
             })
 
+        handle (_.createFacetNow) (fun _ state () -> task { return state, notAttached () })
         handle (_.whereAmI) (fun context state () -> task { return state, siloOf context })
         handle (_.armFailingDeactivation) (fun _ state () -> task { return state, () })
 

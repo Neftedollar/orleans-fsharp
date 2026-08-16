@@ -191,8 +191,19 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
             Assert.Equal("v2:[activated,durable,memory-only]", afterReload)
 
             Assert.Equal(1, StorageLog.countFor grainId "write")
-            // Two SetupState reads plus exactly one application-issued read.
-            Assert.Equal(3, StorageLog.countFor grainId "read")
+
+            // The reload replaced ONLY the selected holder: two SetupState reads plus exactly
+            // one application-issued read on the ledger facet, and nothing extra on the audit
+            // facet, whose value is untouched.
+            let reads =
+                StorageLog.forGrain grainId
+                |> List.filter (fun call -> call.Operation = "read")
+                |> List.map (fun call -> call.StateName)
+
+            Assert.Equal<string list>([ "ledger"; "audit"; "ledger" ], reads)
+
+            let! audit = api.auditPeek ()
+            Assert.Equal(0, audit)
         }
 
     [<Fact>]
@@ -375,6 +386,22 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
     // ──────────────────────────────────────────────────────────────────────────
     // Activation and deactivation ordering
     // ──────────────────────────────────────────────────────────────────────────
+
+    /// <remarks>
+    /// Phase-0 item 9's negative control, against production code: a facet can only be created
+    /// before the activation lifecycle starts. Orleans rejects the same call from inside a
+    /// handler, which is why the functional activator creates every attached facet
+    /// synchronously in <c>CreateInstance</c>. Without that ordering the SetupState load — and
+    /// with it every assertion in this file — could not happen.
+    /// </remarks>
+    [<Fact>]
+    member _.``creating a persistent facet after activation is rejected by Orleans``() =
+        task {
+            let! outcome = (fixture.Ledger(key "latefacet")).createFacetNow ()
+
+            Assert.StartsWith("rejected:InvalidOperationException", outcome)
+            Assert.Contains("Lifecycle has already been started", outcome)
+        }
 
     /// <remarks>
     /// Spec activation order, steps 2–4: SetupState loads, <c>OnActivateAsync</c> initializes,

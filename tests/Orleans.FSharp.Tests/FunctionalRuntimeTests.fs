@@ -41,7 +41,8 @@ type RuntimeApi =
       boom: string -> Task<string>
       storage: unit -> Task<string>
       tokenWrite: unit -> Task<string>
-      tokenPing: unit -> Task<unit> }
+      tokenPing: unit -> Task<unit>
+      clock: unit -> Task<string> }
 
 type RuntimeState = { last: string }
 
@@ -85,6 +86,8 @@ let private definitionFor (contract: GrainContract<'Actor, string, RuntimeApi>) 
         // token can ever be cancelled — one on the acknowledged path, one on the one-way path.
         handle (_.tokenWrite) (fun context state () ->
             task { return state, (if context.cancellationToken.CanBeCanceled then "cancellable" else "none") })
+
+        handle (_.clock) (fun context state () -> task { return state, context.utcNow.ToString "O" })
 
         handle (_.tokenPing) (fun context _ () ->
             task {
@@ -130,7 +133,12 @@ type private StubGrainRuntime(services: IServiceProvider) =
         member this.DelayDeactivation(_context, timeSpan) = this.Delay <- timeSpan
         member _.GetStorage<'T>(_context) = Unchecked.defaultof<Orleans.Core.IStorage<'T>>
 
-let private activationServices () =
+/// <summary>A clock an application registers to stay authoritative over TimeProvider.System.</summary>
+type private FixedTimeProvider(instant: DateTimeOffset) =
+    inherit TimeProvider()
+    override _.GetUtcNow() = instant
+
+let private activationServicesWith (configure: IServiceCollection -> unit) =
     let services = ServiceCollection()
 
     ServiceCollectionExtensions.AddSerializer(
@@ -154,7 +162,11 @@ let private activationServices () =
 
     services.AddSingleton<IGrainFactory>(FunctionalTransportHarness.UnconfiguredFactory() :> IGrainFactory)
     |> ignore
+
+    configure services
     services.BuildServiceProvider() :> IServiceProvider
+
+let private activationServices () = activationServicesWith ignore
 
 /// <summary>
 /// A stub <see cref="T:Orleans.Runtime.IGrainContext"/>: the functional activator only reads
@@ -201,8 +213,11 @@ let private grainIdOf (grainType: string) (key: string) =
 /// Create the target the way Orleans does, without running the activation lifecycle. Only the
 /// disposal and construction tests need this form; everything else uses <c>createTarget</c>.
 /// </summary>
-let private createInactiveTarget (definition: FunctionalHostedDefinition) (key: string) =
-    let services = activationServices ()
+let private createInactiveTargetIn
+    (services: IServiceProvider)
+    (definition: FunctionalHostedDefinition)
+    (key: string)
+    =
     let context = StubGrainContext(grainIdOf definition.GrainTypeName key, services)
 
     let activator =
@@ -212,19 +227,25 @@ let private createInactiveTarget (definition: FunctionalHostedDefinition) (key: 
     context.Instance <- instance
     activator, context, instance
 
+let private createInactiveTarget (definition: FunctionalHostedDefinition) (key: string) =
+    createInactiveTargetIn (activationServices ()) definition key
+
 /// <summary>
 /// Create the target and run the functional half of activation, which is where the ephemeral
 /// primary state is initialized (activation-order step 3). Dispatch is only ever reached on an
 /// activated grain, so every dispatch test starts here.
 /// </summary>
-let private createTarget (definition: FunctionalHostedDefinition) (key: string) =
-    let activator, context, instance = createInactiveTarget definition key
+let private createTargetIn (services: IServiceProvider) (definition: FunctionalHostedDefinition) (key: string) =
+    let activator, context, instance = createInactiveTargetIn services definition key
 
     (instance :?> IGrainBase)
         .OnActivateAsync CancellationToken.None
     |> fun activation -> activation.GetAwaiter().GetResult()
 
     activator, context, instance
+
+let private createTarget (definition: FunctionalHostedDefinition) (key: string) =
+    createTargetIn (activationServices ()) definition key
 
 let private payloadCodec (context: StubGrainContext) =
     (context :> IGrainContext).ActivationServices.GetRequiredService<FunctionalPayloadCodec>()
@@ -704,7 +725,8 @@ let ``the hosted view preserves declaration order, tokens, and flags`` () =
                                                                                              "boom"
                                                                                              "storage"
                                                                                              "tokenWrite"
-                                                                                             "tokenPing" |]
+                                                                                             "tokenPing"
+                                                                                             "clock" |]
         @>
 
     let notify = (definition.TryFindOperation "notify").Value
@@ -781,6 +803,45 @@ let ``a delivered one-way context carries no cancellation, an acknowledged one d
             dispatch instance (envelopeFor "read" AdmissionFlags.ReadOnly (codec.Serialize<unit> ()))
 
         test <@ codec.Deserialize<string> observed.Payload = "none" @>
+    }
+
+/// <remarks>
+/// Spec "Builder registration": silo registration uses <c>TryAddSingleton&lt;TimeProvider&gt;</c>
+/// "so an application-provided clock remains authoritative". The activator therefore has to read
+/// the registered clock, and <c>context.utcNow</c> has to come from it rather than from
+/// <c>DateTimeOffset.UtcNow</c>.
+/// </remarks>
+[<Fact>]
+let ``the invocation context reads the application-registered TimeProvider`` () =
+    let instant = DateTimeOffset(2031, 4, 5, 6, 7, 8, TimeSpan.Zero)
+
+    let services =
+        activationServicesWith (fun services ->
+            services.AddSingleton<TimeProvider>(FixedTimeProvider instant :> TimeProvider)
+            |> ignore)
+
+    let _, context, instance = createTargetIn services (hosted runtimeDefinition) "clock-custom"
+    let codec = payloadCodec context
+
+    let expected = instant.ToString "O"
+
+    task {
+        let! reply = dispatch instance (envelopeFor "clock" 0uy (codec.Serialize<unit> ()))
+        test <@ codec.Deserialize<string> reply.Payload = expected @>
+    }
+
+[<Fact>]
+let ``the invocation context falls back to the system clock`` () =
+    let _, context, instance = createTarget (hosted runtimeDefinition) "clock-default"
+    let codec = payloadCodec context
+    let before = DateTimeOffset.UtcNow.AddSeconds -5.0
+
+    task {
+        let! reply = dispatch instance (envelopeFor "clock" 0uy (codec.Serialize<unit> ()))
+        let observed = DateTimeOffset.Parse(codec.Deserialize<string> reply.Payload)
+
+        test <@ observed > before @>
+        test <@ observed < DateTimeOffset.UtcNow.AddSeconds 5.0 @>
     }
 
 /// <remarks>
