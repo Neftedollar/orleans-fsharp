@@ -85,3 +85,5 @@ website/.astro/
 src/Orleans.FSharp.CodeGen/Generated/
 
 .fake
+## Superpowers scratch
+.superpowers/
