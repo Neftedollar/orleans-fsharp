@@ -100,7 +100,7 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
             with error ->
                 onError error
 
-        this.OnTimersDisposed()
+        this.OnTimersDisposed snapshot.Length
 
     /// <summary>
     /// Observes a timer-disposal failure. Set once by the activator right after construction, so
@@ -115,8 +115,12 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     /// stage: it runs inside <c>Dispose</c>'s <c>finally</c>, strictly after the functional
     /// <c>onDeactivate</c> hook and the remaining Orleans stop stages have already completed, and
     /// strictly before <c>IGrainActivator.DisposeInstance</c> observes <c>Dispose</c> returning.
+    /// It receives how many <c>IGrainTimer</c> handles this activation actually owned, so an
+    /// observer can tell "disposed the two declared timers" from "there was nothing to dispose"
+    /// — the stage fires for every functional activation, including those with no declared
+    /// timers at all.
     /// </summary>
-    member val internal OnTimersDisposed: unit -> unit = ignore with get, set
+    member val internal OnTimersDisposed: int -> unit = ignore with get, set
 
     /// <summary>
     /// How often this target has actually been disposed: <c>0</c> before teardown and exactly

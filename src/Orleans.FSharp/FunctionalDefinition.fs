@@ -405,6 +405,46 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                     DefinitionDraft.single "onDeactivate" draft.Contract.GrainTypeName draft.OnDeactivate hook }
 
     /// <summary>Declare a durable reminder with an explicit due time and period.</summary>
+    /// <remarks>
+    /// <para>
+    /// Every successful activation reconciles the declared reminders through
+    /// <c>RegisterOrUpdateReminder</c>, so adding a declaration or changing its due time or
+    /// period needs no migration: the next activation updates the durable registration in place.
+    /// </para>
+    /// <para>
+    /// <b>Renaming or removing a declaration is different, and nothing automatic happens.</b>
+    /// The registration lives in the reminder table, not in the definition, so it survives the
+    /// deployment that dropped the declaration and keeps firing. Every tick then arrives at a
+    /// name the definition no longer declares, is logged with the grain and reminder identity,
+    /// and fails that callback — for as long as the registration exists. Retiring it is an
+    /// explicit application step, because the runtime cannot tell a rename from a grain type
+    /// that is temporarily not deployed, and unregistering on its own guess would silently
+    /// destroy durable schedules.
+    /// </para>
+    /// <para>
+    /// The migration is a one-off, idempotent call through the stock reminder registry, which
+    /// the functional context reaches through <c>context.services</c> (the functional surface
+    /// intentionally exposes no reminder API of its own):
+    /// </para>
+    /// <code>
+    /// handle (_.retireStaleReminder) (fun context state () ->
+    ///     task {
+    ///         let registry = context.services.GetRequiredService&lt;IReminderRegistry&gt;()
+    ///         let! stale = registry.GetReminder(context.grainId, "old-name")
+    ///
+    ///         if not (obj.ReferenceEquals(stale, null)) then
+    ///             do! registry.UnregisterReminder(context.grainId, stale)
+    ///
+    ///         return state, ()
+    ///     })
+    /// </code>
+    /// <para>
+    /// Run it for every grain that carried the old name (<c>registry.GetReminders grainId</c>
+    /// enumerates what a grain still has registered), and keep the retiring operation deployed
+    /// until every such grain has been visited. A rename is the removal above plus the new
+    /// declaration; there is no in-place rename.
+    /// </para>
+    /// </remarks>
     [<CustomOperation("onReminder")>]
     member _.OnReminder<'State>
         (

@@ -159,10 +159,11 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
             // "timer disposal" stage between the remaining Orleans stop stages and DisposeInstance
             // observing Dispose returning.
             target.OnTimersDisposed <-
-                fun () ->
+                fun disposed ->
                     logger.LogDebug(
-                        "Functional timers of grain type {GrainType} disposed for {GrainId}",
+                        "Functional timers of grain type {GrainType} disposed: {TimerCount} handle(s) for grain {GrainId}",
                         definition.GrainTypeName,
+                        disposed,
                         grainContext.GrainId
                     )
 
