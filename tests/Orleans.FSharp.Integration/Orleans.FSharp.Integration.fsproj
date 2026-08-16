@@ -53,6 +53,7 @@
     <Compile Include="FunctionalStateRestartTests.fs" />
     <Compile Include="FunctionalPhase5Fixture.fs" />
     <Compile Include="FunctionalPhase5IntegrationTests.fs" />
+    <Compile Include="ChatRoomSampleIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

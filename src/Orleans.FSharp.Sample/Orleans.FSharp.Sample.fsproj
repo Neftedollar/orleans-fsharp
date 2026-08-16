@@ -19,6 +19,7 @@
     <Compile Include="LifecycleTestGrain.fs" />
     <Compile Include="AdditionalStateGrain.fs" />
     <Compile Include="TransactionalAccountGrain.fs" />
+    <Compile Include="ChatRoomFunctional.fs" />
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

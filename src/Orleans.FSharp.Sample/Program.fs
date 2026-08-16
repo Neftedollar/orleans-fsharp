@@ -5,6 +5,7 @@ open Microsoft.Extensions.Hosting
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.Sample
+open Chat.Contracts
 
 let config =
     siloConfig {
@@ -19,6 +20,13 @@ SiloConfig.applyToHost config builder
 builder.Services.AddFSharpGrainsFromAssembly(typeof<CounterState>.Assembly) |> ignore
 // Grains without the attribute still register manually:
 builder.Services.AddFSharpGrain<OrderStatus, OrderCommand>(OrderGrainDef.order) |> ignore
+
+// Spec 003's functional-runtime chat room: `AddFunctionalGrain` on the silo builder is enough
+// for a colocated process, since the same `IGrainFactory` that hosts the definition also binds
+// its own functional references (see FunctionalTransportSource.Guidance) -- a genuinely separate
+// client process would call `clientBuilder.AddFunctionalGrainClient()` instead.
+builder.UseOrleans(fun siloBuilder -> siloBuilder.AddFunctionalGrain(Chat.Server.Definition.roomDefinition) |> ignore)
+|> ignore
 builder.Services.AddFSharpGrain<string, EchoCommand>(EchoGrainDef.echo) |> ignore
 
 let host = builder.Build()
@@ -30,7 +38,46 @@ let runSample () : Task =
 
         let factory = host.Services.GetRequiredService<Orleans.IGrainFactory>()
 
+        // Functional grain runtime demo (spec 003) — the exact chat room from the
+        // specification's "Public authoring model" section, driven end to end: `RoomApi.ref` is
+        // the point-free `let ref = FunctionalGrain.ref contract` binding. Runs first so it
+        // completes independently of the older CodeGen-backed demos below.
+        printfn "--- Functional Grain Runtime Demo (chat.room) ---"
+
+        let lobby = RoomApi.ref factory (RoomId.create "general")
+
+        do! lobby.join (UserId.create "alice")
+        do! lobby.join (UserId.create "bob")
+        printfn "alice and bob joined #general"
+
+        let! aliceResult = lobby.say { author = UserId.create "alice"; text = "Hey everyone!" }
+        printfn "alice says \"Hey everyone!\" -> %A" aliceResult
+
+        let! bobResult =
+            lobby.say
+                { author = UserId.create "bob"
+                  text = "Hi Alice, how's it going?" }
+
+        printfn "bob says \"Hi Alice, how's it going?\" -> %A" bobResult
+
+        // typing is oneWay + alwaysInterleave: the call acknowledges locally and never blocks
+        // on the target's own scheduling.
+        do! lobby.typing { user = UserId.create "alice"; isTyping = true }
+        printfn "alice is typing..."
+
+        // say against a non-member fails without touching the message list — the readOnly
+        // history call below still reports only the two accepted messages.
+        let! rejected = lobby.say { author = UserId.create "carol"; text = "Can I join?" }
+        printfn "carol (not a member) says \"Can I join?\" -> %A" rejected
+
+        let! history = lobby.history { take = 20 }
+        printfn "history (most recent last):"
+
+        for message in history do
+            printfn "  [%s] %s: %s" (message.sentAt.ToString "HH:mm:ss") (UserId.value message.author) message.text
+
         // Counter grain demo
+        printfn ""
         let counterRef = GrainRef.ofInt64<ICounterGrain> factory 1L
         printfn "--- Counter Grain Demo ---"
 
