@@ -326,13 +326,21 @@ modules), on `AdditionalStateSpec`, on `[<FSharpGrain>]`, on `AddFSharpGrain` /
 `AddFSharpGrainsFromAssembly`, on the `Timers` and `Reminder` modules, on every operation of the
 universal handle module (`FSharpGrain.ref`/`refGuid`/`refInt` and `send`/`post`/`ask` with their
 `Guid`/`Int` variants), on the three handle types, on the `IFSharpGrain*` interface aliases, on
-the runtime host class `FSharpGrain<'State,'Message>` and `NamedPersistentState`, and -- from
+the runtime host class `FSharpGrain<'State,'Message>` and `NamedPersistentState`, on the C#
+interop helpers for the old cluster (`GrainContext.forCSharp` and the
+`Orleans.FSharp.Runtime.GrainDefinition` module behind `additionalState`), and -- from
 `Orleans.FSharp.Testing` -- on `TestHarness.getFSharpGrain*` and `GrainMock.withFSharpGrain*`.
 So a silo-only, client-only, test-only, or combined process all get the signal at their own
 call sites.
 
-`SimpleGrainState` is the one member of the cluster left unattributed, and only because it is
-`internal`: no consumer can name it, so the attribute would be invisible where it matters.
+Two members of the cluster are deliberately left unattributed, both recorded with a
+`// NOT [<Obsolete>]` comment at their declaration in `GrainDiscovery.fs`:
+`SimpleGrainState`, because it is `internal` (no consumer can name it, so the attribute would be
+invisible where it matters), and `UniversalGrainHandlerRegistry`, the silo-side dispatcher wired
+by the already-obsolete `AddFSharpGrain` — a consumer only reaches it after being warned at that
+entry point, and the one place this repository documents naming it directly
+([testing.md](testing.md), "Testing the Universal Grain Pattern") is under that file's own
+deprecation banner.
 
 Inside this repository the library files that must keep naming these symbols (the definitions
 themselves, the runtime host, the registries, the test harness) wrap exactly those references in

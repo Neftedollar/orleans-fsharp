@@ -350,6 +350,8 @@ type FSharpGrain<'State, 'Message>
 /// </summary>
 // deprecated API self-reference (spec-003 deprecation pass)
 #nowarn "44"
+[<Obsolete("The Orleans.FSharp.Runtime.GrainDefinition module (C# interop helper that initialises the named states declared with the grain{} additionalState CE keyword) is superseded by the functional grain runtime: declare named state with usePersistentState in grainFor { } and read it through ctx.persistentState — AddFunctionalGrain hosts the definition, so no per-grain C# stub initialises state in OnActivateAsync. See docs/functional-grains.md for the migration.",
+          false)>]
 module GrainDefinition =
 
     /// <summary>
@@ -440,6 +442,15 @@ module SiloBuilderExtensions =
     /// Implements <see cref="IUniversalGrainHandler"/> so that <c>FSharpGrainImpl</c> (in
     /// the C# Abstractions project) can dispatch without referencing F#-specific types.
     /// </summary>
+    // NOT [<Obsolete>] (spec-003 deprecation pass): this type IS old-cluster-only and public, and
+    // its Register<'S,'M> overload takes the [<Obsolete>] GrainDefinition<'S,'M> (that reference is
+    // bracketed below). It is deliberately left unattributed because it is not on controller
+    // ruling 1's approved list: it is silo plumbing wired by the already-obsolete AddFSharpGrain,
+    // so a consumer who reaches it has been warned at the entry point. Its one documented direct
+    // use (docs/testing.md "Testing the Universal Grain Pattern") sits under that file's
+    // deprecation banner. Attributing it is a one-line change plus scoped brackets at 11 call
+    // sites in tests/Orleans.FSharp.Tests (UniversalGrainHandlerTests.fs, AddFSharpGrainTests.fs)
+    // — measured, not estimated — and needs a controller ruling first.
     type UniversalGrainHandlerRegistry() =
         // Keyed by message type full name (Type.FullName of the 'Message type parameter).
         // Handler signature includes IServiceProvider and IGrainFactory for context-aware dispatch.
