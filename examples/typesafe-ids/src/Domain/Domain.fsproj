@@ -12,7 +12,9 @@
     <Compile Include="UserGrain.fs" />
     <Compile Include="UserGrainFunctional.fs" />
     <Compile Include="OrderGrain.fs" />
+    <Compile Include="OrderGrainFunctional.fs" />
     <Compile Include="RouterGrain.fs" />
+    <Compile Include="RouterGrainFunctional.fs" />
   </ItemGroup>
 
   <ItemGroup>

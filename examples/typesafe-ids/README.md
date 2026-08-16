@@ -6,6 +6,14 @@ This example showcases three F# features that have **no equivalent in C#** and t
 2. **Active Patterns** for message routing -- decompose messages into categories via pattern matching
 3. **Discriminated Union exhaustiveness** -- the compiler catches unhandled state transitions
 
+All three run live through the functional grain runtime (`UserGrainFunctional.fs`,
+`OrderGrainFunctional.fs`, `RouterGrainFunctional.fs`): the user and order grains keep their typed
+`int64<UserId>` / `int64<OrderId>` contract keys (the functional runtime's own version of the
+units-of-measure guarantee below), and the router grain reuses `Routing.routeMessage` and its
+active patterns verbatim. `UserGrain.fs` / `OrderGrain.fs` / `RouterGrain.fs` keep the original
+`grain {}` versions as deprecated reference -- see `Program.fs` for why they cannot run standalone
+and [docs/functional-grains.md](../../docs/functional-grains.md) for the full migration guide.
+
 ## How to run
 
 ```bash
@@ -160,12 +168,22 @@ In a distributed system with hundreds of grain types and thousands of message fl
 
 ## Key concepts
 
-- **`grain {}`** computation expression for declarative grain behavior
+- **`grainContract` / `grainFor`** the functional grain runtime's contract + definition pair (this
+  example's live path for all three grains)
+- **`int64KeyMapped rawId userId` / `int64KeyMapped rawId orderId`** the contract's key codec --
+  `UserApi.ref factory` only accepts `int64<UserId>`, `OrderApi.ref factory` only accepts
+  `int64<OrderId>`; passing the wrong one is the same compile error the units-of-measure section
+  above shows for `UserGrainDef.getUser` / `OrderGrainDef.getOrder`
 - **`siloConfig {}`** computation expression for silo configuration
-- **`GrainRef`** type-safe grain references with `invoke`
+- **`grain {}`** (deprecated) the original computation expression, kept in `UserGrain.fs` /
+  `OrderGrain.fs` / `RouterGrain.fs` as reference -- needs a C#-generated proxy per grain interface
+  and cannot resolve standalone in an F#-only project
 - **Units of Measure** zero-cost compile-time type tags on numeric IDs
-- **Active Patterns** user-defined pattern-matching decompositions
-- **Exhaustive matching** compiler-enforced handling of all discriminated union cases
+- **Active Patterns** user-defined pattern-matching decompositions -- `Routing.routeMessage` and
+  the `Spam` pattern are plain F# functions, called identically from both the old grain and
+  `RouterFunctionalDef.router`
+- **Exhaustive matching** compiler-enforced handling of all discriminated union cases --
+  `OrderGrainDef.tryTransition` is reused verbatim by `OrderFunctionalDef.order`
 
 ## Documentation
 
