@@ -41,6 +41,7 @@ review before the next task starts. Final whole-branch review by controller.
 | 6 | Phase 5: collection age, reminders, timers, context | Phase 5 | sonnet |
 | 7 | Phase 6: runnable sample, docs, compatibility suite | Phase 6 | sonnet |
 | 8 | Deprecation pass: survey superseded old APIs → `[<Obsolete>]` with replacement pointers; add new-API examples beside the old deprecated ones | user goal (not in spec) | sonnet (survey list approved by controller first) |
+| 9 | Documentation update: website (`website/src/content/docs/`) documents the functional runtime as the current authoring path (getting-started, api-reference, how-to, testing, faq get functional coverage); ALL old-model pages are KEPT, clearly marked deprecated with pointers to replacements — never deleted | user goal (2026-08-16) | sonnet |
 
 Task 8 scope rule: only APIs actually superseded by the functional runtime get
 `[<Obsolete>]`; each attribute message names the concrete replacement
