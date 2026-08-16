@@ -78,6 +78,7 @@
     <Compile Include="FSharpGrainRefTests.fs" />
     <Compile Include="UniversalGrainHandlerTests.fs" />
     <Compile Include="AddFSharpGrainTests.fs" />
+    <Compile Include="AddFSharpGrainsFromAssemblyTests.fs" />
     <Compile Include="HandlerCompositionProperties.fs" />
     <Compile Include="GrainHandlerStateMachineProperties.fs" />
     <Compile Include="SiloIdentityTests.fs" />
