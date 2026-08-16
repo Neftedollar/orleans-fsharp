@@ -1,0 +1,498 @@
+using System.Buffers;
+using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Orleans.Serialization;
+using Orleans.Serialization.Activators;
+using Orleans.Serialization.Buffers;
+using Orleans.Serialization.Cloning;
+using Orleans.Serialization.Codecs;
+using Orleans.Serialization.Configuration;
+using Orleans.Serialization.Serializers;
+using Orleans.Serialization.WireProtocol;
+
+namespace Orleans.FSharp;
+
+/// <summary>
+/// Shared helpers for the hand-written fixed-transport codecs. The fixed layout requires every
+/// listed field exactly once with its exact wire type, so the read loops track which field IDs
+/// have been seen and reject duplicates, unknown IDs, and missing fields.
+/// </summary>
+internal static class FunctionalWire
+{
+    /// <summary>Reject a field ID that is not part of the fixed layout.</summary>
+    public static InvalidOperationException UnknownField(string typeName, uint id) =>
+        FunctionalTransportDiagnostics.Fail(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"'{typeName}' received unknown wire field {id}; the fixed layout is closed."));
+
+    /// <summary>Reject a field ID that appeared twice.</summary>
+    public static InvalidOperationException DuplicateField(string typeName, uint id) =>
+        FunctionalTransportDiagnostics.Fail(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"'{typeName}' received wire field {id} more than once; every field is required exactly once."));
+
+    /// <summary>Reject a payload whose required fields were not all present.</summary>
+    public static InvalidOperationException MissingFields(string typeName, uint seen, uint required) =>
+        FunctionalTransportDiagnostics.Fail(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"'{typeName}' is missing required wire fields (mask 0x{required & ~seen:x2}); every field is required exactly once."));
+
+    /// <summary>Mark one field as seen, rejecting a repeat.</summary>
+    public static void MarkSeen(string typeName, ref uint seen, uint id)
+    {
+        var bit = 1u << (int)id;
+
+        if ((seen & bit) != 0)
+        {
+            throw DuplicateField(typeName, id);
+        }
+
+        seen |= bit;
+    }
+}
+
+/// <summary>Creates uninitialized envelopes for the deserializer.</summary>
+internal sealed class FunctionalRequestEnvelopeActivator : IActivator<FunctionalRequestEnvelope>
+{
+    /// <inheritdoc />
+    public FunctionalRequestEnvelope Create() => new();
+}
+
+/// <summary>Creates uninitialized replies for the deserializer.</summary>
+internal sealed class FunctionalReplyActivator : IActivator<FunctionalReply>
+{
+    /// <inheritdoc />
+    public FunctionalReply Create() => new();
+}
+
+/// <summary>Creates uninitialized requests for the deserializer.</summary>
+internal sealed class FunctionalRequestActivator : IActivator<FunctionalRequest>
+{
+    /// <inheritdoc />
+    public FunctionalRequest Create() => new();
+}
+
+/// <summary>
+/// Explicit serializer for <see cref="FunctionalRequestEnvelope"/>: fields 0-5 in the exact
+/// wire order and wire types fixed by the specification.
+/// </summary>
+internal sealed class FunctionalRequestEnvelopeCodec : IFieldCodec<FunctionalRequestEnvelope>
+{
+    private const string TypeName = nameof(FunctionalRequestEnvelope);
+    private const uint RequiredFields = 0b111111u;
+
+    private readonly Type _codecFieldType = typeof(FunctionalRequestEnvelope);
+    private readonly IActivator<FunctionalRequestEnvelope> _activator;
+
+    /// <summary>Create the codec with the activator Orleans resolves for the envelope.</summary>
+    public FunctionalRequestEnvelopeCodec(IActivator<FunctionalRequestEnvelope> activator) =>
+        _activator = activator;
+
+    /// <inheritdoc />
+    public void WriteField<TBufferWriter>(
+        ref Writer<TBufferWriter> writer,
+        uint fieldIdDelta,
+        Type expectedType,
+        FunctionalRequestEnvelope value)
+        where TBufferWriter : IBufferWriter<byte>
+    {
+        if (ReferenceCodec.TryWriteReferenceField(ref writer, fieldIdDelta, expectedType, value))
+        {
+            return;
+        }
+
+        writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
+        StringCodec.WriteField(ref writer, 0U, value.GrainType);
+        Int32Codec.WriteField(ref writer, 1U, value.ContractVersion);
+        StringCodec.WriteField(ref writer, 1U, value.OperationId);
+        ByteArrayCodec.WriteField(ref writer, 1U, value.ProtocolToken);
+        ByteCodec.WriteField(ref writer, 1U, value.AdmissionFlags);
+        ByteArrayCodec.WriteField(ref writer, 1U, value.Payload);
+        writer.WriteEndObject();
+    }
+
+    /// <inheritdoc />
+    public FunctionalRequestEnvelope ReadValue<TInput>(ref Reader<TInput> reader, Field field)
+    {
+        if (field.IsReference)
+        {
+            return ReferenceCodec.ReadReference<FunctionalRequestEnvelope, TInput>(ref reader, field);
+        }
+
+        field.EnsureWireTypeTagDelimited();
+
+        var placeholder = ReferenceCodec.CreateRecordPlaceholder(reader.Session);
+        var result = _activator.Create();
+        ReferenceCodec.RecordObject(reader.Session, result, placeholder);
+
+        var grainType = string.Empty;
+        var contractVersion = 0;
+        var operationId = string.Empty;
+        byte[] protocolToken = [];
+        byte admissionFlags = 0;
+        byte[] payload = [];
+
+        var seen = 0u;
+        var id = 0u;
+        Field header = default;
+
+        while (true)
+        {
+            reader.ReadFieldHeader(ref header);
+
+            if (header.IsEndBaseOrEndObject)
+            {
+                break;
+            }
+
+            id += header.FieldIdDelta;
+            FunctionalWire.MarkSeen(TypeName, ref seen, id);
+
+            switch (id)
+            {
+                case 0U:
+                    grainType = StringCodec.ReadValue(ref reader, header);
+                    break;
+                case 1U:
+                    contractVersion = Int32Codec.ReadValue(ref reader, header);
+                    break;
+                case 2U:
+                    operationId = StringCodec.ReadValue(ref reader, header);
+                    break;
+                case 3U:
+                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header);
+                    break;
+                case 4U:
+                    admissionFlags = ByteCodec.ReadValue(ref reader, header);
+                    break;
+                case 5U:
+                    payload = ByteArrayCodec.ReadValue(ref reader, header);
+                    break;
+                default:
+                    throw FunctionalWire.UnknownField(TypeName, id);
+            }
+        }
+
+        if (seen != RequiredFields)
+        {
+            throw FunctionalWire.MissingFields(TypeName, seen, RequiredFields);
+        }
+
+        if (FunctionalAdmissionFlags.HasReservedBits(admissionFlags))
+        {
+            throw FunctionalTransportDiagnostics.Fail(
+                $"the admission flags 0x{admissionFlags:x2} set a reserved bit (mask 0x{FunctionalAdmissionFlags.Reserved:x2}); the request is invalid.");
+        }
+
+        result.Initialize(grainType, contractVersion, operationId, protocolToken, admissionFlags, payload);
+        return result;
+    }
+}
+
+/// <summary>Explicit serializer for <see cref="FunctionalReply"/>: fields 0-1.</summary>
+internal sealed class FunctionalReplyCodec : IFieldCodec<FunctionalReply>
+{
+    private const string TypeName = nameof(FunctionalReply);
+    private const uint RequiredFields = 0b11u;
+
+    private readonly Type _codecFieldType = typeof(FunctionalReply);
+    private readonly IActivator<FunctionalReply> _activator;
+
+    /// <summary>Create the codec with the activator Orleans resolves for the reply.</summary>
+    public FunctionalReplyCodec(IActivator<FunctionalReply> activator) => _activator = activator;
+
+    /// <inheritdoc />
+    public void WriteField<TBufferWriter>(
+        ref Writer<TBufferWriter> writer,
+        uint fieldIdDelta,
+        Type expectedType,
+        FunctionalReply value)
+        where TBufferWriter : IBufferWriter<byte>
+    {
+        if (ReferenceCodec.TryWriteReferenceField(ref writer, fieldIdDelta, expectedType, value))
+        {
+            return;
+        }
+
+        writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
+        ByteArrayCodec.WriteField(ref writer, 0U, value.ProtocolToken);
+        ByteArrayCodec.WriteField(ref writer, 1U, value.Payload);
+        writer.WriteEndObject();
+    }
+
+    /// <inheritdoc />
+    public FunctionalReply ReadValue<TInput>(ref Reader<TInput> reader, Field field)
+    {
+        if (field.IsReference)
+        {
+            return ReferenceCodec.ReadReference<FunctionalReply, TInput>(ref reader, field);
+        }
+
+        field.EnsureWireTypeTagDelimited();
+
+        var placeholder = ReferenceCodec.CreateRecordPlaceholder(reader.Session);
+        var result = _activator.Create();
+        ReferenceCodec.RecordObject(reader.Session, result, placeholder);
+
+        byte[] protocolToken = [];
+        byte[] payload = [];
+
+        var seen = 0u;
+        var id = 0u;
+        Field header = default;
+
+        while (true)
+        {
+            reader.ReadFieldHeader(ref header);
+
+            if (header.IsEndBaseOrEndObject)
+            {
+                break;
+            }
+
+            id += header.FieldIdDelta;
+            FunctionalWire.MarkSeen(TypeName, ref seen, id);
+
+            switch (id)
+            {
+                case 0U:
+                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header);
+                    break;
+                case 1U:
+                    payload = ByteArrayCodec.ReadValue(ref reader, header);
+                    break;
+                default:
+                    throw FunctionalWire.UnknownField(TypeName, id);
+            }
+        }
+
+        if (seen != RequiredFields)
+        {
+            throw FunctionalWire.MissingFields(TypeName, seen, RequiredFields);
+        }
+
+        result.Initialize(protocolToken, payload);
+        return result;
+    }
+}
+
+/// <summary>
+/// Explicit serializer for <see cref="FunctionalRequest"/>: exactly one serialized field, the
+/// envelope. Method metadata, options, target, and cancellation state are never wire data.
+/// </summary>
+internal sealed class FunctionalRequestCodec : IFieldCodec<FunctionalRequest>
+{
+    private const string TypeName = nameof(FunctionalRequest);
+    private const uint RequiredFields = 0b1u;
+
+    private readonly Type _codecFieldType = typeof(FunctionalRequest);
+    private readonly ICodecProvider _codecProvider;
+    private readonly IActivator<FunctionalRequest> _activator;
+    private IFieldCodec<FunctionalRequestEnvelope>? _envelopeCodec;
+
+    /// <summary>Create the codec with the shared codec provider and the request activator.</summary>
+    public FunctionalRequestCodec(ICodecProvider codecProvider, IActivator<FunctionalRequest> activator)
+    {
+        _codecProvider = codecProvider;
+        _activator = activator;
+    }
+
+    private IFieldCodec<FunctionalRequestEnvelope> EnvelopeCodec =>
+        _envelopeCodec ??= _codecProvider.GetCodec<FunctionalRequestEnvelope>();
+
+    /// <inheritdoc />
+    public void WriteField<TBufferWriter>(
+        ref Writer<TBufferWriter> writer,
+        uint fieldIdDelta,
+        Type expectedType,
+        FunctionalRequest value)
+        where TBufferWriter : IBufferWriter<byte>
+    {
+        if (value is null)
+        {
+            ReferenceCodec.WriteNullReference(ref writer, fieldIdDelta);
+            return;
+        }
+
+        ReferenceCodec.MarkValueField(writer.Session);
+        writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
+        EnvelopeCodec.WriteField(ref writer, 0U, typeof(FunctionalRequestEnvelope), value.Envelope);
+        writer.WriteEndObject();
+    }
+
+    /// <inheritdoc />
+    public FunctionalRequest ReadValue<TInput>(ref Reader<TInput> reader, Field field)
+    {
+        if (field.IsReference)
+        {
+            return ReferenceCodec.ReadReference<FunctionalRequest, TInput>(ref reader, field);
+        }
+
+        field.EnsureWireTypeTagDelimited();
+        ReferenceCodec.MarkValueField(reader.Session);
+
+        var result = _activator.Create();
+        FunctionalRequestEnvelope? envelope = null;
+
+        var seen = 0u;
+        var id = 0u;
+        Field header = default;
+
+        while (true)
+        {
+            reader.ReadFieldHeader(ref header);
+
+            if (header.IsEndBaseOrEndObject)
+            {
+                break;
+            }
+
+            id += header.FieldIdDelta;
+            FunctionalWire.MarkSeen(TypeName, ref seen, id);
+
+            switch (id)
+            {
+                case 0U:
+                    envelope = EnvelopeCodec.ReadValue(ref reader, header);
+                    break;
+                default:
+                    throw FunctionalWire.UnknownField(TypeName, id);
+            }
+        }
+
+        if (seen != RequiredFields || envelope is null)
+        {
+            throw FunctionalWire.MissingFields(TypeName, seen, RequiredFields);
+        }
+
+        result.SetEnvelope(envelope);
+
+        // The received request carries its scheduling flags in the envelope; the Orleans
+        // request options are restored from those validated flags rather than sent on the wire.
+        result.ApplyAdmissionOptions();
+        return result;
+    }
+}
+
+/// <summary>
+/// Local copier for <see cref="FunctionalRequestEnvelope"/>. The envelope is immutable after
+/// construction, so a local copy shares it.
+/// </summary>
+internal sealed class FunctionalRequestEnvelopeCopier : IDeepCopier<FunctionalRequestEnvelope>
+{
+    /// <inheritdoc />
+    public FunctionalRequestEnvelope DeepCopy(FunctionalRequestEnvelope input, CopyContext context) => input;
+}
+
+/// <summary>
+/// Local copier for <see cref="FunctionalReply"/>. The reply is immutable after construction,
+/// so a local copy shares it.
+/// </summary>
+internal sealed class FunctionalReplyCopier : IDeepCopier<FunctionalReply>
+{
+    /// <inheritdoc />
+    public FunctionalReply DeepCopy(FunctionalReply input, CopyContext context) => input;
+}
+
+/// <summary>
+/// Local copier for <see cref="FunctionalRequest"/>. It preserves the envelope, the dynamic
+/// request options, the caller's cancellation state, and the caller-side method metadata, and
+/// resets the target and the target-local cancellation resources.
+/// </summary>
+internal sealed class FunctionalRequestCopier : IDeepCopier<FunctionalRequest>
+{
+    /// <inheritdoc />
+    public FunctionalRequest DeepCopy(FunctionalRequest input, CopyContext context)
+    {
+        if (input is null)
+        {
+            return null!;
+        }
+
+        if (context.TryGetCopy<FunctionalRequest>(input, out var existing) && existing is not null)
+        {
+            return existing;
+        }
+
+        var copy = new FunctionalRequest(input.Envelope, input.CallerToken);
+        context.RecordCopy(input, copy);
+        copy.AddInvokeMethodOptions(input.Options);
+
+        var interfaceType = input.GetInterfaceType();
+        var method = input.GetMethod();
+
+        if (method is not null && !interfaceType.ContainsGenericParameters)
+        {
+            copy.SetCallerMetadata(interfaceType, method);
+        }
+
+        return copy;
+    }
+}
+
+/// <summary>
+/// The type filter of the fixed transport: it claims exactly the three fixed transport types
+/// and nothing else. Contracts, API records, selectors, reflection metadata, persistent-state
+/// descriptors, and services are never claimed and therefore never enter request bytes through
+/// this filter.
+/// </summary>
+internal sealed class FunctionalTransportTypeFilter : ITypeFilter
+{
+    /// <inheritdoc />
+    public bool? IsTypeAllowed(Type type) =>
+        FunctionalTransportSerialization.IsFixedTransportType(type) ? true : null;
+}
+
+/// <summary>
+/// Registration of the explicit fixed-transport serializers, copiers, and activators.
+/// </summary>
+internal static class FunctionalTransportSerialization
+{
+    /// <summary>True for exactly the three fixed transport types.</summary>
+    public static bool IsFixedTransportType(Type type) =>
+        type == typeof(FunctionalRequestEnvelope)
+        || type == typeof(FunctionalReply)
+        || type == typeof(FunctionalRequest);
+
+    /// <summary>
+    /// Register the explicit fixed-transport serialization on a serializer builder. Repeated
+    /// registration is idempotent.
+    /// </summary>
+    public static ISerializerBuilder AddFunctionalTransport(ISerializerBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        AddFunctionalTransport(builder.Services);
+        return builder;
+    }
+
+    /// <summary>
+    /// Register the explicit fixed-transport serialization on a service collection. Repeated
+    /// registration is idempotent.
+    /// </summary>
+    public static IServiceCollection AddFunctionalTransport(IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.Configure<TypeManifestOptions>(static config =>
+        {
+            config.Serializers.Add(typeof(FunctionalRequestEnvelopeCodec));
+            config.Serializers.Add(typeof(FunctionalReplyCodec));
+            config.Serializers.Add(typeof(FunctionalRequestCodec));
+
+            config.Copiers.Add(typeof(FunctionalRequestEnvelopeCopier));
+            config.Copiers.Add(typeof(FunctionalReplyCopier));
+            config.Copiers.Add(typeof(FunctionalRequestCopier));
+
+            config.Activators.Add(typeof(FunctionalRequestEnvelopeActivator));
+            config.Activators.Add(typeof(FunctionalReplyActivator));
+            config.Activators.Add(typeof(FunctionalRequestActivator));
+        });
+
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ITypeFilter, FunctionalTransportTypeFilter>());
+        return services;
+    }
+}
