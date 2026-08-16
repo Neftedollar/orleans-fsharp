@@ -433,17 +433,39 @@ let ``a rejected API shape reports the same diagnostic on every attempt`` () =
         Assert.Throws<InvalidOperationException>(fun () ->
             ApiShape.ofType typeof<FunctionalShapeTests.AsyncApi> |> ignore)
 
-    test <@ first.Message = second.Message @>
+    // Instance identity, not message equality: two independently constructed diagnostics with
+    // the same text would satisfy an equality check while proving nothing about caching, which
+    // is what this test is named for.
+    test <@ obj.ReferenceEquals(first, second) @>
+
+/// <summary>
+/// The API record the race below runs on. Nothing else in the suite mentions it.
+/// </summary>
+/// <remarks>
+/// The race used to run on <c>SurfaceApi</c>, whose shape this module's own <c>contract</c>
+/// value builds during module initialisation — long before any of the 64 threads start. Sixty-
+/// four readers agreeing on an already-cached instance is not a race; this type keeps the cache
+/// genuinely cold until the parallel map reaches it.
+/// </remarks>
+[<NoEquality; NoComparison>]
+type ConcurrentShapeApi = { onlyOperation: string -> Task<int> }
 
 [<Fact>]
 let ``concurrent shape construction yields one cached instance`` () =
-    let shapes =
-        [| 1..64 |]
-        |> Array.Parallel.map (fun _ -> ApiShape.ofType typeof<SurfaceApi>)
+    let counters = FunctionalInstrumentation.start ()
 
-    let first = shapes.[0]
+    try
+        let shapes =
+            [| 1..64 |]
+            |> Array.Parallel.map (fun _ -> ApiShape.ofType typeof<ConcurrentShapeApi>)
 
-    test <@ shapes |> Array.forall (fun shape -> obj.ReferenceEquals(shape, first)) @>
+        let first = shapes.[0]
+
+        test <@ shapes |> Array.forall (fun shape -> obj.ReferenceEquals(shape, first)) @>
+        // One build across all 64, which is the claim the shared instance is evidence for.
+        test <@ counters.ApiShapeBuilds = 1 @>
+    finally
+        FunctionalInstrumentation.stop ()
 
 [<Fact>]
 let ``two contracts over the same API share one cached shape`` () =
