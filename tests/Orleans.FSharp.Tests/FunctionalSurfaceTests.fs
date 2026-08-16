@@ -482,13 +482,20 @@ let ``two contracts over the same API share one cached shape`` () =
 // Conformance with the normative public API
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// <summary>Every custom-operation name declared by a computation-expression builder.</summary>
-let private customOperations (builderType: Type) =
+/// <summary>Every custom-operation spelling declared by a computation-expression builder.</summary>
+let private customOperationSpellings (builderType: Type) =
     builderType.GetMethods(Reflection.BindingFlags.Public ||| Reflection.BindingFlags.Instance)
     |> Array.collect (fun method' ->
         method'.GetCustomAttributes(typeof<CustomOperationAttribute>, false)
         |> Array.map (fun attribute' -> (attribute' :?> CustomOperationAttribute).Name))
-    |> Array.sort
+
+/// <summary>
+/// Every distinct custom-operation name declared by a builder. The selector-driven operations
+/// are overloaded once per supported curried arity, so the raw spellings repeat; the arity
+/// coverage itself is pinned separately below.
+/// </summary>
+let private customOperations (builderType: Type) =
+    customOperationSpellings builderType |> Array.distinct |> Array.sort
 
 [<Fact>]
 let ``the contract builder declares exactly the specified custom operations`` () =
@@ -518,6 +525,12 @@ let ``the definition builder declares exactly the specified custom operations`` 
         [| "collectionAge"
            "defaultState"
            "handle"
+           "handle2"
+           "handle3"
+           "handle4"
+           "handle5"
+           "handle6"
+           "handle7"
            "initialState"
            "onActivate"
            "onDeactivate"
@@ -527,6 +540,35 @@ let ``the definition builder declares exactly the specified custom operations`` 
            "usePersistentState" |]
 
     test <@ customOperations typeof<FunctionalGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
+
+/// <remarks>
+/// The curried spelling is sugar over the canonical tuple, and the arity cap is 7 because that
+/// is where <c>System.Tuple</c> stops nesting. Both facts are visible in the public surface:
+/// every selector-driven contract operation has exactly seven spellings (the tupled one plus
+/// curried arities 2-7), and the definition builder has exactly one <c>handle</c> spelling per
+/// arity. This test fails if a spelling is added or dropped without the cap moving with it.
+/// </remarks>
+[<Fact>]
+let ``every selector-driven operation is spelled once per supported arity`` () =
+    let contractSpellings =
+        customOperationSpellings typeof<GrainContractBuilder<SurfaceActor, string, SurfaceApi>>
+        |> Array.countBy id
+        |> Map.ofArray
+
+    test <@ contractSpellings.["readOnly"] = 7 @>
+    test <@ contractSpellings.["oneWay"] = 7 @>
+    test <@ contractSpellings.["alwaysInterleave"] = 7 @>
+    test <@ contractSpellings.["operationId"] = 7 @>
+
+    // 'handle' carries the arity in the operation name instead of in an overload, so that the
+    // handler's argument type keeps flowing from the selector into an unannotated handler body.
+    let definitionSpellings =
+        customOperationSpellings typeof<FunctionalGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>>
+        |> Array.countBy id
+        |> Map.ofArray
+
+    for name in [ "handle"; "handle2"; "handle3"; "handle4"; "handle5"; "handle6"; "handle7" ] do
+        test <@ definitionSpellings.[name] = 1 @>
 
 [<Fact>]
 let ``the invocation context declares exactly the specified public members`` () =

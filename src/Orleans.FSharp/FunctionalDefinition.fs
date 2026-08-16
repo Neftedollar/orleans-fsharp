@@ -145,6 +145,54 @@ module internal DefinitionDraft =
     let withState (state: DefinitionDraftState<'Actor, 'Key, 'Api, 'State>) =
         FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>(state)
 
+    /// <summary>
+    /// Attach one boxed handler to a resolved operation, rejecting a second handler for the same
+    /// field and a null handler. Every <c>handle</c> spelling — tupled and curried — funnels
+    /// here, because the handler is always the canonical tupled one.
+    /// </summary>
+    let addHandler
+        (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>)
+        (operation: FunctionalOperation)
+        (handler: obj)
+        =
+        let draft = state.State
+
+        if draft.Handlers.ContainsKey operation.Index then
+            fail
+                DefinitionStage
+                $"API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' already has a handler."
+
+        if obj.ReferenceEquals(handler, null) then
+            fail
+                DefinitionStage
+                $"'handle' for API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' requires a handler."
+
+        withState
+            { draft with
+                Handlers = draft.Handlers.Add(operation.Index, handler) }
+
+    /// <summary>
+    /// Resolve a curried selector and verify that the field really declares the arity the
+    /// spelling promised. The selector's type already pins this at compile time; the check is a
+    /// guard against a shape reflected from a different API record than the one selected.
+    /// </summary>
+    let resolveCurried
+        (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>)
+        (entry: string)
+        (arity: int)
+        (selector: 'Api -> 'Field)
+        =
+        let contract = state.State.Contract
+        let field = ApiShape.resolveField contract.Shape entry selector
+        let operation = contract.Operations.[field.Index]
+
+        if operation.ArgumentTypes.Length <> arity then
+            fail
+                DefinitionStage
+                $"'{entry}' expects API field '{operation.FieldName}' of grain type '{contract.GrainTypeName}' to declare {arity} curried arguments, but it declares {operation.ArgumentTypes.Length}."
+
+        operation
+
     /// <summary>Reject a repeated singleton operation instead of replacing the earlier value.</summary>
     let single (operationName: string) (grainTypeName: string) (current: 'T option) (value: 'T) =
         match current with
@@ -315,6 +363,18 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.create state.Contract "initialState" factory
 
     /// <summary>Bind one handler to the operation identified by the selector.</summary>
+    /// <remarks>
+    /// <para>
+    /// A curried API field is bound by the arity-suffixed spelling of this operation
+    /// (<c>handle2</c> … <c>handle7</c>) and its handler still takes the canonical tuple.
+    /// The arity is in the operation name rather than in an overload of <c>handle</c> on
+    /// purpose: F# type-checks a lambda argument of an <em>overloaded</em> method without the
+    /// expected type, so overloading <c>handle</c> would stop every handler's argument type
+    /// flowing from the selector into the handler body — an unannotated
+    /// <c>fun context state post -&gt; post.author</c> would no longer infer. One method per
+    /// arity keeps that inference exact.
+    /// </para>
+    /// </remarks>
     [<CustomOperation("handle")>]
     member _.Handle<'State, 'Argument, 'Reply>
         (
@@ -322,22 +382,67 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
             selector: OperationSelector<'Api, 'Argument, 'Reply>,
             handler: Handler<'Actor, 'Key, 'State, 'Argument, 'Reply>
         ) =
-        let draft = state.State
-        let operation = draft.Contract.Resolve("handle", selector)
+        DefinitionDraft.addHandler state (state.State.Contract.Resolve("handle", selector)) (box handler)
 
-        if draft.Handlers.ContainsKey operation.Index then
-            fail
-                DefinitionStage
-                $"API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' already has a handler."
+    /// <summary>Bind a tupled handler to a curried two-argument API field.</summary>
+    [<CustomOperation("handle2")>]
+    member _.Handle2<'State, 'A1, 'A2, 'Reply>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: OperationSelector2<'Api, 'A1, 'A2, 'Reply>,
+            handler: Handler<'Actor, 'Key, 'State, 'A1 * 'A2, 'Reply>
+        ) =
+        DefinitionDraft.addHandler state (DefinitionDraft.resolveCurried state "handle2" 2 selector) (box handler)
 
-        if obj.ReferenceEquals(handler, null) then
-            fail
-                DefinitionStage
-                $"'handle' for API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' requires a handler."
+    /// <summary>Bind a tupled handler to a curried three-argument API field.</summary>
+    [<CustomOperation("handle3")>]
+    member _.Handle3<'State, 'A1, 'A2, 'A3, 'Reply>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: OperationSelector3<'Api, 'A1, 'A2, 'A3, 'Reply>,
+            handler: Handler<'Actor, 'Key, 'State, 'A1 * 'A2 * 'A3, 'Reply>
+        ) =
+        DefinitionDraft.addHandler state (DefinitionDraft.resolveCurried state "handle3" 3 selector) (box handler)
 
-        DefinitionDraft.withState
-            { draft with
-                Handlers = draft.Handlers.Add(operation.Index, box handler) }
+    /// <summary>Bind a tupled handler to a curried four-argument API field.</summary>
+    [<CustomOperation("handle4")>]
+    member _.Handle4<'State, 'A1, 'A2, 'A3, 'A4, 'Reply>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: OperationSelector4<'Api, 'A1, 'A2, 'A3, 'A4, 'Reply>,
+            handler: Handler<'Actor, 'Key, 'State, 'A1 * 'A2 * 'A3 * 'A4, 'Reply>
+        ) =
+        DefinitionDraft.addHandler state (DefinitionDraft.resolveCurried state "handle4" 4 selector) (box handler)
+
+    /// <summary>Bind a tupled handler to a curried five-argument API field.</summary>
+    [<CustomOperation("handle5")>]
+    member _.Handle5<'State, 'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: OperationSelector5<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>,
+            handler: Handler<'Actor, 'Key, 'State, 'A1 * 'A2 * 'A3 * 'A4 * 'A5, 'Reply>
+        ) =
+        DefinitionDraft.addHandler state (DefinitionDraft.resolveCurried state "handle5" 5 selector) (box handler)
+
+    /// <summary>Bind a tupled handler to a curried six-argument API field.</summary>
+    [<CustomOperation("handle6")>]
+    member _.Handle6<'State, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: OperationSelector6<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>,
+            handler: Handler<'Actor, 'Key, 'State, 'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6, 'Reply>
+        ) =
+        DefinitionDraft.addHandler state (DefinitionDraft.resolveCurried state "handle6" 6 selector) (box handler)
+
+    /// <summary>Bind a tupled handler to a curried seven-argument API field.</summary>
+    [<CustomOperation("handle7")>]
+    member _.Handle7<'State, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: OperationSelector7<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>,
+            handler: Handler<'Actor, 'Key, 'State, 'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6 * 'A7, 'Reply>
+        ) =
+        DefinitionDraft.addHandler state (DefinitionDraft.resolveCurried state "handle7" 7 selector) (box handler)
 
     /// <summary>Select the loaded primary persistent holder for the definition's state.</summary>
     [<CustomOperation("stateFrom")>]
