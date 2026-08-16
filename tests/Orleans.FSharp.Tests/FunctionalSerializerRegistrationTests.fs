@@ -176,27 +176,30 @@ let ``a declared type resolves where Type.GetType cannot see it`` () =
 [<Fact>]
 let ``a declared type takes precedence over one Type.GetType can resolve`` () =
     // A framework name the codec's own fallback really resolves, so the two lookups genuinely
-    // compete. Nothing else in the suite declares it.
-    let contested = typeof<Version>.FullName
-    test <@ Type.GetType(contested, throwOnError = false) = typeof<Version> @>
+    // compete. Nothing else in the suite declares it. EventArgs specifically: it has no
+    // readable properties, so the emitted shadow's payload carries the same field count the
+    // framework type expects and the wire-arity check cannot mask the precedence question with
+    // a shape complaint.
+    let contested = typeof<EventArgs>.FullName
+    test <@ Type.GetType(contested, throwOnError = false) = typeof<EventArgs> @>
 
     let shadow = emitTypeNamed contested
     test <@ shadow.FullName = contested @>
-    test <@ shadow <> typeof<Version> @>
+    test <@ shadow <> typeof<EventArgs> @>
 
     let bytes =
         FSharpBinaryFormat.serializeWithType (Activator.CreateInstance shadow) shadow
 
     // Before the declaration the Type.GetType fallback wins and yields the framework type…
     let fallback = FSharpBinaryFormat.deserializeWithType bytes null
-    test <@ fallback.GetType() = typeof<Version> @>
+    test <@ fallback.GetType() = typeof<EventArgs> @>
 
     FSharpBinaryFormat.declareType shadow
 
     // …after it the declaration table wins on the very same bytes.
     let declared = FSharpBinaryFormat.deserializeWithType bytes null
     test <@ declared.GetType() = shadow @>
-    test <@ declared.GetType() <> typeof<Version> @>
+    test <@ declared.GetType() <> typeof<EventArgs> @>
 
 /// <remarks>
 /// It uses its own emitted type rather than <c>DeclaredPayload</c>: declaring that one here

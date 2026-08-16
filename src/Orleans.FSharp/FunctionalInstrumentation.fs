@@ -24,6 +24,10 @@ type internal FunctionalCounters() =
     [<DefaultValue>]
     val mutable GenericClosings: int
 
+    /// <summary>Number of F# binary codecs built by reflection over a payload type.</summary>
+    [<DefaultValue>]
+    val mutable CodecBuilds: int
+
     /// <summary>Number of top-level payload serializations.</summary>
     [<DefaultValue>]
     val mutable PayloadSerializations: int
@@ -85,6 +89,16 @@ module internal FunctionalInstrumentation =
         match current.Value with
         | null -> ()
         | counters -> Interlocked.Increment &counters.GenericClosings |> ignore
+
+    /// <summary>
+    /// One F# binary codec was built by reflecting over a payload type. A bound call must
+    /// never do this: every payload type's codec is built on first use and cached, so a
+    /// non-zero count in a steady-state window means the cache stopped working.
+    /// </summary>
+    let countCodecBuild () =
+        match current.Value with
+        | null -> ()
+        | counters -> Interlocked.Increment &counters.CodecBuilds |> ignore
 
     /// <summary>One top-level payload value was serialized.</summary>
     let countPayloadSerialization () =

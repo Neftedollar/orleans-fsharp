@@ -669,12 +669,48 @@ let ``a bound call performs no reflection, selector evaluation, or generic closi
             test <@ counters.ApiShapeBuilds = 0 @>
             test <@ counters.SelectorEvaluations = 0 @>
             test <@ counters.GenericClosings = 0 @>
+            // The payload codecs count their own build and their own generic closings, so the
+            // two assertions above cover the serialization path and not only the binding one:
+            // `history` returns a string list, whose codec closed ListModule.OfArray per call
+            // until that closing moved into the build step.
+            test <@ counters.CodecBuilds = 0 @>
             test <@ counters.PayloadSerializations > 0 @>
+            test <@ counters.PayloadDeserializations > 0 @>
         finally
             FunctionalInstrumentation.stop ()
 
         test <@ transport.Calls.Length = 8 @>
     }
+
+/// <summary>A payload type nothing else in the suite serializes, so its codec is really cold.</summary>
+type InstrumentationProbe = { probe: string }
+
+[<Fact>]
+let ``the codec path is what those counters watch`` () =
+    // The counterweight to the test above: a cold codec really does register on the same two
+    // counters, so their being zero in a warm window is a fact about the codec and not about
+    // the instrumentation being blind to it.
+    let counters = FunctionalInstrumentation.start ()
+
+    try
+        let cold =
+            FSharpBinaryFormat.serialize (box [ { probe = "cold" } ]) typeof<InstrumentationProbe list>
+
+        FSharpBinaryFormat.deserialize cold typeof<InstrumentationProbe list> |> ignore
+
+        test <@ counters.CodecBuilds > 0 @>
+        test <@ counters.GenericClosings > 0 @>
+
+        let warmBuilds = counters.CodecBuilds
+        let warmClosings = counters.GenericClosings
+
+        for _ in 1..5 do
+            FSharpBinaryFormat.deserialize cold typeof<InstrumentationProbe list> |> ignore
+
+        test <@ counters.CodecBuilds = warmBuilds @>
+        test <@ counters.GenericClosings = warmClosings @>
+    finally
+        FunctionalInstrumentation.stop ()
 
 [<Fact>]
 let ``binding evaluates no selector and closes no generic`` () =
@@ -708,6 +744,11 @@ let ``a raw selector call resolves its selector exactly once`` () =
     let _transport, reference = bindWith services target
 
     task {
+        // Warm the reply codec first. `history` returns a string list, whose codec closes one
+        // generic on its first build, and this test's claim is about the SELECTOR — leaving the
+        // codec cold would make the closing count depend on xUnit ordering.
+        let! _ = reference.call (_.history) 1
+
         let counters = FunctionalInstrumentation.start ()
 
         try
@@ -715,6 +756,7 @@ let ``a raw selector call resolves its selector exactly once`` () =
 
             test <@ counters.SelectorEvaluations = 1 @>
             test <@ counters.GenericClosings = 0 @>
+            test <@ counters.CodecBuilds = 0 @>
         finally
             FunctionalInstrumentation.stop ()
     }

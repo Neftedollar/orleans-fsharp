@@ -4,8 +4,10 @@ open System
 open System.IO
 open System.Text
 open System.Threading
+open Microsoft.Extensions.DependencyInjection
 open Xunit
 open Swensen.Unquote
+open Orleans.Serialization
 open Orleans.FSharp
 
 // ── Test types ───────────────────────────────────────────────────────────────
@@ -338,3 +340,285 @@ let ``a type whose nested member is unsupported stays diagnosable`` () : unit =
 
     test <@ first.Contains "unsupported type" @>
     test <@ second = first @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Hardening: every length, count, arity, and type name on the wire is untrusted
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <summary>Write a raw codec body by hand, exactly the way the format specifies it.</summary>
+let private bodyOf (write: BinaryWriter -> unit) : byte[] =
+    use ms = new MemoryStream()
+    use bw = new BinaryWriter(ms, Encoding.UTF8, true)
+    write bw
+    bw.Flush()
+    ms.ToArray()
+
+/// <summary>Write a type-prefixed payload by hand, so the length prefix can be a lie.</summary>
+let private prefixedOf (typeName: string) (declaredLength: int) (body: byte[]) : byte[] =
+    bodyOf (fun bw ->
+        bw.Write(typeName)
+        bw.Write(declaredLength)
+        bw.Write(body))
+
+let private rejects (action: unit -> unit) =
+    Assert.Throws<InvalidOperationException>(action)
+
+let private readingAs<'T> (body: byte[]) =
+    rejects (fun () -> FSharpBinaryFormat.deserialize body typeof<'T> |> ignore)
+
+// ── F1: declared lengths and counts are checked against what is left ──────────
+
+[<Fact>]
+let ``a top-level payload length beyond the remaining bytes is rejected`` () : unit =
+    // 2 GiB declared, four bytes supplied. The unhardened reader hands Int32.MaxValue straight
+    // to BinaryReader.ReadBytes, which allocates the whole array before reading anything.
+    let payload = prefixedOf typeof<RecordWithOptions>.FullName Int32.MaxValue [| 1uy; 2uy; 3uy; 4uy |]
+
+    let error = rejects (fun () -> FSharpBinaryFormat.deserializeWithType payload typeof<RecordWithOptions> |> ignore)
+
+    test <@ error.Message.Contains "exceeds remaining payload" @>
+    test <@ error.Message.Contains "2147483647" @>
+
+[<Fact>]
+let ``a byte-array length beyond the remaining bytes is rejected`` () : unit =
+    let error = readingAs<byte[]> (bodyOf (fun bw -> bw.Write 1000000))
+
+    test <@ error.Message.Contains "exceeds remaining payload" @>
+    test <@ error.Message.Contains "byte array" @>
+
+[<Theory>]
+[<InlineData "list">]
+[<InlineData "array">]
+[<InlineData "set">]
+[<InlineData "map">]
+let ``a container element count beyond the remaining bytes is rejected`` (container: string) : unit =
+    let huge = bodyOf (fun bw -> bw.Write 100000000)
+
+    let error =
+        match container with
+        | "list" -> readingAs<int list> huge
+        | "array" -> readingAs<int[]> huge
+        | "set" -> readingAs<Set<int>> huge
+        | _ -> readingAs<Map<string, int>> huge
+
+    test <@ error.Message.Contains "declared element count 100000000 exceeds remaining payload" @>
+
+[<Fact>]
+let ``a negative element count is rejected`` () : unit =
+    let error = readingAs<int list> (bodyOf (fun bw -> bw.Write -1))
+
+    test <@ error.Message.Contains "is negative" @>
+
+[<Fact>]
+let ``a zero-width element count is capped absolutely`` () : unit =
+    // A unit list carries no per-element bytes, so the remaining-payload bound cannot apply and
+    // the absolute cap is the only thing standing between the count and the allocation.
+    let error = readingAs<unit list> (bodyOf (fun bw -> bw.Write 2000000))
+
+    test <@ error.Message.Contains "1048576-element cap" @>
+
+[<Fact>]
+let ``a legitimate zero-width container still round-trips`` () : unit =
+    // The counterweight to the cap: the bound must not reject a real unit list, whose five
+    // elements occupy zero payload bytes between them.
+    test <@ roundTrip (List.replicate 5 ()) = List.replicate 5 () @>
+    test <@ roundTrip ([ (); () ] |> List.map (fun () -> ((), ()))) |> List.length = 2 @>
+
+// ── F2: wire field counts are checked against the type's real arity ───────────
+
+[<Fact>]
+let ``a record field count that is not the type's arity is rejected`` () : unit =
+    let error = readingAs<RecordWithOptions> (bodyOf (fun bw -> bw.Write 9))
+
+    test <@ error.Message.Contains "declared field count 9 does not match the 3 fields" @>
+    test <@ error.Message.Contains "RecordWithOptions" @>
+
+[<Fact>]
+let ``a record field count below the type's arity is rejected`` () : unit =
+    // The unhardened reader reached FSharpValue.MakeRecord with the wrong arity instead.
+    let error = readingAs<RecordWithOptions> (bodyOf (fun bw -> bw.Write 1))
+
+    test <@ error.Message.Contains "declared field count 1 does not match the 3 fields" @>
+
+[<Fact>]
+let ``a union case tag outside the type's cases is rejected`` () : unit =
+    let error = readingAs<Tree<int>> (bodyOf (fun bw -> bw.Write 7))
+
+    test <@ error.Message.Contains "case tag 7 is out of range for the 2 cases" @>
+
+[<Fact>]
+let ``a negative union case tag is rejected`` () : unit =
+    let error = readingAs<Tree<int>> (bodyOf (fun bw -> bw.Write -3))
+
+    test <@ error.Message.Contains "case tag -3 is out of range" @>
+
+[<Fact>]
+let ``a union field count that is not the case's arity is rejected`` () : unit =
+    let error =
+        readingAs<Tree<int>> (
+            bodyOf (fun bw ->
+                bw.Write 0 // Leaf, arity 1
+                bw.Write 4))
+
+    test <@ error.Message.Contains "declared field count 4 does not match the 1 fields" @>
+
+[<Fact>]
+let ``a CLIMutable field count that is not the type's arity is rejected`` () : unit =
+    let error = readingAs<SimplePoco> (bodyOf (fun bw -> bw.Write 6))
+
+    test <@ error.Message.Contains "declared field count 6 does not match the 2 fields" @>
+
+// ── F3: the caller's expected type constrains the wire name ───────────────────
+
+/// <summary>A declared-abstract payload shape, as the specification's polymorphism rule allows.</summary>
+type IHardenedPayload =
+    interface
+    end
+
+type HardenedPayload =
+    { hardened: string }
+
+    interface IHardenedPayload
+
+type UnrelatedPayload = { unrelated: string }
+
+[<Fact>]
+let ``a wire type outside the expected hierarchy is rejected`` () : unit =
+    FSharpBinaryFormat.declareType typeof<HardenedPayload>
+
+    let bytes =
+        FSharpBinaryFormat.serializeWithType (box { hardened = "x" }) typeof<HardenedPayload>
+
+    let error =
+        rejects (fun () ->
+            FSharpBinaryFormat.ExpectedPayloadType.Scoped(
+                typeof<UnrelatedPayload>,
+                fun () -> FSharpBinaryFormat.deserializeWithType bytes null |> ignore))
+
+    test <@ error.Message.Contains "is not assignable to the expected type" @>
+    test <@ error.Message.Contains "HardenedPayload" @>
+    test <@ error.Message.Contains "UnrelatedPayload" @>
+
+[<Fact>]
+let ``a wire type inside the expected hierarchy still resolves by name`` () : unit =
+    FSharpBinaryFormat.declareType typeof<HardenedPayload>
+
+    let bytes =
+        FSharpBinaryFormat.serializeWithType (box { hardened = "y" }) typeof<HardenedPayload>
+
+    // The declared type is the INTERFACE; only wire-name resolution can reach the concrete
+    // record, which is exactly the polymorphism the specification asks the codec to keep.
+    let restored =
+        FSharpBinaryFormat.ExpectedPayloadType.Scoped(
+            typeof<IHardenedPayload>,
+            fun () -> FSharpBinaryFormat.deserializeWithType bytes null)
+
+    test <@ unbox<HardenedPayload> restored = { hardened = "y" } @>
+
+[<Fact>]
+let ``the payload codec publishes the exact type it was asked for`` () : unit =
+    // The production wiring, not just the guard: a FunctionalPayloadCodec asked for one type
+    // must reject a payload naming another even though both are declared and resolvable.
+    FSharpBinaryFormat.declareType typeof<HardenedPayload>
+    FSharpBinaryFormat.declareType typeof<UnrelatedPayload>
+
+    let services = ServiceCollection()
+
+    ServiceCollectionExtensions.AddSerializer(
+        services,
+        Action<ISerializerBuilder>(fun builder ->
+            FSharpBinaryCodecRegistration.addCodecToSerializerBuilder builder |> ignore))
+    |> ignore
+
+    use provider = services.BuildServiceProvider()
+    let serializer = provider.GetRequiredService<Serializer>()
+    let codec = FunctionalPayloadCodec(serializer, serializer.SessionPool)
+
+    let payload = codec.Serialize<UnrelatedPayload> { unrelated = "z" }
+
+    test <@ codec.Deserialize<UnrelatedPayload> payload = { unrelated = "z" } @>
+
+    let error = rejects (fun () -> codec.Deserialize<HardenedPayload> payload |> ignore)
+
+    test <@ error.Message.Contains "is not assignable to the expected type" @>
+
+// ── F4: the allow-list runs before any assembly is loaded, and rejections do not cache ──
+
+[<Fact>]
+let ``an unlisted assembly is rejected before Type.GetType runs`` () : unit =
+    // The discriminator: Type.GetType would fail to load this assembly and the codec would then
+    // report "not found". Naming the assembly proves the check ran first.
+    let name =
+        "Hardening.Probe, Hostile.Payloads, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+
+    let error = rejects (fun () -> FSharpBinaryFormat.deserializeWithType (prefixedOf name 0 [||]) null |> ignore)
+
+    test <@ error.Message.Contains "names assembly 'Hostile.Payloads'" @>
+    test <@ error.Message.Contains "it was not loaded" @>
+
+[<Fact>]
+let ``an assembly name that merely starts with an allowed prefix is rejected`` () : unit =
+    // The allow-list matches whole dotted segments. A raw StartsWith would admit every one of
+    // these on the strength of a legitimate prefix.
+    for hostile in [ "Orleans.FSharpHostile"; "SystemHostile"; "TypeShapeHostile"; "FSharp.CoreHostile" ] do
+        let name = $"Hardening.Probe, {hostile}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+
+        let error =
+            rejects (fun () -> FSharpBinaryFormat.deserializeWithType (prefixedOf name 0 [||]) null |> ignore)
+
+        test <@ error.Message.Contains $"names assembly '{hostile}'" @>
+
+[<Fact>]
+let ``a genuine sub-namespace of an allowed prefix still resolves`` () : unit =
+    // The counterweight: tightening the match must not lock out the real framework assemblies.
+    let name = typeof<Version>.FullName + ", System.Private.CoreLib"
+
+    // The body says "present, zero fields"; System.Version has more than that, so what stops
+    // this payload is the arity check — proof that resolution itself got past the allow-list.
+    let body = [| 1uy; 0uy; 0uy; 0uy; 0uy |]
+
+    let error =
+        rejects (fun () -> FSharpBinaryFormat.deserializeWithType (prefixedOf name body.Length body) null |> ignore)
+
+    test <@ not (error.Message.Contains "allow-list") @>
+    test <@ error.Message.Contains "System.Version" @>
+    test <@ error.Message.Contains "does not match" @>
+
+[<Fact>]
+let ``an unlisted assembly named only by a generic argument is rejected`` () : unit =
+    // The outer type is a framework name; only the type ARGUMENT names the hostile assembly,
+    // and Type.GetType would load it to close the generic.
+    let name =
+        "System.Collections.Generic.List`1[[Hardening.Probe, Evil.Payloads, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], System.Private.CoreLib"
+
+    let error = rejects (fun () -> FSharpBinaryFormat.deserializeWithType (prefixedOf name 0 [||]) null |> ignore)
+
+    test <@ error.Message.Contains "names assembly 'Evil.Payloads'" @>
+
+[<Fact>]
+let ``an over-long wire type name is rejected`` () : unit =
+    let name = String('A', 5000)
+
+    let error = rejects (fun () -> FSharpBinaryFormat.deserializeWithType (prefixedOf name 0 [||]) null |> ignore)
+
+    test <@ error.Message.Contains "exceeds the 4096-character limit" @>
+
+[<Fact>]
+let ``a stream of rejected type names grows no cache`` () : unit =
+    let before = FSharpBinaryFormat.wireResolvedTypeCount ()
+
+    for index in 1..200 do
+        let name =
+            $"Hardening.Probe{index}, Hostile.Payloads{index}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+
+        rejects (fun () -> FSharpBinaryFormat.deserializeWithType (prefixedOf name 0 [||]) null |> ignore)
+        |> ignore
+
+    // Also 200 names that resolve to nothing at all: still nothing to remember.
+    for index in 1..200 do
+        rejects (fun () ->
+            FSharpBinaryFormat.deserializeWithType (prefixedOf $"Hardening.Missing{index}" 0 [||]) null
+            |> ignore)
+        |> ignore
+
+    test <@ FSharpBinaryFormat.wireResolvedTypeCount () = before @>

@@ -152,6 +152,133 @@ module internal FSharpBinaryFormat =
     let private codecCells = ConcurrentDictionary<Type, CodecCell>()
     let private builtCodecs = ConcurrentDictionary<Type, TypeCodec>()
 
+    // ── Bounded reads ───────────────────────────────────────────────────────
+    // Every length and element count on the wire is chosen by whoever produced the payload.
+    // A reader that allocates before checking turns a four-byte prefix into a multi-gigabyte
+    // allocation, so each one is checked against the bytes that actually remain in the payload
+    // before anything is allocated, and fails with a protocol diagnostic instead.
+
+    /// <summary>The binding flags that let reflection see a private F# representation.</summary>
+    let private allRepresentations =
+        Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic
+
+    /// <summary>Raise a protocol-stage codec diagnostic.</summary>
+    let private failProtocol<'T> (message: string) : 'T =
+        invalidOp $"FSharpBinaryCodec: {message}"
+
+    /// <summary>Bytes still unread in the reader's underlying stream.</summary>
+    let private remainingBytes (br: BinaryReader) : int64 =
+        let stream = br.BaseStream
+
+        if stream.CanSeek then
+            max 0L (stream.Length - stream.Position)
+        else
+            Int64.MaxValue
+
+    /// <summary>
+    /// A lower bound, in bytes, on the wire size of one value of <paramref name="t"/>.
+    /// Only <c>unit</c> — and tuples built solely from it — occupies zero bytes; every other
+    /// shape writes at least one byte, which is all an element-count bound needs.
+    /// </summary>
+    let rec private minWireBytes (t: Type) : int =
+        if t = typeof<unit> then 0
+        elif FSharpType.IsTuple t then
+            FSharpType.GetTupleElements t |> Array.sumBy minWireBytes
+        else
+            1
+
+    /// <summary>
+    /// Cap on the element count of a container whose elements occupy no payload bytes at all
+    /// (<c>unit list</c> and its relatives). Such a count cannot be bounded by the remaining
+    /// payload, so it is bounded absolutely instead: 2^20 elements is far beyond any real
+    /// message and still only a few megabytes of array if a legitimate one ever appears.
+    /// </summary>
+    [<Literal>]
+    let private MaxZeroWidthElements = 1048576
+
+    /// <summary>Read a length prefix, rejecting one that cannot fit in what is left.</summary>
+    let private readLength (br: BinaryReader) (what: string) : int =
+        let length = br.ReadInt32()
+
+        if length < 0 then
+            failProtocol $"declared length {length} is negative for {what}."
+
+        let available = remainingBytes br
+
+        if int64 length > available then
+            failProtocol $"declared length {length} exceeds remaining payload {available} for {what}."
+
+        length
+
+    /// <summary>Read an element count, rejecting one that cannot fit in what is left.</summary>
+    let private readCount (br: BinaryReader) (minBytesPerElement: int) (what: string) : int =
+        let count = br.ReadInt32()
+
+        if count < 0 then
+            failProtocol $"declared element count {count} is negative for {what}."
+
+        if minBytesPerElement > 0 then
+            let needed = int64 count * int64 minBytesPerElement
+            let available = remainingBytes br
+
+            if needed > available then
+                failProtocol
+                    $"declared element count {count} exceeds remaining payload {available} for {what}."
+        elif count > MaxZeroWidthElements then
+            failProtocol
+                $"declared element count {count} exceeds the {MaxZeroWidthElements}-element cap for {what}, whose elements occupy no payload bytes."
+
+        count
+
+    /// <summary>Read a field count, rejecting one that does not match the type's real arity.</summary>
+    let private readArity (br: BinaryReader) (arity: int) (what: string) : unit =
+        let count = br.ReadInt32()
+
+        if count <> arity then
+            failProtocol $"declared field count {count} does not match the {arity} fields of {what}."
+
+    /// <summary>
+    /// Typed shims for the three F# collections. Each one is closed over its element types
+    /// exactly once, in the build step, so the read and write closures call a delegate instead
+    /// of reflecting per value.
+    /// </summary>
+    type private CollectionShims =
+        static member ListOfArray<'E>(values: Array) : obj = box (List.ofArray (values :?> 'E[]))
+
+        static member SetOfArray<'E when 'E: comparison>(values: Array) : obj =
+            box (Set.ofArray (values :?> 'E[]))
+
+        static member MapOfArray<'K, 'V when 'K: comparison>(values: Array) : obj =
+            box (Map.ofArray (values :?> ('K * 'V)[]))
+
+        // `for entry in map` would bind to a byref span extension method rather than to the
+        // map's own enumerator — FSharpMap implements IEnumerable explicitly, and one of this
+        // file's Orleans.Serialization opens brings a competing GetEnumerator into scope.
+        static member MapEntries<'K, 'V when 'K: comparison>(value: obj) : (obj * obj)[] =
+            value :?> Map<'K, 'V>
+            |> Map.toArray
+            |> Array.map (fun (key, item) -> box key, box item)
+
+    let private shimMethod (name: string) (typeArguments: Type[]) =
+        match
+            typeof<CollectionShims>
+                .GetMethod(name, Reflection.BindingFlags.Static ||| allRepresentations)
+        with
+        | null -> failProtocol $"the collection shim '{name}' was not found."
+        | definition ->
+            FunctionalInstrumentation.countGenericClosing ()
+            definition.MakeGenericMethod typeArguments
+
+    /// <summary>Close the array-to-collection constructor for one element type, once.</summary>
+    let private closeCollectionBuilder (name: string) (typeArguments: Type[]) : Array -> obj =
+        (shimMethod name typeArguments).CreateDelegate<Func<Array, obj>>().Invoke
+
+    /// <summary>Close the map-entry reader for one key/value pair of types, once.</summary>
+    let private closeMapEntryReader (keyType: Type) (valueType: Type) : obj -> (obj * obj)[] =
+        (shimMethod "MapEntries" [| keyType; valueType |])
+            .CreateDelegate<Func<obj, (obj * obj)[]>>()
+            .Invoke
+
     /// <summary>
     /// Returns true if the given type is an F# DU case type (a nested class whose
     /// declaring type is an F# union). This handles cases like BankAccountCommand+Deposit
@@ -184,6 +311,8 @@ module internal FSharpBinaryFormat =
                 match cell.Claim t with
                 | UseCodec c -> c // real, or a forwarder onto the build in flight
                 | BuildIt ->
+                    FunctionalInstrumentation.countCodecBuild ()
+
                     let realCodec =
                         try
                             let shape = TypeShape.Create(t)
@@ -322,7 +451,7 @@ module internal FSharpBinaryFormat =
                 bw.Write(arr.Length)
                 bw.Write(arr)
               Read = fun br ->
-                let len = br.ReadInt32()
+                let len = readLength br "a byte array"
                 br.ReadBytes(len) :> obj }
 
         // ── F# Option ─────────────────────────────────────────────────────
@@ -332,25 +461,31 @@ module internal FSharpBinaryFormat =
             let cases     = FSharpType.GetUnionCases(typeof<'T>, true)
             let noneCase  = cases |> Array.find (fun c -> c.Name = "None")
             let someCase  = cases |> Array.find (fun c -> c.Name = "Some")
+            let readTag   = FSharpValue.PreComputeUnionTagReader(typeof<'T>, allRepresentations)
+            let readSome  = FSharpValue.PreComputeUnionReader(someCase, allRepresentations)
+            let makeNone  = FSharpValue.PreComputeUnionConstructor(noneCase, allRepresentations)
+            let makeSome  = FSharpValue.PreComputeUnionConstructor(someCase, allRepresentations)
+            let noneTag   = noneCase.Tag
             { Write = fun bw value ->
-                let case, fields = FSharpValue.GetUnionFields(value, typeof<'T>, true)
-                if case.Name = "None" then
+                if readTag value = noneTag then
                     bw.Write(0uy)
                 else
                     bw.Write(1uy)
-                    innerCodec.Write bw fields.[0]
+                    innerCodec.Write bw (readSome value).[0]
               Read = fun br ->
                 let tag = br.ReadByte()
                 if tag = 0uy then
-                    FSharpValue.MakeUnion(noneCase, [||], true)
+                    makeNone [||]
                 else
                     let inner = innerCodec.Read br
-                    FSharpValue.MakeUnion(someCase, [| inner |], true) }
+                    makeSome [| inner |] }
 
         // ── F# list ───────────────────────────────────────────────────────
         | Shape.FSharpList lstShape ->
             let elemType  = lstShape.Element.Type
             let elemCodec = getCodec elemType
+            let elemMin   = minWireBytes elemType
+            let listOfArray = closeCollectionBuilder "ListOfArray" [| elemType |]
             { Write = fun bw value ->
                 let items =
                     (value :?> System.Collections.IEnumerable)
@@ -359,13 +494,10 @@ module internal FSharpBinaryFormat =
                 bw.Write(items.Length)
                 for item in items do elemCodec.Write bw item
               Read = fun br ->
-                let count   = br.ReadInt32()
-                let items   = Array.init count (fun _ -> elemCodec.Read br)
+                let count   = readCount br elemMin $"a list of '{elemType.FullName}'"
                 let typedArr = Array.CreateInstance(elemType, count)
-                for i in 0 .. count - 1 do typedArr.SetValue(items.[i], i)
-                let listModule = typeof<list<int>>.Assembly.GetType("Microsoft.FSharp.Collections.ListModule")
-                let ofArray    = listModule.GetMethod("OfArray").MakeGenericMethod(elemType)
-                ofArray.Invoke(null, [| typedArr |]) }
+                for i in 0 .. count - 1 do typedArr.SetValue(elemCodec.Read br, i)
+                listOfArray typedArr }
 
         // ── F# Map ────────────────────────────────────────────────────────
         | Shape.FSharpMap mapShape ->
@@ -373,35 +505,32 @@ module internal FSharpBinaryFormat =
             let valType   = mapShape.Value.Type
             let keyCodec  = getCodec keyType
             let valCodec  = getCodec valType
-            let kvpType   = typedefof<Collections.Generic.KeyValuePair<_,_>>.MakeGenericType(keyType, valType)
-            let keyProp   = kvpType.GetProperty("Key")
-            let valProp   = kvpType.GetProperty("Value")
+            let entryMin  = minWireBytes keyType + minWireBytes valType
             let tupleType = FSharpType.MakeTupleType([| keyType; valType |])
+            let makeTuple = FSharpValue.PreComputeTupleConstructor tupleType
+            let entriesOf = closeMapEntryReader keyType valType
+            let mapOfArray = closeCollectionBuilder "MapOfArray" [| keyType; valType |]
             { Write = fun bw value ->
-                let items =
-                    (value :?> System.Collections.IEnumerable)
-                    |> Seq.cast<obj>
-                    |> Array.ofSeq
-                bw.Write(items.Length)
-                for kvp in items do
-                    keyCodec.Write bw (keyProp.GetValue(kvp))
-                    valCodec.Write bw (valProp.GetValue(kvp))
+                let entries = entriesOf value
+                bw.Write(entries.Length)
+                for (key, item) in entries do
+                    keyCodec.Write bw key
+                    valCodec.Write bw item
               Read = fun br ->
-                let count = br.ReadInt32()
-                let pairs = Array.init count (fun _ ->
+                let count = readCount br entryMin $"a map of '{keyType.FullName}' to '{valType.FullName}'"
+                let typedArr = Array.CreateInstance(tupleType, count)
+                for i in 0 .. count - 1 do
                     let k = keyCodec.Read br
                     let v = valCodec.Read br
-                    FSharpValue.MakeTuple([| k; v |], tupleType))
-                let typedArr = Array.CreateInstance(tupleType, count)
-                for i in 0 .. count - 1 do typedArr.SetValue(pairs.[i], i)
-                let mapModule = typeof<Map<int,int>>.Assembly.GetType("Microsoft.FSharp.Collections.MapModule")
-                let ofArray   = mapModule.GetMethod("OfArray").MakeGenericMethod(keyType, valType)
-                ofArray.Invoke(null, [| typedArr |]) }
+                    typedArr.SetValue(makeTuple [| k; v |], i)
+                mapOfArray typedArr }
 
         // ── F# Set ────────────────────────────────────────────────────────
         | Shape.FSharpSet setShape ->
             let elemType  = setShape.Element.Type
             let elemCodec = getCodec elemType
+            let elemMin   = minWireBytes elemType
+            let setOfArray = closeCollectionBuilder "SetOfArray" [| elemType |]
             { Write = fun bw value ->
                 let items =
                     (value :?> System.Collections.IEnumerable)
@@ -410,24 +539,22 @@ module internal FSharpBinaryFormat =
                 bw.Write(items.Length)
                 for item in items do elemCodec.Write bw item
               Read = fun br ->
-                let count   = br.ReadInt32()
-                let items   = Array.init count (fun _ -> elemCodec.Read br)
+                let count   = readCount br elemMin $"a set of '{elemType.FullName}'"
                 let typedArr = Array.CreateInstance(elemType, count)
-                for i in 0 .. count - 1 do typedArr.SetValue(items.[i], i)
-                let setModule = typeof<Set<int>>.Assembly.GetType("Microsoft.FSharp.Collections.SetModule")
-                let ofArray   = setModule.GetMethod("OfArray").MakeGenericMethod(elemType)
-                ofArray.Invoke(null, [| typedArr |]) }
+                for i in 0 .. count - 1 do typedArr.SetValue(elemCodec.Read br, i)
+                setOfArray typedArr }
 
         // ── CLR array ─────────────────────────────────────────────────────
         | Shape.Array arrShape when arrShape.Rank = 1 ->
             let elemType  = arrShape.Element.Type
             let elemCodec = getCodec elemType
+            let elemMin   = minWireBytes elemType
             { Write = fun bw value ->
                 let arr = value :?> Array
                 bw.Write(arr.Length)
                 for i in 0 .. arr.Length - 1 do elemCodec.Write bw (arr.GetValue(i))
               Read = fun br ->
-                let count = br.ReadInt32()
+                let count = readCount br elemMin $"an array of '{elemType.FullName}'"
                 let arr   = Array.CreateInstance(elemType, count)
                 for i in 0 .. count - 1 do arr.SetValue(elemCodec.Read br, i)
                 arr :> obj }
@@ -440,12 +567,13 @@ module internal FSharpBinaryFormat =
                         let getter: 'T -> obj = fun v -> m.Get(v) :> obj
                         getter, getCodec typeof<'F>
                 })
+            let makeTuple = FSharpValue.PreComputeTupleConstructor typeof<'T>
             { Write = fun bw value ->
                 let v = value :?> 'T
                 for getter, fc in elemPairs do fc.Write bw (getter v)
               Read = fun br ->
                 let values = elemPairs |> Array.map (fun (_, fc) -> fc.Read br)
-                FSharpValue.MakeTuple(values, typeof<'T>) }
+                makeTuple values }
 
         // ── F# Record ─────────────────────────────────────────────────────
         | Shape.FSharpRecord (:? ShapeFSharpRecord<'T> as recordShape) ->
@@ -455,14 +583,16 @@ module internal FSharpBinaryFormat =
                         let getter: 'T -> obj = fun v -> m.Get(v) :> obj
                         getter, getCodec typeof<'F>
                 })
+            let makeRecord = FSharpValue.PreComputeRecordConstructor(typeof<'T>, allRepresentations)
+            let recordName = typeof<'T>.FullName
             { Write = fun bw value ->
                 let v = value :?> 'T
                 bw.Write(fieldPairs.Length)
                 for getter, fc in fieldPairs do fc.Write bw (getter v)
               Read = fun br ->
-                let count  = br.ReadInt32()
-                let values = Array.init count (fun i -> snd fieldPairs.[i] |> fun fc -> fc.Read br)
-                FSharpValue.MakeRecord(typeof<'T>, values, true) }
+                readArity br fieldPairs.Length $"the record '{recordName}'"
+                let values = fieldPairs |> Array.map (fun (_, fc) -> fc.Read br)
+                makeRecord values }
 
         // ── F# Discriminated Union ─────────────────────────────────────────
         | Shape.FSharpUnion (:? ShapeFSharpUnion<'T> as unionShape) ->
@@ -476,20 +606,34 @@ module internal FSharpBinaryFormat =
                 )
             )
             let reflCases = FSharpType.GetUnionCases(typeof<'T>, true)
+            let readTag = FSharpValue.PreComputeUnionTagReader(typeof<'T>, allRepresentations)
+            let unionName = typeof<'T>.FullName
+
+            // One constructor per case tag, closed here so the read closure never reflects.
+            let makeCase = Array.zeroCreate<obj[] -> obj> caseFieldPairs.Length
+
+            for case in reflCases do
+                if case.Tag >= 0 && case.Tag < makeCase.Length then
+                    makeCase.[case.Tag] <- FSharpValue.PreComputeUnionConstructor(case, allRepresentations)
+
             { Write = fun bw value ->
                 let v = value :?> 'T
-                let case, _ = FSharpValue.GetUnionFields(v, typeof<'T>, true)
-                bw.Write(case.Tag)
-                let pairs = caseFieldPairs.[case.Tag]
+                let caseTag = readTag value
+                bw.Write(caseTag)
+                let pairs = caseFieldPairs.[caseTag]
                 bw.Write(pairs.Length)
                 for getter, fc in pairs do fc.Write bw (getter v)
               Read = fun br ->
-                let caseTag   = br.ReadInt32()
-                let unionCase = reflCases |> Array.find (fun c -> c.Tag = caseTag)
-                let count     = br.ReadInt32()
-                let pairs     = caseFieldPairs.[caseTag]
-                let fields    = Array.init count (fun i -> snd pairs.[i] |> fun fc -> fc.Read br)
-                FSharpValue.MakeUnion(unionCase, fields, true) }
+                let caseTag = br.ReadInt32()
+
+                if caseTag < 0 || caseTag >= caseFieldPairs.Length then
+                    failProtocol
+                        $"case tag {caseTag} is out of range for the {caseFieldPairs.Length} cases of the union '{unionName}'."
+
+                let pairs = caseFieldPairs.[caseTag]
+                readArity br pairs.Length $"case {caseTag} of the union '{unionName}'"
+                let fields = pairs |> Array.map (fun (_, fc) -> fc.Read br)
+                makeCase.[caseTag] fields }
 
         // ── POCO class (mutable properties) ───────────────────────────────
         | Shape.Poco (:? ShapePoco<'T> as pocoShape) ->
@@ -506,6 +650,7 @@ module internal FSharpBinaryFormat =
                     member _.Visit<'F>(m: ShapeMember<'T,'F>) =
                         fun (target: 'T) (value: obj) -> m.Set target (value :?> 'F)
                 })
+            let pocoName = typeof<'T>.FullName
             { Write = fun bw value ->
                 if isNull value then
                     bw.Write(0uy)
@@ -518,9 +663,14 @@ module internal FSharpBinaryFormat =
                 let tag = br.ReadByte()
                 if tag = 0uy then null
                 else
-                    let count = br.ReadInt32()
+                    readArity br propGetters.Length $"the class '{pocoName}'"
+
+                    if propGetters.Length > fieldSetters.Length then
+                        failProtocol
+                            $"the class '{pocoName}' exposes {propGetters.Length} readable properties but only {fieldSetters.Length} settable backing fields; its values cannot be reconstructed."
+
                     let mutable inst = pocoShape.CreateUninitialized()
-                    for i in 0 .. count - 1 do
+                    for i in 0 .. propGetters.Length - 1 do
                         let value = snd propGetters.[i] |> fun fc -> fc.Read br
                         inst <- fieldSetters.[i] inst value
                     inst :> obj }
@@ -538,14 +688,15 @@ module internal FSharpBinaryFormat =
                     member _.Visit<'F>(m: ShapeMember<'T,'F>) =
                         fun (target: 'T) (value: obj) -> m.Set target (value :?> 'F)
                 })
+            let cliName = typeof<'T>.FullName
             { Write = fun bw value ->
                 let v = value :?> 'T
                 bw.Write(propPairs.Length)
                 for getter, fc in propPairs do fc.Write bw (getter v)
               Read = fun br ->
-                let count = br.ReadInt32()
+                readArity br propPairs.Length $"the CLIMutable record '{cliName}'"
                 let mutable inst = cliShape.CreateUninitialized()
-                for i in 0 .. count - 1 do
+                for i in 0 .. propPairs.Length - 1 do
                     let value = snd propPairs.[i] |> fun fc -> fc.Read br
                     inst <- setterFns.[i] inst value
                 inst :> obj }
@@ -619,6 +770,179 @@ module internal FSharpBinaryFormat =
     let private declaredTypes = ConcurrentDictionary<string, Type>(StringComparer.Ordinal)
 
     /// <summary>
+    /// The exact CLR type the caller asked for on the current top-level payload
+    /// deserialization, when the F# codec owns the whole payload.
+    /// </summary>
+    /// <remarks>
+    /// Orleans elides the field-type header when the actual type equals the expected type,
+    /// which is exactly what exact-type payload serialization produces, so <c>ReadValue</c>
+    /// gets no field type on the path the functional runtime uses and the CLR type would
+    /// otherwise be chosen entirely by a name embedded in the payload. The caller publishes
+    /// its expected type here for the duration of one synchronous <c>Deserialize</c> call —
+    /// thread-static because that call never yields — and the resolved type is then required
+    /// to be assignable to it. A declared-abstract argument type still admits any derived
+    /// type, which is what the specification's polymorphism rule needs; a type from another
+    /// hierarchy is rejected by name.
+    /// </remarks>
+    type internal ExpectedPayloadType() =
+
+        [<ThreadStatic; DefaultValue>]
+        static val mutable private expected: Type
+
+        /// <summary>The expected type of the payload being read, or null outside a scope.</summary>
+        static member Current = ExpectedPayloadType.expected
+
+        /// <summary>Publish <paramref name="expected"/> for the duration of <paramref name="read"/>.</summary>
+        static member Scoped(expected: Type, read: unit -> 'T) : 'T =
+            let previous = ExpectedPayloadType.expected
+            ExpectedPayloadType.expected <- expected
+
+            try
+                read ()
+            finally
+                ExpectedPayloadType.expected <- previous
+
+    // ── Wire type-name resolution ───────────────────────────────────────────
+
+    /// <summary>
+    /// Known-safe assembly name prefixes for type resolution. Only types from these assemblies
+    /// are resolved when the expected type is not carried by the field header.
+    /// </summary>
+    let private allowedAssemblyPrefixes =
+        [| "Orleans.FSharp"
+           "System"
+           "Microsoft.FSharp"
+           "FSharp.Core"
+           "mscorlib"
+           "netstandard"
+           "TypeShape" |]
+
+    /// <summary>
+    /// A prefix matches on whole dotted segments only. A raw <c>StartsWith</c> would admit
+    /// <c>Orleans.FSharpHostile</c> on the strength of <c>Orleans.FSharp</c>, which lets an
+    /// attacker name any assembly they can get onto the probing path.
+    /// </summary>
+    let private isAssemblyAllowed (asmName: string) : bool =
+        not (String.IsNullOrEmpty asmName)
+        && allowedAssemblyPrefixes
+           |> Array.exists (fun prefix ->
+               String.Equals(asmName, prefix, StringComparison.Ordinal)
+               || asmName.StartsWith(prefix + ".", StringComparison.Ordinal))
+
+    /// <summary>
+    /// Upper bound on the length of a type name read from the wire. The longest legitimate F#
+    /// payload name — a generic whose arguments are spelled as full assembly-qualified names —
+    /// is a few hundred characters, so 4 KiB is generous headroom while still bounding both the
+    /// work and the nesting depth of the qualifier scan below.
+    /// </summary>
+    [<Literal>]
+    let private MaxTypeNameLength = 4096
+
+    /// <summary>
+    /// Every assembly simple name an assembly-qualified type name mentions, the outer type's
+    /// own qualifier and those of its generic arguments alike.
+    /// </summary>
+    /// <remarks>
+    /// <c>Type.GetType</c> calls <c>Assembly.Load</c> for each of them, so all of them have to
+    /// clear the allow-list BEFORE resolution runs — checking the resolved type's assembly
+    /// afterwards is already too late, and a generic argument's assembly never shows up there
+    /// at all.
+    /// </remarks>
+    let rec private assemblyNamesIn (typeName: string) : string list =
+        let arguments = ResizeArray<string>()
+        let mutable index = 0
+        let mutable depth = 0
+        let mutable argumentStart = -1
+        let mutable qualifierStart = -1
+
+        while qualifierStart < 0 && index < typeName.Length do
+            match typeName.[index] with
+            | '\\' -> index <- index + 1 // an escaped character is never structural
+            | '[' ->
+                depth <- depth + 1
+
+                if depth = 2 then
+                    argumentStart <- index + 1
+            | ']' ->
+                if depth = 2 && argumentStart >= 0 then
+                    arguments.Add(typeName.Substring(argumentStart, index - argumentStart))
+                    argumentStart <- -1
+
+                depth <- depth - 1
+            | ',' when depth = 0 -> qualifierStart <- index + 1
+            | _ -> ()
+
+            index <- index + 1
+
+        let own =
+            if qualifierStart < 0 then
+                []
+            else
+                let qualifier = typeName.Substring qualifierStart
+
+                let simple =
+                    match qualifier.IndexOf ',' with
+                    | -1 -> qualifier
+                    | stop -> qualifier.Substring(0, stop)
+
+                [ simple.Trim() ]
+
+        own @ (arguments |> Seq.collect assemblyNamesIn |> List.ofSeq)
+
+    /// <summary>
+    /// Cap on the number of DISTINCT type names this process resolves through
+    /// <c>Type.GetType</c> on behalf of a payload. A declared type never counts against it —
+    /// declaration runs at binding and silo startup from local code — so the cap bounds only
+    /// what an inbound stream can add to the process's type and codec caches. A hostile stream
+    /// of unique names is rejected once the cap is reached instead of growing memory without
+    /// bound, and a rejected name is never cached at all.
+    /// </summary>
+    [<Literal>]
+    let private MaxWireResolvedTypes = 512
+
+    let private wireResolvedTypes = ConcurrentDictionary<string, Type>(StringComparer.Ordinal)
+
+    /// <summary>
+    /// How many distinct wire type names this process has resolved and cached. Exposed so a
+    /// test can prove that a rejected name adds nothing — the property that keeps a hostile
+    /// stream of unique names from growing process memory.
+    /// </summary>
+    let internal wireResolvedTypeCount () = wireResolvedTypes.Count
+
+    /// <summary>Resolve a wire-supplied type name, allow-listing before any assembly loads.</summary>
+    let private resolveWireType (typeName: string) : Type =
+        match wireResolvedTypes.TryGetValue typeName with
+        | true, cached -> cached
+        | _ ->
+            if typeName.Length > MaxTypeNameLength then
+                invalidOp
+                    $"FSharpBinaryCodec: the payload declares a {typeName.Length}-character type name, which exceeds the {MaxTypeNameLength}-character limit."
+
+            assemblyNamesIn typeName
+            |> List.iter (fun asmName ->
+                if not (isAssemblyAllowed asmName) then
+                    invalidOp
+                        $"FSharpBinaryCodec: type '{typeName}' names assembly '{asmName}' which is not in the trusted allow-list; it was not loaded. Provide an explicit hintType to deserialize safely.")
+
+            if wireResolvedTypes.Count >= MaxWireResolvedTypes then
+                invalidOp
+                    $"FSharpBinaryCodec: this process has already resolved {MaxWireResolvedTypes} distinct type names from payloads, so '{typeName}' is rejected rather than grow the codec caches without bound. Declare a legitimate payload type as a top-level payload type instead."
+
+            match Type.GetType(typeName, throwOnError = false) with
+            | null ->
+                invalidOp $"FSharpBinaryCodec: type '{typeName}' not found. Ensure the type is in a loaded assembly."
+            | t ->
+                let asmName = t.Assembly.GetName().Name
+
+                if not (isAssemblyAllowed asmName) then
+                    invalidOp
+                        $"FSharpBinaryCodec: type '{typeName}' is from assembly '{asmName}' which is not in the trusted allow-list. Provide an explicit hintType to deserialize safely."
+
+                // Only a resolved, allow-listed type is cached; a rejected name leaves no trace.
+                wireResolvedTypes.TryAdd(typeName, t) |> ignore
+                t
+
+    /// <summary>
     /// Declare one closed type as a top-level payload type so an elided field type can be
     /// resolved by name. Idempotent.
     /// </summary>
@@ -669,40 +993,31 @@ module internal FSharpBinaryFormat =
         use ms = new MemoryStream(data)
         use br = new BinaryReader(ms, Text.Encoding.UTF8, true)
         let typeName = br.ReadString()
-        let valueLen  = br.ReadInt32()
+        let valueLen = readLength br $"the payload of type '{typeName}'"
         let valueBytes = br.ReadBytes(valueLen)
-
-        // Known-safe assembly name prefixes for type resolution.
-        // Only types from these assemblies are resolved when hintType is null.
-        let allowedAssemblyPrefixes =
-            [| "Orleans.FSharp"
-               "System"
-               "Microsoft.FSharp"
-               "FSharp.Core"
-               "mscorlib"
-               "netstandard"
-               "TypeShape" |]
-
-        let isAssemblyAllowed (asmName: string) : bool =
-            asmName <> null &&
-            allowedAssemblyPrefixes |> Array.exists (fun prefix -> asmName.StartsWith prefix)
 
         let actualType =
             if isNull hintType then
-                match declaredTypes.TryGetValue typeName with
-                | true, declared -> declared
-                | _ ->
+                let resolved =
+                    match declaredTypes.TryGetValue typeName with
+                    | true, declared -> declared
+                    | _ -> resolveWireType typeName
 
-                match Type.GetType(typeName, throwOnError = false) with
-                | null ->
-                    invalidOp $"FSharpBinaryCodec: type '{typeName}' not found. Ensure the type is in a loaded assembly."
-                | t ->
-                    let asmName = t.Assembly.GetName().Name
-                    if isAssemblyAllowed asmName then t
-                    else
-                        invalidOp $"FSharpBinaryCodec: type '{typeName}' is from assembly '{asmName}' which is not in the trusted allow-list. Provide an explicit hintType to deserialize safely."
+                // The caller's expected type, when it published one, is authoritative over the
+                // name the payload carries: wire-name resolution stays (a declared abstract or
+                // base type has to admit its subtypes) but it may not step outside the
+                // hierarchy the caller asked for.
+                match ExpectedPayloadType.Current with
+                | null -> ()
+                | expected when expected.IsAssignableFrom resolved -> ()
+                | expected ->
+                    invalidOp
+                        $"FSharpBinaryCodec: the payload declares type '{typeName}', which is not assignable to the expected type '{expected.FullName}'."
+
+                resolved
             else
                 hintType
+
         deserialize valueBytes actualType
 
 /// <summary>
