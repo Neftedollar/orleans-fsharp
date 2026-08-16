@@ -691,8 +691,9 @@ Create one cached `ApiShape` for each closed API type:
 3. For each field, use `FSharpType.IsFunction` and
    `FSharpType.GetFunctionElements` to extract argument and range types.
 4. Verify that the range is exactly `Task<'Reply>` and record the reply type.
-5. Create one unique function object for each exact field type with
-   `FSharpValue.MakeFunction`; its body throws if invoked.
+5. Create one unique function object for each record field, with that field's
+   exact function type, using `FSharpValue.MakeFunction`; its body throws if
+   invoked. Fields with identical function types receive distinct objects.
 6. Construct one probe record from those sentinels with a cached
    `FSharpValue.PreComputeRecordConstructor` delegate.
 7. Invoke the selector once with the probe record.
