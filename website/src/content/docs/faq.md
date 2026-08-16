@@ -60,17 +60,56 @@ let counter =
 
 See the [Getting Started](/orleans-fsharp/getting-started/) guide for a full walkthrough.
 
+**Functional-runtime equivalent** (the current authoring model — same increment/decrement/value domain, a typed API record instead of a boxed message):
+
+```fsharp
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type CounterActor = private CounterActor of unit
+
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { increment: unit -> Task<int>
+      decrement: unit -> Task<int>
+      value: unit -> Task<int> }
+
+[<RequireQualifiedAccess>]
+module CounterApi =
+    let contract =
+        grainContract<CounterActor, string, CounterApi> () {
+            grainType "counter"
+            version 1
+            stringKey
+        }
+
+    let ref = FunctionalGrain.ref contract
+
+let counterDefinition =
+    grainFor CounterApi.contract {
+        defaultState (fun () -> 0)
+
+        handle (_.increment) (fun _context state () -> task { let next = state + 1 in return next, next })
+        handle (_.decrement) (fun _context state () -> task { let next = max 0 (state - 1) in return next, next })
+        handle (_.value) (fun _context state () -> task { return state, state })
+    }
+```
+
+Register with `siloBuilder.AddFunctionalGrain(counterDefinition)`, then call it as
+`let api = CounterApi.ref factory "my-counter" in api.increment ()` — no boxed reply, no separate
+handle type. See [Getting Started](/orleans-fsharp/getting-started/) for the complete functional-first walkthrough.
+
 ## How does Orleans.FSharp compare to using Microsoft Orleans from C#?
 
 Orleans.FSharp provides the same functionality as the C# Microsoft Orleans API but with idiomatic F# syntax. Instead of inheriting from `Grain` base classes and writing imperative C#, you use computation expressions. Key differences:
 
 | Feature | C# Orleans | Orleans.FSharp |
 |---------|-----------|---------------|
-| Grain definition | Class inheritance | `grain { }` CE |
-| State management | Mutable properties | DU state machines |
+| Grain definition | Class inheritance | `grainContract` + `grainFor` (current); `grain { }` CE (deprecated) |
+| State management | Mutable properties | Immutable state returned from handlers |
 | Configuration | Extension method chains | `siloConfig { }` CE |
-| Type safety | Runtime errors | Compile-time constraints |
-| Testing | Manual mocking | GrainArbitrary + FsCheck |
+| Type safety | Runtime errors | Compile-time constraints, typed API records |
+| Testing | Manual mocking | TestingHost + GrainArbitrary + FsCheck |
 
 There is zero overhead — benchmarks show ~8 nanoseconds per grain call, unmeasurable vs network latency.
 
