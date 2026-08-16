@@ -54,6 +54,7 @@
     <Compile Include="FunctionalPhase5Fixture.fs" />
     <Compile Include="FunctionalPhase5IntegrationTests.fs" />
     <Compile Include="ChatRoomSampleIntegrationTests.fs" />
+    <Compile Include="FunctionalObserverIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

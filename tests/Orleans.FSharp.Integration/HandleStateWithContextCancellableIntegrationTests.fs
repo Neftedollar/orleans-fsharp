@@ -20,6 +20,8 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 [<Collection("ClusterCollection")>]
 type HandleStateWithContextCancellableIntegrationTests(fixture: ClusterFixture) =
 

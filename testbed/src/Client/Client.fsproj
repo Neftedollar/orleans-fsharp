@@ -6,6 +6,11 @@
     <IsPackable>false</IsPackable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Task 8 deprecation pass (ruling 6): this client-only testbed process keeps driving the
+         grain{} / FSharpGrain.* demo grains hosted by the Silo project on purpose. Added in the
+         fix round that obsoleted FSharpGrain.send/post/ask — before that this project was the
+         one deployment shape (client-only) that saw no deprecation signal at all. -->
+    <NoWarn>$(NoWarn);FS0044</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

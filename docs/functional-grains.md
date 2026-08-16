@@ -319,6 +319,17 @@ The universal message-passing surface built on the `grain { }` CE -- the builder
 `GrainDefinition`/`GrainContext` types it produces, `FSharpGrainAttribute`,
 `AddFSharpGrain(sFromAssembly)`, the `FSharpGrain.*` handle module, `Timers`, and `Reminder` --
 is superseded by this functional runtime and now carries `[<Obsolete>]` (warning, not error).
+
+Where the warning actually fires: on `grain { }` itself, on `[<FSharpGrain>]`, on
+`AddFSharpGrain` / `AddFSharpGrainsFromAssembly`, on the `Timers` and `Reminder` modules, and on
+every operation of the universal handle module -- `FSharpGrain.send`/`post`/`ask` and their
+`Guid`/`Int` variants. `FSharpGrain.ref`/`refGuid`/`refInt` and the three handle *types* are
+deliberately left unattributed: `Orleans.FSharp.Testing`'s own `getFSharpGrain*` helpers return
+those types from a packable library that carries no FS0044 suppression, and a handle is inert
+without a `send`/`post`/`ask`, so the call-site warning coverage is unchanged either way. Both
+authoring entry points (`grain { }` on the silo side, `FSharpGrain.send`/`ask` on the caller
+side) warn, so a silo-only, client-only, or combined process all get the signal.
+
 Old code keeps compiling and running unchanged; every example under `examples/`, the sample
 under `src/Orleans.FSharp.Sample`, `testbed/`, and the `orleans-fsharp` template carry a small
 functional-runtime twin grain beside the old one so the two authoring styles can be compared
@@ -340,6 +351,7 @@ Before/after mapping:
 | `persist "Default"` | `usePersistentState` with a `PersistentState.create<'State> "name" "provider"` descriptor |
 | one-way `FSharpGrain.post` | `oneWay (_.op)` in the contract |
 | `handleWithContext` / `GrainContext.getService` etc. | the `context` parameter passed to every `handle` callback (`context.services`, `context.grainFactory`, ...) |
+| `FSharpObserverManager<'Obs>` held in `grain { }` state, `Subscribe`/`Unsubscribe`/`Notify` message cases | the same `FSharpObserverManager<'Obs>` held in `grainFor` state, with `subscribe: 'Obs -> Task<_>` / `unsubscribe` / a notifying operation on the contract -- unchanged, observers are not part of this deprecation (see below) |
 
 **Capability gap -- no migration path today:** `grain { }`'s `onLifecycleStage` operation let a
 grain hook an *arbitrary* `GrainLifecycleStage` (`First`/`SetupState`/`Activate`/`Last`/any other
@@ -357,6 +369,33 @@ Two other `grain { }`-adjacent pieces are **not** part of this deprecation and a
 a third authoring style, not superseded by anything here) and `RequestCtx.set/get/getOrDefault/remove`
 (same-static wrappers that work unchanged inside functional handlers; `RequestCtx.withValue` has
 no functional-runtime equivalent).
+
+### Observers, streams, and the other orthogonal surfaces
+
+Pub/sub **observers are not a capability gap**. `Observer.createRef` / `Observer.deleteRef` /
+`Observer.subscribe` and `FSharpObserverManager<'Obs>` are grain-model agnostic -- they need an
+`IGrainFactory` and an `IGrainObserver`-derived interface, both of which a functional grain has
+(`context.grainFactory`, and any observer interface you already use). An observer reference is
+an ordinary contract operation argument: it clears the functional transport's serializer
+preflight and round-trips as a live callback target. That is proven end to end, not asserted --
+`tests/Orleans.FSharp.Integration/FunctionalObserverIntegrationTests.fs` runs a `grainContract` /
+`grainFor` grain on a real TestingHost cluster which subscribes an observer reference, notifies
+it, and unsubscribes it.
+
+The one real constraint is Orleans' own and predates all of this: the **observer interface must
+be declared in C#**, because Orleans' proxy source generators run over C# and not F#. That is
+why `ITestChatObserver` lives in `src/Orleans.FSharp.CodeGen`, and it applies identically to the
+`grain { }` CE and to class grains. An example that declares its observer interface in F#
+(`examples/chat-room`, `IChatObserver` in `ChatTypes.fs`) is subject to that constraint under
+both authoring models, which is why the chat-room functional twin covers only the
+message-posting slice of the domain.
+
+The same "orthogonal, unaffected" verdict covers streaming, broadcast channels, filters,
+Kubernetes hosting, logging, shutdown, transactions, event sourcing
+(`FSharpEventSourcedGrain*` -- a separate interface family, `IFSharpEventSourcedGrain`, which
+shares nothing with the deprecated `IFSharpGrain*` message-passing aliases), versioning,
+resilience, batching, `GrainState.fs`, `FSharpBinaryCodec`, and `StateMigration`. None of them
+carries `[<Obsolete>]`.
 
 ## See also
 

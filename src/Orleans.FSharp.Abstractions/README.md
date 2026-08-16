@@ -8,6 +8,13 @@ Orleans Roslyn source generators only run on C# projects. F# assemblies are invi
 
 This package contains **only** three `IFSharpGrain` interfaces in a C# project. Because the project has `Microsoft.Orleans.Sdk`, source generators run and produce the proxy classes (`Proxy_IFSharpGrain` etc.) in this assembly. Any silo that references this package (directly or transitively via `Orleans.FSharp.Runtime`) can call all F# grains — with no per-grain C# code required.
 
+> **Note.** The three `IFSharpGrain*` interfaces and their `FSharpGrainHandle*` companions back
+> the `grain {}` CE message-passing model, whose `FSharpGrain.send`/`post`/`ask` operations now
+> carry `[<Obsolete>]` (warning, not error). The package itself is not deprecated -- the
+> functional grain runtime (`grainContract` / `grainFor`) also relies on the proxies generated
+> here, and it needs no per-grain C# code either. See
+> [docs/functional-grains.md](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md).
+
 ## Interfaces
 
 | Interface | Key type | F# handle type |

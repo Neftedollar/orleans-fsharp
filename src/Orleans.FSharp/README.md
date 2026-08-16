@@ -2,6 +2,13 @@
 
 Idiomatic F# computation expressions and helpers for [Microsoft Orleans](https://learn.microsoft.com/en-us/dotnet/orleans/) grain development.
 
+> **Deprecated authoring model.** The `grain {}` CE and the universal `FSharpGrain.send`/`post`/`ask`
+> message-passing surface shown below now carry `[<Obsolete>]` (warning, not error). They keep
+> compiling and running; new code should use the functional grain runtime
+> (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) described under
+> [Functional grain runtime](#functional-grain-runtime) below. Migration guide:
+> [docs/functional-grains.md](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md).
+
 ## What it does
 
 Orleans.FSharp replaces verbose C#-style grain implementations with a declarative `grain {}` computation expression. Define state, message handlers, persistence, timers, reminders, and streaming in a single expression. Concurrency is controlled per message type with `interleaveMessage typeof<'Msg>`, and `FSharpGrain.post` gives true fire-and-forget (`[OneWay]`) calls.

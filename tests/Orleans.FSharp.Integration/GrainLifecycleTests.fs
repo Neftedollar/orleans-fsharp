@@ -5,6 +5,8 @@ open Swensen.Unquote
 open Orleans.FSharp
 open Orleans.FSharp.Sample
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 [<Collection("ClusterCollection")>]
 type GrainLifecycleTests(fixture: ClusterFixture) =
 

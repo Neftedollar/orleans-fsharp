@@ -26,6 +26,8 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 // ── Interface-shape tests (no cluster needed — pure reflection) ───────────────
 
 let private assertOneWayShape (t: Type) =

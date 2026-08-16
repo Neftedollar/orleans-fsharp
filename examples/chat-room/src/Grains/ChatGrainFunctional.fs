@@ -2,9 +2,17 @@
 /// Functional-runtime equivalent of <c>ChatGrainDef.chat</c> in <c>ChatGrain.fs</c> (the
 /// <c>grain { }</c> CE original -- now <c>[&lt;Obsolete&gt;]</c>). Same domain (post a message,
 /// read how many have been posted) rebuilt as a <c>grainContract</c> + <c>grainFor</c> pair.
-/// Pub/sub observer notification (<c>Subscribe</c>/<c>Unsubscribe</c>/<c>IChatObserver</c>) has
-/// no functional-runtime equivalent yet -- see the migration doc's capability-gap note -- so
-/// this twin covers only the message-posting slice of the domain.
+/// This twin covers the message-posting slice of the domain. Pub/sub observer notification
+/// (<c>Subscribe</c>/<c>Unsubscribe</c>/<c>IChatObserver</c>) is deliberately left out of the
+/// twin, and is <em>not</em> a functional-runtime capability gap: <c>Observer.createRef</c> and
+/// <c>FSharpObserverManager</c> are orthogonal to this deprecation and work unchanged inside
+/// <c>grainFor</c> handlers -- proven end to end by
+/// <c>tests/Orleans.FSharp.Integration/FunctionalObserverIntegrationTests.fs</c>, and described
+/// under "Observers, streams, and the other orthogonal surfaces" in <c>docs/functional-grains.md</c>.
+/// The one real constraint is Orleans' own: the observer interface needs a source-generated
+/// proxy, so it must be declared in a C# project. This example declares <c>IChatObserver</c> in
+/// F# (<c>ChatTypes.fs</c>), which is why the observer slice is not reproduced here -- the same
+/// constraint the <c>grain { }</c> original is subject to.
 /// </summary>
 namespace ChatRoom.Grains
 
