@@ -9,6 +9,7 @@ description: "A second, complete authoring model: user-authored API records inst
 
 ## What you'll learn
 
+- Why the actor brand type exists, and why it is never constructed
 - Key-codec identity rules: what changes a grain's routing/storage identity, what does not
 - Operation rename via `operationId`, and the exact contract-version matching rule
 - The persistence model: explicit writes only, unique state names, and multi-provider non-atomicity
@@ -63,6 +64,34 @@ Server-side, a `grainFor` definition attaches handlers and persistent state to t
 `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` for the complete, runnable version of this
 example (contract, definition, registration, and a driven call sequence), which is the same
 source spec 003's "Public authoring model" section shows.
+
+## Why the actor brand
+
+```fsharp
+type RoomActor = private RoomActor of unit
+```
+
+`RoomActor` is a phantom type: `private` blocks construction (and pattern-matching) from outside the
+module, and its one case takes `unit` -- so nothing, anywhere, ever constructs a value of it. Only
+its CLR type identity is used; a type that is never instantiated costs nothing at runtime.
+
+That identity is what lets Orleans keep two functional grains distinct with no code generation at
+all. The runtime closes `FunctionalGrainMarker<'Actor>` and `IFunctionalGrainTarget<'Actor>` over
+each definition's actor brand, so `IFunctionalGrainTarget<RoomActor>` and
+`IFunctionalGrainTarget<CounterActor>` are two different closed CLR types that Orleans' manifest,
+activator, and call-filter machinery can address independently -- the same distinction a
+hand-written interface plus C# codegen would otherwise provide. Every contract-adjacent type carries
+the same brand as a type parameter -- `GrainContract<'Actor,'Key,'Api>`, the definition,
+`FunctionalGrainRef<'Actor,'Key,'Api>`, every handler and hook -- so a handler written for one grain
+cannot be passed where another grain's is expected, even when their key and API record types happen
+to coincide. The silo registry enforces the same rule at registration: each actor-brand CLR type
+maps to exactly one contract, and a second definition that reuses an existing brand is a
+configuration error.
+
+What the brand is **not**: it plays no part in wire or storage identity. `GrainId` is built from the
+explicit `grainType` string and the encoded key alone (see
+[Key-codec identity rules](#key-codec-identity-rules) below) -- renaming the brand type, like
+renaming the module or the API record type, changes nothing about routing or stored state.
 
 ## Key-codec identity rules
 
