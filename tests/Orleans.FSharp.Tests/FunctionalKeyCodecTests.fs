@@ -24,9 +24,31 @@ let private throws (action: unit -> unit) =
 
 let private sampleGuid = Guid.Parse "01234567-89ab-cdef-0123-456789abcdef"
 
-/// <summary>Orleans rejects a null, empty, or white-space string key, so properties skip them.</summary>
+/// <summary>True when a string survives the UTF-8 round trip an Orleans string key goes through.</summary>
+let private roundTripsUtf8 (value: string) =
+    String.Equals(
+        Text.Encoding.UTF8.GetString(Text.Encoding.UTF8.GetBytes value),
+        value,
+        StringComparison.Ordinal
+    )
+
+/// <summary>
+/// Orleans rejects a null, empty, or white-space string key, and the codec additionally rejects
+/// one that is not well-formed UTF-8, so properties about accepted keys skip both.
+/// </summary>
 let private significant (value: NonNull<string>) =
-    not (String.IsNullOrWhiteSpace value.Get)
+    not (String.IsNullOrWhiteSpace value.Get) && roundTripsUtf8 value.Get
+
+/// <summary>An unpaired high surrogate: valid UTF-16, no UTF-8 representation.</summary>
+/// <remarks>
+/// Built from a char array rather than written as a <c>\uD800</c> escape: F# source is UTF-8, so
+/// the compiler folds an unpaired surrogate in a string literal to U+FFFD and the two constants
+/// below would come out equal — which is the very collision these tests exist to distinguish.
+/// </remarks>
+let private loneSurrogate = String [| 'r'; 'o'; 'o'; 'm'; '-'; char 0xD800 |]
+
+/// <summary>A different unpaired surrogate — a distinct key that encodes to the same bytes.</summary>
+let private otherLoneSurrogate = String [| 'r'; 'o'; 'o'; 'm'; '-'; char 0xDBFF |]
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Native encodings equal the stock Orleans helpers
@@ -44,6 +66,52 @@ let ``the native string codec matches the stock Orleans string key`` () =
 let ``the native string codec matches the stock Orleans string key for any value`` (value: NonNull<string>) =
     not (significant value)
     || keyText (KeyCodecs.stringKey.EncodeKey value.Get) = keyText (GrainId.Create(grainType, value.Get).Key)
+
+// ──────────────────────────────────────────────────────────────────────────────
+// String keys must be injective, which UTF-8 encoding is not
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``the stock Orleans string key is not injective over unpaired surrogates`` () =
+    // Ground truth for the two tests below, re-derived from Orleans rather than asserted: two
+    // distinct .NET strings really do produce one identical key, because UTF-8 has no encoding
+    // for an unpaired surrogate and the default fallback substitutes U+FFFD for each one.
+    test <@ loneSurrogate <> otherLoneSurrogate @>
+
+    let first = keyText (GrainId.Create(grainType, loneSurrogate).Key)
+    let second = keyText (GrainId.Create(grainType, otherLoneSurrogate).Key)
+    test <@ first = second @>
+
+[<Fact>]
+let ``a string key that is not well-formed UTF-8 is rejected on encode`` () =
+    let first = throws (fun () -> KeyCodecs.stringKey.EncodeKey loneSurrogate |> ignore)
+    let second = throws (fun () -> KeyCodecs.stringKey.EncodeKey otherLoneSurrogate |> ignore)
+
+    test <@ first.Message.Contains "not well-formed UTF-8" @>
+    test <@ second.Message.Contains "unpaired surrogate" @>
+
+    // The mapped codec composes onto the native one, so it inherits the rule rather than
+    // needing its own.
+    let mapped = KeyCodecs.stringKeyMapped id id
+    let viaMapped = throws (fun () -> mapped.EncodeKey loneSurrogate |> ignore)
+    test <@ viaMapped.Message.Contains "not well-formed UTF-8" @>
+
+[<Fact>]
+let ``a string key whose bytes are not valid UTF-8 is rejected on decode`` () =
+    // 0xFF can never appear in well-formed UTF-8, so these bytes cannot have come from any
+    // string this codec encoded; decoding them lossily would return a key nobody asked for.
+    let malformed = IdSpan(Array.append (Text.Encoding.UTF8.GetBytes "room-") [| 0xFFuy |])
+
+    let error = throws (fun () -> KeyCodecs.stringKey.DecodeKey(grainIdOf malformed) |> ignore)
+
+    test <@ error.Message.Contains "not the canonical Orleans representation" @>
+
+[<Fact>]
+let ``a well-formed string key still decodes`` () =
+    // The counterweight: the canonicalization guard must not reject an ordinary key, including
+    // one carrying non-ASCII text that UTF-8 encodes in several bytes.
+    for value in [ "general"; "комната"; "éèê"; "😀" ] do
+        test <@ KeyCodecs.stringKey.DecodeKey(grainIdOf (KeyCodecs.stringKey.EncodeKey value)) = value @>
 
 [<Fact>]
 let ``the native Guid codec matches the stock Orleans Guid key`` () =
@@ -295,6 +363,22 @@ let ``mapped int64 codec preserves the canonical native representation`` (value:
     let native = GrainIdKeyExtensions.CreateIntegerKey value
     keyText (orderCodec.EncodeKey(orderCodec.DecodeKey(grainIdOf native))) = keyText native
 
+/// <summary>A compound extension Orleans keeps verbatim: significant, NUL-free, UTF-8 clean.</summary>
+let private usableExtension (text: NonWhiteSpaceString) =
+    let value = text.Get
+    not (String.IsNullOrWhiteSpace value) && not (value.Contains '\000') && roundTripsUtf8 value
+
+[<Property>]
+let ``mapped compound codec preserves the canonical native representation``
+    (tenant: Guid)
+    (item: NonWhiteSpaceString)
+    =
+    // Law 2 for the compound shape, which had only law 1 and law 4: the native key rebuilt from
+    // a decoded domain key must be byte-identical to the one that was decoded.
+    not (usableExtension item)
+    || (let native = GrainIdKeyExtensions.CreateGuidKey(tenant, item.Get)
+        keyText (tenantCodec.EncodeKey(tenantCodec.DecodeKey(grainIdOf native))) = keyText native)
+
 // Law 3: injective encoding in the selected Orleans key space.
 
 [<Property>]
@@ -313,6 +397,33 @@ let ``mapped Guid codec is injective`` (left: Guid) (right: Guid) =
 let ``mapped int64 codec is injective`` (left: int64) (right: int64) =
     left = right
     || keyText (orderCodec.EncodeKey(OrderId left)) <> keyText (orderCodec.EncodeKey(OrderId right))
+
+[<Property>]
+let ``mapped compound codec is injective``
+    (leftTenant: Guid)
+    (leftItem: NonWhiteSpaceString)
+    (rightTenant: Guid)
+    (rightItem: NonWhiteSpaceString)
+    =
+    // Law 3 for the compound shape. A compound key has two components, so this is where a
+    // separator that the extension could also contain would show up as a collision.
+    not (usableExtension leftItem)
+    || not (usableExtension rightItem)
+    || (leftTenant = rightTenant && leftItem.Get = rightItem.Get)
+    || (let left = { tenant = leftTenant; item = leftItem.Get }
+        let right = { tenant = rightTenant; item = rightItem.Get }
+        keyText (tenantCodec.EncodeKey left) <> keyText (tenantCodec.EncodeKey right))
+
+[<Fact>]
+let ``a compound key extension containing the separator stays injective`` () =
+    // The adversarial case a random property is unlikely to draw: the extension itself carries
+    // the '+' Orleans uses to separate the two components.
+    let left = { tenant = sampleGuid; item = "a+b" }
+    let right = { tenant = sampleGuid; item = "a" }
+
+    test <@ keyText (tenantCodec.EncodeKey left) <> keyText (tenantCodec.EncodeKey right) @>
+    test <@ tenantCodec.DecodeKey(grainIdOf (tenantCodec.EncodeKey left)) = left @>
+    test <@ tenantCodec.DecodeKey(grainIdOf (tenantCodec.EncodeKey right)) = right @>
 
 // Law 4: rejection of malformed or non-canonical native values.
 

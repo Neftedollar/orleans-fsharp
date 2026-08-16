@@ -57,8 +57,26 @@ module internal KeyCodecs =
     // ── native string ────────────────────────────────────────────────────────
 
     /// <summary>
+    /// True when a string survives the UTF-8 round trip Orleans puts a string key through.
+    /// </summary>
+    /// <remarks>
+    /// <c>IdSpan.Create</c> is <c>Encoding.UTF8.GetBytes</c>, and that encoding is not injective
+    /// over arbitrary .NET strings: an unpaired surrogate has no UTF-8 representation, so the
+    /// default replacement fallback turns it into U+FFFD. Two domain keys differing only in
+    /// which unpaired surrogate they carry therefore encode to identical bytes and collapse onto
+    /// one grain identity, and decoding either one returns neither.
+    /// </remarks>
+    let private roundTripsUtf8 (value: string) =
+        String.Equals(
+            Text.Encoding.UTF8.GetString(Text.Encoding.UTF8.GetBytes value),
+            value,
+            StringComparison.Ordinal
+        )
+
+    /// <summary>
     /// Orleans' own <c>GrainId.Create(GrainType, string)</c> rejects a null, empty, or
-    /// white-space string key, so the string codec follows the same validation rule.
+    /// white-space string key, so the string codec follows the same validation rule, and adds
+    /// the well-formedness rule the specification's injectivity law needs on top of it.
     /// </summary>
     let private encodeStringKey (value: string) =
         if isNull value then
@@ -69,6 +87,11 @@ module internal KeyCodecs =
                 ContractStage
                 "a string grain key must not be empty or white-space, matching Orleans' own string key validation."
 
+        if not (roundTripsUtf8 value) then
+            fail
+                ContractStage
+                $"the string grain key '{value}' is not well-formed UTF-8: it carries an unpaired surrogate, which Orleans' UTF-8 key encoding replaces with U+FFFD, so distinct keys would collapse onto one grain identity."
+
         IdSpan.Create value
 
     let private decodeStringKey (grainId: GrainId) =
@@ -78,6 +101,12 @@ module internal KeyCodecs =
             fail
                 ContractStage
                 $"the key '{value}' of grain '{grainId.Type.ToString()}' is not a valid stringKey key: it is empty or white-space."
+
+        // The same re-encode guard the other four native codecs carry: key bytes that are not
+        // valid UTF-8 decode lossily, so the string this returns would not be the key that was
+        // encoded, and encoding it again would not produce the key that arrived.
+        if encodeStringKey value <> grainId.Key then
+            failDecode StringKeyKind grainId "it is not the canonical Orleans representation of that string."
 
         value
 
