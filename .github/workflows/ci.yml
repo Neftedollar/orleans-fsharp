@@ -145,19 +145,13 @@ jobs:
       # job rather than a new one. Build only: running it needs Redis and a multi-silo Docker
       # Compose stack, which is out of scope for a per-PR job.
       #
-      # Debug, not Release, unlike the examples above: `dotnet build testbed/Testbed.slnx -c
-      # Release` fails today on a pre-existing bug unrelated to the testbed. Testbed.slnx lists
-      # Orleans.FSharp.CodeGen but neither Orleans.FSharp.Sample nor Orleans.FSharp.Generator,
-      # and during a solution build MSBuild leaves Configuration unset for a ProjectReference
-      # that is not itself a solution member — so those two land in bin/Debug while the
-      # in-solution CodeGen builds Release. CodeGen then looks for the Sample under
-      # bin/$(Configuration) and the generator exits 1 with "Assembly not found:
-      # .../bin/Release/.../Orleans.FSharp.Sample.dll". (The root Orleans.FSharp.slnx does list
-      # the Sample, which is why `dotnet build Orleans.FSharp.slnx -c Release` is green.)
-      # Reproduced on 5345888 in a clean worktree, i.e. it predates this change. Adding both
-      # projects to Testbed.slnx would fix it; then this line can join the examples in Release.
+      # Release, like the examples: Testbed.slnx now lists Orleans.FSharp.Sample and
+      # Orleans.FSharp.Generator as solution members so CodeGen's generator finds the Sample
+      # under bin/$(Configuration). (During a solution build MSBuild unsets Configuration for a
+      # ProjectReference that is not itself a solution member — the historical Release failure
+      # before those two entries existed.)
       - name: Build the testbed solution
-        run: dotnet build testbed/Testbed.slnx --nologo
+        run: dotnet build testbed/Testbed.slnx -c Release --nologo
 
   quick-integration:
     runs-on: ubuntu-latest
