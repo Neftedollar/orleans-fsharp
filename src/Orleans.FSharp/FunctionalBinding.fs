@@ -57,6 +57,25 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
 /// <c>IGrainFactory</c> implementation (for example <c>IClusterClient</c>) be applied
 /// directly.
 /// </para>
+/// <para>
+/// One consequence is worth knowing at call sites: because the factory is applied to the
+/// returned function rather than to a declared parameter, F# does not insert subtype
+/// flexibility for it. Annotate a caller's factory parameter as <c>IGrainFactory</c> — any
+/// implementation, <c>IClusterClient</c> included, is accepted by ordinary subsumption, so a
+/// flexible <c>#IGrainFactory</c> annotation buys nothing here and is reported as
+/// <c>FS0064</c> ("less generic than indicated by its type annotations"), which is an error
+/// under <c>TreatWarningsAsErrors</c>. Code that must stay generic in the factory type — a
+/// <c>'F when 'F :&gt; IGrainFactory</c> type parameter on a class, which would otherwise fail
+/// with <c>FS0660</c>/<c>FS0663</c> — has two diagnostic-free forms: call through the
+/// application-owned binding (<c>let ref = FunctionalGrain.ref contract</c>, then
+/// <c>ref factory key</c>), because flexibility is inserted at every use of a named binding
+/// even when the compiler has to look through its function type, or upcast once at the call
+/// (<c>FunctionalGrain.ref contract (factory :&gt; IGrainFactory) key</c>).
+/// The same two forms are also the ones that stay silent for projects that opt the
+/// implicit-conversion informationals in with <c>--warnon:3388</c>: applying a derived interface
+/// value such as <c>IClusterClient</c> straight to the returned function is an implicit upcast
+/// and is reported under that flag, which is off by default.
+/// </para>
 /// </remarks>
 [<AbstractClass; Sealed>]
 type FunctionalGrain =

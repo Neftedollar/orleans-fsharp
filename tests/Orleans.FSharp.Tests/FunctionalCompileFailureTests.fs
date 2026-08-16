@@ -77,7 +77,17 @@ let roomState = PersistentState.create<RoomState> "state" "Default"
 let otherState = PersistentState.create<OtherState> "other" "Default"
 """
 
-let private compileErrors (snippet: string) =
+/// <summary>
+/// Type-check the snippet against the preamble and return the diagnostics of the requested
+/// severities, formatted as <c>FSnnnn: message</c>. Nothing is suppressed: the fixtures used to
+/// pass <c>--nowarn:64</c>, which hid exactly the diagnostic a flexible factory annotation
+/// produces at a <c>FunctionalGrain.ref</c> call.
+/// </summary>
+let private compileWith
+    (extraArguments: string list)
+    (severities: FSharpDiagnosticSeverity list)
+    (snippet: string)
+    =
     let file = Path.Combine(Path.GetTempPath(), $"functional_probe_{Guid.NewGuid():N}.fs")
     File.WriteAllText(file, preamble + snippet)
 
@@ -86,7 +96,7 @@ let private compileErrors (snippet: string) =
             [| yield "--noframework"
                yield "--targetprofile:netcore"
                yield "--target:library"
-               yield "--nowarn:64"
+               yield! extraArguments
                yield! referenceArguments.Value
                yield file |]
 
@@ -96,10 +106,29 @@ let private compileErrors (snippet: string) =
             checker.ParseAndCheckProject options |> Async.RunSynchronously
 
         results.Diagnostics
-        |> Array.filter (fun diagnostic -> diagnostic.Severity = FSharpDiagnosticSeverity.Error)
+        |> Array.filter (fun diagnostic -> List.contains diagnostic.Severity severities)
         |> Array.map (fun diagnostic -> sprintf "FS%04d: %s" diagnostic.ErrorNumber diagnostic.Message)
     finally
         File.Delete file
+
+/// <summary>The errors the snippet produces.</summary>
+let private compileErrors snippet =
+    compileWith [] [ FSharpDiagnosticSeverity.Error ] snippet
+
+/// <summary>
+/// Every error and warning the snippet produces. Consumers build with
+/// <c>TreatWarningsAsErrors</c>, so a default-on warning at a documented call form breaks them
+/// exactly as an error does and has to be visible here.
+/// </summary>
+let private compileDiagnostics snippet =
+    compileWith [] [ FSharpDiagnosticSeverity.Error; FSharpDiagnosticSeverity.Warning ] snippet
+
+/// <summary>
+/// Every error and warning the snippet produces with extra compiler flags — used to opt the
+/// off-by-default implicit-conversion informational warnings in.
+/// </summary>
+let private compileDiagnosticsWith extraArguments snippet =
+    compileWith extraArguments [ FSharpDiagnosticSeverity.Error; FSharpDiagnosticSeverity.Warning ] snippet
 
 /// <summary>Assert that the accepted snippet compiles and the rejected snippet does not.</summary>
 let private rejects (accepted: string) (rejected: string) =
@@ -705,3 +734,173 @@ let alsoBad =
     test <@ compileErrors accepted = Array.empty @>
     test <@ compileErrors bothOperations <> Array.empty @>
     test <@ compileErrors noStateOperation <> Array.empty @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Factory annotations at the binding call
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <remarks>
+/// <para>
+/// <c>FunctionalGrain.ref</c> / <c>rawRef</c> declare <c>contract</c> as their only parameter and
+/// apply the factory to the returned function (see <c>FunctionalBinding.fs</c>), so F# inserts
+/// subtype flexibility for the factory only when the call goes through a function value — the
+/// application-owned binding — and not at the direct member call. Every form the library's
+/// <c>&lt;remarks&gt;</c> recommends is asserted here to be free of errors <em>and warnings</em>:
+/// consumers inherit this repo's <c>TreatWarningsAsErrors</c> convention, so a warning at a
+/// documented call form is a break. The negative twin below states the cost of the shape.
+/// </para>
+/// </remarks>
+[<Fact>]
+let ``the documented factory forms bind without any diagnostic`` () =
+    // Plain IGrainFactory annotation — subsumption accepts every implementation.
+    let plainAnnotation =
+        """
+let usePlain (factory: IGrainFactory) =
+    FunctionalGrain.ref roomContract factory (RoomId "general"),
+    FunctionalGrain.rawRef roomContract factory (RoomId "general")
+"""
+
+    // A derived interface value applied directly.
+    let clusterClient =
+        """
+let useClient (client: IClusterClient) =
+    FunctionalGrain.ref roomContract client (RoomId "general"),
+    FunctionalGrain.rawRef roomContract client (RoomId "general")
+"""
+
+    // The application-owned binding is a function value, so flexibility IS inserted for it:
+    // flexible and generic callers stay generic through this path.
+    let throughTheBinding =
+        """
+module RoomApiBindings =
+    let ref = FunctionalGrain.ref roomContract
+    let rawRef = FunctionalGrain.rawRef roomContract
+
+let useFlexible (factory: #IGrainFactory) =
+    RoomApiBindings.ref factory (RoomId "general"), RoomApiBindings.rawRef factory (RoomId "general")
+
+let useGeneric<'F when 'F :> IGrainFactory> (factory: 'F) =
+    RoomApiBindings.ref factory (RoomId "general")
+
+type Holder<'F when 'F :> IGrainFactory>(factory: 'F) =
+    member _.Room = RoomApiBindings.ref factory (RoomId "general")
+"""
+
+    // The one-token escape hatch at a direct call: upcast once.
+    let upcastAtTheCall =
+        """
+let useFlexible (factory: #IGrainFactory) =
+    FunctionalGrain.ref roomContract (factory :> IGrainFactory) (RoomId "general")
+
+type Holder<'F when 'F :> IGrainFactory>(factory: 'F) =
+    member _.Room =
+        FunctionalGrain.ref roomContract (factory :> IGrainFactory) (RoomId "general")
+"""
+
+    // A generic *function* (unlike a generic class) needs no upcast at all.
+    let genericFunctionDirect =
+        """
+let useGeneric<'F when 'F :> IGrainFactory> (factory: 'F) =
+    FunctionalGrain.ref roomContract factory (RoomId "general")
+"""
+
+    test <@ compileDiagnostics plainAnnotation = Array.empty @>
+    test <@ compileDiagnostics clusterClient = Array.empty @>
+    test <@ compileDiagnostics throughTheBinding = Array.empty @>
+    test <@ compileDiagnostics upcastAtTheCall = Array.empty @>
+    test <@ compileDiagnostics genericFunctionDirect = Array.empty @>
+
+/// <remarks>
+/// The documented cost of the member shape, pinned so it cannot drift unnoticed: at a direct
+/// <c>FunctionalGrain.ref</c> call a flexible <c>#IGrainFactory</c> annotation is constrained to
+/// <c>IGrainFactory</c> (FS0064), and a class type parameter <c>'F :&gt; IGrainFactory</c> fails
+/// outright (FS0660/FS0663). Both are diagnostic-free through the forms the test above asserts.
+/// If a future declaration shape removes these, delete this test together with the third
+/// <c>&lt;remarks&gt;</c> paragraph on <c>FunctionalGrain</c>.
+/// </remarks>
+[<Fact>]
+let ``a flexible factory annotation at a direct call is constrained to IGrainFactory`` () =
+    let flexibleDirect =
+        """
+let useFlexible (factory: #IGrainFactory) =
+    FunctionalGrain.ref roomContract factory (RoomId "general")
+"""
+
+    let flexibleDirectRaw =
+        """
+let useFlexible (factory: #IGrainFactory) =
+    FunctionalGrain.rawRef roomContract factory (RoomId "general")
+"""
+
+    let genericClassDirect =
+        """
+type Holder<'F when 'F :> IGrainFactory>(factory: 'F) =
+    member _.Room = FunctionalGrain.ref roomContract factory (RoomId "general")
+"""
+
+    // Warnings only — the code still compiles, which is why the harness has to look at warnings.
+    test <@ compileErrors flexibleDirect = Array.empty @>
+    test <@ compileErrors flexibleDirectRaw = Array.empty @>
+
+    test
+        <@
+            compileDiagnostics flexibleDirect
+            |> Array.exists (fun message -> message.StartsWith "FS0064")
+        @>
+
+    test
+        <@
+            compileDiagnostics flexibleDirectRaw
+            |> Array.exists (fun message -> message.StartsWith "FS0064")
+        @>
+
+    test
+        <@
+            compileErrors genericClassDirect
+            |> Array.exists (fun message -> message.StartsWith "FS0663")
+        @>
+
+/// <remarks>
+/// The same asymmetry shows up in the off-by-default implicit-conversion informationals: applying
+/// a derived interface value (<c>IClusterClient</c>) straight to the function returned by
+/// <c>FunctionalGrain.ref</c> is an implicit upcast (FS3388 under <c>--warnon:3388</c>), while the
+/// application-owned binding and an explicit upcast are silent even with the flag on. Consumers
+/// who opt these warnings in get the same two clean forms, which is why the remarks name them.
+/// </remarks>
+[<Fact>]
+let ``opt-in implicit-conversion warnings point at the same clean forms`` () =
+    let warnOnConversions =
+        [ "--warnon:3388"; "--warnon:3389"; "--warnon:3390"; "--warnon:3391" ]
+
+    let directSubtype =
+        """
+let useClient (client: IClusterClient) =
+    FunctionalGrain.ref roomContract client (RoomId "general")
+"""
+
+    let throughTheBinding =
+        """
+module RoomApiBindings =
+    let ref = FunctionalGrain.ref roomContract
+
+let useClient (client: IClusterClient) =
+    RoomApiBindings.ref client (RoomId "general")
+"""
+
+    let upcastAtTheCall =
+        """
+let useClient (client: IClusterClient) =
+    FunctionalGrain.ref roomContract (client :> IGrainFactory) (RoomId "general")
+"""
+
+    // Off by default, so nothing here breaks a stock consumer build.
+    test <@ compileDiagnostics directSubtype = Array.empty @>
+
+    test
+        <@
+            compileDiagnosticsWith warnOnConversions directSubtype
+            |> Array.exists (fun message -> message.StartsWith "FS3388")
+        @>
+
+    test <@ compileDiagnosticsWith warnOnConversions throughTheBinding = Array.empty @>
+    test <@ compileDiagnosticsWith warnOnConversions upcastAtTheCall = Array.empty @>
