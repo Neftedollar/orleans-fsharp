@@ -208,10 +208,10 @@ module Usage =
         }
 
     /// <remarks>
-    /// F# inserts flexibility for the non-sealed <c>IGrainFactory</c> parameter, so the
-    /// point-free bindings <c>RoomApi.ref</c> / <c>RoomApi.rawRef</c> stay generalized until a
-    /// later use in the same file fixes the factory type. These two uses are what make the
-    /// spec's unannotated module bindings compile; see FunctionalCompileFailureTests.
+    /// The spec's point-free bindings <c>RoomApi.ref</c> / <c>RoomApi.rawRef</c> infer their
+    /// complete concrete types on their own; these uses are ordinary call sites, not what makes
+    /// them compile. <c>FunctionalPointFreeFixture.fs</c> compiles the same bindings with no use
+    /// site at all.
     /// </remarks>
     let pointFreeBindings (client: IGrainFactory) =
         task {

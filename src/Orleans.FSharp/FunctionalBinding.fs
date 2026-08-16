@@ -40,42 +40,52 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
 
 /// <summary>Binding of a contract to an Orleans grain reference.</summary>
 /// <remarks>
-/// F# inserts flexibility for the non-sealed <c>IGrainFactory</c> parameter at every use of
-/// these functions, so a point-free module binding such as
-/// <c>let rawRef = FunctionalGrain.rawRef contract</c> is generalized and hits the value
-/// restriction (FS0030) unless the bound value is applied later in the same file. The
-/// eta-expanded form <c>let rawRef factory key = FunctionalGrain.rawRef contract factory key</c>
-/// always infers its complete concrete type.
+/// <para>
+/// Call sites are ordinary curried applications —
+/// <c>FunctionalGrain.ref contract factory key</c> — and the point-free binding
+/// <c>let ref = FunctionalGrain.ref contract</c> infers the complete concrete type
+/// <c>IGrainFactory -&gt; 'Key -&gt; 'Api</c> with no annotation and no later use site.
+/// </para>
+/// <para>
+/// The binding takes <c>contract</c> as its single declared parameter and returns the
+/// remaining curried function on purpose. F# inserts flexibility for non-sealed parameter
+/// types at every use of a function or member, so declaring <c>factory: IGrainFactory</c> as
+/// a second curried parameter would make every partial application generic in a flexible
+/// <c>'_a :&gt; IGrainFactory</c> and hit the value restriction (FS0030). Flexibility is
+/// inserted only for declared parameters of a member, so with the factory in the result type
+/// the partial application stays concrete, while argument subsumption still lets any
+/// <c>IGrainFactory</c> implementation (for example <c>IClusterClient</c>) be applied
+/// directly.
+/// </para>
 /// </remarks>
-[<RequireQualifiedAccess>]
-module FunctionalGrain =
+[<AbstractClass; Sealed>]
+type FunctionalGrain =
 
     /// <summary>
-    /// Bind the contract to the grain addressed by <paramref name="key"/> and return the
-    /// bound API record.
+    /// Bind the contract to the grain addressed by the domain key and return the bound API
+    /// record. The returned function takes the grain factory of the calling client or
+    /// activation and then the domain key of the target grain.
     /// </summary>
     /// <param name="contract">The sealed contract.</param>
-    /// <param name="factory">The grain factory of the calling client or activation.</param>
-    /// <param name="key">The domain key of the target grain.</param>
-    let ref (contract: GrainContract<'Actor, 'Key, 'Api>) (factory: IGrainFactory) (key: 'Key) : 'Api =
-        ignore contract
-        ignore factory
-        ignore key
-        FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrain.ref"
+    static member ref(contract: GrainContract<'Actor, 'Key, 'Api>) : IGrainFactory -> 'Key -> 'Api =
+        fun factory key ->
+            ignore contract
+            ignore factory
+            ignore key
+            FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrain.ref"
 
     /// <summary>
-    /// Bind the contract to the grain addressed by <paramref name="key"/> and return the typed
-    /// wrapper exposing the key, the cached API record, and selector-based calls.
+    /// Bind the contract to the grain addressed by the domain key and return the typed wrapper
+    /// exposing the key, the cached API record, and selector-based calls. The returned function
+    /// takes the grain factory of the calling client or activation and then the domain key of
+    /// the target grain.
     /// </summary>
     /// <param name="contract">The sealed contract.</param>
-    /// <param name="factory">The grain factory of the calling client or activation.</param>
-    /// <param name="key">The domain key of the target grain.</param>
-    let rawRef
+    static member rawRef
         (contract: GrainContract<'Actor, 'Key, 'Api>)
-        (factory: IGrainFactory)
-        (key: 'Key)
-        : FunctionalGrainRef<'Actor, 'Key, 'Api> =
-        ignore contract
-        ignore factory
-        ignore key
-        FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrain.rawRef"
+        : IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor, 'Key, 'Api> =
+        fun factory key ->
+            ignore contract
+            ignore factory
+            ignore key
+            FunctionalDiagnostics.notAvailable "Phase 2" "FunctionalGrain.rawRef"

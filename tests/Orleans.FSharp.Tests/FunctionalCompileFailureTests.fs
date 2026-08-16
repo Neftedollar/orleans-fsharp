@@ -549,26 +549,65 @@ let useThem (factory: IGrainFactory) =
     test <@ compileErrors accepted = Array.empty @>
 
 /// <remarks>
-/// SPEC-DEVIATION evidence. F# inserts flexibility for the non-sealed <c>IGrainFactory</c>
-/// parameter at every use of a function, so the specification's point-free module binding
-/// <c>let rawRef = FunctionalGrain.rawRef contract</c> stays generalized and hits the value
-/// restriction unless the value is applied to a concrete factory later in the same file. The
-/// eta-expanded binding always infers its complete concrete type.
+/// The specification's point-free bindings must infer their complete concrete types with no
+/// annotation and no use site. This is why <c>FunctionalGrain.ref</c> / <c>rawRef</c> declare
+/// <c>contract</c> as their only parameter and return the remaining curried function: F#
+/// inserts flexibility for non-sealed *declared parameter* types at every use of a function or
+/// member, so a declared <c>factory: IGrainFactory</c> parameter would leave every partial
+/// application generic in <c>'_a :&gt; IGrainFactory</c> and hit the value restriction (FS0030).
+/// The `flexibleParameterWouldNotInfer` snippet reproduces that failure with a local function
+/// of the rejected shape, so this test fails if the library ever regresses to it.
 /// </remarks>
 [<Fact>]
-let ``an unused point-free binding hits the value restriction while its eta-expansion does not`` () =
+let ``the point-free bindings infer their complete concrete types unused`` () =
     let pointFreeUnused =
         """
 module RoomApiBindings =
+    let ref = FunctionalGrain.ref roomContract
     let rawRef = FunctionalGrain.rawRef roomContract
 """
 
     let pointFreeUsedLater =
         """
 module RoomApiBindings =
+    let ref = FunctionalGrain.ref roomContract
     let rawRef = FunctionalGrain.rawRef roomContract
 
-let useIt (factory: IGrainFactory) = RoomApiBindings.rawRef factory (RoomId "general")
+let useIt (factory: IGrainFactory) =
+    RoomApiBindings.ref factory (RoomId "general"), RoomApiBindings.rawRef factory (RoomId "general")
+"""
+
+    // The inferred types are exactly the specification's, checked by annotated re-binding.
+    let pointFreeInferredTypes =
+        """
+module RoomApiBindings =
+    let ref = FunctionalGrain.ref roomContract
+    let rawRef = FunctionalGrain.rawRef roomContract
+
+let inferredRef: IGrainFactory -> RoomId -> RoomApi = RoomApiBindings.ref
+
+let inferredRawRef: IGrainFactory -> RoomId -> FunctionalGrainRef<RoomActor, RoomId, RoomApi> =
+    RoomApiBindings.rawRef
+"""
+
+    // Negative twin: the same annotation with the wrong key type must fail, so the check above
+    // cannot pass by the annotation merely constraining a still-generic binding.
+    let wrongInferredTypes =
+        """
+module RoomApiBindings =
+    let ref = FunctionalGrain.ref roomContract
+
+let inferredRef: IGrainFactory -> string -> RoomApi = RoomApiBindings.ref
+"""
+
+    // The shape the library deliberately does NOT use: a declared non-sealed parameter.
+    let flexibleParameterWouldNotInfer =
+        """
+module RoomApiBindings =
+    let curried (contract: GrainContract<'Actor, 'Key, 'Api>) (factory: IGrainFactory) (key: 'Key) =
+        FunctionalGrain.ref contract factory key
+
+    let ref = curried roomContract
 """
 
     let etaExpanded =
@@ -577,11 +616,33 @@ module RoomApiBindings =
     let rawRef factory key = FunctionalGrain.rawRef roomContract factory key
 """
 
-    let errors = compileErrors pointFreeUnused
+    // Any IGrainFactory implementation may still be applied to the returned function.
+    let subtypeFactory =
+        """
+module RoomApiBindings =
+    let ref = FunctionalGrain.ref roomContract
 
-    test <@ errors |> Array.exists (fun message -> message.StartsWith "FS0030") @>
+let useCluster (client: IClusterClient) =
+    RoomApiBindings.ref client (RoomId "general"), FunctionalGrain.ref roomContract client (RoomId "general")
+"""
+
+    test <@ compileErrors pointFreeUnused = Array.empty @>
     test <@ compileErrors pointFreeUsedLater = Array.empty @>
+    test <@ compileErrors pointFreeInferredTypes = Array.empty @>
     test <@ compileErrors etaExpanded = Array.empty @>
+    test <@ compileErrors subtypeFactory = Array.empty @>
+
+    test
+        <@
+            compileErrors wrongInferredTypes
+            |> Array.exists (fun message -> message.StartsWith "FS0001")
+        @>
+
+    test
+        <@
+            compileErrors flexibleParameterWouldNotInfer
+            |> Array.exists (fun message -> message.StartsWith "FS0030")
+        @>
 
 [<Fact>]
 let ``the definition preamble used by the handler fixtures compiles`` () =

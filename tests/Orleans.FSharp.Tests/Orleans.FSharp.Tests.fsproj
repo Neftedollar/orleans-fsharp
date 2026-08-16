@@ -84,6 +84,7 @@
     <Compile Include="ClientConfigIdentityTests.fs" />
     <Compile Include="GrainResilienceTests.fs" />
     <Compile Include="GrainBatchTests.fs" />
+    <Compile Include="FunctionalPointFreeFixture.fs" />
     <Compile Include="FunctionalCompileFixtures.fs" />
     <Compile Include="FunctionalShapeTests.fs" />
     <Compile Include="FunctionalContractTests.fs" />

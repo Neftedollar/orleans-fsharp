@@ -175,6 +175,39 @@ let ``rawRef reports that it arrives in Phase 2`` () =
 
     test <@ error.Message.Contains "FunctionalGrain.rawRef" @>
 
+/// <remarks>
+/// Cross-file pin for the specification's point-free bindings. <c>Chat.PointFree.Lobby.ref</c>
+/// and <c>rawRef</c> are declared in <c>FunctionalPointFreeFixture.fs</c> with no use site, so
+/// they were generalized in that file before this one was compiled. The annotated bindings
+/// below therefore assert their *inferred* types, not merely that they can be constrained.
+/// </remarks>
+[<Fact>]
+let ``the point-free bindings infer the specification's concrete types`` () =
+    let inferredRef: IGrainFactory -> Chat.PointFree.LobbyId -> Chat.PointFree.LobbyApi =
+        Chat.PointFree.Lobby.ref
+
+    let inferredRawRef:
+        IGrainFactory
+            -> Chat.PointFree.LobbyId
+            -> FunctionalGrainRef<Chat.PointFree.LobbyActor, Chat.PointFree.LobbyId, Chat.PointFree.LobbyApi> =
+        Chat.PointFree.Lobby.rawRef
+
+    // The runtime types carry no type parameters left open either.
+    let refType = inferredRef.GetType()
+    let rawRefType = inferredRawRef.GetType()
+
+    test <@ not refType.ContainsGenericParameters @>
+    test <@ not rawRefType.ContainsGenericParameters @>
+
+    // Applying any IGrainFactory implementation reaches the Phase 2 placeholder rather than a
+    // type error; `null` stands in for a factory the placeholder never touches.
+    let error =
+        Assert.Throws<NotSupportedException>(fun () ->
+            inferredRef Unchecked.defaultof<IClusterClient> (Chat.PointFree.LobbyId "general")
+            |> ignore)
+
+    test <@ error.Message.Contains "FunctionalGrain.ref" @>
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Hosting stubs
 // ──────────────────────────────────────────────────────────────────────────────
