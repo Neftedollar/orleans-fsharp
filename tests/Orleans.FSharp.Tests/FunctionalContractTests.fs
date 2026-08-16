@@ -73,12 +73,37 @@ let ``an explicit version is kept`` () =
 // ──────────────────────────────────────────────────────────────────────────────
 
 [<Fact>]
-let ``a missing grain type fails contract construction`` () =
+let ``an omitted grain type derives the actor brand's CLR simple name`` () =
+    let contract =
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, ChatApi> () { stringKey }
+
+    test <@ contract.GrainTypeName = "DerivableActor" @>
+
+/// <remarks>
+/// <c>ChatActor</c> is declared inside this file's own top-level module, so it is a CLR-nested
+/// type (see <c>GrainTypeDerivationFixtures.fs</c>) -- a convenient, already-present fixture for
+/// the "nested brand" half of the derivation rule.
+/// </remarks>
+[<Fact>]
+let ``a missing grain type on a nested actor brand fails contract construction`` () =
     let error =
         throws (fun () ->
             grainContract<ChatActor, string, ChatApi> () { stringKey } |> ignore)
 
-    test <@ error.Message.Contains "requires exactly one 'grainType' operation" @>
+    test <@ error.Message.Contains "nested" @>
+    test <@ error.Message.Contains "explicit 'grainType'" @>
+
+[<Fact>]
+let ``a missing grain type on a generic actor brand fails contract construction`` () =
+    let error =
+        throws (fun () ->
+            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.GenericActor<int>, string, ChatApi> () {
+                stringKey
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "generic" @>
+    test <@ error.Message.Contains "explicit 'grainType'" @>
 
 [<Fact>]
 let ``a blank grain type fails contract construction`` () =

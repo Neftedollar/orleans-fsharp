@@ -434,6 +434,118 @@ let ``a duplicate timer name fails definition sealing`` () =
     test <@ error.Message.Contains "declared more than once" @>
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Durable attachments require an explicit grain type (Task 12)
+// ──────────────────────────────────────────────────────────────────────────────
+
+type private DerivedExtraState = { total: int64 }
+
+let private derivedContract =
+    grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, RoomApi> () { stringKey }
+
+let private derivedPrimary = PersistentState.create<RoomState> "derived-state" "Default"
+let private derivedExtra = PersistentState.create<DerivedExtraState> "derived-extra" "Default"
+
+[<Fact>]
+let ``an ephemeral definition may omit the contract's grain type`` () =
+    let definition =
+        grainFor derivedContract {
+            defaultState (fun () -> { count = 0 })
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.GrainTypeName = "DerivableActor" @>
+
+/// <remarks>
+/// Task 12 point 3: nothing durable outlives the activation for a timer, collectionAge, or a
+/// lifecycle hook, so none of them trigger the explicit-grainType restriction -- unlike
+/// stateFrom/usePersistentState/onReminder below, all four combine freely with a derived grain
+/// type.
+/// </remarks>
+[<Fact>]
+let ``onActivate, onDeactivate, onTimer, and collectionAge do not require an explicit grain type`` () =
+    let options = GrainTimerCreationOptions(TimeSpan.FromSeconds 1.0, TimeSpan.FromSeconds 5.0)
+
+    let definition =
+        grainFor derivedContract {
+            defaultState (fun () -> { count = 0 })
+            collectionAge (TimeSpan.FromMinutes 10.0)
+            onActivate activateHook
+            onDeactivate deactivateHook
+            onTimer "tick" options timerHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.GrainTypeName = "DerivableActor" @>
+    test <@ definition.CollectionAge = Some(TimeSpan.FromMinutes 10.0) @>
+    test <@ definition.OnActivate.IsSome && definition.OnDeactivate.IsSome @>
+    test <@ definition.Timers |> List.map (fun timer -> timer.Name) = [ "tick" ] @>
+
+[<Fact>]
+let ``stateFrom on a derived grain type fails definition sealing`` () =
+    let error =
+        throws (fun () ->
+            grainFor derivedContract {
+                defaultState (fun () -> { count = 0 })
+                stateFrom derivedPrimary
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'DerivableActor'" @>
+    test <@ error.Message.Contains "explicit 'grainType'" @>
+
+[<Fact>]
+let ``usePersistentState on a derived grain type fails definition sealing`` () =
+    let error =
+        throws (fun () ->
+            grainFor derivedContract {
+                defaultState (fun () -> { count = 0 })
+                usePersistentState derivedExtra (fun _ -> { total = 0L })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'DerivableActor'" @>
+    test <@ error.Message.Contains "explicit 'grainType'" @>
+
+[<Fact>]
+let ``onReminder on a derived grain type fails definition sealing`` () =
+    let error =
+        throws (fun () ->
+            grainFor derivedContract {
+                defaultState (fun () -> { count = 0 })
+                onReminder "sweep" (TimeSpan.FromMinutes 1.0) (TimeSpan.FromMinutes 5.0) reminderHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'DerivableActor'" @>
+    test <@ error.Message.Contains "explicit 'grainType'" @>
+
+/// <remarks>
+/// Regression control: an explicit grain type plus a durable attachment is unaffected by the new
+/// rule -- unchanged from the behavior every other test in the "Persistence attachment" and
+/// "Hooks, reminders, and timers" sections above already pins.
+/// </remarks>
+[<Fact>]
+let ``stateFrom with an explicit grain type still seals`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            stateFrom primary
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.GrainTypeName = "def.room" @>
+    test <@ definition.Primary.IsSome @>
+
+// ──────────────────────────────────────────────────────────────────────────────
 // The specification's own example
 // ──────────────────────────────────────────────────────────────────────────────
 

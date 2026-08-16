@@ -87,6 +87,7 @@
     <Compile Include="GrainBatchTests.fs" />
     <Compile Include="FunctionalTransportHarness.fs" />
     <Compile Include="FunctionalPointFreeFixture.fs" />
+    <Compile Include="GrainTypeDerivationFixtures.fs" />
     <Compile Include="FunctionalCompileFixtures.fs" />
     <Compile Include="FunctionalShapeTests.fs" />
     <Compile Include="FunctionalContractTests.fs" />

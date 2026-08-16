@@ -320,6 +320,94 @@ let ``the registry rejects registration after the freeze`` () =
     test <@ error.Message.Contains "already frozen" @>
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Optional grain type: derivation, registration, and namespace-collision hazard (Task 12)
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``an ephemeral definition with a derived grain type seals and registers`` () =
+    let contract =
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, TinyApi> () { stringKey }
+
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { touched = false })
+            handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+        }
+
+    test <@ definition.GrainTypeName = "DerivableActor" @>
+
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create definition)
+
+    test <@ registry.Snapshot.Length = 1 @>
+    test <@ registry.Snapshot.[0].GrainTypeName = "DerivableActor" @>
+
+/// <remarks>
+/// The derived grain type is the actor brand's CLR SIMPLE name only -- no namespace
+/// qualification. <c>CollisionOne.CounterActor</c> and <c>CollisionTwo.CounterActor</c> are two
+/// distinct actor brands (so two distinct, independently valid contracts) that both derive the
+/// grain type "CounterActor"; the existing grain-type-uniqueness rule must still catch the clash.
+/// </remarks>
+[<Fact>]
+let ``the registry rejects two derived grain types whose actor brands collide on CLR simple name`` () =
+    let contractOne =
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.CollisionOne.CounterActor, string, TinyApi> () {
+            stringKey
+        }
+
+    let contractTwo =
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.CollisionTwo.CounterActor, string, TinyApi> () {
+            stringKey
+        }
+
+    test <@ contractOne.GrainTypeName = "CounterActor" @>
+    test <@ contractTwo.GrainTypeName = "CounterActor" @>
+
+    let definitionFrom contract =
+        grainFor contract {
+            defaultState (fun () -> { touched = false })
+            handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+        }
+
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create(definitionFrom contractOne))
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            registry.Add(FunctionalHosted.create(definitionFrom contractTwo)))
+
+    test <@ error.Message.Contains "CounterActor" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Silo-registration guard: defense-in-depth for the sealing-time rule (Task 12)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <remarks>
+/// <c>DefinitionDraft.run</c> (sealing) already rejects the combination this guard checks for
+/// every definition built through the public <c>grainFor</c> computation expression, so this
+/// exercises <c>FunctionalDurableIdentityGuard.ensure</c> directly with plain arguments -- the
+/// same "defensive check exercised through the internal draft state" pattern
+/// <c>FunctionalContractTests.fs</c> uses for the oneWay/non-unit-reply check the compiler
+/// already makes unreachable through the CE.
+/// </remarks>
+[<Fact>]
+let ``the silo-registration guard rejects a derived grain type with a durable attachment`` () =
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalDurableIdentityGuard.ensure typeof<RuntimeActor> "runtime.probe" false true)
+
+    test <@ error.Message.Contains "explicit 'grainType'" @>
+    test <@ error.Message.Contains "runtime.probe" @>
+
+[<Fact>]
+let ``the silo-registration guard accepts a derived grain type with no durable attachment`` () =
+    FunctionalDurableIdentityGuard.ensure typeof<RuntimeActor> "runtime.probe" false false
+
+[<Fact>]
+let ``the silo-registration guard accepts an explicit grain type with a durable attachment`` () =
+    FunctionalDurableIdentityGuard.ensure typeof<RuntimeActor> "runtime.probe" true true
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Manifest providers
 // ──────────────────────────────────────────────────────────────────────────────
 

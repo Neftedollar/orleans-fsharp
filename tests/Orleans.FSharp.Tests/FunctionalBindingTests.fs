@@ -863,3 +863,40 @@ let ``unit arguments, unit replies, options, and results cross the byte boundary
         test <@ missing = Error "none" @>
         test <@ transport.Calls.Length = 5 @>
     }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Optional grain type: a derived name reaches the wire (Task 12)
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<NoEquality; NoComparison>]
+type DerivedGrainTypeApi = { ping: string -> Task<string> }
+
+let private derivedGrainTypeContract =
+    grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, DerivedGrainTypeApi> () {
+        stringKey
+    }
+
+/// <remarks>
+/// End-to-end over the in-memory sender path: the contract omits 'grainType' entirely, so its
+/// grain type is derived from the actor brand's CLR simple name ("DerivableActor"). The in-memory
+/// target is configured to host exactly that string; a bound call only succeeds if the derived
+/// name genuinely reached the envelope Orleans would route on, not merely
+/// <c>contract.GrainTypeName</c> in isolation.
+/// </remarks>
+[<Fact>]
+let ``an omitted grain type reaches the wire as the actor brand's CLR simple name`` () =
+    test <@ derivedGrainTypeContract.GrainTypeName = "DerivableActor" @>
+
+    let services = buildServices true None
+    let target = InMemoryTarget(services, "DerivableActor", 1)
+    target.Handle<string, string>("ping", fun value -> value + "-pong")
+
+    let transport = InMemoryTransport(services, target.Dispatch)
+    let reference = FunctionalGrain.rawRef derivedGrainTypeContract transport "general"
+
+    task {
+        let! reply = reference.api.ping "hi"
+
+        test <@ reply = "hi-pong" @>
+        test <@ transport.LastCall.Envelope.GrainType = "DerivableActor" @>
+    }
