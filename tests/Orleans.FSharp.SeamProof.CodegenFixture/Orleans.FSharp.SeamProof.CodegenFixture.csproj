@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- TEMPORARY Phase 0 seam-proof helper for spec 003.
+
+       Purpose: an F#-only assembly never gets an Orleans codegen type manifest, so
+       Orleans' default grain-type discovery never sees the open generic functional
+       marker/interface and the `IPostConfigureOptions<GrainTypeOptions>` removal step
+       would be proven only against a hand-seeded options object. This tiny C# assembly
+       DOES run Orleans codegen (Microsoft.Orleans.Sdk), so it contributes a real,
+       discovered open generic grain class + grain interface to `GrainTypeOptions`.
+       The seam tests use it to establish, live:
+         (a) the exact CLR shape real discovery puts into GrainTypeOptions
+             (generic type definition, `IsGenericType && !IsConstructedGenericType`),
+             which is exactly the shape the removal filter matches;
+         (b) that an open generic entry left in GrainTypeOptions really does reach the
+             final grain manifest — so removal is necessary, not decorative.
+
+       Deleted together with tests/Orleans.FSharp.SeamProof before the feature merges. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Orleans.Sdk" />
+  </ItemGroup>
+
+</Project>

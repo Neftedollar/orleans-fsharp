@@ -8,13 +8,76 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Options
 open Orleans
+open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.Runtime
 open Orleans.Serialization
 open Orleans.Serialization.Invocation
 open Orleans.TestingHost
 open Xunit
+
+// ── C# codegen fixture handles ──────────────────────────────────────────────
+
+/// Handles onto `Orleans.FSharp.SeamProof.CodegenFixture` — the only C# (and therefore
+/// the only Orleans-codegen'd) assembly in this proof. Its open generic grain class and
+/// grain interface are what real Orleans discovery contributes to `GrainTypeOptions`.
+[<RequireQualifiedAccess>]
+module CodegenFixtureTypes =
+    let OpenMarker: Type =
+        typedefof<Orleans.FSharp.SeamProof.CodegenFixture.CodegenProbeMarker<_>>
+
+    let OpenInterface: Type =
+        typedefof<Orleans.FSharp.SeamProof.CodegenFixture.ICodegenProbeTarget<_>>
+
+    let Assembly = OpenMarker.Assembly
+
+// ── GrainTypeOptions pipeline replay (item 2 controls) ──────────────────────
+
+/// Replays the silo's real options pipeline stage by stage, and rebuilds a real Orleans
+/// silo grain manifest from arbitrary `GrainTypeOptions`. Used to isolate the effect of
+/// `SeamGrainTypeOptionsPostConfigure`: two manifests built from the same live providers
+/// and resolvers, differing only in whether the post-configure stage ran.
+[<RequireQualifiedAccess>]
+module SeamOptionsPipeline =
+
+    /// The state `IPostConfigureOptions<GrainTypeOptions>` observes on the live silo.
+    let runConfigure (services: IServiceProvider) (options: GrainTypeOptions) =
+        for configure in services.GetServices<IConfigureOptions<GrainTypeOptions>>() do
+            match configure with
+            | :? IConfigureNamedOptions<GrainTypeOptions> as named -> named.Configure(Options.DefaultName, options)
+            | _ -> configure.Configure options
+
+        options
+
+    let runPostConfigure (services: IServiceProvider) (options: GrainTypeOptions) =
+        for post in services.GetServices<IPostConfigureOptions<GrainTypeOptions>>() do
+            post.PostConfigure(Options.DefaultName, options)
+
+        options
+
+    /// `Orleans.Metadata.SiloManifestProvider` is internal but has a single public
+    /// constructor; every parameter except the options comes from the live silo container.
+    let buildManifest (services: IServiceProvider) (options: GrainTypeOptions) =
+        let providerType =
+            match Type.GetType "Orleans.Metadata.SiloManifestProvider, Orleans.Runtime" with
+            | null -> invalidOp "Orleans.Metadata.SiloManifestProvider was not found in Orleans.Runtime."
+            | t -> t
+
+        let ctor = providerType.GetConstructors() |> Array.exactlyOne
+
+        let args =
+            ctor.GetParameters()
+            |> Array.map (fun p ->
+                if p.ParameterType = typeof<IOptions<GrainTypeOptions>> then
+                    box (Options.Create options)
+                else
+                    ServiceProviderServiceExtensions.GetRequiredService(services, p.ParameterType))
+
+        let instance = ctor.Invoke args
+
+        providerType.GetProperty("SiloManifest").GetValue instance :?> Orleans.Metadata.GrainManifest
 
 // ── Grain types hosted by the seam-proof cluster ────────────────────────────
 
@@ -147,10 +210,33 @@ type SeamSiloConfigurator() =
             if siloName <> SeamGrainTypes.PrimarySiloName then
                 registry.Add(SeamDefinition.create<OtherActor> SeamGrainTypes.Other)
 
+            // An all-F# assembly never gets an Orleans codegen type manifest, so Orleans'
+            // own discovery would never put the OPEN generic functional marker/interface
+            // into GrainTypeOptions and the removal half of the seam would be a no-op
+            // against a live silo. Production puts these types in a C# codegen assembly
+            // (spec 003: `src/Orleans.FSharp.Abstractions`), where discovery DOES add them.
+            // Seeding them here through `IConfigureOptions<GrainTypeOptions>` reproduces
+            // that state exactly — `IConfigureOptions` always runs before
+            // `IPostConfigureOptions`, so the removal really fires on the live silo.
+            // The CLR shape used here (generic type definition) is the shape real Orleans
+            // codegen discovery produces; that is proven independently in
+            // `Item02_CodegenDiscoveryTests` from the referenced C# fixture assembly.
+            siloBuilder.Services.Configure<GrainTypeOptions>(fun (options: GrainTypeOptions) ->
+                options.Classes.Add typedefof<FunctionalGrainMarker<_>> |> ignore
+                options.Interfaces.Add typedefof<IFunctionalGrainTarget<_>> |> ignore)
+            |> ignore
+
             SeamRegistration.addSiloServices siloBuilder.Services registry |> ignore
 
             siloBuilder.Services.AddSerializer(fun builder ->
-                SeamTransportCodecRegistration.addToSerializerBuilder builder |> ignore)
+                SeamTransportCodecRegistration.addToSerializerBuilder builder |> ignore
+
+                // Pull in the C# codegen fixture's generated type manifest. A referenced
+                // assembly is not loaded until something touches it, and Orleans only sees
+                // `TypeManifestProviderAttribute` on assemblies it knows about — without
+                // this the fixture's open generic grain class/interface never reach
+                // GrainTypeOptions and `Item02_CodegenDiscoveryTests` would be vacuous.
+                builder.AddAssembly CodegenFixtureTypes.Assembly |> ignore)
             |> ignore
 
             siloBuilder.Services.AddSingleton<IIncomingGrainCallFilter, SeamIncomingCallFilter>()

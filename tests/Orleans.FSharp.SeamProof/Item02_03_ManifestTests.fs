@@ -76,6 +76,85 @@ type ManifestTests(fixture: SeamClusterFixture) =
             registry.Add(SeamDefinition.create<PeerActor> SeamGrainTypes.Peer))
         |> ignore
 
+    /// Non-vacuity witness for the two live assertions below. `SeamSiloConfigurator`
+    /// seeds the open functional pair through `IConfigureOptions<GrainTypeOptions>` — the
+    /// state a C# codegen assembly produces by discovery (proven in
+    /// `Item02_CodegenDiscoveryTests`, which also proves the CLR shape is a generic type
+    /// definition). Replaying the live silo's own configure stage shows the open pair IS
+    /// present when the post-configure runs, so its removal is observable, not assumed.
+    [<Fact>]
+    member _.``the live configure stage holds the open functional types and post-configure removes them``() =
+        let staged = SeamOptionsPipeline.runConfigure primary (GrainTypeOptions())
+
+        // Before: the open pair is really there (this is what makes the live arm non-vacuous).
+        Assert.Contains(typedefof<FunctionalGrainMarker<_>>, staged.Classes)
+        Assert.Contains(typedefof<IFunctionalGrainTarget<_>>, staged.Interfaces)
+        // …alongside the pair real Orleans discovery contributed from the C# assembly.
+        Assert.Contains(CodegenFixtureTypes.OpenMarker, staged.Classes)
+        Assert.Contains(CodegenFixtureTypes.OpenInterface, staged.Interfaces)
+        // …and the closed entries are NOT there yet: the post-configure adds them.
+        Assert.DoesNotContain(markerOf typeof<ProbeActor>, staged.Classes)
+        Assert.DoesNotContain(interfaceOf typeof<ProbeActor>, staged.Interfaces)
+
+        SeamOptionsPipeline.runPostConfigure primary staged |> ignore
+
+        // After: open functional pair gone, closed pair added, unrelated open generics kept.
+        Assert.Empty(staged.Classes |> Seq.filter isOpenFunctional)
+        Assert.Empty(staged.Interfaces |> Seq.filter isOpenFunctional)
+        Assert.Contains(markerOf typeof<ProbeActor>, staged.Classes)
+        Assert.Contains(interfaceOf typeof<ProbeActor>, staged.Interfaces)
+        Assert.Contains(CodegenFixtureTypes.OpenMarker, staged.Classes)
+        Assert.Contains(CodegenFixtureTypes.OpenInterface, staged.Interfaces)
+
+    /// Decisive control for the removal half of item 2: two real Orleans silo manifests
+    /// built by `Orleans.Metadata.SiloManifestProvider` from the live silo's own property
+    /// providers and ID resolvers, differing ONLY in whether the post-configure stage ran.
+    [<Fact>]
+    member _.``the post-configure is what keeps the open functional entries out of a real manifest``() =
+        let openMarkerName = typedefof<FunctionalGrainMarker<_>>.FullName
+        let openInterfaceName = typedefof<IFunctionalGrainTarget<_>>.FullName
+
+        let hasOpenGrain (manifest: GrainManifest) =
+            manifest.Grains
+            |> Seq.exists (fun kv ->
+                match kv.Value.Properties.TryGetValue WellKnownGrainTypeProperties.FullTypeName with
+                | true, value -> value = openMarkerName
+                | _ -> false)
+
+        let hasOpenInterface (manifest: GrainManifest) =
+            manifest.Interfaces |> Seq.exists (fun kv -> string kv.Key = openInterfaceName)
+
+        let withoutRemoval =
+            GrainTypeOptions()
+            |> SeamOptionsPipeline.runConfigure primary
+            |> SeamOptionsPipeline.buildManifest primary
+
+        let withRemoval =
+            GrainTypeOptions()
+            |> SeamOptionsPipeline.runConfigure primary
+            |> SeamOptionsPipeline.runPostConfigure primary
+            |> SeamOptionsPipeline.buildManifest primary
+
+        // Without the post-configure the open functional pair really does land in the manifest…
+        Assert.True(hasOpenGrain withoutRemoval, "expected the open functional marker in the un-post-configured manifest")
+        Assert.True(
+            hasOpenInterface withoutRemoval,
+            "expected the open functional interface in the un-post-configured manifest"
+        )
+
+        // …and with it, it does not, while the closed definitions appear instead.
+        Assert.False(hasOpenGrain withRemoval)
+        Assert.False(hasOpenInterface withRemoval)
+        Assert.True(withRemoval.Grains.ContainsKey(GrainType.Create SeamGrainTypes.Probe))
+
+        Assert.True(
+            withRemoval.Interfaces.ContainsKey(
+                GrainInterfaceType.Create(FunctionalIds.interfaceId SeamGrainTypes.Probe)
+            )
+        )
+
+        Assert.False(withoutRemoval.Grains.ContainsKey(GrainType.Create SeamGrainTypes.Probe))
+
     [<Fact>]
     member _.``the live silo's GrainTypeOptions hold the closed types and no open functional type``() =
         let options = grainTypeOptions ()

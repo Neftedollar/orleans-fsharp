@@ -23,6 +23,7 @@
     <Compile Include="Fixtures.fs" />
     <Compile Include="Item01_StableIdsTests.fs" />
     <Compile Include="Item02_03_ManifestTests.fs" />
+    <Compile Include="Item02_CodegenDiscoveryTests.fs" />
     <Compile Include="Item04_ReferenceSelectionTests.fs" />
     <Compile Include="Item05_ActivationTargetTests.fs" />
     <Compile Include="Item06_CallFilterMetadataTests.fs" />
@@ -32,6 +33,13 @@
     <Compile Include="Item10_CodecPreflightTests.fs" />
     <Compile Include="Item11_IsolationTests.fs" />
     <Compile Include="ExtraProbeTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- C# assembly WITH Orleans codegen: supplies a real, discovered open generic
+         grain class/interface so the GrainTypeOptions removal seam (item 2) is proven
+         against genuine Orleans discovery, not only a hand-seeded options object. -->
+    <ProjectReference Include="../Orleans.FSharp.SeamProof.CodegenFixture/Orleans.FSharp.SeamProof.CodegenFixture.csproj" />
   </ItemGroup>
 
   <ItemGroup>
