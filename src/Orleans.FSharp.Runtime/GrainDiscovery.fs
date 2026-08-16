@@ -16,6 +16,10 @@ open Orleans.FSharp
 /// A simple implementation of IGrainState used internally to bridge IGrainStorage
 /// calls for named persistent states.
 /// </summary>
+// NOT [<Obsolete>] (spec-003 deprecation pass): this type is `internal`, so no consumer can name
+// it and the attribute would produce no consumer-visible warning — only cost inside this file.
+// NamedPersistentState below, which IS public API of the deprecated additionalState path, carries
+// the attribute instead.
 type internal SimpleGrainState<'T>(initialValue: 'T) =
     let mutable state: 'T = initialValue
     let mutable etag: string = null
