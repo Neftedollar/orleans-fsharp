@@ -89,6 +89,16 @@ type ValidatorApi = { keep: ValidatorArgument -> Task<ValidatorReply> }
 
 type ValidatorState = { seen: int }
 
+/// <summary>A durable stored type used by nothing else in the process.</summary>
+type ValidatorStored = { kept: string }
+
+/// <summary>The named storage provider the validator definition attaches.</summary>
+[<Literal>]
+let private ValidatorProvider = "ValidatorStore"
+
+let private validatorStore =
+    PersistentState.create<ValidatorStored> "validator" ValidatorProvider
+
 let private validatorDefinition =
     let contract =
         grainContract<ValidatorActor, string, ValidatorApi> () {
@@ -98,6 +108,7 @@ let private validatorDefinition =
 
     grainFor contract {
         defaultState (fun () -> { seen = 0 })
+        usePersistentState validatorStore (fun _ -> { kept = "" })
 
         handle (_.keep) (fun _ state (payload: ValidatorArgument) ->
             task { return { seen = state.seen + 1 }, { echoed = payload.note } })
@@ -108,6 +119,17 @@ let private validatorDefinition =
 /// preflight cannot mask the silo-side declaration.
 /// </summary>
 type UnboundDefinitionSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage ValidatorProvider |> ignore
+            siloBuilder.AddFunctionalGrain validatorDefinition |> ignore
+
+/// <summary>
+/// The same definition on a silo where its named storage provider is NOT registered. Silo
+/// startup validation has to reject it, since Orleans would otherwise fail on the first
+/// activation instead.
+/// </summary>
+type MissingStorageSiloConfigurator() =
     interface ISiloConfigurator with
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.AddFunctionalGrain validatorDefinition |> ignore
@@ -251,8 +273,12 @@ let ``starting a silo declares the payload types of a definition nothing binds``
     let reply =
         FSharpBinaryFormat.serializeWithType (box { echoed = "silo-only" }) typeof<ValidatorReply>
 
-    // Before the silo exists, the elided-type path resolves neither name.
-    for bytes in [ argument; reply ] do
+    // The durable stored type of an attached facet is declared by the same loop.
+    let stored =
+        FSharpBinaryFormat.serializeWithType (box { kept = "silo-only" }) typeof<ValidatorStored>
+
+    // Before the silo exists, the elided-type path resolves none of the names.
+    for bytes in [ argument; reply; stored ] do
         let before =
             Assert.Throws<InvalidOperationException>(fun () ->
                 FSharpBinaryFormat.deserializeWithType bytes null |> ignore)
@@ -279,9 +305,28 @@ let ``starting a silo declares the payload types of a definition nothing binds``
             { echoed = "silo-only" },
             unbox (FSharpBinaryFormat.deserializeWithType reply null)
         )
+
+        Assert.Equal<ValidatorStored>(
+            { kept = "silo-only" },
+            unbox (FSharpBinaryFormat.deserializeWithType stored null)
+        )
     finally
         cluster.StopAllSilos()
         cluster.Dispose()
+
+/// <remarks>
+/// Spec "Persistence and activation lifecycle": "silo startup checks that every named provider
+/// is available". The positive control is every other test in this file, all of which host the
+/// same definition with the provider registered and start cleanly.
+/// </remarks>
+[<Fact>]
+let ``a definition naming an unregistered storage provider fails silo startup`` () =
+    let reported = deployExpectingFailure<MissingStorageSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "Orleans.FSharp functional silo startup"))
+    Assert.Contains(reported, (fun message -> message.Contains ValidatorProvider))
+    Assert.Contains(reported, (fun message -> message.Contains "which is not registered on this silo"))
+    Assert.Contains(reported, (fun message -> message.Contains "'validator'"))
 
 [<Fact>]
 let ``a non-positive payload limit fails silo startup`` () =

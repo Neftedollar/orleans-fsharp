@@ -150,6 +150,11 @@ type LedgerApi =
 [<RequireQualifiedAccess>]
 module StateProbe =
     let observations = ConcurrentDictionary<string, string>()
+
+    /// <summary>A process-wide monotonic tick, so observations can be ordered against each other.</summary>
+    let private ticks = ref 0
+
+    let tick () = Interlocked.Increment ticks
     let activations = ConcurrentDictionary<string, int>()
     let failingDeactivations = ConcurrentDictionary<string, bool>()
 
@@ -300,6 +305,7 @@ let ledgerDefinition =
             task {
                 let key = string context.grainId
                 StateProbe.record $"deactivate:{key}" $"{reason.ReasonCode}|{describe state}"
+                StateProbe.record $"deactivate-tick:{key}" (string (StateProbe.tick ()))
 
                 match StateProbe.failingDeactivations.TryGetValue key with
                 | true, true -> raise (ApplicationException $"deactivation hook of {key} failed on purpose")
@@ -553,6 +559,39 @@ let ledgerRef = FunctionalGrain.ref ledgerContract
 let ephemeralRef = FunctionalGrain.ref ephemeralContract
 
 // ──────────────────────────────────────────────────────────────────────────────
+// A stop-stage witness
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// A grain-lifecycle observer subscribed at <c>GrainLifecycleStage.SetupState</c>. Stop stages
+/// run in reverse order, so its stop callback runs AFTER the stage which invokes
+/// <c>IGrainBase.OnDeactivateAsync</c> — which is where the functional <c>onDeactivate</c> hook
+/// lives. Comparing the two recorded ticks therefore proves both that the functional hook runs
+/// before the remaining stop stages and that those stages still run when the hook fails.
+/// </summary>
+[<Sealed>]
+type StopStageWitness() =
+
+    interface IConfigureGrainContextProvider with
+        member this.TryGetConfigurator
+            (_grainType: GrainType, _properties: Orleans.Metadata.GrainProperties, configurator: byref<IConfigureGrainContext>)
+            =
+            configurator <- this
+            true
+
+    interface IConfigureGrainContext with
+        member _.Configure(context: IGrainContext) =
+            context.ObservableLifecycle.Subscribe(
+                "Orleans.FSharp.Integration.StopStageWitness",
+                GrainLifecycleStage.SetupState,
+                Func<CancellationToken, Task>(fun _ -> Task.CompletedTask),
+                Func<CancellationToken, Task>(fun _ ->
+                    StateProbe.record $"stop-tick:{context.GrainId}" (string (StateProbe.tick ()))
+                    Task.CompletedTask)
+            )
+            |> ignore
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Silo log capture
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -622,6 +661,11 @@ type FunctionalStateSiloConfigurator() =
             siloBuilder.AddFunctionalGrain ephemeralDefinition |> ignore
 
             siloBuilder.Services.AddSingleton<ILoggerProvider, FunctionalStateLogProvider>()
+            |> ignore
+
+            // Per-activation lifecycle observer used to order the functional deactivation hook
+            // against the remaining Orleans stop stages.
+            siloBuilder.Services.AddSingleton<IConfigureGrainContextProvider, StopStageWitness>()
             |> ignore
 
 type FunctionalStateClientConfigurator() =

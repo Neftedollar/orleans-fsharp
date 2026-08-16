@@ -421,6 +421,12 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
                 Assert.False(observed.StartsWith("|", StringComparison.Ordinal))
             | None -> failwith "the deactivation hook did not run"
 
+            // The hook ran BEFORE the remaining stop stages: the witness subscribed at the lower
+            // SetupState stage, whose stop callback therefore runs after this one.
+            let hookTick = int (Option.get (StateProbe.tryGet $"deactivate-tick:{grainId}"))
+            let stopTick = int (Option.get (StateProbe.tryGet $"stop-tick:{grainId}"))
+            Assert.True(hookTick < stopTick, $"onDeactivate tick {hookTick} must precede stop stage tick {stopTick}")
+
             Assert.Equal(0, StorageLog.countFor grainId "write")
         }
 
@@ -439,6 +445,7 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
             do! api.writeNow "survives"
             do! api.armFailingDeactivation ()
             StateLogCapture.clear ()
+            StateProbe.observations.TryRemove $"stop-tick:{grainId}" |> ignore
 
             do! fixture.Recycle name
 
@@ -458,6 +465,15 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
 
             Assert.Equal(1, attempts)
 
+            // …the remaining Orleans stop stages still ran after the hook threw…
+            let hookTick = int (Option.get (StateProbe.tryGet $"deactivate-tick:{grainId}"))
+            let stopTick = int (Option.get (StateProbe.tryGet $"stop-tick:{grainId}"))
+
+            Assert.True(
+                hookTick < stopTick,
+                $"the stop stage at tick {stopTick} must still run after the failing hook at tick {hookTick}"
+            )
+
             // …and the activation really ended and came back with its durable state intact.
             Assert.Equal(Some "v1:[activated,survives]", StateProbe.tryGet $"activate:{grainId}")
             let! snapshot = api.snapshot ()
@@ -465,42 +481,30 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
         }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Durability across activations and silos
+    // Durability across activations
     // ──────────────────────────────────────────────────────────────────────────
 
     /// <remarks>
     /// Spec "Required tests": "State which the application explicitly writes survives
-    /// deactivation … and activation on another silo." Placement is random, so the test recycles
-    /// until the activation lands on a different silo, asserting the state every time.
+    /// deactivation … while unwritten in-memory changes disappear." Reaching a DIFFERENT silo is
+    /// covered deterministically in <c>FunctionalStateRestartTests</c>, because placement of one
+    /// grain identity is stable while the cluster membership does not change.
     /// </remarks>
     [<Fact>]
-    member _.``explicitly written state survives deactivation and activation on another silo``() =
+    member _.``written state survives deactivation while unwritten changes disappear``() =
         task {
-            let name = key "crosssilo"
+            let name = key "survive"
             let api = fixture.Ledger name
 
-            do! api.writeNow "durable-across-silos"
-            let! firstSilo = api.whereAmI ()
+            do! api.writeNow "written"
+            let! _ = api.append "unwritten"
+            let! before = api.snapshot ()
+            Assert.Equal("v2:[activated,written,unwritten]", before)
 
-            let mutable otherSilo = ""
-            let mutable attempts = 0
+            do! fixture.Recycle name
 
-            while otherSilo = "" && attempts < 20 do
-                attempts <- attempts + 1
-                do! fixture.Recycle name
-
-                let! snapshot = api.snapshot ()
-                Assert.Equal("v1:[activated,durable-across-silos,activated]", snapshot)
-
-                let! silo = api.whereAmI ()
-
-                if silo <> firstSilo then
-                    otherSilo <- silo
-
-            Assert.True(
-                otherSilo <> "",
-                $"the grain never activated on a second silo in {attempts} attempts (first silo {firstSilo})"
-            )
+            let! after = api.snapshot ()
+            Assert.Equal("v1:[activated,written,activated]", after)
         }
 
     // ──────────────────────────────────────────────────────────────────────────

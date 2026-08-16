@@ -233,3 +233,73 @@ let ``declaring an open generic or nameless type is ignored`` () =
     FSharpBinaryFormat.declareType null
     FSharpBinaryFormat.declareType typedefof<option<_>>
     FSharpBinaryFormat.declareType (typeof<int>.MakeArrayType().GetElementType())
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Preflight diagnostics
+// ──────────────────────────────────────────────────────────────────────────────
+
+let private codecProvider () =
+    let services = ServiceCollection()
+
+    ServiceCollectionExtensions.AddSerializer(
+        services,
+        Action<ISerializerBuilder>(fun builder -> FSharpBinaryCodecRegistration.addCodecToSerializerBuilder builder |> ignore)
+    )
+    |> ignore
+
+    services.BuildServiceProvider().GetRequiredService<ICodecProvider>()
+
+/// <remarks>
+/// A <c>declareType</c> collision means two distinct CLR types share one <c>FullName</c>, which
+/// is a name-collision fault — not a missing serializer. Wrapping it in "resolving the Orleans
+/// serializer … failed" would bury the only message that says what is actually wrong, so
+/// preflight has to report it under its own diagnostic with the collision text intact.
+/// </remarks>
+[<Fact>]
+let ``preflight reports a declareType collision as a collision, not a serializer failure`` () =
+    let provider = codecProvider ()
+    let contested = typeof<Orleans.FSharp.Tests.Collision.ContestedPayload>
+
+    // The type itself has a codec: this is not a missing-serializer case.
+    (provider :> IFieldCodecProvider).GetCodec contested |> ignore
+
+    // Something else already claimed the name, so the declaration must be rejected.
+    let shadow = emitTypeNamed contested.FullName
+    test <@ shadow.FullName = contested.FullName @>
+    test <@ shadow <> contested @>
+    FSharpBinaryFormat.declareType shadow
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            SerializerPreflight.checkType provider "collision.probe" "argument" "operation 'store'" contested)
+
+    test <@ error.Message.Contains "cannot be declared as a top-level payload type" @>
+    test <@ error.Message.Contains "already declared" @>
+    test <@ error.Message.Contains "collision.probe" @>
+    test <@ error.Message.Contains "operation 'store'" @>
+    test <@ not (error.Message.Contains "resolving the Orleans serializer") @>
+    test <@ not (error.Message.Contains "has no registered Orleans serializer") @>
+
+    // The accurate cause is still reachable, unaltered.
+    test <@ error.InnerException.Message.Contains contested.FullName @>
+
+[<Fact>]
+let ``the functional client registers a startup participant for the transport preflight`` () =
+    let services = ServiceCollection()
+    // The functional provider is inserted BEFORE the first existing one, so a stock provider
+    // descriptor has to be present; it is never resolved by this test.
+    services.AddSingleton<Orleans.GrainReferences.IGrainReferenceActivatorProvider>(fun _ ->
+        Unchecked.defaultof<Orleans.GrainReferences.IGrainReferenceActivatorProvider>)
+    |> ignore
+
+    FunctionalClientServices.addTo services |> ignore
+
+    let participants =
+        services
+        |> Seq.filter (fun descriptor ->
+            descriptor.ServiceType = typeof<Orleans.ILifecycleParticipant<Orleans.IClusterClientLifecycle>>
+            && descriptor.ImplementationType = typeof<FunctionalClientStartupValidator>)
+        |> Seq.length
+
+    test <@ participants = 1 @>
+

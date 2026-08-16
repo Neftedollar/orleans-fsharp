@@ -97,6 +97,7 @@
     <Compile Include="FunctionalBindingTests.fs" />
     <Compile Include="FunctionalPersistentStateTests.fs" />
     <Compile Include="FunctionalRuntimeTests.fs" />
+    <Compile Include="FunctionalCollisionPayload.fs" />
     <Compile Include="FunctionalSerializerRegistrationTests.fs" />
     <Compile Include="FunctionalCompileFailureTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
