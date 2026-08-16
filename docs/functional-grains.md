@@ -320,15 +320,26 @@ The universal message-passing surface built on the `grain { }` CE -- the builder
 `AddFSharpGrain(sFromAssembly)`, the `FSharpGrain.*` handle module, `Timers`, and `Reminder` --
 is superseded by this functional runtime and now carries `[<Obsolete>]` (warning, not error).
 
-Where the warning actually fires: on `grain { }` itself, on `[<FSharpGrain>]`, on
-`AddFSharpGrain` / `AddFSharpGrainsFromAssembly`, on the `Timers` and `Reminder` modules, and on
-every operation of the universal handle module -- `FSharpGrain.send`/`post`/`ask` and their
-`Guid`/`Int` variants. `FSharpGrain.ref`/`refGuid`/`refInt` and the three handle *types* are
-deliberately left unattributed: `Orleans.FSharp.Testing`'s own `getFSharpGrain*` helpers return
-those types from a packable library that carries no FS0044 suppression, and a handle is inert
-without a `send`/`post`/`ask`, so the call-site warning coverage is unchanged either way. Both
-authoring entry points (`grain { }` on the silo side, `FSharpGrain.send`/`ask` on the caller
-side) warn, so a silo-only, client-only, or combined process all get the signal.
+Where the warning fires -- the whole cluster, not just its entry points: on `grain { }` and the
+`GrainBuilder` type behind it, on `GrainDefinition` and the old `GrainContext` (types and
+modules), on `AdditionalStateSpec`, on `[<FSharpGrain>]`, on `AddFSharpGrain` /
+`AddFSharpGrainsFromAssembly`, on the `Timers` and `Reminder` modules, on every operation of the
+universal handle module (`FSharpGrain.ref`/`refGuid`/`refInt` and `send`/`post`/`ask` with their
+`Guid`/`Int` variants), on the three handle types, on the `IFSharpGrain*` interface aliases, on
+the runtime host class `FSharpGrain<'State,'Message>` and `NamedPersistentState`, and -- from
+`Orleans.FSharp.Testing` -- on `TestHarness.getFSharpGrain*` and `GrainMock.withFSharpGrain*`.
+So a silo-only, client-only, test-only, or combined process all get the signal at their own
+call sites.
+
+`SimpleGrainState` is the one member of the cluster left unattributed, and only because it is
+`internal`: no consumer can name it, so the attribute would be invisible where it matters.
+
+Inside this repository the library files that must keep naming these symbols (the definitions
+themselves, the runtime host, the registries, the test harness) wrap exactly those references in
+`#nowarn "44"` ... `#warnon "44"` brackets carrying the comment
+`deprecated API self-reference (spec-003 deprecation pass)`. That is a self-reference bracket, not
+a blanket suppression: nothing outside the bracketed lines is silenced, and no library project
+disables FS0044 project-wide.
 
 Old code keeps compiling and running unchanged; every example under `examples/`, the sample
 under `src/Orleans.FSharp.Sample`, `testbed/`, and the `orleans-fsharp` template carry a small

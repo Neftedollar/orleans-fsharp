@@ -2,8 +2,10 @@
 
 Idiomatic F# computation expressions and helpers for [Microsoft Orleans](https://learn.microsoft.com/en-us/dotnet/orleans/) grain development.
 
-> **Deprecated authoring model.** The `grain {}` CE and the universal `FSharpGrain.send`/`post`/`ask`
-> message-passing surface shown below now carry `[<Obsolete>]` (warning, not error). They keep
+> **Deprecated authoring model.** The `grain {}` CE and the universal `FSharpGrain.*`
+> message-passing surface shown below -- builder, `GrainDefinition`/`GrainContext`, handles,
+> `IFSharpGrain*`, `ref`/`send`/`post`/`ask`, `Timers`, `Reminder` -- now carry `[<Obsolete>]`
+> (warning, not error). They keep
 > compiling and running; new code should use the functional grain runtime
 > (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) described under
 > [Functional grain runtime](#functional-grain-runtime) below. Migration guide:
