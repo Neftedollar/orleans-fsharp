@@ -268,6 +268,51 @@ let api = FunctionalGrain.ref RoomApi.contract (factory :> IGrainFactory) key
 `FunctionalGrainRef<'Actor, 'Key, 'Api>` wrapper (`key`, the cached `api` record, selector-based
 `call`, and `callCancellable`) instead of the bare API record.
 
+## Running a silo from a standalone F# process
+
+Orleans builds its grain manifest by scanning assemblies that carry the code-generated
+`[assembly: ApplicationPart]` / `[assembly: TypeManifestProvider]` attributes, and it takes that
+snapshot the **first** time `AddSerializer` runs -- which is inside `UseOrleans`, i.e. before your
+own configuration code has touched anything else.
+
+Orleans' source generators are Roslyn generators, so **they never run on an F# project**: an F#
+assembly carries none of those attributes, and neither does anything it references *by way of F#
+only*. In a standalone F# host the practical consequence is that assemblies you only reach through
+an F# hop are absent from that first snapshot, and the first call that needs a grain class from one
+of them fails with:
+
+```text
+System.ArgumentException: Could not find an implementation for interface
+    Orleans.Storage.IMemoryStorageGrain
+```
+
+even though nothing about your own code is wrong.
+
+**If you host with `siloConfig { }` + `SiloConfig.applyToHost`, this is already handled for you.**
+`applyToHost` touches the two assemblies the F# surface depends on immediately before it calls
+`UseOrleans`, so they are loaded when Orleans takes its snapshot:
+
+```fsharp
+typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore // MemoryStorageGrain (addMemoryStorage)
+typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore        // FSharpGrainImpl + functional proxies
+```
+
+If you hand-roll `builder.UseOrleans(...)` instead of going through `applyToHost`, do the same
+thing yourself *before* that call — anything done inside the `UseOrleans` delegate is already too
+late, because the snapshot is taken before the delegate runs. The same force-load appears in
+`tests/Orleans.FSharp.Integration/ClusterFixture.fs` for that suite's own assemblies. Any *other*
+assembly whose grain classes you need (a third-party storage or streaming provider reached only
+through F#) needs the same treatment.
+
+This is also why the functional runtime is easier to host than the per-grain-interface
+(`grain { }` + `Orleans.FSharp.CodeGen`) model: the functional transport's proxies are generated
+once, ahead of time, into the C# `Orleans.FSharp.Abstractions` assembly, so a functional grain
+needs no per-project C# bridge assembly at all. The legacy per-grain-interface demos in
+`src/Orleans.FSharp.Sample` are the counter-example -- their proxies live in
+`src/Orleans.FSharp.CodeGen`, which *references* the sample project and therefore cannot be
+referenced back from it; the sample prints an explicit note and skips them, and they are exercised
+by `tests/Orleans.FSharp.Integration`, which does load that bridge assembly.
+
 ## See also
 
 - [Grain Definition](grain-definition.md) -- the original `grain { }` CE / CodeGen authoring model

@@ -8,13 +8,17 @@
 /// <remarks>
 /// This is the second half of the sample's proof: <c>Program.fs</c> demonstrates the identical
 /// call sequence as a literal standalone console process (<c>dotnet run --project
-/// src/Orleans.FSharp.Sample</c>), which this task's report documents separately together with a
-/// pre-existing, environment-level Orleans hosting issue (reproduced independently in
-/// examples/chat-room too) that currently prevents ANY standalone `Host.CreateApplicationBuilder`
-/// + `UseOrleans` process on this machine from resolving grain interfaces at runtime -- unrelated
-/// to spec 003 and not a regression this task introduces. TestingHost, which backs the entire
-/// 400+-test Integration suite, has no such issue, so this test is the reliable, CI-safe proof
-/// that the sample's own contract/definition/registration/call code genuinely works end to end.
+/// src/Orleans.FSharp.Sample</c>), which CI executes and asserts on for both Orleans versions.
+/// This test adds what the console process cannot: assertions, a fresh room per run, and a real
+/// separate cluster client (<c>AddFunctionalGrainClient</c>) rather than the silo's colocated
+/// factory.
+/// <para>
+/// The test's fully-qualified name deliberately keeps the <c>ChatRoomSample</c> token: CI's
+/// version-matrix Integration step selects it with
+/// <c>--filter "FullyQualifiedName~Functional|FullyQualifiedName~ChatRoomSample"</c>. Renaming
+/// this module or type without updating that filter would silently drop the sample from every PR
+/// run.
+/// </para>
 /// </remarks>
 module Orleans.FSharp.Integration.ChatRoomSampleIntegrationTests
 

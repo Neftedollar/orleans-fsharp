@@ -422,6 +422,20 @@ module SiloConfig =
     /// <param name="config">The silo configuration to apply.</param>
     /// <param name="builder">The HostApplicationBuilder to configure.</param>
     let applyToHost (config: SiloConfig) (builder: HostApplicationBuilder) : unit =
+        // Orleans builds its grain manifest from assemblies carrying the code-generated
+        // [assembly: ApplicationPart] / [assembly: TypeManifestProvider] attributes, and takes that
+        // snapshot the FIRST time AddSerializer runs — which is inside UseOrleans below. Orleans'
+        // generators are Roslyn generators, so an F# assembly never carries those attributes and
+        // an assembly reached only through an F# hop is invisible to that first scan. In a
+        // standalone F# host that means MemoryStorageGrain (Orleans.Persistence.Memory) and
+        // FSharpGrainImpl / the functional transport proxies (Orleans.FSharp.Abstractions) are
+        // missing from the manifest, and the first call needing one dies with
+        // "Could not find an implementation for interface ...". Touching them here loads them
+        // before the snapshot. Cheap (two already-referenced assemblies) and idempotent.
+        // See docs/functional-grains.md, "Running a silo from a standalone F# process".
+        typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore
+        typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore
+
         builder.UseOrleans(fun siloBuilder -> applyToSiloBuilder config siloBuilder)
         |> ignore
 
