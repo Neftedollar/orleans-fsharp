@@ -60,6 +60,13 @@ internal sealed class FunctionalRequest : Request<FunctionalReply>
     /// <summary>True once <see cref="SetTarget"/> has resolved a dispatch target.</summary>
     internal bool HasTarget => _target is not null;
 
+    /// <summary>
+    /// True once caller-side or target-side call-filter metadata has been stored, as opposed to
+    /// the non-generic fallback <see cref="GetInterfaceType"/> and <see cref="GetMethod"/>
+    /// report until then.
+    /// </summary>
+    internal bool HasCallFilterMetadata => _interfaceType is not null && _method is not null;
+
     /// <summary>Replace field 0. Used by the deserializing codec and by <c>SetArgument(0, …)</c>.</summary>
     internal void SetEnvelope(FunctionalRequestEnvelope envelope)
     {

@@ -340,11 +340,12 @@ type internal BoundCallFactory =
 module internal BoundClosure =
 
     let private createMethod =
-        typeof<BoundCallFactory>
-            .GetMethod(
-                "Create",
-                BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic
-            )
+        match
+            typeof<BoundCallFactory>
+                .GetMethod("Create", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+        with
+        | null -> fail ContractStage "the typed client-closure factory 'BoundCallFactory.Create' was not found."
+        | method -> method
 
     /// <summary>
     /// Close the client-closure factory over one operation's exact argument and reply types.

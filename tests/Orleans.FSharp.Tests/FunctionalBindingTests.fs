@@ -740,3 +740,56 @@ let ``the session-conflict detector reports a shared session`` () =
         test <@ counters.ActiveSessions.IsEmpty @>
     finally
         FunctionalInstrumentation.stop ()
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Argument and reply shapes the public model documents
+// ──────────────────────────────────────────────────────────────────────────────
+
+type ShapeActor = private ShapeActor of unit
+
+[<NoEquality; NoComparison>]
+type ShapeApi =
+    { ping: unit -> Task<unit>
+      count: unit -> Task<int>
+      lookup: string option -> Task<Result<int, string>> }
+
+let private shapeContract =
+    grainContract<ShapeActor, string, ShapeApi> () {
+        grainType "bind.shape"
+        stringKey
+    }
+
+[<Fact>]
+let ``unit arguments, unit replies, options, and results cross the byte boundary`` () =
+    let services = buildServices true None
+    let target = InMemoryTarget(services, "bind.shape", 1)
+    let mutable pinged = 0
+
+    target.Handle<unit, unit>("ping", fun () -> pinged <- pinged + 1)
+    target.Handle<unit, int>("count", fun () -> 7)
+
+    target.Handle<string option, Result<int, string>>(
+        "lookup",
+        function
+        | Some "known" -> Ok 1
+        | Some other -> Error other
+        | None -> Error "none"
+    )
+
+    let transport = InMemoryTransport(services, target.Dispatch)
+    let reference = FunctionalGrain.rawRef shapeContract transport "general"
+
+    task {
+        do! reference.api.ping ()
+        let! count = reference.api.count ()
+        let! known = reference.api.lookup (Some "known")
+        let! unknown = reference.api.lookup (Some "other")
+        let! missing = reference.api.lookup None
+
+        test <@ pinged = 1 @>
+        test <@ count = 7 @>
+        test <@ known = Ok 1 @>
+        test <@ unknown = Error "other" @>
+        test <@ missing = Error "none" @>
+        test <@ transport.Calls.Length = 5 @>
+    }

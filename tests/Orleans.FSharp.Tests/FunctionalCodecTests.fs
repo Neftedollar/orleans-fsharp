@@ -558,3 +558,35 @@ let ``the transport type filter claims no contract, facade, selector, or service
 
     neverClaimed
     |> List.iter (fun candidate -> test <@ filter.IsTypeAllowed candidate = Nullable() @>)
+
+[<Fact>]
+let ``a copy of a request without stored metadata keeps the fallback rather than promoting it`` () =
+    let original = new FunctionalRequest(envelope (), CancellationToken.None)
+
+    test <@ not original.HasCallFilterMetadata @>
+
+    let copy = (copier ()).Copy original
+
+    test <@ not copy.HasCallFilterMetadata @>
+    test <@ obj.ReferenceEquals(copy.GetInterfaceType(), typeof<IFunctionalDispatchTarget>) @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Availability without any functional registration
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``the fixed transport types carry a serializer and a copier without any functional registration`` () =
+    // Regression pin: the fixed types appear in the signature of a grain interface, so Orleans
+    // refuses to start a silo unless every one of them has a serializer and a copier. Nothing
+    // here calls the functional registration path.
+    let collection = ServiceCollection()
+    ServiceCollectionExtensions.AddSerializer(collection, Action<ISerializerBuilder>(fun _ -> ())) |> ignore
+    use provider = collection.BuildServiceProvider()
+    let codecProvider = provider.GetRequiredService<Orleans.Serialization.Serializers.ICodecProvider>()
+    let codecs = codecProvider :> Orleans.Serialization.Serializers.IFieldCodecProvider
+    let copiers = codecProvider :> Orleans.Serialization.Cloning.IDeepCopierProvider
+
+    [ typeof<FunctionalRequestEnvelope>; typeof<FunctionalReply>; typeof<FunctionalRequest> ]
+    |> List.iter (fun fixedType ->
+        Assert.NotNull(codecs.GetCodec fixedType)
+        Assert.NotNull(copiers.GetDeepCopier fixedType))

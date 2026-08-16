@@ -11,6 +11,14 @@ using Orleans.Serialization.Configuration;
 using Orleans.Serialization.Serializers;
 using Orleans.Serialization.WireProtocol;
 
+// The fixed transport types appear in the signature of a grain interface
+// (IFunctionalGrainTarget<TActor>.DispatchAsync), and Orleans validates at silo startup that
+// every type referenced by a grain-interface signature has a serializer and a copier. The
+// assembly-level manifest provider therefore registers the explicit codecs wherever this
+// assembly is loaded, so referencing Orleans.FSharp.Abstractions never breaks silo startup.
+[assembly: Orleans.Serialization.Configuration.TypeManifestProvider(
+    typeof(Orleans.FSharp.FunctionalTransportManifestProvider))]
+
 namespace Orleans.FSharp;
 
 /// <summary>
@@ -422,12 +430,11 @@ internal sealed class FunctionalRequestCopier : IDeepCopier<FunctionalRequest>
         context.RecordCopy(input, copy);
         copy.AddInvokeMethodOptions(input.Options);
 
-        var interfaceType = input.GetInterfaceType();
-        var method = input.GetMethod();
-
-        if (method is not null && !interfaceType.ContainsGenericParameters)
+        // Only real caller-side metadata is carried over: the fallback the request reports
+        // until metadata is stored must not be promoted into a stored value by a copy.
+        if (input.HasCallFilterMetadata)
         {
-            copy.SetCallerMetadata(interfaceType, method);
+            copy.SetCallerMetadata(input.GetInterfaceType(), input.GetMethod());
         }
 
         return copy;
@@ -445,6 +452,17 @@ internal sealed class FunctionalTransportTypeFilter : ITypeFilter
     /// <inheritdoc />
     public bool? IsTypeAllowed(Type type) =>
         FunctionalTransportSerialization.IsFixedTransportType(type) ? true : null;
+}
+
+/// <summary>
+/// Publishes the explicit fixed-transport serializers, copiers, and activators to every
+/// Orleans serializer built in a process which loads this assembly.
+/// </summary>
+internal sealed class FunctionalTransportManifestProvider : TypeManifestProviderBase
+{
+    /// <inheritdoc />
+    protected override void ConfigureInner(TypeManifestOptions config) =>
+        FunctionalTransportSerialization.Configure(config);
 }
 
 /// <summary>
@@ -477,22 +495,26 @@ internal static class FunctionalTransportSerialization
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.Configure<TypeManifestOptions>(static config =>
-        {
-            config.Serializers.Add(typeof(FunctionalRequestEnvelopeCodec));
-            config.Serializers.Add(typeof(FunctionalReplyCodec));
-            config.Serializers.Add(typeof(FunctionalRequestCodec));
-
-            config.Copiers.Add(typeof(FunctionalRequestEnvelopeCopier));
-            config.Copiers.Add(typeof(FunctionalReplyCopier));
-            config.Copiers.Add(typeof(FunctionalRequestCopier));
-
-            config.Activators.Add(typeof(FunctionalRequestEnvelopeActivator));
-            config.Activators.Add(typeof(FunctionalReplyActivator));
-            config.Activators.Add(typeof(FunctionalRequestActivator));
-        });
-
+        services.Configure<TypeManifestOptions>(Configure);
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ITypeFilter, FunctionalTransportTypeFilter>());
         return services;
+    }
+
+    /// <summary>Add the explicit codecs, copiers, and activators to a type manifest.</summary>
+    public static void Configure(TypeManifestOptions config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        config.Serializers.Add(typeof(FunctionalRequestEnvelopeCodec));
+        config.Serializers.Add(typeof(FunctionalReplyCodec));
+        config.Serializers.Add(typeof(FunctionalRequestCodec));
+
+        config.Copiers.Add(typeof(FunctionalRequestEnvelopeCopier));
+        config.Copiers.Add(typeof(FunctionalReplyCopier));
+        config.Copiers.Add(typeof(FunctionalRequestCopier));
+
+        config.Activators.Add(typeof(FunctionalRequestEnvelopeActivator));
+        config.Activators.Add(typeof(FunctionalReplyActivator));
+        config.Activators.Add(typeof(FunctionalRequestActivator));
     }
 }
