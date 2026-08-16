@@ -3,6 +3,8 @@
 module Orleans.FSharp.SeamProof.Item04_ReferenceSelectionTests
 
 open System
+open Microsoft.Extensions.DependencyInjection
+open Orleans.GrainReferences
 open Orleans.Runtime
 open Xunit
 
@@ -47,6 +49,18 @@ type ReferenceSelectionTests(fixture: SeamClusterFixture) =
                 |> ignore)
 
         Assert.Contains("IGrainReferenceActivatorProvider", error.Message)
+
+    [<Fact>]
+    member _.``the functional provider precedes every stock provider on client and silo``() =
+        for services in [ fixture.ClientServices; fixture.SiloServices "Primary" ] do
+            let providers = services.GetServices<IGrainReferenceActivatorProvider>() |> Seq.toArray
+            Assert.True(providers.Length > 1, "Orleans must already have registered its own providers")
+            Assert.IsType<SeamGrainReferenceActivatorProvider>(providers[0], exactMatch = true) |> ignore
+
+            Assert.DoesNotContain(
+                providers |> Array.skip 1,
+                fun (p: IGrainReferenceActivatorProvider) -> p :? SeamGrainReferenceActivatorProvider
+            )
 
     [<Fact>]
     member _.``the client can call the target through the custom reference``() =

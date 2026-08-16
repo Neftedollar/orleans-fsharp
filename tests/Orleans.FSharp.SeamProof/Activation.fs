@@ -106,11 +106,22 @@ type SeamGrainActivator<'Actor>(definition: SeamDefinition) =
             let early =
                 stateFactory.Create<ResizeArray<string>>(grainContext, SeamPersistentStateConfiguration("early", "Default"))
 
-            // Deliberate negative control: created only on first use, i.e. far
-            // too late for the SetupState load.
-            let late =
-                lazy
-                    stateFactory.Create<ResizeArray<string>>(grainContext, SeamPersistentStateConfiguration("late", "Default"))
+            let second =
+                stateFactory.Create<ResizeArray<string>>(grainContext, SeamPersistentStateConfiguration("second", "Default"))
+
+            // Deliberate negative control: attempting the same creation once the
+            // activation lifecycle has started must be rejected by Orleans.
+            let createFacetNow () =
+                try
+                    stateFactory.Create<ResizeArray<string>>(
+                        grainContext,
+                        SeamPersistentStateConfiguration("too-late", "Default")
+                    )
+                    |> ignore
+
+                    "created"
+                with ex ->
+                    $"rejected:{ex.GetType().Name}:{ex.Message}"
 
             let probe = ActivationProbe()
 
@@ -120,7 +131,8 @@ type SeamGrainActivator<'Actor>(definition: SeamDefinition) =
                   Serializer = serializer
                   GrainFactory = grainFactory
                   EarlyState = early
-                  LateState = late
+                  SecondState = second
+                  CreateFacetNow = createFacetNow
                   Probe = probe }
 
             let target =
@@ -128,6 +140,8 @@ type SeamGrainActivator<'Actor>(definition: SeamDefinition) =
                     member this.OnActivated() =
                         probe.RecordExistsAtActivation <- early.RecordExists
                         probe.StateAtActivation <- StateBox.read early.State
+                        probe.SecondRecordExistsAtActivation <- second.RecordExists
+                        probe.SecondStateAtActivation <- StateBox.read second.State
 
                   interface IFunctionalDispatchTarget with
                       member _.DispatchAsync(envelope, cancellationToken) =

@@ -21,7 +21,17 @@
     <Compile Include="Activation.fs" />
     <Compile Include="Hosting.fs" />
     <Compile Include="Fixtures.fs" />
+    <Compile Include="Item01_StableIdsTests.fs" />
+    <Compile Include="Item02_03_ManifestTests.fs" />
     <Compile Include="Item04_ReferenceSelectionTests.fs" />
+    <Compile Include="Item05_ActivationTargetTests.fs" />
+    <Compile Include="Item06_CallFilterMetadataTests.fs" />
+    <Compile Include="Item07_SchedulingTests.fs" />
+    <Compile Include="Item08_CancellationTests.fs" />
+    <Compile Include="Item09_PersistentFacetTests.fs" />
+    <Compile Include="Item10_CodecPreflightTests.fs" />
+    <Compile Include="Item11_IsolationTests.fs" />
+    <Compile Include="ExtraProbeTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

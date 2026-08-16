@@ -48,11 +48,14 @@ type ActivationProbe() =
     let mutable inFlight = 0
     let mutable maxInFlight = 0
     let mutable counter = 0
+    let mutable gateEntered = 0
 
     member val TargetTypeName = "" with get, set
     member val ContextIsSuppliedContext = false with get, set
     member val RecordExistsAtActivation = false with get, set
     member val StateAtActivation = "" with get, set
+    member val SecondRecordExistsAtActivation = false with get, set
+    member val SecondStateAtActivation = "" with get, set
     member val Deactivate: unit -> unit = id with get, set
 
     member _.Counter = Volatile.Read(&counter)
@@ -76,6 +79,14 @@ type ActivationProbe() =
 
     member _.Leave() = Interlocked.Decrement(&inFlight) |> ignore
 
+    /// Deterministic interleaving probe: a default-policy request parks on the
+    /// gate while another request tries to release it from the same activation.
+    member val Gate = TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously) with get
+
+    member _.GateEntered = Volatile.Read(&gateEntered) = 1
+    member _.EnterGate() = Volatile.Write(&gateEntered, 1)
+    member _.LeaveGate() = Volatile.Write(&gateEntered, 0)
+
 /// Everything a dispatch body needs from its activation.
 type ActivationEnv =
     { Context: IGrainContext
@@ -86,8 +97,11 @@ type ActivationEnv =
       /// `ResizeArray<string>` (not bare `string`) because Orleans' default
       /// reference-type activator cannot create an uninitialized `String`.
       EarlyState: IPersistentState<ResizeArray<string>>
-      /// Facet created lazily on first use — the negative control for item 9.
-      LateState: Lazy<IPersistentState<ResizeArray<string>>>
+      /// A second attached facet, also created by the activator.
+      SecondState: IPersistentState<ResizeArray<string>>
+      /// Negative control for item 9: attempts to create a facet *now*, i.e.
+      /// after the activation lifecycle already started.
+      CreateFacetNow: unit -> string
       Probe: ActivationProbe }
 
 /// Immutable operation descriptor.
@@ -111,13 +125,20 @@ module Operations =
           { OperationId = "bump"
             Flags = AdmissionFlags.OneWay ||| AdmissionFlags.AlwaysInterleave }
           { OperationId = "counter"; Flags = AdmissionFlags.ReadOnly }
+          { OperationId = "awaitGate"; Flags = AdmissionFlags.None }
+          { OperationId = "gateEntered"; Flags = AdmissionFlags.AlwaysInterleave }
+          { OperationId = "releaseGateInterleave"; Flags = AdmissionFlags.AlwaysInterleave }
+          { OperationId = "releaseGateReadOnly"; Flags = AdmissionFlags.ReadOnly }
+          { OperationId = "releaseGateDefault"; Flags = AdmissionFlags.None }
           { OperationId = "waitCancel"; Flags = AdmissionFlags.None }
           { OperationId = "callPeerCancel"; Flags = AdmissionFlags.None }
           { OperationId = "stateRead"; Flags = AdmissionFlags.None }
           { OperationId = "stateWrite"; Flags = AdmissionFlags.None }
           { OperationId = "stateInfo"; Flags = AdmissionFlags.ReadOnly }
-          { OperationId = "lateWrite"; Flags = AdmissionFlags.None }
-          { OperationId = "lateInfo"; Flags = AdmissionFlags.None }
+          { OperationId = "secondWrite"; Flags = AdmissionFlags.None }
+          { OperationId = "secondRead"; Flags = AdmissionFlags.None }
+          { OperationId = "secondInfo"; Flags = AdmissionFlags.ReadOnly }
+          { OperationId = "lateCreate"; Flags = AdmissionFlags.None }
           { OperationId = "deactivate"; Flags = AdmissionFlags.None } ]
 
     let private byId =
@@ -207,6 +228,25 @@ module Dispatcher =
 
         | "counter" -> Task.FromResult(string probe.Counter)
 
+        | "awaitGate" ->
+            task {
+                probe.EnterGate()
+
+                try
+                    let! finished = Task.WhenAny(probe.Gate.Task, Task.Delay(int argument))
+                    return if Object.ReferenceEquals(finished, probe.Gate.Task) then "released" else "timeout"
+                finally
+                    probe.LeaveGate()
+            }
+
+        | "gateEntered" -> Task.FromResult(string probe.GateEntered)
+
+        | "releaseGateInterleave"
+        | "releaseGateReadOnly"
+        | "releaseGateDefault" ->
+            probe.Gate.TrySetResult true |> ignore
+            Task.FromResult "ok"
+
         | "waitCancel" ->
             task {
                 let observationKey = $"waitCancel:{env.Context.GrainId}"
@@ -228,6 +268,9 @@ module Dispatcher =
                 let peerKey = parts[1]
                 let peerDelay = parts[2]
                 let cancelAfter = int parts[3]
+
+                SeamObservations.table.TryRemove($"waitCancel:{FunctionalIds.grainId peerGrainType peerKey}")
+                |> ignore
 
                 let peer =
                     env.GrainFactory.GetGrain(
@@ -260,11 +303,18 @@ module Dispatcher =
                         | ex -> return "error:" + ex.GetType().Name
                     }
 
-                let observed =
-                    SeamObservations.tryGet $"waitCancel:{FunctionalIds.grainId peerGrainType peerKey}"
-                    |> Option.defaultValue "none"
+                // The caller can observe cancellation before the target finishes
+                // recording it, so wait briefly for the target-side observation.
+                let observationKey = $"waitCancel:{FunctionalIds.grainId peerGrainType peerKey}"
+                let deadline = DateTime.UtcNow.AddSeconds 10.0
+                let mutable observed = SeamObservations.tryGet observationKey
 
-                return $"self={siloOf env}|outcome={outcome}|peerObserved={observed}"
+                while observed.IsNone && DateTime.UtcNow < deadline do
+                    do! Task.Delay 100
+                    observed <- SeamObservations.tryGet observationKey
+
+                let peerObserved = Option.defaultValue "none" observed
+                return $"self={siloOf env}|outcome={outcome}|peerObserved={peerObserved}"
             }
 
         | "stateRead" -> Task.FromResult(StateBox.read env.EarlyState.State)
@@ -280,21 +330,20 @@ module Dispatcher =
             Task.FromResult
                 $"recordExistsAtActivation={probe.RecordExistsAtActivation}|stateAtActivation={probe.StateAtActivation}"
 
-        | "lateWrite" ->
+        | "secondRead" -> Task.FromResult(StateBox.read env.SecondState.State)
+
+        | "secondWrite" ->
             task {
-                let late = env.LateState.Value
-                StateBox.write late.State argument
-                do! late.WriteStateAsync()
+                StateBox.write env.SecondState.State argument
+                do! env.SecondState.WriteStateAsync()
                 return "ok"
             }
 
-        | "lateInfo" ->
-            task {
-                let late = env.LateState.Value
-                let before = $"recordExists={late.RecordExists}|state={StateBox.read late.State}"
-                do! late.ReadStateAsync()
-                return $"{before}|afterRead.recordExists={late.RecordExists}|afterRead.state={StateBox.read late.State}"
-            }
+        | "secondInfo" ->
+            Task.FromResult
+                $"recordExistsAtActivation={probe.SecondRecordExistsAtActivation}|stateAtActivation={probe.SecondStateAtActivation}"
+
+        | "lateCreate" -> Task.FromResult(env.CreateFacetNow())
 
         | "deactivate" ->
             probe.Deactivate()

@@ -136,7 +136,8 @@ type SeamOutgoingCallFilter() =
 type SeamSiloConfigurator() =
     interface ISiloConfigurator with
         member _.Configure(siloBuilder: ISiloBuilder) =
-            let siloName = siloBuilder.Configuration["SiloName"]
+            // TestingHost publishes the silo name under "Orleans:Name".
+            let siloName = siloBuilder.Configuration["Orleans:Name"]
 
             let registry = SeamRegistry()
             registry.Add(SeamDefinition.create<ProbeActor> SeamGrainTypes.Probe)
@@ -225,11 +226,40 @@ module SeamClient =
 type SeamClusterFixture() =
     let cluster =
         let builder = TestClusterBuilder(2s)
+        // Silos advertise different definitions, so the homogeneity shortcut must be off.
+        builder.Options.AssumeHomogenousSilosForTesting <- false
         builder.AddSiloBuilderConfigurator<SeamSiloConfigurator>() |> ignore
         builder.AddClientBuilderConfigurator<SeamClientConfigurator>() |> ignore
         let cluster = builder.Build()
         cluster.Deploy()
+        // Placement is only spread across silos once every silo is Active in the
+        // membership view; without this the first test can see a one-silo cluster.
+        cluster.WaitForLivenessToStabilizeAsync().GetAwaiter().GetResult()
         cluster
+
+    /// Placement only spreads once every silo's cluster manifest carries every
+    /// other silo's grain manifest; until then a silo believes it is the only
+    /// host of a grain type and keeps every activation local.
+    let waitForManifestPropagation () =
+        let deadline = DateTime.UtcNow.AddSeconds 60.0
+
+        let propagated () =
+            cluster.Silos
+            |> Seq.forall (fun handle ->
+                let services = (handle :?> InProcessSiloHandle).SiloHost.Services
+                let current = services.GetRequiredService<IClusterManifestProvider>().Current
+
+                current.Silos.Count = cluster.Silos.Count
+                && current.Silos
+                   |> Seq.forall (fun kv -> kv.Value.Grains.ContainsKey(GrainType.Create SeamGrainTypes.Peer)))
+
+        while not (propagated ()) && DateTime.UtcNow < deadline do
+            Thread.Sleep 200
+
+        if not (propagated ()) then
+            failwith "cluster manifests did not propagate to every silo"
+
+    do waitForManifestPropagation ()
 
     member _.Cluster = cluster
     member _.Client = cluster.Client

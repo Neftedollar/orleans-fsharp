@@ -93,6 +93,18 @@ module internal TransportWire =
         | 255uy -> null
         | tag -> invalidOp $"SeamTransportCodec: unknown transport tag {tag}."
 
+/// Instrumentation so a test can prove the fixed transport really crosses the
+/// Orleans serialization boundary rather than being handed over as an object.
+[<RequireQualifiedAccess>]
+module SeamCodecCounters =
+    let mutable private written = 0
+    let mutable private read = 0
+
+    let internal countWrite () = System.Threading.Interlocked.Increment &written |> ignore
+    let internal countRead () = System.Threading.Interlocked.Increment &read |> ignore
+    let writes () = System.Threading.Volatile.Read &written
+    let reads () = System.Threading.Volatile.Read &read
+
 /// Generalized codec/copier/type-filter for the three fixed transport types.
 [<Sealed>]
 type SeamTransportCodec() =
@@ -109,6 +121,7 @@ type SeamTransportCodec() =
             else
                 let actualType = if isNull value then expectedType else value.GetType()
                 let bytes = TransportWire.serialize value
+                SeamCodecCounters.countWrite ()
                 writer.WriteFieldHeader(fieldIdDelta, expectedType, actualType, WireType.LengthPrefixed)
                 writer.WriteVarUInt32(uint32 bytes.Length)
                 writer.Write(ReadOnlySpan<byte>(bytes))
@@ -119,6 +132,7 @@ type SeamTransportCodec() =
             else
                 let length = reader.ReadVarUInt32()
                 let bytes = reader.ReadBytes(length)
+                SeamCodecCounters.countRead ()
                 TransportWire.deserialize bytes
 
     interface IGeneralizedCopier with
