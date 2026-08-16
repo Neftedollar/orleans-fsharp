@@ -8,9 +8,13 @@ module Orleans.FSharp.Tests.FunctionalSerializerRegistrationTests
 open System
 open System.Reflection
 open System.Reflection.Emit
+open System.Threading
 open Microsoft.Extensions.DependencyInjection
+open Orleans
 open Orleans.Serialization
+open Orleans.Serialization.Activators
 open Orleans.Serialization.Cloning
+open Orleans.Serialization.Codecs
 open Orleans.Serialization.Serializers
 open Orleans.FSharp
 open Swensen.Unquote
@@ -282,6 +286,210 @@ let ``preflight reports a declareType collision as a collision, not a serializer
 
     // The accurate cause is still reachable, unaltered.
     test <@ error.InnerException.Message.Contains contested.FullName @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Client startup preflight of the fixed transport types
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// A codec provider which delegates everything to a real one except <c>GetCodec(Type)</c> for one
+/// nominated type, which it fails. That is the only way to reach the per-type failure arm of
+/// <c>FunctionalTransportTypes.preflight</c>: in a real process the assembly-level
+/// <c>[TypeManifestProvider]</c> of <c>Orleans.FSharp.Abstractions</c> always answers for the
+/// three fixed types (proven by the bare-serializer test below).
+/// </summary>
+/// <summary>
+/// Preflight resolves field codecs by <see cref="T:System.Type" /> and nothing else; any other
+/// member being reached would be a change of behaviour the double below must not hide.
+/// </summary>
+let private unreached<'T> () : 'T =
+    raise (NotSupportedException "the preflight double only serves GetCodec(Type)")
+
+[<Sealed>]
+type private CodecProviderFailingFor(inner: ICodecProvider, failFor: Type) =
+
+    let fields = inner :> IFieldCodecProvider
+    let copiers = inner :> IDeepCopierProvider
+
+    interface ICodecProvider with
+        member _.Services = inner.Services
+
+    interface IFieldCodecProvider with
+        member _.GetCodec<'TField>() : IFieldCodec<'TField> = unreached ()
+        member _.TryGetCodec<'TField>() : IFieldCodec<'TField> = unreached ()
+        member _.TryGetCodec(fieldType: Type) = fields.TryGetCodec fieldType
+
+        member _.GetCodec(fieldType: Type) =
+            if fieldType = failFor then
+                raise (InvalidOperationException $"no codec is registered for '{fieldType.FullName}'")
+            else
+                fields.GetCodec fieldType
+
+    interface IBaseCodecProvider with
+        member _.GetBaseCodec<'TField when 'TField: not struct>() : IBaseCodec<'TField> = unreached ()
+
+    interface IValueSerializerProvider with
+        member _.GetValueSerializer<'TField
+            when 'TField: struct and 'TField :> ValueType and 'TField: (new: unit -> 'TField)>
+            ()
+            : IValueSerializer<'TField> =
+            unreached ()
+
+    interface IActivatorProvider with
+        member _.GetActivator<'T>() : IActivator<'T> = unreached ()
+
+    interface IDeepCopierProvider with
+        member _.GetDeepCopier<'T>() : IDeepCopier<'T> = unreached ()
+        member _.TryGetDeepCopier<'T>() : IDeepCopier<'T> = unreached ()
+        member _.GetDeepCopier(fieldType: Type) = copiers.GetDeepCopier fieldType
+        member _.TryGetDeepCopier(fieldType: Type) = copiers.TryGetDeepCopier fieldType
+        member _.GetBaseCopier<'T when 'T: not struct>() : IBaseCopier<'T> = unreached ()
+
+/// <summary>A service provider exposing exactly one service (or none at all).</summary>
+let private providerOf (service: obj) =
+    { new IServiceProvider with
+        member _.GetService(serviceType: Type) =
+            match service with
+            | :? ICodecProvider when serviceType = typeof<ICodecProvider> -> service
+            | _ -> null }
+
+/// <summary>The service provider a functional client really builds.</summary>
+let private functionalClientProvider () =
+    let services = ServiceCollection()
+
+    services.AddSingleton<Orleans.GrainReferences.IGrainReferenceActivatorProvider>(fun _ ->
+        Unchecked.defaultof<Orleans.GrainReferences.IGrainReferenceActivatorProvider>)
+    |> ignore
+
+    FunctionalClientServices.addTo services |> ignore
+    services.BuildServiceProvider()
+
+[<Fact>]
+let ``the preflight list is exactly the three fixed transport types`` () =
+    // Non-vacuity guard for every preflight test below: an empty or shortened list would make
+    // them all pass without checking anything.
+    let names =
+        FunctionalTransportTypes.all |> Array.map (fun candidate -> candidate.Name) |> Array.toList
+
+    test <@ names = [ "FunctionalRequest"; "FunctionalRequestEnvelope"; "FunctionalReply" ] @>
+
+[<Fact>]
+let ``the fixed transport types pass preflight on a functional client`` () =
+    use provider = functionalClientProvider ()
+
+    // Each type really resolves a codec — the assertion the preflight loop makes.
+    let codecs = provider.GetRequiredService<ICodecProvider>() :> IFieldCodecProvider
+
+    for transportType in FunctionalTransportTypes.all do
+        test <@ not (isNull (box (codecs.GetCodec transportType))) @>
+
+    FunctionalTransportTypes.preflight provider
+
+/// <remarks>
+/// The honest scope of the client preflight, established by test rather than by prose: because
+/// <c>Orleans.FSharp.Abstractions</c> carries an assembly-level <c>[TypeManifestProvider]</c>,
+/// even a serializer registration which knows nothing about the functional transport resolves all
+/// three types. The check therefore cannot fail in a process that loaded the assembly at all.
+/// </remarks>
+[<Fact>]
+let ``a bare Orleans serializer already resolves the fixed transport types`` () =
+    let services = ServiceCollection()
+    ServiceCollectionExtensions.AddSerializer(services, Action<ISerializerBuilder>(ignore)) |> ignore
+    use provider = services.BuildServiceProvider()
+
+    FunctionalTransportTypes.preflight provider
+
+[<Fact>]
+let ``preflight names the fixed transport type whose codec cannot be resolved`` () =
+    // Once per fixed type, so the loop is proven to cover every element of the list.
+    for failFor in FunctionalTransportTypes.all do
+        use client = functionalClientProvider ()
+        let real = client.GetRequiredService<ICodecProvider>()
+        let broken = CodecProviderFailingFor(real, failFor) :> ICodecProvider
+
+        let error =
+            Assert.Throws<InvalidOperationException>(fun () ->
+                FunctionalTransportTypes.preflight (providerOf broken))
+
+        test <@ error.Message.StartsWith(FunctionalDiagnostics.BindingStage, StringComparison.Ordinal) @>
+        test <@ error.Message.Contains failFor.FullName @>
+        test <@ error.Message.Contains "has no registered Orleans serializer in this process" @>
+        test <@ error.Message.Contains "AddFunctionalGrainClient" @>
+
+        // The accurate cause is preserved, not swallowed.
+        test <@ not (isNull error.InnerException) @>
+        test <@ error.InnerException.Message.Contains failFor.FullName @>
+
+[<Fact>]
+let ``preflight rejects a process with no Orleans serializer at all`` () =
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () -> FunctionalTransportTypes.preflight (providerOf null))
+
+    test <@ error.Message.StartsWith(FunctionalDiagnostics.BindingStage, StringComparison.Ordinal) @>
+    test <@ error.Message.Contains "no ICodecProvider is registered in this process" @>
+    test <@ isNull error.InnerException @>
+
+/// <summary>Records what a lifecycle participant subscribed, so the callback can be run.</summary>
+[<Sealed>]
+type private RecordingClientLifecycle() =
+    let subscriptions = ResizeArray<string * int * ILifecycleObserver>()
+
+    member _.Subscriptions = List.ofSeq subscriptions
+
+    interface IClusterClientLifecycle with
+        member _.Subscribe(name: string, stage: int, observer: ILifecycleObserver) =
+            subscriptions.Add((name, stage, observer))
+
+            { new IDisposable with
+                member _.Dispose() = () }
+
+/// <remarks>
+/// The descriptor test above proves the participant is registered; this one proves the
+/// registration does something — that the subscribed start callback really runs the preflight.
+/// </remarks>
+[<Fact>]
+let ``the client startup participant runs the transport preflight when the client starts`` () =
+    let lifecycle = RecordingClientLifecycle()
+
+    let participant =
+        FunctionalClientStartupValidator(providerOf null) :> ILifecycleParticipant<IClusterClientLifecycle>
+
+    participant.Participate lifecycle
+
+    match lifecycle.Subscriptions with
+    | [ (name, stage, observer) ] ->
+        test <@ name = "Orleans.FSharp.FunctionalGrainClient" @>
+        test <@ stage = ServiceLifecycleStage.RuntimeInitialize @>
+
+        // The provider handed to the validator has no ICodecProvider, so starting must fail with
+        // the preflight's own diagnostic rather than silently succeeding.
+        let error =
+            Assert.ThrowsAsync<InvalidOperationException>(fun () -> observer.OnStart CancellationToken.None)
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        test <@ error.Message.Contains "no ICodecProvider is registered in this process" @>
+    | other -> failwith $"expected exactly one lifecycle subscription, got {List.length other}"
+
+/// <remarks>
+/// The same participant, started against the service provider a functional client really builds:
+/// the preflight passes and the start callback completes.
+/// </remarks>
+[<Fact>]
+let ``the client startup participant succeeds against a real functional client provider`` () =
+    use provider = functionalClientProvider ()
+    let lifecycle = RecordingClientLifecycle()
+
+    let participant =
+        FunctionalClientStartupValidator(provider) :> ILifecycleParticipant<IClusterClientLifecycle>
+
+    participant.Participate lifecycle
+
+    match lifecycle.Subscriptions with
+    | [ (_, _, observer) ] ->
+        let start = observer.OnStart CancellationToken.None
+        start.GetAwaiter().GetResult()
+        test <@ start.IsCompletedSuccessfully @>
+    | other -> failwith $"expected exactly one lifecycle subscription, got {List.length other}"
 
 [<Fact>]
 let ``the functional client registers a startup participant for the transport preflight`` () =

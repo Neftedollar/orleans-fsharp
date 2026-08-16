@@ -27,6 +27,18 @@ open Orleans.FSharp
 open Xunit
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Stored state
+// ──────────────────────────────────────────────────────────────────────────────
+// Declared before the instrumentation because the instrumenting provider needs the primary
+// stored type to play a competing writer in the ETag-conflict test.
+
+type LedgerState =
+    { entries: string list
+      version: int }
+
+type AuditState = { writes: int }
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Storage instrumentation
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -48,6 +60,30 @@ module StorageLog =
     /// <summary>Providers whose writes must fail, used by the partial-success test.</summary>
     let failingWrites = ConcurrentDictionary<string, bool>()
 
+    /// <summary>One <c>(stateName, grainId)</c> record, the key of the two switches below.</summary>
+    let record (stateName: string) (grainId: string) = $"{stateName}@{grainId}"
+
+    /// <summary>
+    /// Records whose reads must fail. Keyed per record rather than per provider so a test can fail
+    /// the SetupState load of ONE grain without disturbing any other activation in the cluster.
+    /// </summary>
+    let failingReads = ConcurrentDictionary<string, bool>()
+
+    /// <summary>
+    /// Records whose next write must be preceded by an out-of-band competing write, which bumps
+    /// the stored ETag and so makes the real write a genuine stale-ETag conflict. One-shot.
+    /// </summary>
+    let etagTheft = ConcurrentDictionary<string, bool>()
+
+    let failRead (stateName: string) (grainId: string) =
+        failingReads.ContainsKey(record stateName grainId)
+
+    /// <summary>Consume an armed theft, so it affects exactly one write.</summary>
+    let consumeEtagTheft (stateName: string) (grainId: string) =
+        match etagTheft.TryRemove(record stateName grainId) with
+        | true, armed -> armed
+        | _ -> false
+
     let forGrain (grainId: string) =
         calls |> Seq.filter (fun call -> call.GrainId = grainId) |> Seq.toList
 
@@ -67,18 +103,56 @@ type InstrumentingGrainStorage(inner: IGrainStorage, provider: string) =
               StateName = stateName
               GrainId = string grainId }
 
+    /// <summary>
+    /// A competing writer of the same record: it reads the current state, writes a marked
+    /// variant of it back, and so leaves the caller holding a stale ETag. Nothing here is
+    /// recorded, because it is not a call the grain made.
+    /// </summary>
+    member private _.StealEtag<'T>(stateName: string, grainId: GrainId, pending: IGrainState<'T>) =
+        task {
+            let intruder = GrainState<'T>()
+            do! inner.ReadStateAsync<'T>(stateName, grainId, intruder)
+
+            match box intruder.State with
+            | :? LedgerState as ledger ->
+                intruder.State <-
+                    unbox<'T> (
+                        box
+                            { entries = ledger.entries @ [ "intruder" ]
+                              version = ledger.version + 100 }
+                    )
+            | _ -> ()
+
+            do! inner.WriteStateAsync<'T>(stateName, grainId, intruder)
+
+            // The pending write still carries the ETag the grain loaded, which the provider now
+            // rejects: a real Orleans InconsistentStateException, produced by real storage.
+            do! inner.WriteStateAsync<'T>(stateName, grainId, pending)
+        }
+
     interface IGrainStorage with
         member _.ReadStateAsync<'T>(stateName: string, grainId: GrainId, grainState: IGrainState<'T>) =
             record "read" stateName grainId
-            inner.ReadStateAsync<'T>(stateName, grainId, grainState)
 
-        member _.WriteStateAsync<'T>(stateName: string, grainId: GrainId, grainState: IGrainState<'T>) =
+            if StorageLog.failRead stateName (string grainId) then
+                Task.FromException(
+                    InvalidOperationException
+                        $"storage provider '{provider}' is configured to fail reads of '{stateName}'"
+                )
+            else
+                inner.ReadStateAsync<'T>(stateName, grainId, grainState)
+
+        member this.WriteStateAsync<'T>(stateName: string, grainId: GrainId, grainState: IGrainState<'T>) =
             record "write" stateName grainId
 
             match StorageLog.failingWrites.TryGetValue provider with
             | true, true ->
                 Task.FromException(InvalidOperationException $"storage provider '{provider}' is configured to fail writes")
-            | _ -> inner.WriteStateAsync<'T>(stateName, grainId, grainState)
+            | _ ->
+                if StorageLog.consumeEtagTheft stateName (string grainId) then
+                    this.StealEtag<'T>(stateName, grainId, grainState) :> Task
+                else
+                    inner.WriteStateAsync<'T>(stateName, grainId, grainState)
 
         member _.ClearStateAsync<'T>(stateName: string, grainId: GrainId, grainState: IGrainState<'T>) =
             record "clear" stateName grainId
@@ -89,12 +163,6 @@ type InstrumentingGrainStorage(inner: IGrainStorage, provider: string) =
 // ──────────────────────────────────────────────────────────────────────────────
 
 type LedgerActor = private LedgerActor of unit
-
-type LedgerState =
-    { entries: string list
-      version: int }
-
-type AuditState = { writes: int }
 
 [<NoEquality; NoComparison>]
 type LedgerApi =
@@ -118,6 +186,8 @@ type LedgerApi =
       auditPeek: unit -> Task<int>
       /// Writes the primary holder and then the audit holder, in that order.
       orderedWrites: string -> Task<string>
+      /// Writes the primary holder after a competing writer has bumped the stored ETag.
+      conflictingWrite: string -> Task<string>
       /// A read-only operation which tries the whole mutation surface and reports the outcome.
       readOnlyProbe: unit -> Task<string>
       /// The same probe under readOnly + alwaysInterleave.
@@ -160,6 +230,13 @@ module StateProbe =
     let activations = ConcurrentDictionary<string, int>()
     let failingDeactivations = ConcurrentDictionary<string, bool>()
     let failingActivations = ConcurrentDictionary<string, bool>()
+
+    /// <summary>
+    /// Grain KEYS (not ids) whose state initializers must throw. Both the attached-facet
+    /// initializer and the ephemeral state factory read it, so the spec's "initializer failure
+    /// fails activation" rule can be exercised on either.
+    /// </summary>
+    let failingInitializers = ConcurrentDictionary<string, bool>()
     let writingDeactivations = ConcurrentDictionary<string, string>()
 
     /// <summary>The facade one handler deliberately let escape its invocation.</summary>
@@ -278,7 +355,10 @@ let ledgerDefinition =
         defaultState (fun () -> { entries = []; version = 0 })
 
         stateFrom ledgerState
-        usePersistentState auditState (fun _ -> { writes = 0 })
+        usePersistentState auditState (fun key ->
+            match StateProbe.failingInitializers.TryGetValue key with
+            | true, true -> raise (ApplicationException $"the audit initializer of {key} failed on purpose")
+            | _ -> { writes = 0 })
 
         onActivate (fun context state ->
             task {
@@ -435,6 +515,43 @@ let ledgerDefinition =
                 return state, "both"
             })
 
+        handle (_.conflictingWrite) (fun context state (entry: string) ->
+            task {
+                let key = string context.grainId
+                let facade = context.persistentState ledgerState
+                let etagBefore = facade.Etag
+
+                // The competing write happens inside the provider, between this call and the
+                // record it targets, so the ETag this activation holds is stale by the time the
+                // write lands. Nothing in the runtime may notice, retry, reload, or repair it.
+                StorageLog.etagTheft.[StorageLog.record "ledger" key] <- true
+
+                facade.State <-
+                    { entries = state.entries @ [ entry ]
+                      version = state.version + 1 }
+
+                let mutable failure: exn = null
+
+                try
+                    do! facade.WriteStateAsync()
+                    StateProbe.record $"conflict:{key}" "written"
+                with error ->
+                    // Recorded from INSIDE the failing invocation, because Orleans reacts to an
+                    // inconsistent-state error by ending the activation: this is the only moment
+                    // at which "the ETag was not repaired and the holder was not rolled back"
+                    // can be observed at all.
+                    failure <- error
+
+                    StateProbe.record
+                        $"conflict:{key}"
+                        $"error={error.GetType().Name}|etagUnchanged={facade.Etag = etagBefore}|holder={describe facade.State}"
+
+                if not (isNull failure) then
+                    raise failure
+
+                return state, "written"
+            })
+
         handle (_.readOnlyProbe) (fun context state () ->
             task {
                 let facade = context.persistentState ledgerState
@@ -559,7 +676,10 @@ let private notAttached<'T> () : 'T =
 
 let ephemeralDefinition =
     grainFor ephemeralContract {
-        initialState (fun (key: string) -> { entries = [ key ]; version = 0 })
+        initialState (fun (key: string) ->
+            match StateProbe.failingInitializers.TryGetValue key with
+            | true, true -> raise (ApplicationException $"the ephemeral initializer of {key} failed on purpose")
+            | _ -> { entries = [ key ]; version = 0 })
 
         handle (_.append) (fun _ state (entry: string) ->
             task {
@@ -579,6 +699,7 @@ let ephemeralDefinition =
         handle (_.auditWrite) (fun _ state (_: int) -> task { return state, notAttached () })
         handle (_.auditPeek) (fun _ state () -> task { return state, notAttached () })
         handle (_.orderedWrites) (fun _ state (_: string) -> task { return state, notAttached () })
+        handle (_.conflictingWrite) (fun _ state (_: string) -> task { return state, notAttached () })
         handle (_.readOnlyProbe) (fun _ state () -> task { return state, notAttached () })
         handle (_.interleavedProbe) (fun _ state () -> task { return state, notAttached () })
         handle (_.escapeFacade) (fun _ state () -> task { return state, notAttached () })

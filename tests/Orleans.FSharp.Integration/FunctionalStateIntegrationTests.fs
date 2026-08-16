@@ -24,6 +24,32 @@ let private field (report: string) (name: string) =
     | Some value -> value
     | None -> failwith $"field '{name}' is missing from report '{report}'"
 
+/// <summary>
+/// A call which must eventually succeed. An activation which failed is torn down asynchronously,
+/// so the first call made after a fault is disarmed can still reach the dying one.
+/// </summary>
+let private eventually (call: unit -> Task<'T>) =
+    task {
+        let deadline = DateTime.UtcNow.AddSeconds 30.0
+        let mutable result = Unchecked.defaultof<'T>
+        let mutable succeeded = false
+        let mutable last: exn = null
+
+        while not succeeded && DateTime.UtcNow < deadline do
+            try
+                let! value = call ()
+                result <- value
+                succeeded <- true
+            with error ->
+                last <- error
+                do! Task.Delay 100
+
+        if not succeeded then
+            raise (InvalidOperationException("the call never succeeded", last))
+
+        return result
+    }
+
 [<Collection("FunctionalStateCluster")>]
 type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
 
@@ -561,6 +587,180 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
                 StateLogCapture.contains "Skipping the functional onDeactivate hook",
                 "on these Orleans versions the hook is not reached at all, so nothing is skipped"
             )
+        }
+
+    /// <remarks>
+    /// Spec state-initialization rule 6: "storage read, initializer, or hook failure fails
+    /// activation." This is the READ arm: the stock SetupState load of the primary facet fails,
+    /// so the activation never reaches step 3 or the functional hook, and the runtime neither
+    /// retries the read nor writes anything while failing.
+    /// </remarks>
+    [<Fact>]
+    member _.``a failing SetupState read fails activation``() =
+        task {
+            let name = key "failread"
+            let grainId = fixture.LedgerId name
+            let api = fixture.Ledger name
+            let record = StorageLog.record "ledger" grainId
+            StorageLog.failingReads.[record] <- true
+
+            try
+                let! error = Assert.ThrowsAnyAsync<exn>(fun () -> api.snapshot () :> Task)
+                Assert.Contains("configured to fail reads", error.ToString())
+            finally
+                StorageLog.failingReads.TryRemove record |> ignore
+
+            // Activation stopped at the storage read: neither state initialization nor the
+            // functional onActivate hook ran, and an activation with no state never reaches the
+            // deactivation hook either.
+            Assert.Equal(0, StateProbe.activationCount grainId)
+            Assert.Equal(None, StateProbe.tryGet $"activate:{grainId}")
+            Assert.Equal(None, StateProbe.tryGet $"deactivate:{grainId}")
+
+            // Nothing was written or cleared in response to the failure.
+            Assert.Equal(0, StorageLog.countFor grainId "write")
+            Assert.Equal(0, StorageLog.countFor grainId "clear")
+
+            // With the provider healthy again the grain activates normally.
+            let! snapshot = eventually api.snapshot
+            Assert.Equal("v0:[activated]", snapshot)
+            Assert.Equal(1, StateProbe.activationCount grainId)
+
+            // The same holds for an ADDITIONAL holder on the second provider: its SetupState read
+            // is just as load-bearing as the primary one.
+            let additional = key "failread-audit"
+            let additionalId = fixture.LedgerId additional
+            let additionalApi = fixture.Ledger additional
+            let auditRecord = StorageLog.record "audit" additionalId
+            StorageLog.failingReads.[auditRecord] <- true
+
+            try
+                let! error = Assert.ThrowsAnyAsync<exn>(fun () -> additionalApi.snapshot () :> Task)
+                Assert.Contains("configured to fail reads of 'audit'", error.ToString())
+            finally
+                StorageLog.failingReads.TryRemove auditRecord |> ignore
+
+            Assert.Equal(0, StateProbe.activationCount additionalId)
+            Assert.Equal(0, StorageLog.countFor additionalId "write")
+
+            let! recovered = eventually additionalApi.snapshot
+            Assert.Equal("v0:[activated]", recovered)
+        }
+
+    /// <remarks>
+    /// The INITIALIZER arm of the same rule, on both of its call sites: the initializer of an
+    /// attached holder whose record does not exist, and the ephemeral state factory. Neither may
+    /// be swallowed, and neither may write anything.
+    /// </remarks>
+    [<Fact>]
+    member _.``a failing state initializer fails activation``() =
+        task {
+            let name = key "failinit"
+            let grainId = fixture.LedgerId name
+            let api = fixture.Ledger name
+            StateProbe.failingInitializers.[name] <- true
+
+            try
+                let! error = Assert.ThrowsAnyAsync<exn>(fun () -> api.snapshot () :> Task)
+                Assert.Contains("the audit initializer", error.ToString())
+            finally
+                StateProbe.failingInitializers.TryRemove name |> ignore
+
+            // Initialization is activation step 3, before the functional hook of step 4…
+            Assert.Equal(0, StateProbe.activationCount grainId)
+            Assert.Equal(None, StateProbe.tryGet $"activate:{grainId}")
+            Assert.Equal(None, StateProbe.tryGet $"deactivate:{grainId}")
+
+            // …and an initializer populates memory only, so the failed activation shows the two
+            // SetupState reads and nothing else.
+            Assert.Equal(0, StorageLog.countFor grainId "write")
+            Assert.Equal(0, StorageLog.countFor grainId "clear")
+
+            let! snapshot = eventually api.snapshot
+            Assert.Equal("v0:[activated]", snapshot)
+
+            // The ephemeral state factory is the other call site of step 3 and fails activation
+            // in exactly the same way.
+            let ephemeralName = key "failinit-ephemeral"
+            let ephemeral = fixture.Ephemeral ephemeralName
+            StateProbe.failingInitializers.[ephemeralName] <- true
+
+            try
+                let! error = Assert.ThrowsAnyAsync<exn>(fun () -> ephemeral.snapshot () :> Task)
+                Assert.Contains("the ephemeral initializer", error.ToString())
+            finally
+                StateProbe.failingInitializers.TryRemove ephemeralName |> ignore
+
+            let! after = eventually ephemeral.snapshot
+            Assert.Equal($"v0:[{ephemeralName}]", after)
+        }
+
+    /// <remarks>
+    /// Spec "Persistence and activation lifecycle": "the runtime performs no rollback, retry,
+    /// reload, or ETag repair." A competing writer bumps the stored ETag between this
+    /// activation's load and its explicit write, so real memory storage raises a real Orleans
+    /// <c>InconsistentStateException</c>. Everything asserted afterwards is the functional
+    /// runtime NOT reacting to it.
+    /// </remarks>
+    /// <remarks>
+    /// Orleans itself does react: <c>StateStorageBridge</c> ends the activation after an
+    /// inconsistent-state error. That is stock behaviour below this library, which is why the
+    /// unrepaired facade is observed from inside the failing invocation and the durable outcome
+    /// from the activation which replaces it.
+    /// </remarks>
+    [<Fact>]
+    member _.``a stale ETag write fails the call and nothing repairs it``() =
+        task {
+            let name = key "etag"
+            let grainId = fixture.LedgerId name
+            let api = fixture.Ledger name
+
+            do! api.writeNow "durable"
+            Assert.Equal(1, StorageLog.countFor grainId "write")
+            Assert.Equal(1, StateProbe.activationCount grainId)
+
+            let! conflict = Assert.ThrowsAnyAsync<exn>(fun () -> api.conflictingWrite "conflict" :> Task)
+
+            // The provider's own diagnostic reaches the caller, unwrapped and unrepaired.
+            Assert.Contains("InconsistentStateException", conflict.ToString())
+
+            // No retry: exactly one further write reached the provider…
+            Assert.Equal(2, StorageLog.countFor grainId "write")
+            // …no reload or repair read: still only the two SetupState reads…
+            Assert.Equal(2, StorageLog.countFor grainId "read")
+            // …and no clear.
+            Assert.Equal(0, StorageLog.countFor grainId "clear")
+
+            // What the failing invocation saw once the write had failed: the same stale ETag it
+            // loaded with (no repair) and the value its own setter installed (no rollback).
+            match StateProbe.tryGet $"conflict:{grainId}" with
+            | Some report ->
+                Assert.Equal("InconsistentStateException", field report "error")
+                Assert.Equal("True", field report "etagUnchanged")
+                Assert.Equal("v2:[activated,durable,conflict]", field report "holder")
+            | None -> failwith "the conflicting write recorded nothing"
+
+            // Orleans ends the activation after an inconsistent-state error; wait for the one
+            // which replaces it.
+            let deadline = DateTime.UtcNow.AddSeconds 30.0
+
+            while StateProbe.activationCount grainId < 2 && DateTime.UtcNow < deadline do
+                do! Task.Delay 100
+                let! _ = eventually api.snapshot
+                ()
+
+            Assert.True(StateProbe.activationCount grainId >= 2, "the conflicting activation never ended")
+
+            // Nothing was flushed on the way out — the write count did not move — so the record
+            // is the competing writer's, and the diverged in-memory state simply disappeared.
+            Assert.Equal(2, StorageLog.countFor grainId "write")
+            Assert.Equal(0, StorageLog.countFor grainId "clear")
+            Assert.Equal(Some "v101:[activated,durable,intruder]", StateProbe.tryGet $"activate:{grainId}")
+
+            // The deactivation hook of the failing activation still saw the unrepaired state.
+            match StateProbe.tryGet $"deactivate:{grainId}" with
+            | Some observed -> Assert.Contains("v2:[activated,durable,conflict]", observed)
+            | None -> failwith "the deactivation hook did not run"
         }
 
     // ──────────────────────────────────────────────────────────────────────────
