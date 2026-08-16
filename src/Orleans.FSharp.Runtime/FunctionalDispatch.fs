@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Runtime.ExceptionServices
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
@@ -151,30 +152,58 @@ module internal FunctionalDispatch =
 
         // 4-6. Typed payload deserialization with a fresh session, the per-invocation context,
         //      the preclosed typed handler adapter, and the state-publication rule.
+
+        // The delivered one-way context uses CancellationToken.None. A one-way caller completed
+        // at the local acknowledgement and can never signal cancellation, so the target-local
+        // token would be a token that cannot be cancelled but CAN be disposed underneath a
+        // handler which registered on it — the request disposes its own CancellationTokenSource.
+        let invocationToken =
+            if operation.IsOneWay then
+                CancellationToken.None
+            else
+                cancellationToken
+
         let invocation =
             { Key = env.Key
-              Core = contextCore env cancellationToken
+              Core = contextCore env invocationToken
               State = env.State.Current
               Payload = envelope.Payload
               Codec = env.Codec }
 
         let work =
             task {
-                let! nextState, payload = operation.Adapter.Invoke invocation
+                try
+                    let! nextState, payload = operation.Adapter.Invoke invocation
 
-                // Read-only and state-neutral interleaved operations discard their replacement.
-                if not (operation.IsReadOnly || operation.IsAlwaysInterleave) then
-                    env.State.Publish nextState
+                    // Read-only and state-neutral interleaved operations discard their replacement.
+                    if not (operation.IsReadOnly || operation.IsAlwaysInterleave) then
+                        env.State.Publish nextState
 
-                // 7. The silo reply limit, then the descriptor's reply token and fresh payload.
-                PayloadLimit.ensure
-                    SiloReplySend
-                    grainTypeName
-                    operation.OperationId
-                    payload.Length
-                    env.MaxPayloadBytes
+                    // 7. The silo reply limit, then the descriptor's reply token and fresh payload.
+                    PayloadLimit.ensure
+                        SiloReplySend
+                        grainTypeName
+                        operation.OperationId
+                        payload.Length
+                        env.MaxPayloadBytes
 
-                return FunctionalReply(operation.ReplyToken, payload)
+                    return FunctionalReply(operation.ReplyToken, payload)
+                with error when operation.IsOneWay ->
+                    // A one-way target failure is never returned to that caller: the caller's
+                    // send completed at the local acknowledgement. It is recorded here so the
+                    // failure is not silent, then rethrown onto the ordinary Orleans path so
+                    // tracing and the runtime's own one-way logging still observe it.
+                    env.Logger.LogError(
+                        error,
+                        "Functional one-way operation {OperationId} on grain type {GrainType} failed on target {GrainId}: {Message}",
+                        operation.OperationId,
+                        grainTypeName,
+                        env.GrainContext.GrainId,
+                        error.Message
+                    )
+
+                    ExceptionDispatchInfo.Capture(error).Throw()
+                    return Unchecked.defaultof<FunctionalReply>
             }
 
         ValueTask<FunctionalReply> work

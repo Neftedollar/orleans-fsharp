@@ -9,6 +9,7 @@ open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime
 open Orleans.FSharp
@@ -175,6 +176,10 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
             Assert.True(captured.PayloadLength > 0)
         }
 
+    /// <remarks>
+    /// All five valid combinations over the real transport: default, plain readOnly, plain
+    /// oneWay, readOnly + alwaysInterleave, oneWay + alwaysInterleave.
+    /// </remarks>
     [<Fact>]
     member _.``every declared flag combination reaches the filter``() =
         task {
@@ -182,13 +187,20 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
             let key = $"filter-flags-{Guid.NewGuid():N}"
             let probe = fixture.Probe key
             let! _ = probe.api.echo "a"
+            let! _ = probe.api.readSlow 0
             let! _ = probe.api.peek ()
             do! probe.api.bump 0
+            do! probe.api.signal "ok"
 
             let deadline = DateTime.UtcNow.AddSeconds 10.0
 
-            while not (CallCapture.incoming |> Seq.exists (fun call -> call.OperationId = "bump"))
-                  && DateTime.UtcNow < deadline do
+            let arrived () =
+                let seen =
+                    CallCapture.incoming |> Seq.map (fun call -> call.OperationId) |> Set.ofSeq
+
+                seen.Contains "bump" && seen.Contains "signal"
+
+            while not (arrived ()) && DateTime.UtcNow < deadline do
                 do! Task.Delay 100
 
             let byOperation =
@@ -196,20 +208,15 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
                 |> Seq.map (fun call -> call.OperationId, call)
                 |> Map.ofSeq
 
-            let echo = byOperation.["echo"]
-            Assert.False echo.IsReadOnly
-            Assert.False echo.IsOneWay
-            Assert.False echo.IsAlwaysInterleave
+            let flags (operationId: string) =
+                let call = byOperation.[operationId]
+                call.IsReadOnly, call.IsOneWay, call.IsAlwaysInterleave
 
-            let peek = byOperation.["peek"]
-            Assert.True peek.IsReadOnly
-            Assert.True peek.IsAlwaysInterleave
-            Assert.False peek.IsOneWay
-
-            let bump = byOperation.["bump"]
-            Assert.True bump.IsOneWay
-            Assert.True bump.IsAlwaysInterleave
-            Assert.False bump.IsReadOnly
+            Assert.Equal((false, false, false), flags "echo")
+            Assert.Equal((true, false, false), flags "readSlow")
+            Assert.Equal((false, true, false), flags "signal")
+            Assert.Equal((true, false, true), flags "peek")
+            Assert.Equal((false, true, true), flags "bump")
         }
 
     [<Fact>]
@@ -363,6 +370,86 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
                 observed <- current
 
             Assert.Equal(1, observed)
+        }
+
+    /// <summary>Waits for a target-recorded observation, or returns None.</summary>
+    member private _.WaitForObservation(key: string) =
+        task {
+            let deadline = DateTime.UtcNow.AddSeconds 10.0
+            let mutable observed = Probe.tryGet key
+
+            while observed.IsNone && DateTime.UtcNow < deadline do
+                do! Task.Delay 100
+                observed <- Probe.tryGet key
+
+            return observed
+        }
+
+    /// <remarks>
+    /// Spec "Orleans request options and cancellation": the delivered one-way context uses
+    /// <c>CancellationToken.None</c> while the acknowledged context carries the target-local
+    /// token. Both arms cross the real transport; the acknowledged arm is the control.
+    /// </remarks>
+    [<Fact>]
+    member this.``a delivered one-way context carries no cancellation token``() =
+        task {
+            let key = $"oneway-token-{Guid.NewGuid():N}"
+            let probe = fixture.Probe key
+
+            let! identity = probe.api.identity ()
+            Assert.Equal<string>("True", field identity "cancellable")
+
+            do! probe.api.signal "ok"
+
+            let! observed = this.WaitForObservation $"signal:{FunctionalGrainTypes.Probe}/{key}"
+
+            Assert.Equal<string>("mode=ok|cancellable=False", Option.defaultValue "none" observed)
+        }
+
+    /// <remarks>
+    /// Spec: a one-way target failure "is recorded through logging and tracing and is not
+    /// returned to that caller". The caller's send must complete normally, the handler must
+    /// really have run and thrown, the silo must have logged it, and the activation must keep
+    /// serving afterwards.
+    /// </remarks>
+    [<Fact>]
+    member this.``a one-way target failure is logged and never returned to the caller``() =
+        task {
+            LogCapture.clear ()
+            let key = $"oneway-fail-{Guid.NewGuid():N}"
+            let probe = fixture.Probe key
+
+            // The send itself acknowledges locally and does not surface the target failure.
+            do! probe.api.signal "fail"
+
+            let! observed = this.WaitForObservation $"signal:{FunctionalGrainTypes.Probe}/{key}"
+            Assert.Equal<string>("mode=fail|cancellable=False", Option.defaultValue "none" observed)
+
+            // …and the failure is not silent: the functional runtime logs it on the target.
+            let matches () =
+                LogCapture.entries
+                |> Seq.filter (fun entry ->
+                    entry.Category.StartsWith("Orleans.FSharp.Functional.", StringComparison.Ordinal)
+                    && entry.Message.Contains "signal"
+                    && entry.Error.Contains $"one-way target failure on {FunctionalGrainTypes.Probe}/{key}")
+                |> List.ofSeq
+
+            let deadline = DateTime.UtcNow.AddSeconds 10.0
+
+            while List.isEmpty (matches ()) && DateTime.UtcNow < deadline do
+                do! Task.Delay 100
+
+            let logged = matches ()
+            Assert.NotEmpty logged
+            Assert.All(logged, fun entry -> Assert.Equal(LogLevel.Error, entry.Level))
+
+            // The activation survived the failure, and the failing handler published no state.
+            let! state = probe.api.stateRead ()
+            Assert.Equal<string>("", state)
+
+            do! probe.api.signal "ok"
+            let! echoed = probe.api.echo "still-alive"
+            Assert.Equal<string>("still-alive", echoed)
         }
 
     [<Fact>]
@@ -607,16 +694,31 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
             Assert.Contains("admission flags", error.Message)
         }
 
+    /// <remarks>
+    /// Typed payload deserialization is step 4 of the dispatch order, so a corrupt payload fails
+    /// as an ORLEANS SERIALIZATION failure (the codec's own diagnostic), never dressed up as a
+    /// functional transport diagnostic, and always before the handler runs. The operation used
+    /// here is the one which records its own execution, so "before the handler" is asserted
+    /// rather than assumed.
+    /// </remarks>
     [<Fact>]
-    member _.``a corrupt payload fails as a protocol-stage diagnostic``() =
+    member _.``a corrupt payload fails deserialization before the handler runs``() =
+        let key = $"dispatch-corrupt-{Guid.NewGuid():N}"
+
         task {
             let! error =
                 Assert.ThrowsAnyAsync<Exception>(fun () ->
-                    rawSend fixture.Client FunctionalGrainTypes.Probe typeof<ProbeActor> "dispatch-corrupt"
-                    <| envelope "echo" 0uy [| 1uy; 2uy; 3uy |]
+                    rawSend fixture.Client FunctionalGrainTypes.Probe typeof<ProbeActor> key
+                    <| envelope "sink" 0uy [| 1uy; 2uy; 3uy |]
                     :> Task)
 
-            Assert.NotNull error
+            Assert.StartsWith("Orleans.Serialization", error.GetType().FullName)
+            Assert.DoesNotContain("Orleans.FSharp functional transport", error.Message)
+
+            Assert.True(
+                (Probe.tryGet $"sink:{FunctionalGrainTypes.Probe}/{key}").IsNone,
+                "the handler must not run when its argument cannot be deserialized"
+            )
         }
 
     [<Fact>]

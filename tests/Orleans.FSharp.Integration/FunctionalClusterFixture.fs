@@ -13,6 +13,7 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Hosting
 open Orleans.Runtime
@@ -67,6 +68,9 @@ type ProbeApi =
       readSlow: int -> Task<string>
       peek: unit -> Task<int>
       bump: int -> Task<unit>
+      /// A PLAIN one-way operation (no alwaysInterleave): "ok" records what it saw,
+      /// "fail" records and then throws on the target.
+      signal: string -> Task<unit>
       counter: unit -> Task<int>
       awaitGate: int -> Task<string>
       gateEntered: unit -> Task<bool>
@@ -192,6 +196,8 @@ let private contractFor<'Actor> (name: string) =
 
         oneWay (_.bump)
         alwaysInterleave (_.bump)
+
+        oneWay (_.signal)
     }
 
 let probeContract = contractFor<ProbeActor> FunctionalGrainTypes.Probe
@@ -214,7 +220,25 @@ let private definitionFor (contract: GrainContract<'Actor, ProbeId, ProbeApi>) =
         handle (_.echo) (fun _ state (argument: string) -> task { return state, argument })
 
         handle (_.identity) (fun context state () ->
-            task { return state, $"silo={siloOf context}|grain={context.grainId}" })
+            task {
+                return
+                    state,
+                    $"silo={siloOf context}|grain={context.grainId}|cancellable={context.cancellationToken.CanBeCanceled}"
+            })
+
+        handle (_.signal) (fun context state (mode: string) ->
+            task {
+                // Whether the DELIVERED one-way context can be cancelled at all: the spec
+                // requires CancellationToken.None here, unlike the acknowledged path.
+                Probe.record
+                    $"signal:{context.grainId}"
+                    $"mode={mode}|cancellable={context.cancellationToken.CanBeCanceled}"
+
+                if mode = "fail" then
+                    raise (ApplicationException $"one-way target failure on {context.grainId}")
+
+                return { last = "signal:" + mode }, ()
+            })
 
         handle (_.slow) (fun context state (delay: int) ->
             task {
@@ -244,7 +268,10 @@ let private definitionFor (contract: GrainContract<'Actor, ProbeId, ProbeApi>) =
 
         handle (_.bump) (fun context state (delay: int) ->
             task {
-                do! Task.Delay(delay, CancellationToken.None)
+                // Deliberately delays on the CONTEXT token of a one-way invocation. With the
+                // spec's CancellationToken.None this is inert; with a target-local token it
+                // would be waiting on a CancellationTokenSource the request disposes.
+                do! Task.Delay(delay, context.cancellationToken)
                 (Probe.cell context.grainId).Bump()
                 Probe.record $"bump:{context.grainId}" "delivered"
                 return state, ()
@@ -378,6 +405,53 @@ let peerDefinition = definitionFor peerContract
 let otherDefinition = definitionFor otherContract
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Silo log capture
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <summary>One captured silo log entry: category, level, rendered message, exception text.</summary>
+type CapturedLog =
+    { Category: string
+      Level: LogLevel
+      Message: string
+      Error: string }
+
+/// <summary>
+/// Errors logged by the functional runtime itself. A one-way target failure never reaches the
+/// caller, so the only observable record of it is the silo log.
+/// </summary>
+[<RequireQualifiedAccess>]
+module LogCapture =
+    let entries = ConcurrentQueue<CapturedLog>()
+
+    let clear () = entries.Clear()
+
+[<Sealed>]
+type private CaptureLogger(category: string) =
+    interface ILogger with
+        member _.BeginScope<'TState>(_state: 'TState) =
+            { new IDisposable with
+                member _.Dispose() = () }
+
+        member _.IsEnabled(level: LogLevel) = level >= LogLevel.Error
+
+        member _.Log<'TState>(level, _eventId, state: 'TState, error: exn, formatter: Func<'TState, exn, string>) =
+            if level >= LogLevel.Error then
+                LogCapture.entries.Enqueue
+                    { Category = category
+                      Level = level
+                      Message = formatter.Invoke(state, error)
+                      Error =
+                        match error with
+                        | null -> ""
+                        | value -> value.ToString() }
+
+[<Sealed>]
+type FunctionalLogCaptureProvider() =
+    interface ILoggerProvider with
+        member _.CreateLogger(category: string) = CaptureLogger category :> ILogger
+        member _.Dispose() = ()
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Global call-filter capture
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -508,6 +582,9 @@ type FunctionalSiloConfigurator() =
                                                                                 (options:
                                                                                     FunctionalGrainTransportOptions) ->
                 options.MaxPayloadBytes <- FunctionalLimits.Silo)
+            |> ignore
+
+            siloBuilder.Services.AddSingleton<ILoggerProvider, FunctionalLogCaptureProvider>()
             |> ignore
 
             siloBuilder.Services.AddSingleton<IIncomingGrainCallFilter, FunctionalIncomingCallFilter>()

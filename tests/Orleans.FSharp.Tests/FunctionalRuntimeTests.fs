@@ -8,6 +8,9 @@ module Orleans.FSharp.Tests.FunctionalRuntimeTests
 
 open System
 open System.Collections.Generic
+open System.Collections.Immutable
+open System.Reflection
+open System.Runtime.CompilerServices
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
@@ -36,7 +39,9 @@ type RuntimeApi =
       ping: string -> Task<unit>
       notify: string -> Task<unit>
       boom: string -> Task<string>
-      storage: unit -> Task<string> }
+      storage: unit -> Task<string>
+      tokenWrite: unit -> Task<string>
+      tokenPing: unit -> Task<unit> }
 
 type RuntimeState = { last: string }
 
@@ -52,6 +57,7 @@ let private contractFor<'Actor> (name: string) =
         oneWay (_.ping)
         oneWay (_.notify)
         alwaysInterleave (_.notify)
+        oneWay (_.tokenPing)
     }
 
 let private definitionFor (contract: GrainContract<'Actor, string, RuntimeApi>) =
@@ -73,6 +79,18 @@ let private definitionFor (contract: GrainContract<'Actor, string, RuntimeApi>) 
             task {
                 let facet = context.persistentState runtimeState
                 return state, facet.State.last
+            })
+
+        // Both report the SAME fact about the per-invocation context — whether its cancellation
+        // token can ever be cancelled — one on the acknowledged path, one on the one-way path.
+        handle (_.tokenWrite) (fun context state () ->
+            task { return state, (if context.cancellationToken.CanBeCanceled then "cancellable" else "none") })
+
+        handle (_.tokenPing) (fun context _ () ->
+            task {
+                return
+                    { last = (if context.cancellationToken.CanBeCanceled then "cancellable" else "none") },
+                    ()
             })
     }
 
@@ -430,6 +448,35 @@ let ``an undeclared reminder fails the target callback explicitly`` () =
     test <@ error.Result.Message.Contains "nightly" @>
     test <@ error.Result.Message.Contains "runtime.probe" @>
 
+/// <summary>
+/// A <see cref="T:Orleans.Runtime.GrainTypeSharedContext"/> which only carries components. Its
+/// only public constructor demands the whole silo runtime (placement resolver, manifest
+/// provider, grain reference activator), so the component bag alone is materialized here: the
+/// instance is created uninitialized and its single component dictionary is planted. The field
+/// is located BY TYPE, not by name, and the lookup asserts there is exactly one — if Orleans
+/// ever reshapes the component bag, this harness fails loudly instead of quietly testing a
+/// different thing.
+/// </summary>
+/// <summary>
+/// Orleans 10.2.2 requires grain properties to use an ordinal key comparer; 10.1.0 accepts any.
+/// </summary>
+let private emptyProperties =
+    ImmutableDictionary.Create<string, string>(StringComparer.Ordinal)
+
+let private componentBag () =
+    let field =
+        typeof<GrainTypeSharedContext>
+            .GetFields(BindingFlags.Instance ||| BindingFlags.NonPublic)
+        |> Array.filter (fun candidate -> candidate.FieldType = typeof<Dictionary<Type, obj>>)
+
+    test <@ field.Length = 1 @>
+
+    let shared =
+        RuntimeHelpers.GetUninitializedObject typeof<GrainTypeSharedContext> :?> GrainTypeSharedContext
+
+    field.[0].SetValue(shared, Dictionary<Type, obj>())
+    shared
+
 [<Fact>]
 let ``the component configurator installs the functional activator only for registered types`` () =
     let registry = frozenRegistry ()
@@ -437,23 +484,45 @@ let ``the component configurator installs the functional activator only for regi
     let configure =
         FunctionalConfigureGrainTypeComponents registry :> IConfigureGrainTypeComponents
 
-    test <@ not (isNull (box configure)) @>
+    // Registered branch: Configure really installs the closed functional activator.
+    let registered = componentBag ()
 
-    let activator =
-        FunctionalConfigureGrainTypeComponents.CreateActivator(hosted runtimeDefinition)
+    configure.Configure(GrainType.Create "runtime.probe", GrainProperties(emptyProperties), registered)
+
+    let installed = registered.GetComponent<IGrainActivator>()
 
     test
         <@
-            activator.GetType() = typedefof<FunctionalGrainActivator<_>>.MakeGenericType typeof<RuntimeActor>
+            installed.GetType() = typedefof<FunctionalGrainActivator<_>>.MakeGenericType typeof<RuntimeActor>
+        @>
+
+    // Unregistered branch: an unrelated grain type keeps whatever Orleans installed, and this
+    // configurator adds nothing at all.
+    let untouched = componentBag ()
+
+    configure.Configure(GrainType.Create "some.other.grain", GrainProperties(emptyProperties), untouched)
+
+    test <@ isNull (box (untouched.GetComponent<IGrainActivator>())) @>
+
+    // The static closing helper stays covered on its own, since the registered branch above
+    // proves only that SOME functional activator was installed.
+    let activator =
+        FunctionalConfigureGrainTypeComponents.CreateActivator(hosted otherDefinition)
+
+    test
+        <@
+            activator.GetType() = typedefof<FunctionalGrainActivator<_>>.MakeGenericType typeof<OtherRuntimeActor>
         @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Target dispatch validation order
 // ──────────────────────────────────────────────────────────────────────────────
 
+let private dispatchWith (instance: obj) (envelope: FunctionalRequestEnvelope) (token: CancellationToken) =
+    (instance :?> IFunctionalDispatchTarget).DispatchAsync(envelope, token)
+
 let private dispatch (instance: obj) (envelope: FunctionalRequestEnvelope) =
-    (instance :?> IFunctionalDispatchTarget)
-        .DispatchAsync(envelope, CancellationToken.None)
+    dispatchWith instance envelope CancellationToken.None
 
 let private envelopeFor (operationId: string) (flags: byte) (payload: byte[]) =
     FunctionalRequestEnvelope(
@@ -615,7 +684,9 @@ let ``the hosted view preserves declaration order, tokens, and flags`` () =
                                                                                              "ping"
                                                                                              "notify"
                                                                                              "boom"
-                                                                                             "storage" |]
+                                                                                             "storage"
+                                                                                             "tokenWrite"
+                                                                                             "tokenPing" |]
         @>
 
     let notify = (definition.TryFindOperation "notify").Value
@@ -662,6 +733,36 @@ let ``a sequential one-way handler publishes its returned state`` () =
             dispatch instance (envelopeFor "read" AdmissionFlags.ReadOnly (codec.Serialize<unit> ()))
 
         test <@ codec.Deserialize<string> afterNotify.Payload = "pinged" @>
+    }
+
+/// <remarks>
+/// Spec "Orleans request options and cancellation": the acknowledged context carries the
+/// target-local token, the DELIVERED ONE-WAY context uses <c>CancellationToken.None</c>. Both
+/// arms dispatch with the same live, cancellable token, so the only difference is the one-way
+/// admission flag. Beyond the semantic difference this also keeps a one-way handler off the
+/// request's own <c>CancellationTokenSource</c>, which the request disposes.
+/// </remarks>
+[<Fact>]
+let ``a delivered one-way context carries no cancellation, an acknowledged one does`` () =
+    let _, context, instance = createTarget (hosted runtimeDefinition) "dispatch-oneway-token"
+    let codec = payloadCodec context
+    use source = new CancellationTokenSource()
+
+    task {
+        // Control arm: the acknowledged path receives the token it was dispatched with.
+        let! acknowledged =
+            dispatchWith instance (envelopeFor "tokenWrite" 0uy (codec.Serialize<unit> ())) source.Token
+
+        test <@ codec.Deserialize<string> acknowledged.Payload = "cancellable" @>
+        test <@ source.Token.CanBeCanceled @>
+
+        // One-way arm: the same token is dispatched, the handler must not see it.
+        let! _ = dispatchWith instance (envelopeFor "tokenPing" AdmissionFlags.OneWay (codec.Serialize<unit> ())) source.Token
+
+        let! observed =
+            dispatch instance (envelopeFor "read" AdmissionFlags.ReadOnly (codec.Serialize<unit> ()))
+
+        test <@ codec.Deserialize<string> observed.Payload = "none" @>
     }
 
 [<Fact>]

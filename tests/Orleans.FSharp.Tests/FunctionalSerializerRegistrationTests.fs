@@ -162,6 +162,39 @@ let ``a declared type resolves where Type.GetType cannot see it`` () =
     test <@ unbox<DeclaredPayload> restored = { marker = "declared" } @>
 
 /// <remarks>
+/// Resolution where <c>Type.GetType</c> returns null (the test above) is not PRECEDENCE. This
+/// one takes a name <c>Type.GetType</c> CAN resolve — a framework type — and emits a distinct
+/// CLR type carrying the same <c>FullName</c>. The identical bytes are resolved twice: before
+/// the declaration they must yield the framework type, after it the declared type. That is the
+/// production order in <c>deserializeWithType</c> (declaration table first, <c>Type.GetType</c>
+/// second) and nothing weaker can distinguish the two.
+/// </remarks>
+[<Fact>]
+let ``a declared type takes precedence over one Type.GetType can resolve`` () =
+    // A framework name the codec's own fallback really resolves, so the two lookups genuinely
+    // compete. Nothing else in the suite declares it.
+    let contested = typeof<Version>.FullName
+    test <@ Type.GetType(contested, throwOnError = false) = typeof<Version> @>
+
+    let shadow = emitTypeNamed contested
+    test <@ shadow.FullName = contested @>
+    test <@ shadow <> typeof<Version> @>
+
+    let bytes =
+        FSharpBinaryFormat.serializeWithType (Activator.CreateInstance shadow) shadow
+
+    // Before the declaration the Type.GetType fallback wins and yields the framework type…
+    let fallback = FSharpBinaryFormat.deserializeWithType bytes null
+    test <@ fallback.GetType() = typeof<Version> @>
+
+    FSharpBinaryFormat.declareType shadow
+
+    // …after it the declaration table wins on the very same bytes.
+    let declared = FSharpBinaryFormat.deserializeWithType bytes null
+    test <@ declared.GetType() = shadow @>
+    test <@ declared.GetType() <> typeof<Version> @>
+
+/// <remarks>
 /// It uses its own emitted type rather than <c>DeclaredPayload</c>: declaring that one here
 /// would make the "before the declaration" arm of the resolution test above depend on test
 /// execution order.

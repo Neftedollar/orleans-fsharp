@@ -7,6 +7,7 @@ module Orleans.FSharp.Integration.FunctionalHostingIntegrationTests
 
 open System
 open System.Linq
+open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Options
 open Orleans
@@ -70,6 +71,46 @@ type BrokenManifestSiloConfigurator() =
                     descriptor.ImplementationType = typeof<FunctionalGrainTypeOptionsPostConfigure>)
 
             services.Remove postConfigure |> ignore
+
+// ──────────────────────────────────────────────────────────────────────────────
+// A definition nothing binds — the silo-side payload-type declaration
+// ──────────────────────────────────────────────────────────────────────────────
+
+type ValidatorActor = private ValidatorActor of unit
+
+/// <summary>An argument type used by nothing else in the process.</summary>
+type ValidatorArgument = { note: string }
+
+/// <summary>A reply type used by nothing else in the process.</summary>
+type ValidatorReply = { echoed: string }
+
+[<NoEquality; NoComparison>]
+type ValidatorApi = { keep: ValidatorArgument -> Task<ValidatorReply> }
+
+type ValidatorState = { seen: int }
+
+let private validatorDefinition =
+    let contract =
+        grainContract<ValidatorActor, string, ValidatorApi> () {
+            grainType "functional.validator"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { seen = 0 })
+
+        handle (_.keep) (fun _ state (payload: ValidatorArgument) ->
+            task { return { seen = state.seen + 1 }, { echoed = payload.note } })
+    }
+
+/// <summary>
+/// A silo hosting a definition NO client in this process ever binds, so the client-side binding
+/// preflight cannot mask the silo-side declaration.
+/// </summary>
+type UnboundDefinitionSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddFunctionalGrain validatorDefinition |> ignore
 
 /// <summary>A silo whose transport limit violates the ValidateOnStart rule.</summary>
 type InvalidLimitSiloConfigurator() =
@@ -193,6 +234,54 @@ let ``silo startup validation rejects a manifest which disagrees with the regist
 
     Assert.Contains(reported, (fun message -> message.Contains "Orleans.FSharp functional silo startup"))
     Assert.Contains(reported, (fun message -> message.Contains "post-configure did not run"))
+
+/// <remarks>
+/// The silo startup validator declares every hosted argument and reply type as a top-level
+/// payload type (Phase-2 defect 2 on the target side). The cluster fixture cannot prove this:
+/// its client binds the same definitions in the same process and therefore declares those types
+/// into the same static table first. Here NOTHING binds the definition, so the only code that
+/// can put these two type names into the table is the validator's declaration loop — deleting
+/// it makes the two "after" assertions fail with a type-resolution error.
+/// </remarks>
+[<Fact>]
+let ``starting a silo declares the payload types of a definition nothing binds`` () =
+    let argument =
+        FSharpBinaryFormat.serializeWithType (box { note = "silo-only" }) typeof<ValidatorArgument>
+
+    let reply =
+        FSharpBinaryFormat.serializeWithType (box { echoed = "silo-only" }) typeof<ValidatorReply>
+
+    // Before the silo exists, the elided-type path resolves neither name.
+    for bytes in [ argument; reply ] do
+        let before =
+            Assert.Throws<InvalidOperationException>(fun () ->
+                FSharpBinaryFormat.deserializeWithType bytes null |> ignore)
+
+        Assert.Contains("not found", before.Message)
+
+    let cluster = deploy<UnboundDefinitionSiloConfigurator> ()
+
+    try
+        // The silo really hosts it — otherwise the declaration loop had nothing to declare.
+        let manifest =
+            (siloServices cluster)
+                .GetRequiredService<IClusterManifestProvider>()
+                .LocalGrainManifest
+
+        Assert.True(manifest.Grains.ContainsKey(GrainType.Create "functional.validator"))
+
+        Assert.Equal<ValidatorArgument>(
+            { note = "silo-only" },
+            unbox (FSharpBinaryFormat.deserializeWithType argument null)
+        )
+
+        Assert.Equal<ValidatorReply>(
+            { echoed = "silo-only" },
+            unbox (FSharpBinaryFormat.deserializeWithType reply null)
+        )
+    finally
+        cluster.StopAllSilos()
+        cluster.Dispose()
 
 [<Fact>]
 let ``a non-positive payload limit fails silo startup`` () =
