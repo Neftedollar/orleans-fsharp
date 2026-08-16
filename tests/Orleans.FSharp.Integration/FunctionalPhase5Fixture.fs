@@ -43,6 +43,7 @@ module Phase5Probe =
     let private reminderTokens = ConcurrentDictionary<string, bool>()
     let private activations = ConcurrentDictionary<string, int>()
     let private timerTicks = ConcurrentDictionary<string, int>()
+    let private timerTokens = ConcurrentDictionary<string, bool>()
 
     /// <summary>Record one occurrence of a named ordering stage, keeping its first tick and a count.</summary>
     let recordStage (name: string) =
@@ -86,14 +87,20 @@ module Phase5Probe =
         | true, value -> Some value
         | _ -> None
 
-    let recordTimerTick (grainId: string) (timerName: string) =
+    let recordTimerTick (grainId: string) (timerName: string) (canBeCancelled: bool) =
         let key = $"{grainId}:{timerName}"
         timerTicks.AddOrUpdate(key, 1, fun _ current -> current + 1) |> ignore
+        timerTokens.[key] <- canBeCancelled
 
     let timerTickCount (grainId: string) (timerName: string) =
         match timerTicks.TryGetValue $"{grainId}:{timerName}" with
         | true, value -> value
         | _ -> 0
+
+    let timerTokenCouldCancel (grainId: string) (timerName: string) =
+        match timerTokens.TryGetValue $"{grainId}:{timerName}" with
+        | true, value -> Some value
+        | _ -> None
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Log capture: the runtime's own Debug-level dispatch/timer-disposal/DisposeInstance traces
@@ -198,6 +205,9 @@ module Phase5GrainTypes =
 
     [<Literal>]
     let Collection = "phase5.collection"
+
+    [<Literal>]
+    let CollectionEphemeral = "phase5.collection.ephemeral"
 
     [<Literal>]
     let Context = "phase5.context"
@@ -305,7 +315,7 @@ let private timerDefinition =
             (GrainTimerCreationOptions(DueTime = TimeSpan.Zero, Period = Phase5Timing.TimerPeriod, KeepAlive = false))
             (fun context state ->
                 task {
-                    Phase5Probe.recordTimerTick (string context.grainId) "poll"
+                    Phase5Probe.recordTimerTick (string context.grainId) "poll" context.cancellationToken.CanBeCanceled
                     return { state with polls = state.polls + 1 }
                 })
 
@@ -342,7 +352,7 @@ let private timerKeepAliveDefinition =
             (GrainTimerCreationOptions(DueTime = TimeSpan.Zero, Period = Phase5Timing.TimerPeriod, KeepAlive = true))
             (fun context state ->
                 task {
-                    Phase5Probe.recordTimerTick (string context.grainId) "poll"
+                    Phase5Probe.recordTimerTick (string context.grainId) "poll" context.cancellationToken.CanBeCanceled
                     return { state with polls = state.polls + 1 }
                 })
 
@@ -394,6 +404,38 @@ let private collectionDefinition =
                 return next, ()
             })
 
+        handle (_.snapshot) (fun _ state () -> task { return state, state.marker })
+    }
+
+/// <summary>
+/// An ephemeral twin of <see cref="T:Orleans.FSharp.Integration.FunctionalPhase5Fixture.CollectionActor"/>:
+/// same collectionAge override, but no attached persistent state at all, so a collected and
+/// reactivated instance has nothing to reload and must re-run its initializer instead.
+/// </summary>
+type CollectionEphemeralActor = private CollectionEphemeralActor of unit
+
+let private collectionEphemeralContract =
+    grainContract<CollectionEphemeralActor, string, CollectionApi> () {
+        grainType Phase5GrainTypes.CollectionEphemeral
+        stringKey
+        readOnly (_.snapshot)
+    }
+
+let private collectionEphemeralDefinition =
+    grainFor collectionEphemeralContract {
+        defaultState (fun () -> { marker = "" })
+        collectionAge Phase5Timing.CollectionAge
+
+        onActivate (fun context state ->
+            task {
+                Phase5Probe.recordActivation (string context.grainId)
+                return state
+            })
+
+        // An in-memory-only mutation, never written anywhere: it can only survive if the SAME
+        // activation is still alive. A reactivation always re-runs the initializer and observes
+        // the pristine "" marker, never this value.
+        handle (_.writeNow) (fun _ state (value: string) -> task { return { marker = value }, () })
         handle (_.snapshot) (fun _ state () -> task { return state, state.marker })
     }
 
@@ -462,6 +504,7 @@ let reminderRef = FunctionalGrain.ref reminderContract
 let timerRef = FunctionalGrain.ref timerContract
 let timerKeepAliveRef = FunctionalGrain.ref timerKeepAliveContract
 let collectionRef = FunctionalGrain.ref collectionContract
+let collectionEphemeralRef = FunctionalGrain.ref collectionEphemeralContract
 let contextRef = FunctionalGrain.ref contextContract
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -495,6 +538,7 @@ type Phase5SiloConfigurator() =
             siloBuilder.AddFunctionalGrain timerDefinition |> ignore
             siloBuilder.AddFunctionalGrain timerKeepAliveDefinition |> ignore
             siloBuilder.AddFunctionalGrain collectionDefinition |> ignore
+            siloBuilder.AddFunctionalGrain collectionEphemeralDefinition |> ignore
             siloBuilder.AddFunctionalGrain contextDefinition |> ignore
 
             siloBuilder.Services.AddSingleton<ILoggerProvider, Phase5LogProvider>() |> ignore
@@ -528,12 +572,14 @@ type Phase5ClusterFixture() =
     member _.Timer(key: string) = timerRef cluster.Client key
     member _.TimerKeepAlive(key: string) = timerKeepAliveRef cluster.Client key
     member _.Collection(key: string) = collectionRef cluster.Client key
+    member _.CollectionEphemeral(key: string) = collectionEphemeralRef cluster.Client key
     member _.Context(key: string) = contextRef cluster.Client key
 
     member _.ReminderId(key: string) = $"{Phase5GrainTypes.Reminder}/{key}"
     member _.TimerId(key: string) = $"{Phase5GrainTypes.Timer}/{key}"
     member _.TimerKeepAliveId(key: string) = $"{Phase5GrainTypes.TimerKeepAlive}/{key}"
     member _.CollectionId(key: string) = $"{Phase5GrainTypes.Collection}/{key}"
+    member _.CollectionEphemeralId(key: string) = $"{Phase5GrainTypes.CollectionEphemeral}/{key}"
 
     interface IDisposable with
         member _.Dispose() =

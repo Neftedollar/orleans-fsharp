@@ -140,6 +140,11 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
 
             let! polls = api.snapshot ()
             Assert.True(polls >= 3, $"expected accumulated whole-state replacement, got {polls}")
+
+            // "Timer hook: token from the Orleans timer callback" — unlike the reminder token,
+            // which is always CancellationToken.None, the timer callback's token is a real,
+            // cancellable one.
+            Assert.Equal(Some true, Phase5Probe.timerTokenCouldCancel grainId "poll")
         }
 
     /// <remarks>
@@ -303,6 +308,37 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
             // Durable state reloads: the reactivation loaded the explicitly written record.
             let! snapshot = api.snapshot ()
             Assert.Equal("durable-marker", snapshot)
+        }
+
+    /// <remarks>
+    /// The ephemeral half of the same rule: "ephemeral state re-initializes." An in-memory-only
+    /// mutation which was never written anywhere cannot survive a real recollection — only the
+    /// SAME activation could still hold it — so observing the pristine initializer value after
+    /// reactivation is exactly what "re-initializes" (as opposed to "reloads") means here.
+    /// </remarks>
+    [<Fact>]
+    member _.``a collectionAge override on an ephemeral definition re-initializes state on reactivation``
+        ()
+        =
+        task {
+            let name = key "collection-ephemeral"
+            let grainId = fixture.CollectionEphemeralId name
+            let api = fixture.CollectionEphemeral name
+
+            do! api.writeNow "in-memory-only"
+            let! before = api.snapshot ()
+            Assert.Equal("in-memory-only", before)
+
+            let activationsBefore = Phase5Probe.activationCount grainId
+            do! Task.Delay(Phase5Timing.CollectionAge + Phase5Timing.CollectionQuantum + Phase5Timing.CollectionQuantum)
+
+            let! reactivated =
+                pollByCalling 20.0 api.snapshot (fun _ -> Phase5Probe.activationCount grainId > activationsBefore)
+
+            Assert.True(reactivated, "an idle ephemeral activation past its collectionAge override must be collected")
+
+            let! after = api.snapshot ()
+            Assert.Equal("", after)
         }
 
     // ──────────────────────────────────────────────────────────────────────────
