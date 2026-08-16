@@ -11,7 +11,7 @@ description: "Complete guide to the grain computation expression."
 > the old `GrainContext`, `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, `Reminder`,
 > and the `FSharpGrain.*` handle module -- now carries `[<Obsolete>]` (warning, not error). It keeps
 > compiling and running; new code should use the functional grain runtime described in
-> [functional-grains.md](functional-grains.md), which also carries the before/after mapping table.
+> [functional-grains.md](/orleans-fsharp/functional-grains/), which also carries the before/after mapping table.
 
 ## What you'll learn
 
@@ -657,7 +657,7 @@ let chatRoom =
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md) -- configure storage, clustering, and streaming for your grains
-- [Streaming](streaming.md) -- publish and subscribe to events
-- [Testing](testing.md) -- test your grain definitions with FsCheck and TestHarness
-- [Advanced](advanced.md) -- transactions, grain directory, OpenTelemetry, shutdown, state migration
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) -- configure storage, clustering, and streaming for your grains
+- [Streaming](/orleans-fsharp/streaming/) -- publish and subscribe to events
+- [Testing](/orleans-fsharp/testing/) -- test your grain definitions with FsCheck and TestHarness
+- [Advanced](/orleans-fsharp/advanced/) -- transactions, grain directory, OpenTelemetry, shutdown, state migration

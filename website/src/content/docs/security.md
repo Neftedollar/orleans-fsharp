@@ -422,6 +422,6 @@ let config = siloConfig {
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md) -- TLS and filter configuration
-- [Advanced](advanced.md) -- transactions and more security patterns
-- [API Reference](api-reference.md) -- all public security-related APIs
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) -- TLS and filter configuration
+- [Advanced](/orleans-fsharp/advanced/) -- transactions and more security patterns
+- [API Reference](/orleans-fsharp/api-reference/) -- all public security-related APIs

@@ -11,7 +11,7 @@ description: "Quick reference for all public modules, types, and functions in Or
 > `GrainContext`, `AdditionalStateSpec`, `FSharpGrainAttribute`, `IFSharpGrain*`, the
 > `FSharpGrainHandle*` types, the `FSharpGrain.*` module, `AddFSharpGrain(sFromAssembly)`, `Timers`
 > and `Reminder` -- now carry `[<Obsolete>]` (warning, not error). See
-> [functional-grains.md](functional-grains.md) for the replacement of each.
+> [functional-grains.md](/orleans-fsharp/functional-grains/) for the replacement of each.
 
 ---
 
@@ -63,7 +63,7 @@ description: "Quick reference for all public modules, types, and functions in Or
 | `onTimer` | `string * TimeSpan * TimeSpan * ('State -> Task<'State>)` | Declarative timer: name, dueTime, period, handler |
 | `interleaveMessage` | `System.Type` | Allow a message type to interleave (`interleaveMessage typeof<Query>`) |
 
-See [Grain Definition guide](grain-definition.md) for the full keyword list. Per-grain Orleans
+See [Grain Definition guide](/orleans-fsharp/grain-definition/) for the full keyword list. Per-grain Orleans
 attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
 `[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
 
@@ -255,7 +255,7 @@ services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
 
 #### `GrainResilience` — Polly v8 resilience wrappers
 
-Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](resilience.md).
+Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](/orleans-fsharp/resilience/).
 
 | Type | Description |
 |---|---|

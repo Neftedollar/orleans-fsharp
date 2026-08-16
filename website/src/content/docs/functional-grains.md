@@ -19,7 +19,7 @@ description: "A second, complete authoring model: user-authored API records inst
 ## Overview
 
 The functional grain runtime is a second, independent way to author and call grains, alongside
-the `grain { }` CE / CodeGen path described in [Grain Definition](grain-definition.md). Instead of
+the `grain { }` CE / CodeGen path described in [Grain Definition](/orleans-fsharp/grain-definition/). Instead of
 a C# interface generated at build time, you write a plain F# record of functions -- the **API
 record** -- and a **contract** that gives it a stable wire identity:
 
@@ -344,7 +344,7 @@ Two members of the cluster are deliberately left unattributed, both recorded wit
 invisible where it matters), and `UniversalGrainHandlerRegistry`, the silo-side dispatcher wired
 by the already-obsolete `AddFSharpGrain` — a consumer only reaches it after being warned at that
 entry point. The prose that hands a reader a recipe naming it directly is
-[testing.md](testing.md), "Testing the Universal Grain Pattern" (in this repository and in its
+[testing.md](/orleans-fsharp/testing/), "Testing the Universal Grain Pattern" (in this repository and in its
 published mirror under `website/src/content/docs/`, which is what the docs site ships), plus the
 "Understanding the Universal Grain Pattern" section of `DEVGUIDE.md`; each of those three now sits
 under a deprecation banner. `CHANGELOG.md` also names it, in the historical release entry that
@@ -426,8 +426,8 @@ carries `[<Obsolete>]`.
 
 ## See also
 
-- [Grain Definition](grain-definition.md) -- the original `grain { }` CE / CodeGen authoring model
-- [Silo Configuration](silo-configuration.md) / [Client Configuration](client-configuration.md) --
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- the original `grain { }` CE / CodeGen authoring model
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) / [Client Configuration](/orleans-fsharp/client-configuration/) --
   `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
   there
 - `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the complete runnable sample this guide's

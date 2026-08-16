@@ -10,7 +10,7 @@ description: "Zero to working grain in 15 minutes."
 > **Note.** This guide uses the `grain { }` CE and the universal `FSharpGrain.ref`/`send` pattern,
 > which now carry `[<Obsolete>]` (warning, not error) -- they still work exactly as described. For
 > the current authoring model (`grainContract` / `grainFor` / `FunctionalGrain.ref` /
-> `AddFunctionalGrain`), see [functional-grains.md](functional-grains.md).
+> `AddFunctionalGrain`), see [functional-grains.md](/orleans-fsharp/functional-grains/).
 
 ## What you'll learn
 
@@ -257,10 +257,10 @@ dotnet test
 
 | Guide | Description |
 |---|---|
-| [Grain Definition](grain-definition.md) | Complete `grain { }` CE reference — all 31 keywords |
-| [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
-| [Serialization](serialization.md) | FSharpBinaryCodec, JSON fallback, Orleans native |
-| [Streaming](streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](event-sourcing.md) | CQRS with `eventSourcedGrain { }` |
-| [Testing](testing.md) | TestHarness, GrainMock, property tests |
-| [API Reference](api-reference.md) | All public modules and functions |
+| [Grain Definition](/orleans-fsharp/grain-definition/) | Complete `grain { }` CE reference — all 31 keywords |
+| [Silo Configuration](/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
+| [Serialization](/orleans-fsharp/serialization/) | FSharpBinaryCodec, JSON fallback, Orleans native |
+| [Streaming](/orleans-fsharp/streaming/) | Publish, subscribe, TaskSeq, broadcast |
+| [Event Sourcing](/orleans-fsharp/event-sourcing/) | CQRS with `eventSourcedGrain { }` |
+| [Testing](/orleans-fsharp/testing/) | TestHarness, GrainMock, property tests |
+| [API Reference](/orleans-fsharp/api-reference/) | All public modules and functions |

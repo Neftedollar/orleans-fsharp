@@ -10,7 +10,7 @@ Orleans.FSharp offers three serialization modes. Choose based on your needs — 
 > **Note.** `AddFSharpGrain`, the `grain { }` CE and `GrainDefinition<_,_>` referenced below now
 > carry `[<Obsolete>]` (warning, not error). Codec registration works the same way under the
 > functional grain runtime -- `AddFunctionalGrain` also registers `FSharpBinaryCodec` -- see
-> [functional-grains.md](functional-grains.md).
+> [functional-grains.md](/orleans-fsharp/functional-grains/).
 
 ## Quick Comparison
 
@@ -213,7 +213,7 @@ let config = siloConfig {
 | Add record field | **Fails** (FSharp.SystemTextJson strict) | **Fails** (ordinal-based) | **Fails** (ordinal-based) |
 | Rename DU case | Fails (name-based) | Works (ordinal-based) | Works (ordinal-based) |
 
-For schema migrations across versions, use the [StateMigration](advanced.md) module.
+For schema migrations across versions, use the [StateMigration](/orleans-fsharp/advanced/) module.
 
 ## Performance
 
@@ -229,7 +229,7 @@ All modes are fast enough for real-world Orleans usage. Grain call network laten
 
 ## Next Steps
 
-- [Getting Started](getting-started.md) — build your first grain
-- [Grain Definition](grain-definition.md) — all 31 CE keywords
-- [Advanced](advanced.md) — state migration for schema evolution
-- [Testing](testing.md) — FsCheck property tests for serialization roundtrips
+- [Getting Started](/orleans-fsharp/getting-started/) — build your first grain
+- [Grain Definition](/orleans-fsharp/grain-definition/) — all 31 CE keywords
+- [Advanced](/orleans-fsharp/advanced/) — state migration for schema evolution
+- [Testing](/orleans-fsharp/testing/) — FsCheck property tests for serialization roundtrips

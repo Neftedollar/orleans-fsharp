@@ -7,7 +7,7 @@ description: Comparison of Orleans.FSharp, raw C# Microsoft Orleans, Akkling (Ak
 
 > **Note.** The `grain { }` CE used in the F#-API comparisons below now carries `[<Obsolete>]`
 > (warning, not error); the current grain authoring model is the functional grain runtime described
-> in [functional-grains.md](functional-grains.md). Both ship in the same packages, so the
+> in [functional-grains.md](/orleans-fsharp/functional-grains/). Both ship in the same packages, so the
 > package-level comparison is unchanged.
 
 ## Quick comparison

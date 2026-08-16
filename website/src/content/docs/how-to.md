@@ -10,7 +10,7 @@ Orleans.FSharp provides idiomatic F# computation expressions for Microsoft Orlea
 > **Note.** This tutorial is written against the `grain { }` CE, which now carries `[<Obsolete>]`
 > (warning, not error) -- every step still works exactly as written. For the current grain authoring
 > model (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) see
-> [functional-grains.md](functional-grains.md); the silo, persistence and testing steps are the same
+> [functional-grains.md](/orleans-fsharp/functional-grains/); the silo, persistence and testing steps are the same
 > under both models.
 
 ## Prerequisites

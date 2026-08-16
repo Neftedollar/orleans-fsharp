@@ -6,7 +6,7 @@ description: Common questions about Orleans.FSharp — the idiomatic F# API for 
 > **Note.** Grain authoring has two models. The `grain { }` CE shown on this page still compiles and
 > runs, but its public surface now carries `[<Obsolete>]` (warning, not error); new code should use
 > the functional grain runtime (`grainContract` / `grainFor` / `FunctionalGrain.ref` /
-> `AddFunctionalGrain`). See [functional-grains.md](functional-grains.md). `siloConfig { }`,
+> `AddFunctionalGrain`). See [functional-grains.md](/orleans-fsharp/functional-grains/). `siloConfig { }`,
 > `clientConfig { }` and `eventSourcedGrain { }` are unaffected.
 
 ## What is Orleans.FSharp?

@@ -9,7 +9,7 @@ description: "Publish, subscribe, and consume streams."
 
 > **Note.** The streaming APIs on this page are current. The `grain { }` CE used in the examples to
 > host them now carries `[<Obsolete>]` (warning, not error); see
-> [functional-grains.md](functional-grains.md) for the current grain authoring model.
+> [functional-grains.md](/orleans-fsharp/functional-grains/) for the current grain authoring model.
 
 ## What you'll learn
 
@@ -257,6 +257,6 @@ for event in events do
 
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- `interleaveMessage` and other grain features
-- [Silo Configuration](silo-configuration.md) -- configure stream providers
-- [Event Sourcing](event-sourcing.md) -- CQRS pattern with event streams
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- `interleaveMessage` and other grain features
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) -- configure stream providers
+- [Event Sourcing](/orleans-fsharp/event-sourcing/) -- CQRS pattern with event streams

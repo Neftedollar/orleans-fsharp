@@ -223,6 +223,11 @@ jobs:
       - name: Build the docs site
         working-directory: website
         run: npm ci && npm run build
+      # Checks the emitted HTML, both link forms: an absolute href under the base path that
+      # points at no emitted page, and a relative `page.md` href — Astro copies the latter
+      # through verbatim and never emits a .md file, so it 404s from every page that carries
+      # it. The first version of this check skipped relative hrefs and reported "0 broken"
+      # over 67 of them.
       - name: No broken internal links in the built site
         run: python3 scripts/check-docs-links.py
 

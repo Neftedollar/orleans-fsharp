@@ -9,7 +9,7 @@ description: "Complete siloConfig CE reference."
 
 > **Note.** `siloConfig { }` itself is current and not deprecated. The few `grain { persist ... }`
 > snippets on this page illustrate the deprecated `grain { }` CE, which now carries `[<Obsolete>]`
-> (warning, not error); see [functional-grains.md](functional-grains.md) for its replacement.
+> (warning, not error); see [functional-grains.md](/orleans-fsharp/functional-grains/) for its replacement.
 
 ## What you'll learn
 
@@ -627,7 +627,7 @@ let config = siloConfig {
 
 ## Next steps
 
-- [Client Configuration](client-configuration.md) -- configure Orleans clients
-- [Grain Definition](grain-definition.md) -- define grains that use these providers
-- [Streaming](streaming.md) -- publish and subscribe to events
-- [Security](security.md) -- TLS, mTLS, and call filters in depth
+- [Client Configuration](/orleans-fsharp/client-configuration/) -- configure Orleans clients
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- define grains that use these providers
+- [Streaming](/orleans-fsharp/streaming/) -- publish and subscribe to events
+- [Security](/orleans-fsharp/security/) -- TLS, mTLS, and call filters in depth

@@ -11,7 +11,7 @@ description: "TestHarness, GrainMock, GrainArbitrary, FsCheck, and log capture."
 > `GrainMock.withFSharpGrain*` helpers they use, test the deprecated `grain { }` model and now carry
 > `[<Obsolete>]` (warning, not error). Functional-runtime grains are tested against a TestingHost
 > silo with `AddFunctionalGrain` + `FunctionalGrain.ref harness.Client`; see
-> [functional-grains.md](functional-grains.md).
+> [functional-grains.md](/orleans-fsharp/functional-grains/).
 
 ## What you'll learn
 
@@ -723,6 +723,6 @@ module ScoreProperties =
 
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- the grain definitions you are testing
-- [Event Sourcing](event-sourcing.md) -- testing event-sourced grains
-- [Advanced](advanced.md) -- transactions, serialization, and more
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- the grain definitions you are testing
+- [Event Sourcing](/orleans-fsharp/event-sourcing/) -- testing event-sourced grains
+- [Advanced](/orleans-fsharp/advanced/) -- transactions, serialization, and more
