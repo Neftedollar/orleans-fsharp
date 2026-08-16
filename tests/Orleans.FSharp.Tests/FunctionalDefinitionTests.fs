@@ -184,6 +184,14 @@ let ``the same state name with a different provider fails definition sealing`` (
     test <@ error.Message.Contains "is attached more than once" @>
     test <@ not (error.Message.Contains "already attached as the primary state") @>
 
+/// <remarks>
+/// Task-7 close-out A.4: this is the positive arm of `repeatsPrimary` — the same descriptor
+/// value (matching StateName, ProviderName, AND StoredType) reattached via `usePersistentState`
+/// really is the primary repeated, so the "already attached as the primary state" sentence must
+/// be present. Asserting only "is attached more than once" (as this test did before) would still
+/// pass with `repeatsPrimary` hardcoded to `false`, since that substring is common to both arms
+/// of the message; the sentence below only appears on the true arm.
+/// </remarks>
 [<Fact>]
 let ``the primary descriptor must not be repeated with usePersistentState`` () =
     let error =
@@ -198,6 +206,7 @@ let ``the primary descriptor must not be repeated with usePersistentState`` () =
             |> ignore)
 
     test <@ error.Message.Contains "is attached more than once" @>
+    test <@ error.Message.Contains "already attached as the primary state" @>
 
 [<Fact>]
 let ``persistent descriptors reject blank and NUL names`` () =

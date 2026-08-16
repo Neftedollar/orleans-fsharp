@@ -169,6 +169,24 @@ module Phase5Probe =
 module Phase5LogCapture =
     let entries = ConcurrentQueue<string>()
 
+    /// <summary>
+    /// Task-7 close-out A.6: this queue is shared by every test in the fixture's collection for
+    /// the fixture's whole lifetime — every functional-runtime Debug log line the shared silo
+    /// emits lands here, including from tests that never call <c>clear()</c> before or after
+    /// themselves. Left unbounded, a long test run keeps every line for the whole process
+    /// lifetime. The cap keeps memory bounded without changing any single test's read of its own
+    /// recent entries, since tests read immediately after acting and no assertion here depends on
+    /// the queue's full history.
+    /// </summary>
+    [<Literal>]
+    let private Capacity = 5000
+
+    let enqueue (entry: string) =
+        entries.Enqueue entry
+
+        while entries.Count > Capacity do
+            entries.TryDequeue() |> ignore
+
     let clear () = entries.Clear()
 
     let contains (fragment: string) =
@@ -218,7 +236,7 @@ type private Phase5CaptureLogger(category: string) =
         member _.Log<'TState>(level, _eventId, state: 'TState, error: exn, formatter: Func<'TState, exn, string>) =
             if level >= LogLevel.Debug then
                 let rendered = formatter.Invoke(state, error)
-                Phase5LogCapture.entries.Enqueue $"{category}|{rendered}"
+                Phase5LogCapture.enqueue $"{category}|{rendered}"
 
                 // Deactivation-ordering stages 3 and 4 are otherwise opaque runtime internals:
                 // this is the only place outside the runtime itself that can observe them, since
@@ -296,12 +314,19 @@ type Phase5StopStageWitness() =
 [<Sealed>]
 type SettableTimeProvider() =
     inherit TimeProvider()
+    // Task-7 close-out A.6: `Set` runs on the test thread, `GetUtcNow` runs on whatever
+    // activation thread services the grain call the override is aimed at — two different
+    // threads with no lock or await between them to guarantee the write is visible. On a
+    // relaxed memory model (observed on arm64) a plain `mutable` field read on the activation
+    // thread could still see the stale `None` after `Set` has returned on the test thread.
+    // `option` is a reference type, so `Volatile.Read`/`Volatile.Write` publish the write with
+    // the release/acquire fence this crossing needs, without a lock.
     let mutable overridden: DateTimeOffset option = None
-    member _.Set(value: DateTimeOffset) = overridden <- Some value
-    member _.Reset() = overridden <- None
+    member _.Set(value: DateTimeOffset) = Volatile.Write(&overridden, Some value)
+    member _.Reset() = Volatile.Write(&overridden, None)
 
     override _.GetUtcNow() =
-        match overridden with
+        match Volatile.Read(&overridden) with
         | Some value -> value
         | None -> TimeProvider.System.GetUtcNow()
 
@@ -761,6 +786,16 @@ type Phase5SiloConfigurator() =
 
             siloBuilder.UseInMemoryReminderService() |> ignore
 
+            // Task-7 close-out A.1: Orleans only creates a per-call Activity (which dispatch
+            // then tags) when something actually samples its "Microsoft.Orleans.Runtime" /
+            // "Microsoft.Orleans.Application" ActivitySources — the built-in grain-call filter
+            // that starts/propagates that Activity is opt-in via AddActivityPropagation(), the
+            // same extension point the OpenTelemetry docs guide points applications at. Without
+            // it, Activity.Current is always null during dispatch and the tagging code, though
+            // present, has nothing to tag — enabling it here is what makes the activity-tagging
+            // test below observe real Activities rather than trivially passing on an empty set.
+            siloBuilder.AddActivityPropagation() |> ignore
+
             siloBuilder.Services.Configure<ReminderOptions>(fun (options: ReminderOptions) ->
                 options.MinimumReminderPeriod <- Phase5Timing.MinimumReminderPeriod)
             |> ignore
@@ -800,6 +835,7 @@ type Phase5ClientConfigurator() =
     interface IClientBuilderConfigurator with
         member _.Configure(_configuration: IConfiguration, clientBuilder: IClientBuilder) =
             clientBuilder.AddFunctionalGrainClient() |> ignore
+            clientBuilder.AddActivityPropagation() |> ignore
 
 [<Sealed>]
 type Phase5ClusterFixture() =

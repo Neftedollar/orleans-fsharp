@@ -5,6 +5,7 @@
 module Orleans.FSharp.Integration.FunctionalPhase5IntegrationTests
 
 open System
+open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
@@ -349,7 +350,20 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
 
             // Wait well past this grain type's own short collectionAge override, with no calls.
             // A KeepAlive=true timer ticking throughout must keep the SAME activation alive.
-            do! Task.Delay(Phase5Timing.CollectionAge + Phase5Timing.CollectionQuantum + Phase5Timing.CollectionQuantum)
+            //
+            // Task-7 close-out A.7: this test's assertion is negative (no recollection observed),
+            // so it only proves anything if the collector actually got a fair chance to sweep a
+            // stale activation within the window. The collector runs every CollectionQuantum, and
+            // sweeps are aligned to silo startup rather than to this test's `touch()` call, so the
+            // worst-case first sweep after the grain becomes theoretically eligible can land
+            // almost a full quantum later than the CollectionAge threshold alone suggests. The
+            // previous window (CollectionAge + 2*Quantum) left only one quantum (0.5s) of margin
+            // beyond that worst case — on a loaded CI runner a late collector sweep could silently
+            // swallow the whole margin, and a REAL KeepAlive bug (the grain actually eligible for
+            // collection) would then go undetected purely because the test didn't wait long enough
+            // to see the collector catch up, not because KeepAlive worked. Six quanta of margin
+            // (3s) makes that far less likely while keeping the test's total wall time bounded.
+            do! Task.Delay(Phase5Timing.CollectionAge + (TimeSpan.FromTicks(Phase5Timing.CollectionQuantum.Ticks * 6L)))
 
             // The call itself is what proves it: if the activation HAD been collected, this call
             // would trigger a fresh one and bump the activation count.
@@ -600,6 +614,7 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
     member _.``dispatch tracing includes grain type, operation, version, grain id, and outcome``() =
         task {
             let name = key "tracing"
+            let grainId = fixture.ContextId name
             let api = fixture.Context name
             Phase5LogCapture.clear ()
 
@@ -614,6 +629,10 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
                     entry.Contains(Phase5GrainTypes.Context, StringComparison.Ordinal)
                     && entry.Contains("operationId=clock", StringComparison.Ordinal)
                     && entry.Contains("version=1", StringComparison.Ordinal)
+                    // Task-7 close-out A.5: a distinct "grainId=<exact GrainId>" token, not
+                    // merely a substring `Contains` that a grain-type or operation token could
+                    // also satisfy (e.g. a grain type name that happens to contain "grainId").
+                    && entry.Contains($"grainId={grainId}", StringComparison.Ordinal)
                     && entry.Contains("outcome=success", StringComparison.Ordinal))
             )
 
@@ -628,6 +647,7 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
                 failureEntries
                 |> List.exists (fun entry ->
                     entry.Contains("operationId=boom", StringComparison.Ordinal)
+                    && entry.Contains($"grainId={grainId}", StringComparison.Ordinal)
                     && entry.Contains("outcome=failed", StringComparison.Ordinal))
             )
 
@@ -635,5 +655,86 @@ type FunctionalPhase5Tests(fixture: Phase5ClusterFixture) =
             // exception message must never appear in the dispatch trace line itself.
             Assert.False(
                 failureEntries |> List.exists (fun entry -> entry.Contains("boom-for-tracing", StringComparison.Ordinal))
+            )
+        }
+
+    /// <remarks>
+    /// Task-7 close-out A.1: "Logs AND activities" — this half was unimplemented (log-only).
+    /// Dispatch tags the ambient <c>Activity.Current</c>, when Orleans' own
+    /// "Microsoft.Orleans.Runtime" instrumentation started one for the call, with exactly the
+    /// five fields the spec names and nothing application-shaped. An <c>ActivityListener</c>
+    /// forces Orleans to actually create+sample that Activity for the duration of this test —
+    /// without a listener sampling the source, no Activity would exist to tag at all, which is
+    /// what "when one exists" in the spec sentence is conditioned on. Captured activities are
+    /// filtered to this call's exact grainId so concurrently-running tests' unrelated grain
+    /// calls (which share the same process-wide ActivitySource) cannot contaminate the result.
+    /// </remarks>
+    [<Fact>]
+    member _.``dispatch tags the ambient Activity with grain type, operation, version, grain id, and outcome``
+        ()
+        =
+        task {
+            let name = key "activity-tracing"
+            let grainId = fixture.ContextId name
+            let api = fixture.Context name
+
+            let captured = System.Collections.Concurrent.ConcurrentBag<Activity>()
+
+            use listener =
+                new ActivityListener(
+                    ShouldListenTo = (fun source -> source.Name = "Microsoft.Orleans.Runtime"),
+                    Sample = (fun (_: byref<ActivityCreationOptions<ActivityContext>>) -> ActivitySamplingResult.AllData),
+                    ActivityStopped = (fun activity -> captured.Add activity)
+                )
+
+            ActivitySource.AddActivityListener listener
+
+            let! _ = api.clock ()
+            let! _ = Assert.ThrowsAnyAsync<exn>(fun () -> api.boom () :> Task)
+
+            let tag (activity: Activity) (name: string) =
+                match activity.GetTagItem name with
+                | null -> None
+                | value -> Some(string value)
+
+            let taggedFor (grainId: string) (operationId: string) =
+                captured
+                |> Seq.filter (fun activity ->
+                    tag activity "grainId" = Some grainId && tag activity "operationId" = Some operationId)
+                |> List.ofSeq
+
+            let successActivities = taggedFor grainId "clock"
+
+            Assert.True(
+                successActivities.Length >= 1,
+                $"expected at least one sampled Activity tagged for grainId={grainId} operationId=clock; captured {captured.Count} activities total"
+            )
+
+            Assert.True(
+                successActivities
+                |> List.forall (fun activity ->
+                    tag activity "grainType" = Some Phase5GrainTypes.Context
+                    && tag activity "version" = Some "1"
+                    && tag activity "outcome" = Some "success")
+            )
+
+            let failureActivities = taggedFor grainId "boom"
+
+            Assert.True(failureActivities.Length >= 1, "the failing call must be tagged too")
+            Assert.True(failureActivities |> List.forall (fun activity -> tag activity "outcome" = Some "failed"))
+
+            // Payload bytes and application values are excluded: the distinctive application
+            // exception message must never appear as the value of one of the five tags THIS
+            // dispatch code sets. Orleans' own AddActivityPropagation instrumentation records
+            // the exception separately on the same Activity (e.g. an "exception.message" tag or
+            // an ActivityEvent) when the call fails — that is Orleans' own diagnostic behavior,
+            // not a leak from the functional runtime, and is out of scope for this assertion; only
+            // the fixed key set the spec names is checked.
+            let ownTagKeys = [ "grainType"; "operationId"; "version"; "grainId"; "outcome" ]
+
+            Assert.False(
+                failureActivities
+                |> List.exists (fun activity ->
+                    ownTagKeys |> List.exists (fun key -> tag activity key = Some "boom-for-tracing"))
             )
         }

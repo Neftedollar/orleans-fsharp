@@ -50,6 +50,7 @@ let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: Canc
           Services = ServiceCollection().BuildServiceProvider() :> IServiceProvider
           Logger = NullLogger.Instance
           TimeProvider = TimeProvider.System
+          UtcNow = TimeProvider.System.GetUtcNow()
           CancellationToken = token
           DeactivateOnIdle = fun () -> deactivated <- deactivated + 1
           DelayDeactivation = fun span -> delayed <- span
@@ -60,16 +61,32 @@ let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: Canc
 
 [<Fact>]
 let ``the context exposes the decoded key, grain identity, and clock`` () =
-    let context, _, _ = makeContext (fun _ -> null) CancellationToken.None
     let before = DateTimeOffset.UtcNow.AddSeconds -1.0
+    let context, _, _ = makeContext (fun _ -> null) CancellationToken.None
+    let after = DateTimeOffset.UtcNow.AddSeconds 1.0
     let grainTypeText = context.grainId.Type.ToString()
 
     test <@ context.key = "general" @>
     test <@ grainTypeText = "surface.test" @>
     test <@ obj.ReferenceEquals(context.timeProvider, TimeProvider.System) @>
-    test <@ context.utcNow > before @>
+    test <@ context.utcNow > before && context.utcNow < after @>
     test <@ not (isNull (box context.services)) @>
     test <@ not (isNull (box context.logger)) @>
+
+/// <remarks>
+/// Task-7 close-out A.3: <c>utcNow</c> is frozen once at context creation ("contains
+/// <c>utcNow = timeProvider.GetUtcNow()</c>" — a value, not a re-evaluated property), so two
+/// reads through the same context must be byte-for-byte identical even though real wall-clock
+/// time keeps advancing between them.
+/// </remarks>
+[<Fact>]
+let ``utcNow is a single frozen value, not recomputed on each read`` () =
+    let context, _, _ = makeContext (fun _ -> null) CancellationToken.None
+    let first = context.utcNow
+    Thread.Sleep 5
+    let second = context.utcNow
+
+    test <@ first = second @>
 
 [<Fact>]
 let ``the context carries the callback cancellation token`` () =

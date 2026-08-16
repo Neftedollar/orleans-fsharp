@@ -25,6 +25,11 @@ type internal FunctionalContextCore =
         Logger: ILogger
         /// The registered time provider.
         TimeProvider: TimeProvider
+        /// The single <c>utcNow</c> value for this context, read once from
+        /// <see cref="TimeProvider"/> at context creation. Every access through the public
+        /// <c>utcNow</c> member returns this same frozen value, so two reads inside one callback
+        /// can never observe different instants.
+        UtcNow: DateTimeOffset
         /// The token selected by callback kind.
         CancellationToken: CancellationToken
         /// Wrapper for the protected Orleans deactivate-on-idle method.
@@ -60,8 +65,13 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     /// <summary>The registered time provider.</summary>
     member _.timeProvider = core.TimeProvider
 
-    /// <summary>The current time according to <see cref="P:Orleans.FSharp.FunctionalGrainContext`2.timeProvider"/>.</summary>
-    member _.utcNow = core.TimeProvider.GetUtcNow()
+    /// <summary>
+    /// The instant this context was created, read once from
+    /// <see cref="P:Orleans.FSharp.FunctionalGrainContext`2.timeProvider"/>. Stable for the whole
+    /// callback: two reads of <c>utcNow</c> in the same handler, hook, timer, or reminder
+    /// callback always agree.
+    /// </summary>
+    member _.utcNow = core.UtcNow
 
     /// <summary>The cancellation token selected by this callback kind.</summary>
     member _.cancellationToken = core.CancellationToken

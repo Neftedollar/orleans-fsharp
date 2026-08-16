@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Diagnostics
 open System.Runtime.ExceptionServices
 open System.Threading
 open System.Threading.Tasks
@@ -67,6 +68,7 @@ module internal FunctionalContextFactory =
           Services = env.Services
           Logger = env.Logger
           TimeProvider = env.TimeProvider
+          UtcNow = env.TimeProvider.GetUtcNow()
           CancellationToken = cancellationToken
           DeactivateOnIdle = env.DeactivateOnIdle
           DelayDeactivation = env.DelayDeactivation
@@ -247,14 +249,35 @@ module internal FunctionalDispatch =
                         ExceptionDispatchInfo.Capture(error).Throw()
                         return Unchecked.defaultof<FunctionalReply>
                 finally
-                    env.Logger.LogDebug(
-                        "Functional dispatch grainType={GrainType} operationId={OperationId} version={Version} grainId={GrainId} outcome={Outcome}",
-                        grainTypeName,
-                        operation.OperationId,
-                        definition.Version,
-                        env.GrainContext.GrainId,
-                        outcome
-                    )
+                    // "Logs and activities contain grain type, operation ID, version, grain ID,
+                    // and outcome; payload bytes and application values are excluded." The
+                    // ambient Activity (if any diagnostic listener started one for this request)
+                    // is tagged with exactly those five fields and nothing application-shaped.
+                    // Tagging is unconditional — SetTag is a cheap dictionary write and only runs
+                    // at all when an Activity is actually current.
+                    match Activity.Current with
+                    | null -> ()
+                    | activity ->
+                        activity
+                            .SetTag("grainType", grainTypeName)
+                            .SetTag("operationId", operation.OperationId)
+                            .SetTag("version", definition.Version)
+                            .SetTag("grainId", string env.GrainContext.GrainId)
+                            .SetTag("outcome", outcome)
+                        |> ignore
+
+                    // The per-call trace line is Debug-level and fires on every dispatched
+                    // request; guard it so a production silo running at Information (or above)
+                    // never boxes the five arguments into an object[] just to discard them.
+                    if env.Logger.IsEnabled LogLevel.Debug then
+                        env.Logger.LogDebug(
+                            "Functional dispatch grainType={GrainType} operationId={OperationId} version={Version} grainId={GrainId} outcome={Outcome}",
+                            grainTypeName,
+                            operation.OperationId,
+                            definition.Version,
+                            env.GrainContext.GrainId,
+                            outcome
+                        )
             }
 
         ValueTask<FunctionalReply> work
