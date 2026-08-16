@@ -331,6 +331,51 @@ let ``the envelope rejects malformed field values at construction`` () =
     |> List.iter (fun case -> Assert.Throws<InvalidOperationException>(fun () -> case () |> ignore) |> ignore)
 
 [<Fact>]
+let ``the envelope caps the length of its two text fields`` () =
+    // Nothing else bounds fields 0 and 2: the payload limit covers field 5 only, and both of
+    // these are echoed verbatim into diagnostics that reach the log and the remote caller.
+    let cap = FunctionalTransportDiagnostics.MaxWireTextLength
+    let atCap = String('g', cap)
+    let overCap = String('g', cap + 1)
+
+    // The cap is inclusive, so a value exactly at it still constructs.
+    FunctionalRequestEnvelope(atCap, 1, atCap, token, 0uy, payload) |> ignore
+
+    let grainTypeError =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalRequestEnvelope(overCap, 1, "join", token, 0uy, payload) |> ignore)
+
+    let operationIdError =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalRequestEnvelope("chat.room", 1, overCap, token, 0uy, payload) |> ignore)
+
+    test <@ grainTypeError.Message.Contains $"'grainType' must be at most {cap} characters" @>
+    test <@ operationIdError.Message.Contains $"'operationId' must be at most {cap} characters" @>
+
+[<Fact>]
+let ``the envelope rejects control characters in its two text fields`` () =
+    // A newline in either field forges a second log line out of the first one's diagnostic.
+    let hostile =
+        [ "chat\nroom"; "chat\rroom"; "chat\troom"; "chat\broom"; "chat\000room"; "chat\027[31mroom" ]
+
+    hostile
+    |> List.iter (fun value ->
+        let grainTypeError =
+            Assert.Throws<InvalidOperationException>(fun () ->
+                FunctionalRequestEnvelope(value, 1, "join", token, 0uy, payload) |> ignore)
+
+        let operationIdError =
+            Assert.Throws<InvalidOperationException>(fun () ->
+                FunctionalRequestEnvelope("chat.room", 1, value, token, 0uy, payload) |> ignore)
+
+        test <@ grainTypeError.Message.Contains "'grainType' must not contain control characters" @>
+        test <@ operationIdError.Message.Contains "'operationId' must not contain control characters" @>)
+
+    // The counterweight: an ordinary dotted name, and a non-ASCII one, are still accepted.
+    FunctionalRequestEnvelope("chat.room", 1, "join", token, 0uy, payload) |> ignore
+    FunctionalRequestEnvelope("чат.комната", 1, "присоединиться", token, 0uy, payload) |> ignore
+
+[<Fact>]
 let ``an initialized envelope cannot be initialized again`` () =
     let value = envelope ()
 
@@ -513,6 +558,65 @@ let ``SetTarget installs the target, its closed interface metadata, and target-l
     request.Dispose()
     test <@ not request.HasTarget @>
     test <@ not request.HasTargetCancellation @>
+
+[<Fact>]
+let ``cancelling a disposed request is a benign no-op`` () =
+    // The lifecycle disposes the request while a cancel signal may still be in flight. Under
+    // the earlier check-then-act the cancel path read a live source, lost the race, and called
+    // Cancel on a disposed CancellationTokenSource; the fix has to leave nothing to cancel
+    // rather than throw.
+    let request = new FunctionalRequest(envelope (), CancellationToken.None)
+    request.SetTarget(FakeHolder(FakeTarget()))
+
+    request.Dispose()
+
+    test <@ not (request.TryCancel()) @>
+    test <@ not request.HasTargetCancellation @>
+
+    // Disposing twice must stay a no-op as well: the handoff is interlocked, so the second
+    // call finds nothing rather than double-disposing the source.
+    request.Dispose()
+    test <@ not (request.TryCancel()) @>
+
+[<Fact>]
+let ``cancelling and disposing concurrently never escapes an exception`` () =
+    // Two threads spin on a shared flag and act the instant it flips, so the cancel lands in
+    // the window Dispose is closing. 20000 rounds of that, which is a hunt rather than a proof —
+    // but a hunt that catches its quarry: against the earlier check-then-act TryCancel this
+    // reproduces both halves of the race (ObjectDisposedException from cancelling a source
+    // Dispose already disposed, and NullReferenceException from the field being nulled between
+    // the check and the call) within the first two seconds of the run.
+    let failures = ResizeArray<exn>()
+
+    for _ in 1..20000 do
+        let request = new FunctionalRequest(envelope (), CancellationToken.None)
+        request.SetTarget(FakeHolder(FakeTarget()))
+
+        let mutable go = 0
+
+        let run (action: unit -> unit) =
+            let thread =
+                Thread(fun () ->
+                    while Volatile.Read &go = 0 do
+                        Thread.SpinWait 1
+
+                    try
+                        action ()
+                    with error ->
+                        lock failures (fun () -> failures.Add error))
+
+            thread.IsBackground <- true
+            thread.Start()
+            thread
+
+        let cancel = run (fun () -> request.TryCancel() |> ignore)
+        let dispose = run (fun () -> request.Dispose())
+
+        Volatile.Write(&go, 1)
+        cancel.Join()
+        dispose.Join()
+
+    test <@ failures |> Seq.map (fun error -> error.GetType().Name) |> Seq.distinct |> Seq.toList = [] @>
 
 [<Fact>]
 let ``caller metadata refuses the open generic target interface`` () =

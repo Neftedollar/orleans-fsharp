@@ -251,22 +251,41 @@ internal sealed class FunctionalRequest : Request<FunctionalReply>
     public override CancellationToken GetCancellationToken() => _currentToken;
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The cancel signal and the completion of the call race by construction: Orleans may call
+    /// <see cref="TryCancel"/> from the cancellation path while the request lifecycle is already
+    /// running <see cref="Dispose"/> on another thread. Reading the field twice would let the
+    /// null check see a live source and the call see a field <c>Dispose</c> has since nulled,
+    /// so the source is captured into a local exactly once. Ownership still belongs to
+    /// <c>Dispose</c> — cancelling must not dispose a source whose token the handler may still
+    /// register on — so the capture cannot make the last interleaving impossible: <c>Dispose</c>
+    /// may run between the capture and the <c>Cancel</c>. That one is benign and is caught:
+    /// the call being cancelled has already finished, and there is nothing left to cancel.
+    /// </remarks>
     public override bool TryCancel()
     {
-        if (_targetCancellation is null)
+        var cancellation = Volatile.Read(ref _targetCancellation);
+
+        if (cancellation is null)
         {
             return false;
         }
 
-        _targetCancellation.Cancel();
-        return true;
+        try
+        {
+            cancellation.Cancel();
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     /// <inheritdoc />
     public override void Dispose()
     {
-        _targetCancellation?.Dispose();
-        _targetCancellation = null;
+        Interlocked.Exchange(ref _targetCancellation, null)?.Dispose();
         _target = null;
     }
 

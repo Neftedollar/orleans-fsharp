@@ -86,7 +86,24 @@ internal static class FunctionalTransportDiagnostics
     public static InvalidOperationException Fail(string message) =>
         new(Stage + ": " + message);
 
-    /// <summary>Validate a non-empty, NUL-free ordinal string field.</summary>
+    /// <summary>
+    /// Longest accepted wire text. Both fields it guards — the grain type and the operation ID —
+    /// are dotted identifiers chosen by the application: the grain type is the name handed to
+    /// <c>GrainType.Create</c>, the operation ID is an API record field name. A fully qualified
+    /// .NET name of that shape stays well inside 256 characters in practice, so 512 leaves two
+    /// times headroom for the longest legitimate value while capping a hostile one at half a
+    /// kilobyte instead of a whole payload's worth. Nothing else bounds these two fields: the
+    /// payload limit covers only field 5.
+    /// </summary>
+    public const int MaxWireTextLength = 512;
+
+    /// <summary>Validate a bounded, control-character-free, non-empty ordinal string field.</summary>
+    /// <remarks>
+    /// Both fields are echoed verbatim into diagnostics that reach the silo log and the remote
+    /// caller, so a value carrying CR, LF, or any other C0 control character could forge log
+    /// lines, and an unbounded one could bloat every exception it appears in. NUL is one of the
+    /// characters this rejects.
+    /// </remarks>
     public static void EnsureWireText(string? value, string fieldName)
     {
         if (string.IsNullOrEmpty(value))
@@ -94,9 +111,19 @@ internal static class FunctionalTransportDiagnostics
             throw Fail($"'{fieldName}' must be a non-empty string.");
         }
 
-        if (value.IndexOf('\0') >= 0)
+        if (value.Length > MaxWireTextLength)
         {
-            throw Fail($"'{fieldName}' must not contain a NUL character.");
+            throw Fail(
+                $"'{fieldName}' must be at most {MaxWireTextLength.ToString(CultureInfo.InvariantCulture)} characters, but {value.Length.ToString(CultureInfo.InvariantCulture)} were supplied.");
+        }
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] < ' ')
+            {
+                throw Fail(
+                    $"'{fieldName}' must not contain control characters, but one appears at index {index.ToString(CultureInfo.InvariantCulture)}.");
+            }
         }
     }
 
