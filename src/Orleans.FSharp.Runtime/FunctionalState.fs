@@ -64,6 +64,28 @@ type internal FunctionalActivationState
         | None -> ephemeral
 
     /// <summary>Publish a replacement primary state in memory. Never writes storage.</summary>
+    /// <remarks>
+    /// <para>
+    /// This is an unsynchronized reference write — no lock, no volatile, no interlocked
+    /// exchange — and it is safe because of where it runs, not because a reference write is
+    /// atomic. Orleans serializes the turns of one activation: every path that reaches
+    /// <c>Publish</c> is inside a dispatched request on that activation's own scheduler, and
+    /// two such turns never overlap, so the write and every subsequent read of
+    /// <see cref="Current" /> are ordered by the scheduler rather than by memory barriers.
+    /// </para>
+    /// <para>
+    /// The claim survives the interleaving cases because none of them publish. A read-only or
+    /// always-interleave request is the only kind Orleans admits while another request is in
+    /// flight, and the dispatch rule discards its returned state rather than publishing it, so
+    /// such a turn can only read. A declared timer publishes like a handler return, but sealing
+    /// rejects <c>Interleave = true</c> on a whole-state timer hook, so a publishing timer tick
+    /// never overlaps a request either. Reminder and activation hooks publish from turns that
+    /// are not interleaving to begin with. What remains is one writer at a time, ordered against
+    /// its own readers by the same scheduler — which is what makes the plain write correct.
+    /// Admitting publication from an interleaving operation would invalidate this, and needs the
+    /// synchronization this deliberately does without.
+    /// </para>
+    /// </remarks>
     member _.Publish(value: obj) =
         match primary with
         | Some facet -> facet.Blueprint.SetState facet.Instance value
