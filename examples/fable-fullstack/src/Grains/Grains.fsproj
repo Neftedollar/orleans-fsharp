@@ -4,8 +4,15 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Task 8 deprecation pass (ruling 6): this example keeps its grain{} demo running
+         beside its functional-runtime twin (TodoGrainFunctional.fs) on purpose. -->
+    <NoWarn>$(NoWarn);FS0044</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Include="TodoGrain.fs" />
+    <Compile Include="TodoGrainFunctional.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -17,6 +17,10 @@ let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 builder.Services.AddFSharpGrain<OrderState, OrderCommand>(OrderGrainDef.order) |> ignore
 
+// Functional-runtime equivalent of the grain above -- see OrderGrainFunctional.fs.
+builder.UseOrleans(fun siloBuilder -> siloBuilder.AddFunctionalGrain(OrderFunctionalDef.order) |> ignore)
+|> ignore
+
 let host = builder.Build()
 
 let run () : Task =
@@ -64,6 +68,16 @@ let run () : Task =
         printfn ""
         printfn "Waiting for reminder tick..."
         do! Task.Delay(12000)
+
+        printfn ""
+        printfn "--- Functional Grain Runtime equivalent (same order domain) ---"
+        let orderFn = OrderApi.ref factory "order-001-functional"
+
+        let! placed = orderFn.place "Widget x10"
+        printfn "Place order (functional): %s" placed
+
+        let! status = orderFn.status ()
+        printfn "Status (functional): %A" status
 
         printfn ""
         printfn "Done. Shutting down..."

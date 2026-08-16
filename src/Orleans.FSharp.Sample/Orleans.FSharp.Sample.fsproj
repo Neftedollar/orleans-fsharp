@@ -2,7 +2,11 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-  <IsPackable>false</IsPackable></PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- Task 8 deprecation pass (ruling 6): this sample keeps its grain{} / FSharpGrain.ref
+         demos running beside their functional-runtime twins on purpose. -->
+    <NoWarn>$(NoWarn);FS0044</NoWarn>
+  </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="CounterGrain.fs" />
@@ -20,6 +24,7 @@
     <Compile Include="AdditionalStateGrain.fs" />
     <Compile Include="TransactionalAccountGrain.fs" />
     <Compile Include="ChatRoomFunctional.fs" />
+    <Compile Include="CounterGrainFunctional.fs" />
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

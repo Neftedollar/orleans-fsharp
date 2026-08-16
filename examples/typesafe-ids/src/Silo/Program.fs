@@ -21,6 +21,10 @@ builder.Services.AddFSharpGrain<UserState, UserCommand>(UserGrainDef.user) |> ig
 builder.Services.AddFSharpGrain<OrderState, OrderCommand>(OrderGrainDef.order) |> ignore
 builder.Services.AddFSharpGrain<RouterState, IncomingMessage>(RouterGrainDef.router) |> ignore
 
+// Functional-runtime equivalent of the user grain above -- see UserGrainFunctional.fs.
+builder.UseOrleans(fun siloBuilder -> siloBuilder.AddFunctionalGrain(UserFunctionalDef.user) |> ignore)
+|> ignore
+
 let host = builder.Build()
 
 let run () : Task =
@@ -104,6 +108,14 @@ let run () : Task =
         // Invalid transition: delivered -> cancelled
         let! cancelledAfterDelivery = GrainRef.invoke orderRef (fun g -> g.HandleMessage(CancelOrder))
         printfn "Order %d cancel after delivery: %A (no-op, status unchanged)" (rawId order1) cancelledAfterDelivery
+
+        printfn ""
+        printfn "--- Functional Grain Runtime equivalent (same user domain) ---"
+        let userFn = UserApi.ref factory user1
+
+        let! _ = userFn.setProfile ("Alice (functional)", "alice-fn@example.com")
+        let! profile = userFn.getProfile ()
+        printfn "Functional user profile for User %d: %A" (rawId user1) profile
 
         printfn ""
         printfn "Done. Shutting down..."

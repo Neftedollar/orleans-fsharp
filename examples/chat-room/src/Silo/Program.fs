@@ -27,6 +27,10 @@ let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 builder.Services.AddFSharpGrain<ChatState, ChatMessage>(ChatGrainDef.chat) |> ignore
 
+// Functional-runtime equivalent of the grain above -- see ChatGrainFunctional.fs.
+builder.UseOrleans(fun siloBuilder -> siloBuilder.AddFunctionalGrain(RoomFunctionalDef.room) |> ignore)
+|> ignore
+
 let host = builder.Build()
 
 let run () : Task =
@@ -77,6 +81,14 @@ let run () : Task =
         // Cleanup
         let! _ = GrainRef.invoke chatRef (fun g -> g.HandleMessage(Unsubscribe aliceRef))
         Observer.deleteRef<IChatObserver> factory aliceRef
+
+        printfn ""
+        printfn "--- Functional Grain Runtime equivalent (same chat-room domain) ---"
+        let roomFn = RoomApi.ref factory "general-functional"
+
+        let! _ = roomFn.post ("Alice", "Hey from the functional runtime!")
+        let! postCount = roomFn.post ("Bob", "Hi Alice!")
+        printfn "Posted 2 messages; count = %d" postCount
 
         printfn ""
         printfn "Done. Shutting down..."

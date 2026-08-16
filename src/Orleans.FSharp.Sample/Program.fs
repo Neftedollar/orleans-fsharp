@@ -6,6 +6,7 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.Sample
 open Chat.Contracts
+open Counter.Contracts
 
 let config =
     siloConfig {
@@ -40,7 +41,11 @@ builder.Services.AddFSharpGrain<OrderStatus, OrderCommand>(OrderGrainDef.order) 
 // for a colocated process, since the same `IGrainFactory` that hosts the definition also binds
 // its own functional references (see FunctionalTransportSource.Guidance) -- a genuinely separate
 // client process would call `clientBuilder.AddFunctionalGrainClient()` instead.
-builder.UseOrleans(fun siloBuilder -> siloBuilder.AddFunctionalGrain(Chat.Server.Definition.roomDefinition) |> ignore)
+builder.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddFunctionalGrain(Chat.Server.Definition.roomDefinition) |> ignore
+    // Functional-runtime equivalent of CounterGrainDef.counter (grain{} CE) above -- see
+    // CounterGrainFunctional.fs.
+    siloBuilder.AddFunctionalGrain(Counter.Server.Definition.counterDefinition) |> ignore)
 |> ignore
 builder.Services.AddFSharpGrain<string, EchoCommand>(EchoGrainDef.echo) |> ignore
 // The aggregator carries no [<FSharpGrain>] attribute either; the universal-pattern demo below
@@ -186,6 +191,23 @@ let runSample () : Task =
 
         // `send` is NOT interchangeable here: it would unbox this handler's int reply as
         // CounterState and throw. Use `send` only when the reply is the new state (above).
+
+        // Functional-runtime equivalent of the Counter Grain demo above (grain{} / ask):
+        // same increment/decrement/value domain, driven through a typed API record instead
+        // of FSharpGrain.ref + ask.
+        printfn ""
+        printfn "--- Functional Grain Runtime Demo (counter.functional) ---"
+
+        let counterFn = CounterApi.ref factory 1L
+
+        let! c1 = counterFn.increment ()
+        printfn "After increment: %d" c1
+
+        let! c2 = counterFn.increment ()
+        printfn "After increment: %d" c2
+
+        let! c3 = counterFn.decrement ()
+        printfn "After decrement: %d" c3
 
         printfn ""
         printfn "Sample complete. Shutting down..."

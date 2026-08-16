@@ -25,6 +25,11 @@ builder.Host.UseOrleans(fun siloBuilder ->
 
 builder.Services.AddFSharpGrain<TodoState, TodoCommand>(TodoGrainDef.todos) |> ignore
 
+// Functional-runtime equivalent of the grain above -- see TodoGrainFunctional.fs.
+builder.Host.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddFunctionalGrain(TodoFunctionalDef.todos) |> ignore)
+|> ignore
+
 let app = builder.Build()
 
 /// <summary>
@@ -70,8 +75,23 @@ app.MapGet(
         "Fable Fullstack Server is running. API available at /api/ITodoApi/*"))
 |> ignore
 
+// Functional-runtime equivalent of the todoApi grain calls above (same todos domain),
+// exercised once at startup alongside the old grain.
+let exerciseFunctionalTwin () =
+    task {
+        let factory = app.Services.GetRequiredService<IGrainFactory>()
+        let todoRef = TodoApi.ref factory "global-functional"
+        let! _ = todoRef.addTodo "Try the functional grain runtime"
+        let! todos = todoRef.getTodos ()
+        printfn "Functional-runtime todos twin: %d todo(s)" todos.Length
+    }
+
 printfn "--- Fable Fullstack: Server-side Demo ---"
 printfn "Fable.Remoting API available at http://localhost:5000/api/ITodoApi/*"
 printfn "Press Ctrl+C to stop."
+
+app.Lifetime.ApplicationStarted.Register(fun () ->
+    exerciseFunctionalTwin().GetAwaiter().GetResult())
+|> ignore
 
 app.Run("http://localhost:5000")

@@ -21,6 +21,12 @@ builder.Host.UseOrleans(fun siloBuilder ->
 |> ignore
 
 builder.Services.AddFSharpGrain<DashboardState, DashboardCommand>(DashboardGrainDef.dashboard) |> ignore
+
+// Functional-runtime equivalent of the grain above -- see DashboardGrainFunctional.fs.
+builder.Host.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddFunctionalGrain(DashboardFunctionalDef.dashboard) |> ignore)
+|> ignore
+
 builder.Services.AddSignalR() |> ignore
 
 let app = builder.Build()
@@ -37,6 +43,10 @@ let startDashboard () =
         let dashboard = factory.GetGrain<IDashboardGrain>("default")
         // Activate the grain by sending a command. The declarative timer will start automatically.
         let! _ = dashboard.HandleMessage(GetSequenceNumber)
+
+        // Functional-runtime equivalent of the activation above (same dashboard domain).
+        let dashboardFn = DashboardApi.ref factory "default-functional"
+        let! _ = dashboardFn.tick ()
         printfn "--- SignalR Realtime: Dashboard grain activated with timer ---"
         printfn "Open http://localhost:5000 in your browser to see live metrics."
         printfn "Press Ctrl+C to stop."

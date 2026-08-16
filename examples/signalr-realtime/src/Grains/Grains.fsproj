@@ -1,7 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- Task 8 deprecation pass (ruling 6): this example keeps its grain{} demo running
+         beside its functional-runtime twin (DashboardGrainFunctional.fs) on purpose. -->
+    <NoWarn>$(NoWarn);FS0044</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Include="DashboardGrain.fs" />
+    <Compile Include="DashboardGrainFunctional.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -16,6 +16,11 @@ let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 builder.Services.AddFSharpGrain<CounterState, CounterCommand>(CounterGrainDef.counter) |> ignore
 
+// Functional-runtime equivalent of the grain above -- see CounterGrainFunctional.fs.
+builder.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddFunctionalGrain(CounterFunctionalDef.counter) |> ignore)
+|> ignore
+
 let host = builder.Build()
 
 let run () : Task =
@@ -33,6 +38,17 @@ let run () : Task =
 
         let! value = GrainRef.invoke counterRef (fun g -> g.HandleMessage(GetValue))
         printfn "Final count: %A" value
+
+        printfn ""
+        printfn "--- Functional Grain Runtime equivalent (same counter domain) ---"
+        let counterFn = CounterApi.ref factory "my-counter-functional"
+
+        for i in 1..5 do
+            let! result = counterFn.increment ()
+            printfn "Increment #%d -> count = %d" i result
+
+        let! finalValue = counterFn.value ()
+        printfn "Final count (functional): %d" finalValue
 
         printfn "Done. Shutting down..."
         do! host.StopAsync()
