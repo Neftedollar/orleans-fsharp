@@ -2,7 +2,8 @@
 /// Functional-runtime equivalent of <c>UserGrainDef.user</c> in <c>UserGrain.fs</c> (the
 /// <c>grain { }</c> CE original -- now <c>[&lt;Obsolete&gt;]</c>). Same domain (set/read a user
 /// profile) rebuilt as a <c>grainContract</c> + <c>grainFor</c> pair. The functional runtime's
-/// own key codec (<c>stringKeyMapped</c>) gives the same "wrong-ID-type is a compile error"
+/// own key codec (<c>int64KeyMapped rawId userId</c>, so the grain key IS an
+/// <c>int64&lt;UserId&gt;</c>) gives the same "wrong-ID-type is a compile error"
 /// guarantee this example demonstrates with units of measure -- see docs/functional-grains.md,
 /// "Key-codec identity rules".
 /// </summary>

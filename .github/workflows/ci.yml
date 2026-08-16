@@ -68,6 +68,13 @@ jobs:
           grep -q -- "--- Functional Grain Runtime Demo (chat.room) ---" sample.out
           grep -q "alice and bob joined #general" sample.out
           grep -q "carol (not a member) says .* Error NotAMember" sample.out
+          # The counter twin is the only functional grain with a runtime assertion in CI:
+          # it must both appear and produce the right numbers (the old grain{} counter prints
+          # "After Increment", capitalised, so these lines are unambiguous).
+          grep -q -- "--- Functional Grain Runtime Demo (counter.functional) ---" sample.out
+          grep -q -x "After increment: 1" sample.out
+          grep -q -x "After increment: 2" sample.out
+          grep -q -x "After decrement: 1" sample.out
           grep -q "Sample complete" sample.out
 
   redis-durability:
@@ -112,7 +119,7 @@ jobs:
           --verbosity normal ${{ matrix.arg }}
 
   examples:
-    name: Build Examples
+    name: Build Examples & Testbed
     runs-on: ubuntu-latest
     needs: build-and-test
     timeout-minutes: 20
@@ -133,6 +140,12 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+      # The testbed is the same shape of out-of-root-solution code as the examples (its own
+      # Testbed.slnx, ProjectReferences into src/) and rots the same way, so it is built in this
+      # job rather than a new one. Build only: running it needs Redis and a multi-silo Docker
+      # Compose stack, which is out of scope for a per-PR job.
+      - name: Build the testbed solution
+        run: dotnet build testbed/Testbed.slnx -c Release --nologo
 
   quick-integration:
     runs-on: ubuntu-latest

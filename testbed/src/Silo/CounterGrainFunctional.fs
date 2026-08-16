@@ -2,30 +2,13 @@
 /// Functional-runtime equivalent of the <c>counterGrain</c> <c>grain { }</c> definition in
 /// <c>Program.fs</c> (now <c>[&lt;Obsolete&gt;]</c>). Same domain (increment / decrement / read)
 /// rebuilt as a <c>grainContract</c> + <c>grainFor</c> pair, registered alongside the old grain.
+/// The contract itself lives in <c>Shared</c> (<c>Testbed.Shared.CounterFunctionalContract</c>)
+/// because the Client process calls this grain too; only the definition is server-side.
 /// </summary>
 module Testbed.CounterFunctional
 
-open System.Threading.Tasks
 open Orleans.FSharp
-
-type CounterActor = private CounterActor of unit
-
-[<NoEquality; NoComparison>]
-type CounterApi =
-    { increment: unit -> Task<int>
-      decrement: unit -> Task<int>
-      value: unit -> Task<int> }
-
-[<RequireQualifiedAccess>]
-module CounterApi =
-    let contract =
-        grainContract<CounterActor, string, CounterApi> () {
-            grainType "testbed.counter.functional"
-            version 1
-            stringKey
-        }
-
-    let ref = FunctionalGrain.ref contract
+open Testbed.Shared.CounterFunctionalContract
 
 let counterDefinition =
     grainFor CounterApi.contract {
