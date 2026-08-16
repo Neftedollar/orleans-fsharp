@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
@@ -61,6 +62,8 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
 
             let mutable deactivate = fun () -> ()
             let mutable delay = fun (_: TimeSpan) -> ()
+            let mutable registerReminder = fun (_: string) (_: TimeSpan) (_: TimeSpan) -> Unchecked.defaultof<Task<IGrainReminder>>
+            let mutable createTimer = fun (_: CancellationToken -> Task) (_: GrainTimerCreationOptions) -> ()
 
             let env =
                 { Definition = definition
@@ -74,7 +77,9 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                   Key = key
                   State = FunctionalActivationState(definition, facets)
                   DeactivateOnIdle = fun () -> deactivate ()
-                  DelayDeactivation = fun timeSpan -> delay timeSpan }
+                  DelayDeactivation = fun timeSpan -> delay timeSpan
+                  RegisterReminder = fun name dueTime period -> registerReminder name dueTime period
+                  CreateTimer = fun callback options -> createTimer callback options }
 
             let target =
                 { new FunctionalGrainTargetBase(grainContext, grainRuntime) with
@@ -95,22 +100,59 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                           FunctionalDispatch.dispatch env envelope cancellationToken
 
                   interface IRemindable with
-                      member _.ReceiveReminder(reminderName: string, _status: TickStatus) =
-                          logger.LogError(
-                              "Grain {GrainId} of functional grain type {GrainType} received unknown reminder {ReminderName}",
-                              grainContext.GrainId,
-                              definition.GrainTypeName,
-                              reminderName
-                          )
+                      member _.ReceiveReminder(reminderName: string, status: TickStatus) : Task =
+                          match definition.TryFindReminder reminderName with
+                          | Some hostedReminder ->
+                              task {
+                                  let scope =
+                                      FunctionalStateScope(
+                                          definition.GrainTypeName,
+                                          $"onReminder:{reminderName}",
+                                          true
+                                      )
 
-                          Task.FromException(
-                              InvalidOperationException(
-                                  $"{StartupStage}: grain '{grainContext.GrainId}' of grain type '{definition.GrainTypeName}' received reminder '{reminderName}', which the hosted definition does not declare."
+                                  try
+                                      // "Reminder hook: CancellationToken.None, because
+                                      // IRemindable.ReceiveReminder supplies no token."
+                                      let core =
+                                          FunctionalContextFactory.core env CancellationToken.None scope
+
+                                      let! next =
+                                          hostedReminder.Adapter.Invoke(env.Key, core, env.State.Current, status)
+
+                                      env.State.Publish next
+                                  finally
+                                      scope.Expire()
+                              }
+                              :> Task
+                          | None ->
+                              logger.LogError(
+                                  "Grain {GrainId} of functional grain type {GrainType} received unknown reminder {ReminderName}",
+                                  grainContext.GrainId,
+                                  definition.GrainTypeName,
+                                  reminderName
                               )
-                          ) }
+
+                              Task.FromException(
+                                  InvalidOperationException(
+                                      $"{StartupStage}: grain '{grainContext.GrainId}' of grain type '{definition.GrainTypeName}' received reminder '{reminderName}', which the hosted definition does not declare."
+                                  )
+                              ) }
 
             deactivate <- fun () -> target.DeactivateNow()
             delay <- fun timeSpan -> target.DelayDeactivationFor timeSpan
+            registerReminder <- fun name dueTime period -> target.RegisterReminderNow(name, dueTime, period)
+            createTimer <- fun callback options -> target.CreateTrackedTimer(callback, options) |> ignore
+
+            target.OnTimerDisposalError <-
+                fun error ->
+                    logger.LogError(
+                        error,
+                        "Disposing a timer of grain type {GrainType} on {GrainId} failed: {Message}",
+                        definition.GrainTypeName,
+                        grainContext.GrainId,
+                        error.Message
+                    )
 
             if not (obj.ReferenceEquals((target :> IGrainBase).GrainContext, grainContext)) then
                 fail

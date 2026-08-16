@@ -109,6 +109,19 @@ type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistr
 
                 properties.[matches.[0].Key] <- entry.InterfaceId
 
+                // "Collection age is frozen into manifest properties." Orleans' own
+                // GrainTypeSharedContext.GetCollectionAgeLimit reads exactly this well-known
+                // property (WellKnownGrainTypeProperties.IdleDeactivationPeriod, "idle-duration")
+                // off the published grain manifest via TimeSpan.TryParse, before falling back to
+                // a class-specific or the host's stock GrainCollectionOptions.CollectionAge — so
+                // an omitted collectionAge publishes no property here and the host default
+                // applies exactly as if this grain type were unknown to it. TimeSpan.ToString()
+                // with no format specifier always renders the culture-invariant "c" format, which
+                // TimeSpan.TryParse round-trips.
+                match entry.Definition.CollectionAge with
+                | Some age -> properties.[WellKnownGrainTypeProperties.IdleDeactivationPeriod] <- age.ToString()
+                | None -> ()
+
 /// <summary>
 /// Atomically freezes the registry, removes the open functional marker and target-interface
 /// definitions Orleans discovered by default, and adds only the registered closed types.

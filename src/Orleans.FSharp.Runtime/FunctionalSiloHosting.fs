@@ -74,6 +74,26 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                 (definition.Facets
                  |> Array.map (fun facet -> facet.Descriptor.StateName, facet.Descriptor.StoredType))
 
+        // "Silo startup validates every declared period against the configured
+        // ReminderOptions.MinimumReminderPeriod." The real reminder service enforces the same
+        // floor lazily, at first RegisterOrUpdateReminder call during activation (an
+        // ArgumentException from LocalReminderService) — this check exists to fail the same
+        // misconfiguration at startup instead, before the first activation ever reaches it.
+        // IOptions<ReminderOptions> resolves to its documented 1-minute default even when no
+        // reminder provider is configured at all, so this is safe to call unconditionally.
+        let hasAnyReminder =
+            snapshot |> Array.exists (fun entry -> entry.Definition.Reminders.Length > 0)
+
+        if hasAnyReminder then
+            let reminderOptions = services.GetRequiredService<IOptions<ReminderOptions>>().Value
+
+            for entry in snapshot do
+                for reminder in entry.Definition.Reminders do
+                    if reminder.Period < reminderOptions.MinimumReminderPeriod then
+                        fail
+                            StartupStage
+                            $"reminder '{reminder.Name}' of grain type '{entry.GrainTypeName}' declares period {reminder.Period}, which is below the configured ReminderOptions.MinimumReminderPeriod of {reminderOptions.MinimumReminderPeriod}."
+
         // Every named storage provider of every attached facet must be registered on this silo.
         // Orleans resolves a named IGrainStorage as a keyed service, so an unregistered name
         // would otherwise surface as an activation failure on the first call.

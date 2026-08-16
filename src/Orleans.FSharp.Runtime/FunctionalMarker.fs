@@ -53,11 +53,56 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
 
     let mutable disposals = 0
 
+    /// <summary>
+    /// The <c>IGrainTimer</c> handles of every declared timer created for this activation, so
+    /// they can be disposed exactly once, deterministically, as activation-local cleanup.
+    /// </summary>
+    let timers = ResizeArray<IGrainTimer>()
+    let timersGate = obj ()
+
     /// <summary>Narrow wrapper for the protected <c>Grain.DeactivateOnIdle</c>.</summary>
     member this.DeactivateNow() = this.DeactivateOnIdle()
 
     /// <summary>Narrow wrapper for the protected <c>Grain.DelayDeactivation</c>.</summary>
     member this.DelayDeactivationFor(timeSpan: TimeSpan) = this.DelayDeactivation timeSpan
+
+    /// <summary>
+    /// Register a durable reminder through the stock Orleans reminder extension. This activation
+    /// must implement <c>IRemindable</c>, which every functional target does.
+    /// </summary>
+    member this.RegisterReminderNow(reminderName: string, dueTime: TimeSpan, period: TimeSpan) =
+        GrainReminderExtensions.RegisterOrUpdateReminder(this, reminderName, dueTime, period)
+
+    /// <summary>
+    /// Create one declared timer through the stock Orleans timer extension and track its handle
+    /// for guaranteed disposal, regardless of whatever else activation-local cleanup does.
+    /// </summary>
+    member this.CreateTrackedTimer
+        (callback: CancellationToken -> Task, options: GrainTimerCreationOptions)
+        : IGrainTimer =
+        let handle = GrainBaseExtensions.RegisterGrainTimer(this, Func<CancellationToken, Task> callback, options)
+        lock timersGate (fun () -> timers.Add handle)
+        handle
+
+    /// <summary>
+    /// Dispose every timer created for this activation. Every handle is attempted even when an
+    /// earlier one throws while disposing, and the caller decides how failures are reported.
+    /// </summary>
+    member private _.DisposeTimers(onError: exn -> unit) =
+        let snapshot = lock timersGate (fun () -> timers.ToArray())
+
+        for timer in snapshot do
+            try
+                timer.Dispose()
+            with error ->
+                onError error
+
+    /// <summary>
+    /// Observes a timer-disposal failure. Set once by the activator right after construction, so
+    /// a disposal failure reaches the same scoped logger every other functional diagnostic uses;
+    /// defaults to a silent no-op so this base type has no hard logging dependency of its own.
+    /// </summary>
+    member val internal OnTimerDisposalError: exn -> unit = ignore with get, set
 
     /// <summary>
     /// How often this target has actually been disposed: <c>0</c> before teardown and exactly
@@ -130,4 +175,12 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     interface IDisposable with
         member this.Dispose() =
             if Interlocked.Exchange(&disposals, 1) = 0 then
-                this.OnDisposing()
+                // Deactivation ordering: the functional onDeactivate hook and the remaining
+                // Orleans stop stages (lifecycle OnStop) have already run by the time Orleans
+                // calls IGrainActivator.DisposeInstance, which reaches here. Timer disposal is
+                // activation-local cleanup and must happen even when OnDisposing itself throws,
+                // so it runs in `finally` rather than merely after OnDisposing returns.
+                try
+                    this.OnDisposing()
+                finally
+                    this.DisposeTimers(this.OnTimerDisposalError)

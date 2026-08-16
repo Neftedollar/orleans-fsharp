@@ -37,6 +37,10 @@ type internal FunctionalTargetEnvironment =
         DeactivateOnIdle: unit -> unit
         /// Wrapper for the protected Orleans delay-deactivation method.
         DelayDeactivation: TimeSpan -> unit
+        /// Register or update one durable reminder on the real Orleans reminder service.
+        RegisterReminder: string -> TimeSpan -> TimeSpan -> Task<IGrainReminder>
+        /// Create one declared timer, tracked by the target for guaranteed disposal.
+        CreateTimer: (CancellationToken -> Task) -> GrainTimerCreationOptions -> unit
     }
 
 /// <summary>
@@ -231,10 +235,57 @@ module internal FunctionalDispatch =
 module internal FunctionalLifecycle =
 
     /// <summary>
-    /// Steps 3 and 4 of the activation order: initialize the ephemeral primary state and every
-    /// attached holder which reports no durable record, then run the functional
-    /// <c>onActivate</c> hook, whose replacement is published in memory only. A storage read,
-    /// an initializer, or the hook failing all fail the activation.
+    /// Step 5 of the activation order: reconcile every declared reminder, in declaration order,
+    /// through <c>RegisterOrUpdateReminder</c>. Each call is awaited before the next one starts,
+    /// so "declaration order" is a real sequential guarantee and not just registration-call order.
+    /// </summary>
+    let private reconcileReminders (env: FunctionalTargetEnvironment) : Task =
+        task {
+            for reminder in env.Definition.Reminders do
+                let! _ = env.RegisterReminder reminder.Name reminder.DueTime reminder.Period
+                ()
+        }
+        :> Task
+
+    /// <summary>
+    /// Step 6 of the activation order: create every declared timer from the
+    /// <c>GrainTimerCreationOptions</c> copied at sealing. Each callback builds a fresh
+    /// invocation context per tick — token from the Orleans timer callback, whole-state
+    /// replacement under <c>Interleave = false</c> — and publishes its returned state exactly
+    /// like a handler return.
+    /// </summary>
+    let private createTimers (env: FunctionalTargetEnvironment) =
+        for timer in env.Definition.Timers do
+            let options =
+                GrainTimerCreationOptions(
+                    DueTime = timer.DueTime,
+                    Period = timer.Period,
+                    Interleave = timer.Interleave,
+                    KeepAlive = timer.KeepAlive
+                )
+
+            let callback (token: CancellationToken) : Task =
+                task {
+                    let scope =
+                        FunctionalStateScope(env.Definition.GrainTypeName, $"onTimer:{timer.Name}", true)
+
+                    try
+                        let core = FunctionalContextFactory.core env token scope
+                        let! next = timer.Adapter.Invoke(env.Key, core, env.State.Current)
+                        env.State.Publish next
+                    finally
+                        scope.Expire()
+                }
+                :> Task
+
+            env.CreateTimer callback options
+
+    /// <summary>
+    /// Steps 3 through 6 of the activation order: initialize the ephemeral primary state and
+    /// every attached holder which reports no durable record; run the functional
+    /// <c>onActivate</c> hook, whose replacement is published in memory only; reconcile declared
+    /// reminders; then create declared timers. A storage read, an initializer, or the hook
+    /// failing all fail the activation before reminders or timers are ever touched.
     /// </summary>
     let activate (env: FunctionalTargetEnvironment) (cancellationToken: CancellationToken) : Task =
         task {
@@ -252,6 +303,9 @@ module internal FunctionalLifecycle =
                     env.State.Publish next
                 finally
                     scope.Expire()
+
+            do! reconcileReminders env
+            createTimers env
         }
         :> Task
 

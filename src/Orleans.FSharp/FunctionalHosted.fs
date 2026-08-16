@@ -106,6 +106,50 @@ type internal FunctionalActivateAdapter = delegate of obj * FunctionalContextCor
 type internal FunctionalDeactivateAdapter =
     delegate of obj * FunctionalContextCore * DeactivationReason * obj -> Task
 
+/// <summary>
+/// The preclosed typed adapter of one declared reminder hook. Whole-state replacement under
+/// ordinary Orleans scheduling; the reminder context token is always <c>CancellationToken.None</c>.
+/// </summary>
+type internal FunctionalReminderAdapter = delegate of obj * FunctionalContextCore * obj * TickStatus -> Task<obj>
+
+/// <summary>
+/// The preclosed typed adapter of one declared timer hook. Whole-state replacement under
+/// <c>Interleave = false</c>; the context token is the one supplied by the Orleans timer callback.
+/// </summary>
+type internal FunctionalTimerAdapter = delegate of obj * FunctionalContextCore * obj -> Task<obj>
+
+/// <summary>One declared reminder frozen into the hosted view: identity plus its preclosed adapter.</summary>
+[<ReferenceEquality>]
+type internal FunctionalHostedReminder =
+    {
+        /// The durable reminder name.
+        Name: string
+        /// Explicit due time, validated non-negative at definition sealing.
+        DueTime: TimeSpan
+        /// Explicit period, validated strictly positive at definition sealing.
+        Period: TimeSpan
+        /// The preclosed typed reminder-hook adapter.
+        Adapter: FunctionalReminderAdapter
+    }
+
+/// <summary>One declared timer frozen into the hosted view: identity plus its preclosed adapter.</summary>
+[<ReferenceEquality>]
+type internal FunctionalHostedTimer =
+    {
+        /// The timer name, unique within the definition.
+        Name: string
+        /// <c>GrainTimerCreationOptions.DueTime</c>, copied at sealing.
+        DueTime: TimeSpan
+        /// <c>GrainTimerCreationOptions.Period</c>, copied at sealing.
+        Period: TimeSpan
+        /// <c>GrainTimerCreationOptions.Interleave</c>; always <c>false</c> for a whole-state timer.
+        Interleave: bool
+        /// <c>GrainTimerCreationOptions.KeepAlive</c>, copied at sealing.
+        KeepAlive: bool
+        /// The preclosed typed timer-hook adapter.
+        Adapter: FunctionalTimerAdapter
+    }
+
 /// <summary>One hosted operation: the immutable descriptor plus its preclosed server adapter.</summary>
 [<ReferenceEquality>]
 type internal FunctionalHostedOperation =
@@ -157,7 +201,10 @@ type internal FunctionalHostedDefinition
         primaryFacet: FunctionalFacetBlueprint option,
         additionalFacets: FunctionalFacetBlueprint[],
         onActivate: FunctionalActivateAdapter option,
-        onDeactivate: FunctionalDeactivateAdapter option
+        onDeactivate: FunctionalDeactivateAdapter option,
+        collectionAge: TimeSpan option,
+        reminders: FunctionalHostedReminder[],
+        timers: FunctionalHostedTimer[]
     ) =
 
     let facets =
@@ -231,6 +278,20 @@ type internal FunctionalHostedDefinition
     /// <summary>The preclosed deactivation-hook adapter, when the definition declares one.</summary>
     member _.OnDeactivate = onDeactivate
 
+    /// <summary>The configured idle collection age, frozen into manifest properties when present.</summary>
+    member _.CollectionAge = collectionAge
+
+    /// <summary>Declared reminders in declaration order.</summary>
+    member _.Reminders = reminders
+
+    /// <summary>Declared timers in declaration order.</summary>
+    member _.Timers = timers
+
+    /// <summary>Look up a declared reminder by its exact ordinal name.</summary>
+    member _.TryFindReminder(reminderName: string) =
+        reminders
+        |> Array.tryFind (fun reminder -> String.Equals(reminder.Name, reminderName, StringComparison.Ordinal))
+
     override _.ToString() =
         $"FunctionalHostedDefinition(grainType = '{grainTypeName}', version = {version}, operations = {operations.Length})"
 
@@ -294,6 +355,42 @@ module internal FunctionalHosted =
                     let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
                     hook context reason (unbox<'State> state) :> Task))
 
+        let reminders =
+            definition.Reminders
+            |> List.map (fun declaration ->
+                let adapter =
+                    FunctionalReminderAdapter(fun key core state tickStatus ->
+                        task {
+                            let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                            let! next = declaration.Hook context (unbox<'State> state) tickStatus
+                            return box next
+                        })
+
+                { Name = declaration.Name
+                  DueTime = declaration.DueTime
+                  Period = declaration.Period
+                  Adapter = adapter })
+            |> List.toArray
+
+        let timers =
+            definition.Timers
+            |> List.map (fun declaration ->
+                let adapter =
+                    FunctionalTimerAdapter(fun key core state ->
+                        task {
+                            let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                            let! next = declaration.Hook context (unbox<'State> state)
+                            return box next
+                        })
+
+                { Name = declaration.Name
+                  DueTime = declaration.DueTime
+                  Period = declaration.Period
+                  Interleave = declaration.Interleave
+                  KeepAlive = declaration.KeepAlive
+                  Adapter = adapter })
+            |> List.toArray
+
         FunctionalHostedDefinition(
             box definition,
             contract.GrainTypeName,
@@ -310,5 +407,8 @@ module internal FunctionalHosted =
             primaryFacet,
             List.toArray definition.Additional,
             onActivate,
-            onDeactivate
+            onDeactivate,
+            definition.CollectionAge,
+            reminders,
+            timers
         )
