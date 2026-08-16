@@ -5,16 +5,6 @@ open System.Collections.Generic
 open Orleans.Runtime
 open Orleans.FSharp.FunctionalDiagnostics
 
-/// <summary>An attached additional persistent state and its key-aware initializer.</summary>
-[<ReferenceEquality>]
-type internal AttachedPersistentState<'Key> =
-    {
-        /// The logical identity of the attached facet.
-        Descriptor: PersistentStateDescriptor
-        /// Initializer used only when that holder reports no record; the result is boxed.
-        Initialize: 'Key -> obj
-    }
-
 /// <summary>A declared reminder frozen into definition metadata.</summary>
 [<ReferenceEquality>]
 type internal ReminderDeclaration<'Actor, 'Key, 'State> =
@@ -54,7 +44,7 @@ type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
       InitializerOperation: string
       Initializer: 'Key -> 'State
       Primary: PersistentStateRef<'State> option
-      Additional: AttachedPersistentState<'Key> list
+      Additional: FunctionalFacetBlueprint list
       CollectionAge: TimeSpan option
       OnActivate: ActivateHook<'Actor, 'Key, 'State> option
       OnDeactivate: DeactivateHook<'Actor, 'Key, 'State> option
@@ -182,7 +172,9 @@ module internal DefinitionDraft =
 
             fail DefinitionStage $"grain type '{grainTypeName}' has no handler for API field(s) {missingNames}."
 
-        // Unique state names, with one provider and one stored type per name.
+        // Unique state names, with one provider and one stored type per name. The name alone is
+        // the key: Orleans derives its activation-migration keys from the state name, so the
+        // same name under two different providers is still a collision.
         let attached = ResizeArray<PersistentStateDescriptor>()
 
         match state.Primary with
@@ -197,10 +189,31 @@ module internal DefinitionDraft =
         for descriptor in attached do
             match seenStates.TryGetValue descriptor.StateName with
             | true, existing ->
+                let repeatsPrimary =
+                    match state.Primary with
+                    | Some primary -> primary.Descriptor.StateName = descriptor.StateName
+                    | None -> false
+
+                let detail =
+                    if repeatsPrimary then
+                        " The 'stateFrom' descriptor is already attached as the primary state and must not be repeated with 'usePersistentState'."
+                    else
+                        ""
+
                 fail
                     DefinitionStage
-                    $"stateName '{descriptor.StateName}' is attached more than once to grain type '{grainTypeName}' (providers '{existing.ProviderName}' and '{descriptor.ProviderName}', stored types '{existing.StoredType.FullName}' and '{descriptor.StoredType.FullName}')."
+                    $"stateName '{descriptor.StateName}' is attached more than once to grain type '{grainTypeName}' (providers '{existing.ProviderName}' and '{descriptor.ProviderName}', stored types '{existing.StoredType.FullName}' and '{descriptor.StoredType.FullName}').{detail}"
             | _ -> seenStates.[descriptor.StateName] <- descriptor
+
+        // Stock Orleans cannot even construct an IPersistentState over some closed types, so an
+        // attachment of one of them can never activate on any storage provider.
+        for descriptor in attached do
+            match StoredStateType.unsupportedReason descriptor.StoredType with
+            | Some reason ->
+                fail
+                    DefinitionStage
+                    $"the stored type '{descriptor.StoredType.FullName}' of persistent state '{descriptor.StateName}' (provider '{descriptor.ProviderName}') attached to grain type '{grainTypeName}' cannot be held in an Orleans IPersistentState: {reason}."
+            | None -> ()
 
         match state.CollectionAge with
         | Some age when age <= TimeSpan.Zero ->
@@ -338,9 +351,10 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 DefinitionStage
                 $"'usePersistentState' for stateName '{persistentState.StateName}' requires an initializer."
 
+        // The blueprint is closed over the exact stored type here, where 'StoredState is still
+        // a type parameter of this custom operation. No silo-side code ever closes it again.
         let attached =
-            { Descriptor = persistentState.Descriptor
-              Initialize = fun key -> box (initializer key) }
+            FunctionalFacet.blueprint persistentState (fun key -> box (initializer (unbox<'Key> key)))
 
         DefinitionDraft.withState
             { draft with

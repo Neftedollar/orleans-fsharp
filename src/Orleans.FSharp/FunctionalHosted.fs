@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 open System.Reflection
 open System.Threading.Tasks
+open Orleans
 open Orleans.Runtime
 open Orleans.FSharp.FunctionalDiagnostics
 
@@ -91,6 +92,20 @@ module internal ServerAdapter =
         (closed.CreateDelegate typeof<Func<obj, FunctionalServerAdapter>> :?> Func<obj, FunctionalServerAdapter>)
             .Invoke handler
 
+/// <summary>
+/// The preclosed typed adapter of the functional <c>onActivate</c> hook. It receives the boxed
+/// domain key, the invocation context core, and the boxed current primary state, and returns the
+/// boxed replacement state, which is published in memory only.
+/// </summary>
+type internal FunctionalActivateAdapter = delegate of obj * FunctionalContextCore * obj -> Task<obj>
+
+/// <summary>
+/// The preclosed typed adapter of the functional <c>onDeactivate</c> hook. It returns no
+/// replacement state.
+/// </summary>
+type internal FunctionalDeactivateAdapter =
+    delegate of obj * FunctionalContextCore * DeactivationReason * obj -> Task
+
 /// <summary>One hosted operation: the immutable descriptor plus its preclosed server adapter.</summary>
 [<ReferenceEquality>]
 type internal FunctionalHostedOperation =
@@ -138,8 +153,18 @@ type internal FunctionalHostedDefinition
         operations: FunctionalHostedOperation[],
         decodeKey: GrainId -> obj,
         createState: obj -> obj,
-        declaredTypes: (string * Type * Type)[]
+        declaredTypes: (string * Type * Type)[],
+        primaryFacet: FunctionalFacetBlueprint option,
+        additionalFacets: FunctionalFacetBlueprint[],
+        onActivate: FunctionalActivateAdapter option,
+        onDeactivate: FunctionalDeactivateAdapter option
     ) =
+
+    let facets =
+        [| match primaryFacet with
+           | Some primary -> yield primary
+           | None -> ()
+           yield! additionalFacets |]
 
     let byId =
         let map = Dictionary<string, FunctionalHostedOperation>(StringComparer.Ordinal)
@@ -191,6 +216,24 @@ type internal FunctionalHostedDefinition
     /// <summary>Create the initial primary state of one activation from its boxed domain key.</summary>
     member _.CreateState(key: obj) = createState key
 
+    /// <summary>
+    /// The primary persistent holder when <c>stateFrom</c> is configured. Its
+    /// <c>IPersistentState.State</c> is then the authoritative in-memory primary state.
+    /// </summary>
+    member _.PrimaryFacet = primaryFacet
+
+    /// <summary>Additional attached facets in declaration order.</summary>
+    member _.AdditionalFacets = additionalFacets
+
+    /// <summary>Every attached facet: the primary one first, then the additional ones.</summary>
+    member _.Facets = facets
+
+    /// <summary>The preclosed activation-hook adapter, when the definition declares one.</summary>
+    member _.OnActivate = onActivate
+
+    /// <summary>The preclosed deactivation-hook adapter, when the definition declares one.</summary>
+    member _.OnDeactivate = onDeactivate
+
     override _.ToString() =
         $"FunctionalHostedDefinition(grainType = '{grainTypeName}', version = {version}, operations = {operations.Length})"
 
@@ -230,6 +273,30 @@ module internal FunctionalHosted =
                   ReplyType = operation.ReplyType
                   Adapter = adapter })
 
+        // The primary facet blueprint closes over 'State here; the additional ones were closed
+        // over their own stored types by 'usePersistentState'.
+        let primaryFacet =
+            definition.Primary
+            |> Option.map (fun reference ->
+                FunctionalFacet.blueprint reference (fun key -> box (definition.Initializer(unbox<'Key> key))))
+
+        let onActivate =
+            definition.OnActivate
+            |> Option.map (fun hook ->
+                FunctionalActivateAdapter(fun key core state ->
+                    task {
+                        let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                        let! next = hook context (unbox<'State> state)
+                        return box next
+                    }))
+
+        let onDeactivate =
+            definition.OnDeactivate
+            |> Option.map (fun hook ->
+                FunctionalDeactivateAdapter(fun key core reason state ->
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    hook context reason (unbox<'State> state) :> Task))
+
         FunctionalHostedDefinition(
             box definition,
             contract.GrainTypeName,
@@ -242,5 +309,9 @@ module internal FunctionalHosted =
             operations,
             (fun grainId -> box (contract.KeyOf grainId)),
             (fun key -> box (definition.Initializer(unbox<'Key> key))),
-            contract.DeclaredTypes
+            contract.DeclaredTypes,
+            primaryFacet,
+            List.toArray definition.Additional,
+            onActivate,
+            onDeactivate
         )

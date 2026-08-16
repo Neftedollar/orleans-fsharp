@@ -184,6 +184,47 @@ module internal SerializerPreflight =
                 $"binding the contract '{grainTypeName}' requires the Orleans serializer, but no ICodecProvider is registered in this process."
 
     /// <summary>
+    /// Resolve the Orleans codec of one declared type and declare it as a top-level payload
+    /// type. <paramref name="role"/> and <paramref name="owner"/> only shape the diagnostics.
+    /// </summary>
+    /// <remarks>
+    /// The two failures are kept apart deliberately. A missing codec means the serializer
+    /// cannot resolve the type; a rejected declaration means two distinct CLR types share one
+    /// <c>FullName</c>, which is a name-collision fault and not a serializer-resolution one.
+    /// Reporting the collision as "resolving the Orleans serializer failed" would hide the only
+    /// message that says what is actually wrong, so it is rethrown under its own diagnostic
+    /// with the original message preserved verbatim.
+    /// </remarks>
+    let internal checkType (provider: ICodecProvider) (grainTypeName: string) (role: string) (owner: string) (declaredType: Type) =
+        let codecs = provider :> IFieldCodecProvider
+
+        try
+            codecs.GetCodec declaredType |> ignore
+        with
+        | :? CodecNotFoundException as cause ->
+            failCause
+                BindingStage
+                $"the {role} type '{declaredType.FullName}' of {owner} on grain type '{grainTypeName}' has no registered Orleans serializer. Register a codec for it (for example through AddFSharpSerialization/the F# binary codec) on every process which sends or hosts this contract."
+                cause
+        | cause ->
+            failCause
+                BindingStage
+                $"resolving the Orleans serializer for the {role} type '{declaredType.FullName}' of {owner} on grain type '{grainTypeName}' failed."
+                cause
+
+        // Exact-type payload serialization makes Orleans elide the field type, so the F# binary
+        // codec has to resolve a top-level payload type by name. Declaring it here keeps that
+        // resolution working for application assemblies without widening the codec's assembly
+        // allow-list.
+        try
+            FSharpBinaryFormat.declareType declaredType
+        with cause ->
+            failCause
+                BindingStage
+                $"the {role} type '{declaredType.FullName}' of {owner} on grain type '{grainTypeName}' cannot be declared as a top-level payload type: {cause.Message}"
+                cause
+
+    /// <summary>
     /// Validate that every declared argument and reply type has a codec, caching the outcome
     /// for this API shape and this serializer-service instance.
     /// </summary>
@@ -197,34 +238,20 @@ module internal SerializerPreflight =
             validated.GetValue(provider, fun _ -> ConcurrentDictionary<Type, bool>())
 
         if not (perProvider.ContainsKey apiType) then
-            let codecs = provider :> IFieldCodecProvider
-
-            let check (operationId: string) (role: string) (declaredType: Type) =
-                try
-                    codecs.GetCodec declaredType |> ignore
-
-                    // Exact-type payload serialization makes Orleans elide the field type, so
-                    // the F# binary codec has to resolve a top-level payload type by name.
-                    // Declaring it here keeps that resolution working for application
-                    // assemblies without widening the codec's assembly allow-list.
-                    FSharpBinaryFormat.declareType declaredType
-                with
-                | :? CodecNotFoundException as cause ->
-                    failCause
-                        BindingStage
-                        $"the {role} type '{declaredType.FullName}' of operation '{operationId}' on grain type '{grainTypeName}' has no registered Orleans serializer. Register a codec for it (for example through AddFSharpSerialization/the F# binary codec) on every process which sends or hosts this contract."
-                        cause
-                | cause ->
-                    failCause
-                        BindingStage
-                        $"resolving the Orleans serializer for the {role} type '{declaredType.FullName}' of operation '{operationId}' on grain type '{grainTypeName}' failed."
-                        cause
-
             for operationId, argumentType, replyType in declared do
-                check operationId "argument" argumentType
-                check operationId "reply" replyType
+                checkType provider grainTypeName "argument" $"operation '{operationId}'" argumentType
+                checkType provider grainTypeName "reply" $"operation '{operationId}'" replyType
 
             perProvider.[apiType] <- true
+
+    /// <summary>
+    /// Validate the durable stored type of every attached persistent state of one hosted
+    /// definition. Silo startup runs this so a state type without a serializer fails startup
+    /// instead of failing the first storage write.
+    /// </summary>
+    let ensureStoredTypes (provider: ICodecProvider) (grainTypeName: string) (states: (string * Type)[]) =
+        for stateName, storedType in states do
+            checkType provider grainTypeName "stored state" $"persistent state '{stateName}'" storedType
 
 /// <summary>
 /// The preclosed pair of client closures of one bound operation: the bound API-record field

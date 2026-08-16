@@ -70,6 +70,24 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
 
     default _.OnDisposing() = ()
 
+    /// <summary>
+    /// The functional half of activation, run by Orleans after the stock
+    /// <c>GrainLifecycleStage.SetupState</c> load and before activation completes.
+    /// </summary>
+    abstract OnActivating: CancellationToken -> Task
+
+    default _.OnActivating(_cancellationToken: CancellationToken) = Task.CompletedTask
+
+    /// <summary>The functional half of deactivation, run before the lifecycle stop stages.</summary>
+    abstract OnDeactivating: DeactivationReason * CancellationToken -> Task
+
+    default _.OnDeactivating(_reason: DeactivationReason, _cancellationToken: CancellationToken) = Task.CompletedTask
+
+    override this.OnActivateAsync(cancellationToken: CancellationToken) = this.OnActivating cancellationToken
+
+    override this.OnDeactivateAsync(reason: DeactivationReason, cancellationToken: CancellationToken) =
+        this.OnDeactivating(reason, cancellationToken)
+
     interface IDisposable with
         member this.Dispose() =
             if Interlocked.Exchange(&disposals, 1) = 0 then

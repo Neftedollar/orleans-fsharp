@@ -96,6 +96,61 @@ type internal FunctionalClientServicesMarker() =
     end
 
 /// <summary>
+/// The fixed transport types every functional process must be able to serialize: the request,
+/// its envelope, and the reply.
+/// </summary>
+[<RequireQualifiedAccess>]
+module internal FunctionalTransportTypes =
+
+    /// <summary>The three fixed transport types, in wire-nesting order.</summary>
+    let all: Type[] =
+        [| typeof<FunctionalRequest>
+           typeof<FunctionalRequestEnvelope>
+           typeof<FunctionalReply> |]
+
+    /// <summary>
+    /// Resolve an Orleans codec for each fixed transport type. A functional process which
+    /// cannot serialize them can never send or receive a functional call, so this runs at
+    /// startup rather than at the first call.
+    /// </summary>
+    let preflight (services: IServiceProvider) =
+        match services.GetService typeof<ICodecProvider> with
+        | :? ICodecProvider as provider ->
+            let codecs = provider :> IFieldCodecProvider
+
+            for transportType in all do
+                try
+                    codecs.GetCodec transportType |> ignore
+                with cause ->
+                    failCause
+                        BindingStage
+                        $"the fixed functional transport type '{transportType.FullName}' has no registered Orleans serializer in this process. AddFunctionalGrainClient/AddFunctionalGrain must run on every process which binds or hosts a functional contract."
+                        cause
+        | _ ->
+            fail
+                BindingStage
+                "the functional transport requires the Orleans serializer, but no ICodecProvider is registered in this process."
+
+/// <summary>
+/// Client startup validation: the fixed transport types must have serializers before the client
+/// admits any functional call. Spec: "An external client validates fixed transport types at
+/// startup."
+/// </summary>
+[<Sealed>]
+type internal FunctionalClientStartupValidator(services: IServiceProvider) =
+
+    interface ILifecycleParticipant<IClusterClientLifecycle> with
+        member _.Participate(lifecycle: IClusterClientLifecycle) =
+            lifecycle.Subscribe(
+                "Orleans.FSharp.FunctionalGrainClient",
+                ServiceLifecycleStage.RuntimeInitialize,
+                Func<CancellationToken, Task>(fun _ ->
+                    FunctionalTransportTypes.preflight services
+                    Task.CompletedTask)
+            )
+            |> ignore
+
+/// <summary>
 /// The single idempotent client-side registration routine. <c>AddFunctionalGrainClient</c> and
 /// <c>AddFunctionalGrain</c> both run it before adding anything of their own.
 /// </summary>
@@ -167,6 +222,12 @@ module internal FunctionalClientServices =
                 Action<ISerializerBuilder>(fun builder ->
                     FSharpBinaryCodecRegistration.addCodecToSerializerBuilder builder |> ignore)
             )
+            |> ignore
+
+            // 6. Startup preflight of the fixed transport types on an external client. A silo
+            //    has no IClusterClientLifecycle, so this participant is simply never invoked
+            //    there; the silo runs its own, wider startup validation instead.
+            services.AddSingleton<ILifecycleParticipant<IClusterClientLifecycle>, FunctionalClientStartupValidator>()
             |> ignore
 
             services

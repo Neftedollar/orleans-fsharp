@@ -18,6 +18,7 @@
     <Compile Include="FunctionalMarker.fs" />
     <Compile Include="FunctionalRegistry.fs" />
     <Compile Include="FunctionalManifest.fs" />
+    <Compile Include="FunctionalState.fs" />
     <Compile Include="FunctionalDispatch.fs" />
     <Compile Include="FunctionalActivation.fs" />
     <Compile Include="FunctionalSiloHosting.fs" />

@@ -39,10 +39,25 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                     .GetRequiredService<ILoggerFactory>()
                     .CreateLogger($"Orleans.FSharp.Functional.{definition.GrainTypeName}")
 
-            // The domain key is decoded once per activation, and the ephemeral primary state is
-            // created once per activation from the definition's normalized 'Key -> 'State
-            // factory. Neither ever writes storage.
+            // The domain key is decoded once per activation. The primary state itself is created
+            // in OnActivateAsync (activation step 3), never here, so a definition without a
+            // durable record and one with it follow the same ordering.
             let key = definition.DecodeKey grainContext.GrainId
+
+            // Step 1 of the activation order: every attached facet is created here,
+            // synchronously and before the target is returned, so each one subscribes to the
+            // activation lifecycle in time for the stock GrainLifecycleStage.SetupState load.
+            // IPersistentStateFactory.Create refuses to run once the lifecycle has started.
+            let facets =
+                if definition.Facets.Length = 0 then
+                    Array.empty
+                else
+                    let stateFactory = services.GetRequiredService<IPersistentStateFactory>()
+
+                    definition.Facets
+                    |> Array.map (fun blueprint ->
+                        { Blueprint = blueprint
+                          Instance = blueprint.Create stateFactory grainContext })
 
             let mutable deactivate = fun () -> ()
             let mutable delay = fun (_: TimeSpan) -> ()
@@ -57,13 +72,19 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                   Codec = codec
                   MaxPayloadBytes = FunctionalTransportConfiguration.maxPayloadBytes services
                   Key = key
-                  State = FunctionalActivationState(definition.CreateState key)
+                  State = FunctionalActivationState(definition, facets)
                   DeactivateOnIdle = fun () -> deactivate ()
                   DelayDeactivation = fun timeSpan -> delay timeSpan }
 
             let target =
                 { new FunctionalGrainTargetBase(grainContext, grainRuntime) with
                     member _.OnDisposing() = ()
+
+                    member _.OnActivating(cancellationToken) =
+                        FunctionalLifecycle.activate env cancellationToken
+
+                    member _.OnDeactivating(reason, cancellationToken) =
+                        FunctionalLifecycle.deactivate env reason cancellationToken
 
                   interface IFunctionalDispatchTarget with
                       member _.DispatchAsync(envelope, cancellationToken) =

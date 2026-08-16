@@ -12,6 +12,7 @@ open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.Metadata
 open Orleans.Runtime
+open Orleans.Storage
 open Orleans.FSharp.FunctionalDiagnostics
 open Orleans.FSharp.FunctionalSiloDiagnostics
 
@@ -59,13 +60,33 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                     StartupStage
                     $"grain type '{entry.GrainTypeName}' is registered but its closed target interface '{entry.InterfaceType.FullName}' is missing from GrainTypeOptions.Interfaces."
 
-        // Every hosted argument and reply type must have an Orleans serializer on this silo, and
-        // every one of them is declared as a top-level payload type so the F# binary codec can
-        // resolve an elided field type on the receiving side.
+        // Every hosted argument, reply, and durable state type must have an Orleans serializer on
+        // this silo, and every one of them is declared as a top-level payload type so the F#
+        // binary codec can resolve an elided field type on the receiving side.
         for entry in snapshot do
             let definition = entry.Definition
             let provider = SerializerPreflight.providerOf services definition.GrainTypeName
             SerializerPreflight.ensure provider definition.GrainTypeName definition.ApiType definition.DeclaredTypes
+
+            SerializerPreflight.ensureStoredTypes
+                provider
+                definition.GrainTypeName
+                (definition.Facets
+                 |> Array.map (fun facet -> facet.Descriptor.StateName, facet.Descriptor.StoredType))
+
+        // Every named storage provider of every attached facet must be registered on this silo.
+        // Orleans resolves a named IGrainStorage as a keyed service, so an unregistered name
+        // would otherwise surface as an activation failure on the first call.
+        for entry in snapshot do
+            let definition = entry.Definition
+
+            for facet in definition.Facets do
+                let descriptor = facet.Descriptor
+
+                if isNull (box (services.GetKeyedService<IGrainStorage> descriptor.ProviderName)) then
+                    fail
+                        StartupStage
+                        $"the persistent state '{descriptor.StateName}' (stored type '{descriptor.StoredType.FullName}') of grain type '{definition.GrainTypeName}' names storage provider '{descriptor.ProviderName}', which is not registered on this silo. Add that named IGrainStorage (for example AddMemoryGrainStorage \"{descriptor.ProviderName}\") to every silo which hosts this definition."
 
         // Manifest agreement: the published local grain manifest carries every registered
         // definition with its closed interface ID.
