@@ -161,6 +161,21 @@ module internal DefinitionDraft =
         let state = draft.State
         let grainTypeName = state.Contract.GrainTypeName
 
+        // A derived grain type (no explicit 'grainType' on the contract) moves silently if the
+        // actor brand is ever renamed, because the brand's CLR simple name IS the grain type in
+        // that case. That is harmless for an ephemeral definition, but it would orphan persisted
+        // state or lose durable reminders registered under the old name, so any definition with a
+        // durable attachment requires an explicit 'grainType'.
+        let hasDurableAttachment =
+            state.Primary.IsSome
+            || not (List.isEmpty state.Additional)
+            || not (List.isEmpty state.Reminders)
+
+        if hasDurableAttachment && not state.Contract.IsGrainTypeExplicit then
+            fail
+                DefinitionStage
+                $"grain type '{grainTypeName}' attaches 'stateFrom', 'usePersistentState', or declares 'onReminder', but its contract derives 'grainType' from the actor brand '{typeof<'Actor>.FullName}' instead of declaring one explicitly. A brand rename would then silently move routing AND storage identity, orphaning persisted state and losing durable reminders. Declare an explicit 'grainType' on the contract before attaching durable state or a reminder."
+
         // Exactly one handler for every API-record field.
         let missing =
             state.Contract.Operations

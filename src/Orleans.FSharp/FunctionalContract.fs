@@ -50,6 +50,7 @@ type GrainContract<'Actor, 'Key, 'Api>
     internal
     (
         grainTypeName: string,
+        isGrainTypeExplicit: bool,
         version: int,
         shape: ApiShape,
         keyCodec: KeyCodec<'Key>,
@@ -75,8 +76,20 @@ type GrainContract<'Actor, 'Key, 'Api>
         operations
         |> Array.map (fun operation -> operation.OperationId, operation.ArgumentType, operation.ReplyType)
 
-    /// <summary>The explicit Orleans grain type name.</summary>
+    /// <summary>
+    /// The contract's Orleans grain type name -- either the explicit <c>grainType</c> value, or,
+    /// when omitted, the actor brand's CLR simple name.
+    /// </summary>
     member internal _.GrainTypeName = grainTypeName
+
+    /// <summary>
+    /// <c>true</c> when the contract declared an explicit <c>grainType</c>; <c>false</c> when it
+    /// was derived from the actor brand's CLR simple name. A definition may attach durable state
+    /// (<c>stateFrom</c>, <c>usePersistentState</c>) or declare <c>onReminder</c> only when this
+    /// is <c>true</c> -- a derived grain type moves silently if the brand is ever renamed, which
+    /// would orphan persisted state or lose durable reminders.
+    /// </summary>
+    member internal _.IsGrainTypeExplicit = isGrainTypeExplicit
 
     /// <summary>The application contract version carried in every request.</summary>
     member internal _.Version = version
@@ -185,15 +198,36 @@ module internal ContractDraft =
 
         current.Add operation.Index
 
+    /// <summary>
+    /// Derive the default grain type name from the actor brand's CLR simple name, used when the
+    /// contract omits an explicit 'grainType'. Only a simple, non-generic, non-nested brand
+    /// qualifies -- a generic brand's <c>Name</c> carries a backtick arity suffix (for example
+    /// <c>"CounterActor`1"</c>), and a brand nested in another type or in an F# <c>module</c>
+    /// (every type a <c>module</c> declares is a CLR-nested type, unlike a <c>namespace</c>)
+    /// carries a '+' separator in its qualified name. Either case must declare 'grainType'
+    /// explicitly instead.
+    /// </summary>
+    let private deriveGrainTypeName (actorType: Type) =
+        if actorType.IsGenericType then
+            fail
+                ContractStage
+                $"the actor brand '{actorType.FullName}' is a generic type, so its CLR name is not a simple non-generic name and cannot supply a derived 'grainType'. Declare an explicit 'grainType' for this contract."
+
+        if actorType.IsNested then
+            fail
+                ContractStage
+                $"the actor brand '{actorType.FullName}' is a nested type (declared inside another type or inside an F# 'module' rather than a 'namespace'), so its CLR name is not a simple name and cannot supply a derived 'grainType'. Declare an explicit 'grainType' for this contract."
+
+        actorType.Name
+
     /// <summary>Seal a draft into an immutable contract.</summary>
     let run<'Actor, 'Key, 'Api> (draft: GrainContractDraft<'Actor, 'Key, 'Api>) : GrainContract<'Actor, 'Key, 'Api> =
         let state = draft.State
-        let apiName = state.Shape.ApiType.FullName
 
-        let grainTypeName =
+        let grainTypeName, isGrainTypeExplicit =
             match state.GrainTypeName with
-            | None -> fail ContractStage $"the contract for '{apiName}' requires exactly one 'grainType' operation."
-            | Some value -> value
+            | Some value -> value, true
+            | None -> deriveGrainTypeName typeof<'Actor>, false
 
         let version = state.Version |> Option.defaultValue 1
 
@@ -256,7 +290,7 @@ module internal ContractDraft =
                     $"operation ID '{operation.OperationId}' of '{grainTypeName}' is used by both API field '{owner}' and API field '{operation.FieldName}'."
             | _ -> seen.[operation.OperationId] <- operation.FieldName
 
-        GrainContract<'Actor, 'Key, 'Api>(grainTypeName, version, state.Shape, keyCodec, operations)
+        GrainContract<'Actor, 'Key, 'Api>(grainTypeName, isGrainTypeExplicit, version, state.Shape, keyCodec, operations)
 
 /// <summary>
 /// The <c>grainContract</c> computation expression: immutable contract metadata, exactly one
