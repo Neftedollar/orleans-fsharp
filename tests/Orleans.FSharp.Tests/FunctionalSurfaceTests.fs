@@ -1,7 +1,7 @@
 /// <summary>
-/// Surface tests for spec 003 Phase 1: the per-invocation context, the bound-reference
-/// wrapper, the compile-only hosting stubs, and construction-stage caching behaviour that the
-/// shape and contract suites do not cover.
+/// Surface tests for spec 003: the per-invocation context, the bound-reference wrapper,
+/// client and silo registration, and construction-stage caching behaviour that the shape and
+/// contract suites do not cover.
 /// </summary>
 module Orleans.FSharp.Tests.FunctionalSurfaceTests
 
@@ -13,6 +13,7 @@ open Microsoft.Extensions.Logging.Abstractions
 open Xunit
 open Swensen.Unquote
 open Orleans
+open Orleans.GrainReferences
 open Orleans.Hosting
 open Orleans.Runtime
 open Orleans.FSharp
@@ -151,12 +152,31 @@ let private surfaceTransport () =
 
 [<Fact>]
 let ``the reference wrapper exposes the key and the cached API instance`` () =
-    let transport = surfaceTransport ()
-    let reference = FunctionalGrain.rawRef contract transport "general"
+    let transportA = surfaceTransport ()
+    let transportB = surfaceTransport ()
+    let referenceA = FunctionalGrain.rawRef contract transportA "general"
+    let referenceB = FunctionalGrain.rawRef contract transportB "general"
 
-    test <@ reference.key = "general" @>
-    test <@ obj.ReferenceEquals(reference.api, reference.api) @>
-    test <@ obj.ReferenceEquals(reference.api, (reference :> obj :?> FunctionalGrainRef<SurfaceActor, string, SurfaceApi>).api) @>
+    // Obtained once, independently of the accesses compared below.
+    let capturedA = referenceA.api
+
+    test <@ referenceA.key = "general" @>
+
+    // The same instance on every access…
+    test <@ obj.ReferenceEquals(referenceA.api, capturedA) @>
+
+    // …and not a process-wide singleton: an independent binding builds its own record.
+    test <@ not (obj.ReferenceEquals(referenceA.api, referenceB.api)) @>
+
+    task {
+        // The captured record really carries this reference's bound closures: the call it
+        // makes appears on referenceA's transport and nowhere else.
+        do! capturedA.first 1
+
+        test <@ transportA.Calls.Length = 1 @>
+        test <@ transportB.Calls.Length = 0 @>
+        test <@ transportA.LastCall.Envelope.OperationId = "first" @>
+    }
 
 [<Fact>]
 let ``selector-based calls reach the bound closure of the selected field`` () =
@@ -237,17 +257,69 @@ let private fakeSiloBuilder (services: IServiceCollection) =
         member _.Services = services
         member _.Configuration = Unchecked.defaultof<Microsoft.Extensions.Configuration.IConfiguration> }
 
+/// <summary>
+/// Orleans installs its own reference activator providers before a builder extension runs.
+/// A bare service collection therefore has to be seeded with a stand-in stock provider
+/// descriptor to reproduce the state the extensions are specified against.
+/// </summary>
+let private seedStockReferenceActivatorProvider (services: IServiceCollection) =
+    services.AddSingleton<IGrainReferenceActivatorProvider>(
+        { new IGrainReferenceActivatorProvider with
+            member _.TryGet(_grainType, _interfaceType, activator) =
+                activator <- Unchecked.defaultof<IGrainReferenceActivator>
+                false }
+    )
+    |> ignore
+
+    services
+
 [<Fact>]
-let ``the Phase 1 client registration stub returns the builder unchanged`` () =
-    let services = ServiceCollection() :> IServiceCollection
+let ``client registration returns the builder and installs the functional transport`` () =
+    let services = seedStockReferenceActivatorProvider (ServiceCollection())
     let builder = fakeClientBuilder services
     let returned = builder.AddFunctionalGrainClient()
 
     test <@ obj.ReferenceEquals(returned, builder) @>
-    test <@ services.Count = 0 @>
+    test <@ FunctionalClientServices.isRegistered services @>
+
+    let providers =
+        services
+        |> Seq.filter (fun descriptor -> descriptor.ServiceType = typeof<IGrainReferenceActivatorProvider>)
+        |> Seq.toArray
+
+    test <@ providers.Length = 2 @>
+
+    // The functional descriptor is inserted immediately before the first existing provider.
+    let index =
+        services
+        |> Seq.findIndex (fun descriptor -> descriptor.ServiceType = typeof<IGrainReferenceActivatorProvider>)
+
+    test <@ obj.ReferenceEquals(services.[index], providers.[0]) @>
+    test <@ providers.[0].ImplementationFactory <> null @>
+    test <@ providers.[1].ImplementationInstance <> null @>
 
 [<Fact>]
-let ``the Phase 1 silo registration stub returns the builder unchanged`` () =
+let ``client registration is idempotent`` () =
+    let services = seedStockReferenceActivatorProvider (ServiceCollection())
+    let builder = fakeClientBuilder services
+    builder.AddFunctionalGrainClient() |> ignore
+    let after = services.Count
+    builder.AddFunctionalGrainClient() |> ignore
+
+    test <@ services.Count = after @>
+
+[<Fact>]
+let ``registration without an existing reference activator provider is a configuration error`` () =
+    let services = ServiceCollection() :> IServiceCollection
+    let builder = fakeClientBuilder services
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () -> builder.AddFunctionalGrainClient() |> ignore)
+
+    test <@ error.Message.Contains "IGrainReferenceActivatorProvider" @>
+
+[<Fact>]
+let ``silo registration returns the builder and registers the definition once`` () =
     let definition =
         grainFor contract {
             defaultState (fun () -> { count = 0 })
@@ -255,12 +327,25 @@ let ``the Phase 1 silo registration stub returns the builder unchanged`` () =
             handle (_.second) (fun _ state (_: int) -> task { return state, () })
         }
 
-    let services = ServiceCollection() :> IServiceCollection
+    let services = seedStockReferenceActivatorProvider (ServiceCollection())
     let builder = fakeSiloBuilder services
     let returned = builder.AddFunctionalGrain definition
 
     test <@ obj.ReferenceEquals(returned, builder) @>
-    test <@ services.Count = 0 @>
+    test <@ FunctionalClientServices.isRegistered services @>
+
+    // Repeated registration of the same definition value is idempotent.
+    builder.AddFunctionalGrain definition |> ignore
+
+    let registry =
+        services
+        |> Seq.pick (fun descriptor ->
+            match descriptor.ImplementationInstance with
+            | :? FunctionalGrainRegistry as registry -> Some registry
+            | _ -> None)
+
+    test <@ registry.Snapshot.Length = 1 @>
+    test <@ registry.Snapshot.[0].GrainTypeName = "surface.test" @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Construction-stage behaviour

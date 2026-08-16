@@ -71,16 +71,48 @@ let ``every component of the token input changes the digest`` () =
 
     test <@ variants |> List.forall (fun variant -> not (ProtocolToken.equal baseline variant)) @>
 
+/// <summary>
+/// Independent re-derivation of the token input: SHA-256 over
+/// <c>grainType NUL version NUL operationId NUL direction</c> in UTF-8, with the version
+/// rendered exactly as supplied here.
+/// </summary>
+let private digestOf (grainType: string) (version: string) (operationId: string) (direction: string) =
+    let text = String.Join('\000', [| grainType; version; operationId; direction |])
+
+    Convert
+        .ToHexString(Security.Cryptography.SHA256.HashData(Text.Encoding.UTF8.GetBytes text))
+        .ToLowerInvariant()
+
 [<Fact>]
 let ``the version is rendered as invariant decimal without sign or padding`` () =
     let previous = Globalization.CultureInfo.CurrentCulture
 
     try
-        // A culture with non-ASCII digits must not change the token.
+        // A culture whose number format differs from the invariant one must not change the
+        // token, and the rendering rule itself is re-derived rather than asserted by fiat.
         Globalization.CultureInfo.CurrentCulture <- Globalization.CultureInfo.GetCultureInfo "ar-SA"
-        let token = ProtocolToken.request "chat.room" 1 "join"
 
-        test <@ ProtocolToken.toHex token = "525f112d5114016be421e973fee8aa7e4b439b560f29b419fd374e48336c430e" @>
+        for version in [ 1; 7; 42; 1000; Int32.MaxValue ] do
+            let token = ProtocolToken.request "chat.room" version "join"
+
+            test
+                <@
+                    ProtocolToken.toHex token = digestOf
+                        "chat.room"
+                        (string version)
+                        "join"
+                        ProtocolToken.RequestDirection
+                @>
+
+        // Falsifiability: any other plausible rendering of the same version produces a
+        // different digest, so the assertions above really pin the invariant-decimal rule.
+        let actual = ProtocolToken.toHex (ProtocolToken.request "chat.room" 1 "join")
+
+        for rendering in [ "01"; "+1"; " 1"; "1.0"; "١" ] do
+            test <@ actual <> digestOf "chat.room" rendering "join" ProtocolToken.RequestDirection @>
+
+        // The published golden vector still holds.
+        test <@ actual = "525f112d5114016be421e973fee8aa7e4b439b560f29b419fd374e48336c430e" @>
     finally
         Globalization.CultureInfo.CurrentCulture <- previous
 
