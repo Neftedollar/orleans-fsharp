@@ -32,6 +32,7 @@ type FSharpGrainAttribute() =
 /// Enables grain-to-grain communication via type-safe GrainRef creation
 /// and service resolution via the IServiceProvider.
 /// </summary>
+[<Obsolete("GrainContext (the grain{} handler context) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and use the FunctionalGrainContext passed to each operation handler (ctx.services for service resolution, ctx.persistentState with usePersistentState for named state, ctx.grainId / ctx.key for identity, ctx.deactivateOnIdle() / ctx.delayDeactivation for lifetime control). See docs/functional-grains.md for the migration.", false)>]
 type GrainContext =
     {
         /// <summary>The Orleans grain factory for creating grain references.</summary>
@@ -56,6 +57,9 @@ type GrainContext =
 /// <summary>
 /// Functions for creating type-safe grain references and resolving services from within a grain context.
 /// </summary>
+// deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+[<Obsolete("The GrainContext module (grain{} handler-context helpers) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and use the FunctionalGrainContext members directly (ctx.services replaces GrainContext.getService, ctx.persistentState with usePersistentState replaces GrainContext.getState, ctx.deactivateOnIdle() / ctx.delayDeactivation replace GrainContext.deactivateOnIdle / delayDeactivation, ctx.grainId / ctx.key replace GrainContext.grainId / primaryKeyString / primaryKeyGuid / primaryKeyInt64). See docs/functional-grains.md for the migration.", false)>]
 [<RequireQualifiedAccess>]
 module GrainContext =
 
@@ -284,18 +288,13 @@ module GrainContext =
             GrainId = Some grainId
             PrimaryKey = None
         }
+#warnon "44"
 
-/// <summary>
-/// Defines the complete specification for an F# grain, including its initial state,
-/// message handler, persistence configuration, and lifecycle hooks.
-/// </summary>
-/// <typeparam name="'State">The type of the grain's state.</typeparam>
-/// <typeparam name="'Message">The type of messages the grain handles.</typeparam>
 /// <summary>
 /// Declares a named additional persistent state for use in grain handlers.
 /// Each entry specifies the state name, the storage provider name, and the default value.
 /// </summary>
-/// <typeparam name="'T">The type of the state value.</typeparam>
+[<Obsolete("AdditionalStateSpec (the grain{} additionalState declaration) is superseded by the functional grain runtime: declare named state with usePersistentState in grainFor { } and read it through ctx.persistentState. See docs/functional-grains.md for the migration.", false)>]
 type AdditionalStateSpec =
     {
         /// <summary>The name for this persistent state (used as the state key in storage).</summary>
@@ -308,6 +307,15 @@ type AdditionalStateSpec =
         StateType: Type
     }
 
+/// <summary>
+/// Defines the complete specification for an F# grain, including its initial state,
+/// message handler, persistence configuration, and lifecycle hooks.
+/// </summary>
+/// <typeparam name="'State">The type of the grain's state.</typeparam>
+/// <typeparam name="'Message">The type of messages the grain handles.</typeparam>
+// deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+[<Obsolete("GrainDefinition (the value produced by the grain{} CE) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, which produces a FunctionalGrainDefinition registered with AddFunctionalGrain and called through FunctionalGrain.ref. See docs/functional-grains.md for the before/after mapping.", false)>]
 type GrainDefinition<'State, 'Message> =
     {
         /// <summary>The initial state value for the grain when first activated.</summary>
@@ -347,10 +355,14 @@ type GrainDefinition<'State, 'Message> =
         /// Standard stages: First=2000, SetupState=4000, Activate=6000, Last=int.MaxValue.</summary>
         LifecycleHooks: Map<int, (CancellationToken -> Task<unit>) list>
     }
+#warnon "44"
 
 /// <summary>
 /// Utility functions for working with GrainDefinition values.
 /// </summary>
+// deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+[<Obsolete("The GrainDefinition module (grain{} definition helpers) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and let AddFunctionalGrain / FunctionalGrain.ref drive dispatch — handler lookup and invocation are no longer part of the public surface. See docs/functional-grains.md for the migration.", false)>]
 [<RequireQualifiedAccess>]
 module GrainDefinition =
 
@@ -537,6 +549,7 @@ module GrainDefinition =
         match definition.OnDeactivate with
         | Some f -> f state :> Task
         | None -> Task.CompletedTask
+#warnon "44"
 
 /// <summary>
 /// Computation expression builder for declaratively defining grain behavior.
@@ -551,6 +564,9 @@ module GrainDefinition =
 /// }
 /// </code>
 /// </example>
+// deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+[<Obsolete("GrainBuilder (the type behind the grain { } CE) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, register it with AddFunctionalGrain and call it through FunctionalGrain.ref. See docs/functional-grains.md for the before/after mapping.", false)>]
 type GrainBuilder() =
 
     /// <summary>Yields the initial empty grain definition.</summary>
@@ -1166,6 +1182,7 @@ type GrainBuilder() =
                 $"No handler registered for grain definition with state type '{typeof<'State>.Name}' and message type '{typeof<'Message>.Name}'. Use 'handle', 'handleState', 'handleTyped', 'handleCancellable', 'handleWithContext', or 'handleWithContextCancellable' in the grain {{ }} CE."
 
         definition
+#warnon "44"
 
 /// <summary>
 /// The grain computation expression builder instance.
@@ -1184,4 +1201,7 @@ module GrainBuilderInstance =
     /// interleaveMessage, onLifecycleStage.
     /// </summary>
     [<Obsolete("The grain { } CE (GrainBuilder, GrainDefinition, the old GrainContext, and the universal FSharpGrain.* message-passing surface) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and call it via FunctionalGrain.ref, registering it with AddFunctionalGrain. Timers -> onTimer in grainFor { } (or Grain.RegisterGrainTimer directly on a class grain); Reminders -> onReminder in grainFor { } (or Grain.RegisterOrUpdateReminder directly on a class grain). See docs/functional-grains.md for the before/after mapping.", false)>]
+    // deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
     let grain = GrainBuilder()
+#warnon "44"

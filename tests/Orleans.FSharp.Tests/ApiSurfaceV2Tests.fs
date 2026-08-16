@@ -67,6 +67,8 @@ let ``Timers module is publicly accessible`` () =
 
     test <@ hasTimers @>
 
+// Task 8 deprecation pass: asserts on the pre-functional-runtime grain{} surface on purpose.
+#nowarn "44"
 [<Fact>]
 let ``GrainDefinition has ReminderHandlers field`` () =
     let defType = typeof<Orleans.FSharp.GrainDefinition<int, string>>
@@ -90,6 +92,7 @@ let ``GrainBuilder has onReminder custom operation`` () =
     // Should have CustomOperation attribute
     let attrs = onReminderMethod.Value.GetCustomAttributes(typeof<FSharp.Core.CustomOperationAttribute>, false)
     test <@ attrs.Length > 0 @>
+#warnon "44"
 
 // ---------------------------------------------------------------------------
 // FsCheck property tests
@@ -99,7 +102,10 @@ let ``GrainBuilder has onReminder custom operation`` () =
 let ``all public types in v2 assembly have non-empty names`` () =
     publicTypes |> Array.forall (fun t -> t.Name.Length > 0)
 
+// Task 8 deprecation pass: asserts on the pre-functional-runtime grain{} surface on purpose.
+#nowarn "44"
 [<Property>]
 let ``GrainBuilder has at least 10 public instance methods`` () =
     let builderType = typeof<Orleans.FSharp.GrainBuilder>
     builderType.GetMethods(BindingFlags.Public ||| BindingFlags.Instance).Length >= 10
+#warnon "44"

@@ -77,7 +77,11 @@ type RedisClusterFixture() =
                 if redisAvailable then
                     // Load CodeGen and Abstractions assemblies so Orleans discovers grain proxies.
                     let _ = typeof<Orleans.FSharp.CodeGen.CodeGenAssemblyMarker>.Assembly.GetTypes()
+                    // Task 8 deprecation pass: names the deprecated IFSharpGrain purely as an
+                    // assembly handle so Orleans loads Abstractions (proxy discovery), not to use it.
+#nowarn "44"
                     let _ = typeof<Orleans.FSharp.IFSharpGrain>.Assembly.GetTypes()
+#warnon "44"
 
                     let builder = TestClusterBuilder()
                     builder.Options.InitialSilosCount <- 1s

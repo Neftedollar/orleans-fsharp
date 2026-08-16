@@ -434,7 +434,10 @@ module SiloConfig =
         // before the snapshot. Cheap (two already-referenced assemblies) and idempotent.
         // See docs/functional-grains.md, "Running a silo from a standalone F# process".
         typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore
+        // deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
         typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore
+#warnon "44"
 
         builder.UseOrleans(fun siloBuilder -> applyToSiloBuilder config siloBuilder)
         |> ignore

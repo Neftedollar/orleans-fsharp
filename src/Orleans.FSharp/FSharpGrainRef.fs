@@ -11,6 +11,9 @@ open Orleans
 /// </summary>
 /// <typeparam name="'State">The grain's state type, returned from send operations.</typeparam>
 /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+// deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+[<Obsolete("FSharpGrainHandle (the string-keyed grain{} handle) is superseded by the functional grain runtime: get a typed API record with FunctionalGrain.ref contract factory key and call its operations directly. See docs/functional-grains.md for the before/after mapping.", false)>]
 [<Struct>]
 type FSharpGrainHandle<'State, 'Command> =
     internal
@@ -24,6 +27,7 @@ type FSharpGrainHandle<'State, 'Command> =
 /// </summary>
 /// <typeparam name="'State">The grain's state type.</typeparam>
 /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+[<Obsolete("FSharpGrainGuidHandle (the Guid-keyed grain{} handle) is superseded by the functional grain runtime: get a typed API record with FunctionalGrain.ref contract factory key and call its operations directly. See docs/functional-grains.md for the before/after mapping.", false)>]
 [<Struct>]
 type FSharpGrainGuidHandle<'State, 'Command> =
     internal
@@ -37,6 +41,7 @@ type FSharpGrainGuidHandle<'State, 'Command> =
 /// </summary>
 /// <typeparam name="'State">The grain's state type.</typeparam>
 /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+[<Obsolete("FSharpGrainIntHandle (the int64-keyed grain{} handle) is superseded by the functional grain runtime: get a typed API record with FunctionalGrain.ref contract factory key and call its operations directly. See docs/functional-grains.md for the before/after mapping.", false)>]
 [<Struct>]
 type FSharpGrainIntHandle<'State, 'Command> =
     internal
@@ -73,6 +78,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A typed grain handle.</returns>
+    [<Obsolete("FSharpGrain.ref (grain{} universal message-passing handle) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and get a typed API record with FunctionalGrain.ref contract factory key, then call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let ref<'State, 'Command> (factory: IGrainFactory) (key: string) : FSharpGrainHandle<'State, 'Command> =
         { Grain = factory.GetGrain<IFSharpGrain>(key) }
 
@@ -84,6 +90,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A typed grain handle.</returns>
+    [<Obsolete("FSharpGrain.refGuid (grain{} universal message-passing handle) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor over a Guid key and get a typed API record with FunctionalGrain.ref contract factory key. See docs/functional-grains.md for the before/after mapping.", false)>]
     let refGuid<'State, 'Command> (factory: IGrainFactory) (key: Guid) : FSharpGrainGuidHandle<'State, 'Command> =
         { Grain = factory.GetGrain<IFSharpGrainWithGuidKey>(key) }
 
@@ -95,6 +102,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A typed grain handle.</returns>
+    [<Obsolete("FSharpGrain.refInt (grain{} universal message-passing handle) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor over an int64 key and get a typed API record with FunctionalGrain.ref contract factory key. See docs/functional-grains.md for the before/after mapping.", false)>]
     let refInt<'State, 'Command> (factory: IGrainFactory) (key: int64) : FSharpGrainIntHandle<'State, 'Command> =
         { Grain = factory.GetGrain<IFSharpGrainWithIntKey>(key) }
 
@@ -251,6 +259,7 @@ module FSharpGrain =
             let! result = handle.Grain.HandleMessage(box cmd)
             return result :?> 'Result
         }
+#warnon "44"
 
 // ---------------------------------------------------------------------------
 // Event-sourced grain handles

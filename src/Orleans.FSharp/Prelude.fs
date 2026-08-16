@@ -21,12 +21,15 @@ type AssemblyMarker =
 /// Universal grain interface for all F# grains (string key).
 /// Defined in C# (Orleans.FSharp.Abstractions) so Orleans can generate proxies.
 /// </summary>
+[<System.Obsolete("The IFSharpGrain universal message-passing interface (the transport behind grain{} and FSharpGrain.ref/send/post/ask) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, register it with AddFunctionalGrain and call it through FunctionalGrain.ref, which generates its own proxy per contract. See docs/functional-grains.md for the migration.", false)>]
 type IFSharpGrain = Orleans.FSharp.IFSharpGrain
 
 /// <summary>GUID-keyed variant of the universal F# grain interface.</summary>
+[<System.Obsolete("The IFSharpGrainWithGuidKey universal message-passing interface (the transport behind grain{} and FSharpGrain.refGuid/sendGuid/postGuid/askGuid) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor over a Guid key, register it with AddFunctionalGrain and call it through FunctionalGrain.ref. See docs/functional-grains.md for the migration.", false)>]
 type IFSharpGrainWithGuidKey = Orleans.FSharp.IFSharpGrainWithGuidKey
 
 /// <summary>Integer-keyed variant of the universal F# grain interface.</summary>
+[<System.Obsolete("The IFSharpGrainWithIntKey universal message-passing interface (the transport behind grain{} and FSharpGrain.refInt/sendInt/postInt/askInt) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor over an int64 key, register it with AddFunctionalGrain and call it through FunctionalGrain.ref. See docs/functional-grains.md for the migration.", false)>]
 type IFSharpGrainWithIntKey = Orleans.FSharp.IFSharpGrainWithIntKey
 
 /// <summary>

@@ -140,6 +140,9 @@ module GrainMock =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>The same mock grain factory with the registration added.</returns>
+    // deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+    [<Obsolete("GrainMock.withFSharpGrain mocks the superseded grain{} message-passing cluster: functional grains defined with grainContract<...> / grainFor are tested against a real TestingHost silo (AddFunctionalGrain + FunctionalGrain.ref) or by calling the handler functions directly, since they are plain functions. See docs/functional-grains.md for the migration.", false)>]
     let withFSharpGrain<'State, 'Command>
         (key: string)
         (def: GrainDefinition<'State, 'Command>)
@@ -186,6 +189,7 @@ module GrainMock =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>The same mock grain factory with the registration added.</returns>
+    [<Obsolete("GrainMock.withFSharpGrainGuid mocks the superseded grain{} message-passing cluster: functional grains defined with grainContract<...> / grainFor are tested against a real TestingHost silo (AddFunctionalGrain + FunctionalGrain.ref) or by calling the handler functions directly, since they are plain functions. See docs/functional-grains.md for the migration.", false)>]
     let withFSharpGrainGuid<'State, 'Command>
         (key: Guid)
         (def: GrainDefinition<'State, 'Command>)
@@ -232,6 +236,7 @@ module GrainMock =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>The same mock grain factory with the registration added.</returns>
+    [<Obsolete("GrainMock.withFSharpGrainInt mocks the superseded grain{} message-passing cluster: functional grains defined with grainContract<...> / grainFor are tested against a real TestingHost silo (AddFunctionalGrain + FunctionalGrain.ref) or by calling the handler functions directly, since they are plain functions. See docs/functional-grains.md for the migration.", false)>]
     let withFSharpGrainInt<'State, 'Command>
         (key: int64)
         (def: GrainDefinition<'State, 'Command>)
@@ -267,3 +272,4 @@ module GrainMock =
 
         factory.Register(typeof<IFSharpGrainWithIntKey>, string key, box mock)
         factory
+#warnon "44"
