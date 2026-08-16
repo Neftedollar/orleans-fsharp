@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- TEMPORARY Phase 0 seam-proof project for spec 003.
+       Proves raw Orleans extension seams with minimal hand-written spike types.
+       It deliberately references NO production Orleans.FSharp* project.
+       Promoted into production tests or deleted before the feature merges. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Spike code: the object-expression target intentionally shadows/ignores
+         values; keep the strict repo-wide warning policy but allow the two
+         F#-specific noise warnings that spike code trips. -->
+    <NoWarn>$(NoWarn);FS0064;FS3370</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Transport.fs" />
+    <Compile Include="Codecs.fs" />
+    <Compile Include="Registry.fs" />
+    <Compile Include="Dispatch.fs" />
+    <Compile Include="Activation.fs" />
+    <Compile Include="Hosting.fs" />
+    <Compile Include="Fixtures.fs" />
+    <Compile Include="Item04_ReferenceSelectionTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Orleans.Server" />
+    <PackageReference Include="Microsoft.Orleans.TestingHost" />
+    <PackageReference Include="Microsoft.Orleans.Persistence.Memory" />
+    <PackageReference Include="Microsoft.Orleans.Reminders" />
+  </ItemGroup>
+
+</Project>

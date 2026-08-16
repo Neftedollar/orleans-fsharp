@@ -28,6 +28,7 @@
     <PackageVersion Include="Microsoft.Orleans.TestingHost"                  Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Clustering.Redis"             Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Persistence.Redis"            Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Persistence.Memory"           Version="$(OrleansVersion)" />
 
     <!-- Microsoft.Extensions / ASP.NET Core
          Previously floated at 10.*; reconciled to highest 10.x in local cache. -->
