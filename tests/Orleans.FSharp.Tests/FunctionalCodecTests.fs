@@ -590,3 +590,17 @@ let ``the fixed transport types carry a serializer and a copier without any func
     |> List.iter (fun fixedType ->
         Assert.NotNull(codecs.GetCodec fixedType)
         Assert.NotNull(copiers.GetDeepCopier fixedType))
+
+[<Fact>]
+let ``the fixed request survives the dynamic type path Orleans uses for an invokable`` () =
+    // A real message writes the invokable with its concrete type name, which the receiving
+    // side resolves through the type filter. This is the path Phase 3 depends on.
+    let request = new FunctionalRequest(envelope (), CancellationToken.None)
+    let bytes = (serializer ()).SerializeToArray<obj>(box request)
+
+    match (serializer ()).Deserialize<obj> bytes with
+    | :? FunctionalRequest as restored ->
+        test <@ restored.Envelope.OperationId = "join" @>
+        test <@ restored.Envelope.GrainType = "chat.room" @>
+        test <@ restored.Options = InvokeMethodOptions.ReadOnly @>
+    | other -> failwith $"the request round-tripped as '{other.GetType().FullName}'."
