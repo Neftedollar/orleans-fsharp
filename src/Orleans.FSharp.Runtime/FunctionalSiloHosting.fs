@@ -212,6 +212,29 @@ module internal FunctionalSiloServices =
         (registryOf services).Add definition
 
 /// <summary>
+/// Redundant defense-in-depth for the sealing-time rule (<c>DefinitionDraft.run</c> in
+/// <c>Orleans.FSharp</c>): a definition with a durable attachment -- <c>stateFrom</c>,
+/// <c>usePersistentState</c>, or a declared <c>onReminder</c> -- must carry an explicit contract
+/// <c>grainType</c>, because a derived grain type moves silently when the actor brand is renamed,
+/// orphaning persisted state and losing durable reminders. Every definition built through the
+/// public <c>grainFor</c> computation expression already satisfies this at sealing; this check
+/// guards a definition value that reached silo registration any other way.
+/// </summary>
+module internal FunctionalDurableIdentityGuard =
+
+    /// <summary>Fail registration when a durable attachment meets a derived grain type.</summary>
+    let ensure
+        (actorType: Type)
+        (grainTypeName: string)
+        (isGrainTypeExplicit: bool)
+        (hasDurableAttachment: bool)
+        =
+        if hasDurableAttachment && not isGrainTypeExplicit then
+            fail
+                SiloStage
+                $"grain type '{grainTypeName}' cannot be registered: its contract derives 'grainType' from the actor brand '{actorType.FullName}' instead of declaring one explicitly, but the definition attaches 'stateFrom', 'usePersistentState', or declares 'onReminder'. A brand rename would then silently move routing AND storage identity, orphaning persisted state and losing durable reminders. Declare an explicit 'grainType' on the contract before registering a definition with a durable attachment."
+
+/// <summary>
 /// Silo-side registration of one hosted functional grain definition. The silo path also runs
 /// the idempotent client registration before adding server services.
 /// </summary>
@@ -229,6 +252,14 @@ type FunctionalGrainSiloHostingExtensions =
         : ISiloBuilder =
         if isNull (box builder) then
             fail SiloStage "AddFunctionalGrain requires a silo builder."
+
+        FunctionalDurableIdentityGuard.ensure
+            typeof<'Actor>
+            definition.GrainTypeName
+            definition.Contract.IsGrainTypeExplicit
+            (definition.Primary.IsSome
+             || not (List.isEmpty definition.Additional)
+             || not (List.isEmpty definition.Reminders))
 
         let hosted = FunctionalHosted.create definition
 
