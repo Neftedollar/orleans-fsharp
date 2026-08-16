@@ -128,9 +128,6 @@ module internal FunctionalTransportSource =
 [<Sealed>]
 type internal FunctionalPayloadCodec(serializer: Serializer, sessionPool: SerializerSessionPool) =
 
-    /// <summary>The Orleans serializer this codec writes through.</summary>
-    member _.Serializer = serializer
-
     /// <summary>Serialize one value as its exact declared type into a fresh byte array.</summary>
     member _.Serialize<'T>(value: 'T) : byte[] =
         let session = sessionPool.GetSession()
@@ -254,12 +251,6 @@ type internal FunctionalCallSite
     ) =
 
     let isOneWay = admissionFlags &&& AdmissionFlags.OneWay <> AdmissionFlags.None
-
-    /// <summary>The stable wire operation ID of this call site.</summary>
-    member _.OperationId = operationId
-
-    /// <summary>True when this operation acknowledges only the local send.</summary>
-    member _.IsOneWay = isOneWay
 
     /// <summary>
     /// Validate the fixed reply shape, its protocol token, and the local reply-size limit

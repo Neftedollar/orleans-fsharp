@@ -48,9 +48,6 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
     /// <summary>The exact Orleans identity this reference addresses.</summary>
     member internal _.GrainId = grainId
 
-    /// <summary>The preclosed client closures, in API-record declaration order.</summary>
-    member internal _.Bound = bound
-
     /// <summary>Call one operation identified by an explicit selector.</summary>
     member this.call (selector: OperationSelector<'Api, 'Argument, 'Reply>) (argument: 'Argument) : Task<'Reply> =
         let call = this.Resolve("call", selector)

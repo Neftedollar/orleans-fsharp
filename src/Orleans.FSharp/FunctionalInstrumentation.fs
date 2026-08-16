@@ -68,9 +68,6 @@ module internal FunctionalInstrumentation =
     /// <summary>Stop counting in the current call flow.</summary>
     let stop () = current.Value <- null
 
-    /// <summary>The counters of the current call flow, if any.</summary>
-    let counters () = current.Value
-
     /// <summary>One <c>ApiShape</c> was reflected and cached.</summary>
     let countApiShapeBuild () =
         match current.Value with

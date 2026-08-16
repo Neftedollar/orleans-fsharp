@@ -534,12 +534,6 @@ module internal FSharpBinaryFormat =
         then
             declaredTypes.[declared.FullName] <- declared
 
-    /// <summary>True when the type was declared by an upper layer.</summary>
-    let internal isDeclaredType (declared: Type) =
-        not (isNull declared)
-        && not (isNull declared.FullName)
-        && declaredTypes.ContainsKey declared.FullName
-
     /// <summary>
     /// Serializes a value to a codec-level byte array that embeds the type's FullName.
     /// Used by WriteField/ReadValue so deserialization can recover the type even when

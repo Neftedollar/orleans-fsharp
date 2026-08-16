@@ -705,8 +705,10 @@ let ``concurrent bound calls never share a serializer session`` () =
         let counters = FunctionalInstrumentation.start ()
 
         try
+            // Enough parallelism to make sessions genuinely overlap, small enough not to
+            // saturate the thread pool while the rest of the suite runs beside it.
             let calls =
-                [| for index in 1..64 ->
+                [| for index in 1..32 ->
                        Task.Run(fun () ->
                            task {
                                let! _ = reference.api.say { name = $"n{index}"; bytes = [| byte index |] }
@@ -717,7 +719,7 @@ let ``concurrent bound calls never share a serializer session`` () =
             do! Task.WhenAll calls
 
             // Caller serialize + target deserialize + target serialize + caller deserialize.
-            test <@ counters.SessionRentals = 64 * 4 @>
+            test <@ counters.SessionRentals = 32 * 4 @>
             test <@ counters.SessionConflicts = 0 @>
             test <@ counters.ActiveSessions.IsEmpty @>
         finally

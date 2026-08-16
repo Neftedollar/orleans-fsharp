@@ -93,13 +93,6 @@ internal sealed class FunctionalRequest : Request<FunctionalReply>
         _method = dispatchMethod;
     }
 
-    /// <summary>Copy the caller-side cancellation state onto a local copy of this request.</summary>
-    internal void SetCallerToken(CancellationToken callerToken)
-    {
-        _callerToken = callerToken;
-        _currentToken = callerToken;
-    }
-
     /// <summary>The Orleans request options implied by the envelope's admission flags.</summary>
     internal static InvokeMethodOptions OptionsFor(byte admissionFlags)
     {

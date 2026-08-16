@@ -72,29 +72,6 @@ internal static class FunctionalAdmissionFlags
 
     /// <summary>True when the value sets at least one reserved bit.</summary>
     public static bool HasReservedBits(byte flags) => (flags & Reserved) != 0;
-
-    /// <summary>Compose the flag byte from the three policy decisions.</summary>
-    public static byte Compose(bool isReadOnly, bool isOneWay, bool isAlwaysInterleave)
-    {
-        byte flags = None;
-
-        if (isReadOnly)
-        {
-            flags |= ReadOnly;
-        }
-
-        if (isOneWay)
-        {
-            flags |= OneWay;
-        }
-
-        if (isAlwaysInterleave)
-        {
-            flags |= AlwaysInterleave;
-        }
-
-        return flags;
-    }
 }
 
 /// <summary>Shared diagnostic vocabulary of the fixed transport.</summary>
@@ -138,10 +115,6 @@ internal static class FunctionalTransportDiagnostics
                 $"'{fieldName}' must be exactly {ProtocolTokenLength} bytes, but {value.Length} bytes were supplied.");
         }
     }
-
-    /// <summary>Render a protocol token as lowercase hexadecimal for diagnostics.</summary>
-    public static string ToHex(byte[]? value) =>
-        value is null ? "<null>" : Convert.ToHexString(value).ToLowerInvariant();
 }
 
 /// <summary>
@@ -247,9 +220,6 @@ internal sealed class FunctionalRequestEnvelope : IFunctionalRequestMetadata
         _initialized = true;
     }
 
-    /// <summary>True once every field has been supplied and validated.</summary>
-    internal bool IsInitialized => _initialized;
-
     /// <inheritdoc />
     public override string ToString() =>
         string.Create(
@@ -279,9 +249,6 @@ internal sealed class FunctionalReply
 
     /// <summary>Field 1 — the serialized reply payload.</summary>
     public byte[] Payload => _payload;
-
-    /// <summary>True once every field has been supplied and validated.</summary>
-    internal bool IsInitialized => _initialized;
 
     /// <summary>Populate and validate both fields exactly once.</summary>
     internal void Initialize(byte[] protocolToken, byte[] payload)
