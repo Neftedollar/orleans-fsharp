@@ -133,10 +133,8 @@ type internal FunctionalHostedDefinition
         actorType: Type,
         interfaceType: Type,
         interfaceId: string,
-        grainInterfaceType: GrainInterfaceType,
         apiType: Type,
         stateType: Type,
-        collectionAge: TimeSpan option,
         operations: FunctionalHostedOperation[],
         decodeKey: GrainId -> obj,
         createState: obj -> obj,
@@ -157,9 +155,6 @@ type internal FunctionalHostedDefinition
     /// <summary>The explicit Orleans grain type name.</summary>
     member _.GrainTypeName = grainTypeName
 
-    /// <summary>The Orleans grain type value.</summary>
-    member _.GrainType = GrainType.Create grainTypeName
-
     /// <summary>The application contract version this silo hosts.</summary>
     member _.Version = version
 
@@ -172,17 +167,11 @@ type internal FunctionalHostedDefinition
     /// <summary>The reserved functional interface ID of this grain type.</summary>
     member _.InterfaceId = interfaceId
 
-    /// <summary>The stable actor-specific <c>GrainInterfaceType</c>.</summary>
-    member _.GrainInterfaceType = grainInterfaceType
-
     /// <summary>The API record CLR type.</summary>
     member _.ApiType = apiType
 
     /// <summary>The definition's primary state CLR type.</summary>
     member _.StateType = stateType
-
-    /// <summary>The configured idle collection age, when present.</summary>
-    member _.CollectionAge = collectionAge
 
     /// <summary>Hosted operations in API-record declaration order.</summary>
     member _.Operations = operations
@@ -248,10 +237,8 @@ module internal FunctionalHosted =
             typeof<'Actor>,
             metadata.InterfaceType,
             metadata.InterfaceId,
-            metadata.GrainInterfaceType,
             contract.ApiType,
             typeof<'State>,
-            definition.CollectionAge,
             operations,
             (fun grainId -> box (contract.KeyOf grainId)),
             (fun key -> box (definition.Initializer(unbox<'Key> key))),
