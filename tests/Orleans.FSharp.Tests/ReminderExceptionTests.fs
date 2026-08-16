@@ -9,6 +9,8 @@ open FsCheck.Xunit
 open Orleans.Runtime
 open Orleans.FSharp
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 /// <summary>
 /// Tests verifying that reminder handler exceptions are handled gracefully.
 /// A throwing handler should not prevent future reminder ticks from being processed.

@@ -5,6 +5,8 @@ open System.Diagnostics
 open System.Threading.Tasks
 open Orleans.FSharp
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 /// <summary>
 /// Performance benchmarks measuring F# grain definition dispatch overhead
 /// versus direct handler invocation. Validates SC-003: overhead less than 5%.

@@ -8,6 +8,8 @@ open Orleans
 open Orleans.FSharp
 open Orleans.FSharp.Testing
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 /// <summary>Tests for GrainMock.fs — MockGrainFactory and GrainMock module.</summary>
 
 // --- Test grain interfaces ---

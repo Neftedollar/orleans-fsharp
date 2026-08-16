@@ -13,6 +13,8 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.Streaming
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 // ============================================================================
 // GAP #1: Cluster identity config
 // ============================================================================

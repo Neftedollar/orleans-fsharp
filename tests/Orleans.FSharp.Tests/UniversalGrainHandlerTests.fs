@@ -13,6 +13,8 @@ open Swensen.Unquote
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 // ── Test types ──────────────────────────────────────────────────────────────
 
 type CountState = { N: int }

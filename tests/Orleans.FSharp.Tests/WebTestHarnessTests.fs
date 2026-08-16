@@ -12,6 +12,8 @@ open Orleans.FSharp.Testing
 open Swensen.Unquote
 open Xunit
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 type CompanyState = { Count: int }
 type CompanyCommand =
     | Increment

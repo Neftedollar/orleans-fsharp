@@ -9,6 +9,8 @@ open Swensen.Unquote
 open Orleans.Runtime
 open Orleans.FSharp
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 /// <summary>
 /// FsCheck property tests verifying that reminder handlers registered in GrainDefinition
 /// preserve the invariant that state is correctly updated through any sequence of reminder firings.

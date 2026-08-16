@@ -9,6 +9,8 @@ open FsCheck.Xunit
 open Orleans.FSharp
 open Orleans.Runtime
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 [<Fact>]
 let ``grain CE registers lifecycle hook at SetupState stage`` () =
     let def =

@@ -9,6 +9,8 @@ open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 [<Fact>]
 let ``GrainContext deactivateOnIdle calls the registered function`` () =
     let mutable deactivateCalled = false

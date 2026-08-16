@@ -19,6 +19,8 @@ open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 // ── Test types (unique to this file; see module doc) ─────────────────────────
 
 /// Registered directly via FSharpInterleaveRegistry.Register.

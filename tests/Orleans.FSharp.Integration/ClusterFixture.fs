@@ -10,6 +10,8 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.EventSourcing
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 /// <summary>
 /// Deterministic convergence helper for observing the effect of a true one-way
 /// <c>FSharpGrain.post</c> call. Because a one-way request returns once the message

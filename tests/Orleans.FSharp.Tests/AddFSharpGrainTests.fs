@@ -17,6 +17,8 @@ open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 // ── Test domain types ─────────────────────────────────────────────────────────
 
 type WidgetState = { Count: int; Name: string }

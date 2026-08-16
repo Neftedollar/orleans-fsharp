@@ -8,6 +8,8 @@ open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp
 
+#nowarn "44" // Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+
 // ── Test types ──
 
 type TestState = { Value: int }
