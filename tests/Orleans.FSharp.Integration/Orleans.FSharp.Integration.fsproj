@@ -48,6 +48,9 @@
     <Compile Include="FunctionalManifestIntegrationTests.fs" />
     <Compile Include="FunctionalRuntimeIntegrationTests.fs" />
     <Compile Include="FunctionalHostingIntegrationTests.fs" />
+    <Compile Include="FunctionalStateFixture.fs" />
+    <Compile Include="FunctionalStateIntegrationTests.fs" />
+    <Compile Include="FunctionalStateRestartTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

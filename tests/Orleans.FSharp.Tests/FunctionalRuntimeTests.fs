@@ -197,7 +197,11 @@ type private StubGrainContext(grainId: GrainId, services: IServiceProvider) =
 let private grainIdOf (grainType: string) (key: string) =
     GrainId.Create(GrainType.Create grainType, key)
 
-let private createTarget (definition: FunctionalHostedDefinition) (key: string) =
+/// <summary>
+/// Create the target the way Orleans does, without running the activation lifecycle. Only the
+/// disposal and construction tests need this form; everything else uses <c>createTarget</c>.
+/// </summary>
+let private createInactiveTarget (definition: FunctionalHostedDefinition) (key: string) =
     let services = activationServices ()
     let context = StubGrainContext(grainIdOf definition.GrainTypeName key, services)
 
@@ -206,6 +210,20 @@ let private createTarget (definition: FunctionalHostedDefinition) (key: string) 
 
     let instance = activator.CreateInstance context
     context.Instance <- instance
+    activator, context, instance
+
+/// <summary>
+/// Create the target and run the functional half of activation, which is where the ephemeral
+/// primary state is initialized (activation-order step 3). Dispatch is only ever reached on an
+/// activated grain, so every dispatch test starts here.
+/// </summary>
+let private createTarget (definition: FunctionalHostedDefinition) (key: string) =
+    let activator, context, instance = createInactiveTarget definition key
+
+    (instance :?> IGrainBase)
+        .OnActivateAsync CancellationToken.None
+    |> fun activation -> activation.GetAwaiter().GetResult()
+
     activator, context, instance
 
 let private payloadCodec (context: StubGrainContext) =
@@ -765,19 +783,25 @@ let ``a delivered one-way context carries no cancellation, an acknowledged one d
         test <@ codec.Deserialize<string> observed.Payload = "none" @>
     }
 
+/// <remarks>
+/// <c>runtimeDefinition</c> attaches no persistent state at all, so the descriptor the handler
+/// looks up is unattached. Spec "State publication": <c>context.persistentState</c> resolves by
+/// logical <c>(stateName, providerName, storedType)</c> identity and "fails deterministically
+/// for an unattached descriptor" — it never silently hands back an unrelated holder.
+/// </remarks>
 [<Fact>]
-let ``persistent state is phase-gated until Phase 4`` () =
+let ``looking up an unattached persistent state fails deterministically`` () =
     let _, context, instance = createTarget (hosted runtimeDefinition) "dispatch-storage"
     let codec = payloadCodec context
 
     task {
         let! error =
-            Assert.ThrowsAsync<NotSupportedException>(fun () ->
+            Assert.ThrowsAsync<InvalidOperationException>(fun () ->
                 (dispatch instance (envelopeFor "storage" 0uy (codec.Serialize<unit> ()))).AsTask() :> Task)
 
-        test <@ error.Message.Contains "Phase 4" @>
-        test <@ error.Message.Contains "state" @>
-        test <@ error.Message.Contains "runtime.probe" @>
+        test <@ error.Message.Contains "no persistent state named 'state'" @>
+        test <@ error.Message.Contains "Default" @>
+        test <@ error.Message.Contains typeof<RuntimeState>.FullName @>
     }
 
 // ──────────────────────────────────────────────────────────────────────────────
