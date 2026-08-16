@@ -127,7 +127,14 @@ let private handWriteWrongVersionType () =
     ReferenceCodec.TryWriteReferenceField(&writer, 0u, typeof<FunctionalRequestEnvelope>, marker) |> ignore
     writer.WriteStartObject(0u, typeof<FunctionalRequestEnvelope>, typeof<FunctionalRequestEnvelope>)
     StringCodec.WriteField(&writer, 0u, "chat.room")
+    // Field 1 is the only mistyped one: a string where the fixed layout requires an int32.
+    // Every other field is written exactly as the layout specifies, so a failure can only be
+    // caused by the wire type rather than by a missing or duplicated field.
     StringCodec.WriteField(&writer, 1u, "one")
+    StringCodec.WriteField(&writer, 1u, "join")
+    ByteArrayCodec.WriteField(&writer, 1u, token)
+    ByteCodec.WriteField(&writer, 1u, 0uy)
+    ByteArrayCodec.WriteField(&writer, 1u, payload)
     writer.WriteEndObject()
     writer.Commit()
     buffer.WrittenSpan.ToArray()
@@ -244,7 +251,21 @@ let ``an unknown field is rejected`` () =
 
 [<Fact>]
 let ``a field carrying the wrong wire type is rejected`` () =
-    Assert.ThrowsAny<exn>(fun () -> readEnvelope (handWriteWrongVersionType ()) |> ignore) |> ignore
+    // Control: the same six fields with the correct wire types read back cleanly, so the
+    // rejection below is caused by the mistyped field 1 alone.
+    let control = readEnvelope (handWriteEnvelope "chat.room" 1 "join" 0uy)
+    test <@ control.ContractVersion = 1 @>
+
+    let error =
+        Assert.ThrowsAny<exn>(fun () -> readEnvelope (handWriteWrongVersionType ()) |> ignore)
+
+    // The failure comes from the Orleans field reader refusing the declared wire type, not
+    // from one of the fixed-layout guards, and it names the concrete mismatch.
+    test <@ error.GetType().Namespace.StartsWith "Orleans.Serialization" @>
+    test <@ error.Message.Contains "specified in header" @>
+    test <@ not (error.Message.Contains "missing required wire fields") @>
+    test <@ not (error.Message.Contains "more than once") @>
+    test <@ not (error.Message.Contains "unknown wire field") @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Admission flags on the wire

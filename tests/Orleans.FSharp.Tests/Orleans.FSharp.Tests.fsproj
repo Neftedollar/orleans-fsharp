@@ -95,6 +95,8 @@
     <Compile Include="FunctionalProtocolTests.fs" />
     <Compile Include="FunctionalCodecTests.fs" />
     <Compile Include="FunctionalBindingTests.fs" />
+    <Compile Include="FunctionalRuntimeTests.fs" />
+    <Compile Include="FunctionalSerializerRegistrationTests.fs" />
     <Compile Include="FunctionalCompileFailureTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>

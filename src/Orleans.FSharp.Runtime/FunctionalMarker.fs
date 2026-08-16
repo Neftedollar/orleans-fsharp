@@ -59,7 +59,10 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     /// <summary>Narrow wrapper for the protected <c>Grain.DelayDeactivation</c>.</summary>
     member this.DelayDeactivationFor(timeSpan: TimeSpan) = this.DelayDeactivation timeSpan
 
-    /// <summary>How often this target has actually been disposed; exactly one after teardown.</summary>
+    /// <summary>
+    /// How often this target has actually been disposed: <c>0</c> before teardown and exactly
+    /// <c>1</c> afterwards, however many times <c>Dispose</c> is called.
+    /// </summary>
     member _.DisposalCount = Volatile.Read(&disposals)
 
     /// <summary>Activation-local cleanup, run exactly once by <c>IGrainActivator.DisposeInstance</c>.</summary>
@@ -69,5 +72,5 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
 
     interface IDisposable with
         member this.Dispose() =
-            if Interlocked.Increment(&disposals) = 1 then
+            if Interlocked.Exchange(&disposals, 1) = 0 then
                 this.OnDisposing()
