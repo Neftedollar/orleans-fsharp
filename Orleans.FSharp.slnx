@@ -12,8 +12,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Orleans.FSharp.Integration/Orleans.FSharp.Integration.fsproj" />
-    <Project Path="tests/Orleans.FSharp.SeamProof/Orleans.FSharp.SeamProof.fsproj" />
-    <Project Path="tests/Orleans.FSharp.SeamProof.CodegenFixture/Orleans.FSharp.SeamProof.CodegenFixture.csproj" />
     <Project Path="tests/Orleans.FSharp.Tests/Orleans.FSharp.Tests.fsproj" />
   </Folder>
   <Folder Name="/templates/">
