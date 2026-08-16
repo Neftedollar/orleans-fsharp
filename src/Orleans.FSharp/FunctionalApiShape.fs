@@ -47,14 +47,6 @@ module internal FunctionalDiagnostics =
     let failCause<'T> (stage: string) (message: string) (cause: exn) : 'T =
         raise (InvalidOperationException(stage + ": " + message, cause))
 
-    /// <summary>Raise a diagnostic for a surface which lands in a later implementation phase.</summary>
-    let notAvailable<'T> (phase: string) (feature: string) : 'T =
-        raise (
-            NotSupportedException(
-                $"Orleans.FSharp functional runtime: {feature} is not available until {phase} of the functional grain runtime."
-            )
-        )
-
     /// <summary>True when a name is null, empty, or white-space only.</summary>
     let isBlank (value: string) = String.IsNullOrWhiteSpace value
 

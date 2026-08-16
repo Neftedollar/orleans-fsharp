@@ -48,10 +48,6 @@ module StorageLog =
     /// <summary>Providers whose writes must fail, used by the partial-success test.</summary>
     let failingWrites = ConcurrentDictionary<string, bool>()
 
-    let clear () =
-        calls.Clear()
-        failingWrites.Clear()
-
     let forGrain (grainId: string) =
         calls |> Seq.filter (fun call -> call.GrainId = grainId) |> Seq.toList
 
@@ -140,6 +136,8 @@ type LedgerApi =
       armFailingDeactivation: unit -> Task<unit>
       /// Arms the ACTIVATION hook of every later activation of this grain to fail.
       armFailingActivation: unit -> Task<unit>
+      /// Arms the deactivation hook of this activation to write the given entry explicitly.
+      armWritingDeactivation: string -> Task<unit>
       /// Requests deactivation once this turn completes.
       goAway: unit -> Task<unit> }
 
@@ -162,6 +160,7 @@ module StateProbe =
     let activations = ConcurrentDictionary<string, int>()
     let failingDeactivations = ConcurrentDictionary<string, bool>()
     let failingActivations = ConcurrentDictionary<string, bool>()
+    let writingDeactivations = ConcurrentDictionary<string, string>()
 
     /// <summary>The facade one handler deliberately let escape its invocation.</summary>
     let escaped = ConcurrentDictionary<string, IPersistentState<LedgerState>>()
@@ -177,13 +176,6 @@ module StateProbe =
         match activations.TryGetValue key with
         | true, value -> value
         | _ -> 0
-
-    let clear () =
-        observations.Clear()
-        activations.Clear()
-        failingDeactivations.Clear()
-        failingActivations.Clear()
-        escaped.Clear()
 
 let private describe (state: LedgerState) =
     $"v{state.version}:[{String.Join(',', state.entries)}]"
@@ -316,6 +308,18 @@ let ledgerDefinition =
                 let key = string context.grainId
                 StateProbe.record $"deactivate:{key}" $"{reason.ReasonCode}|{describe state}"
                 StateProbe.record $"deactivate-tick:{key}" (string (StateProbe.tick ()))
+
+                // A deactivation hook may write explicitly; the runtime adds nothing around it.
+                match StateProbe.writingDeactivations.TryGetValue key with
+                | true, entry ->
+                    let facade = context.persistentState ledgerState
+
+                    facade.State <-
+                        { entries = state.entries @ [ entry ]
+                          version = state.version + 1 }
+
+                    do! facade.WriteStateAsync()
+                | _ -> ()
 
                 match StateProbe.failingDeactivations.TryGetValue key with
                 | true, true -> raise (ApplicationException $"deactivation hook of {key} failed on purpose")
@@ -515,6 +519,12 @@ let ledgerDefinition =
                 return state, ()
             })
 
+        handle (_.armWritingDeactivation) (fun context state (entry: string) ->
+            task {
+                StateProbe.writingDeactivations.[string context.grainId] <- entry
+                return state, ()
+            })
+
         handle (_.goAway) (fun context state () ->
             task {
                 context.deactivateOnIdle ()
@@ -587,6 +597,7 @@ let ephemeralDefinition =
         handle (_.whereAmI) (fun context state () -> task { return state, siloOf context })
         handle (_.armFailingDeactivation) (fun _ state () -> task { return state, () })
         handle (_.armFailingActivation) (fun _ state () -> task { return state, () })
+        handle (_.armWritingDeactivation) (fun _ state (_: string) -> task { return state, () })
 
         handle (_.goAway) (fun context state () ->
             task {

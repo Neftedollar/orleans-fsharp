@@ -57,9 +57,6 @@ type internal FunctionalActivationState
     /// </summary>
     member _.IsInitialized = initialized
 
-    /// <summary>True when the definition selected a primary persistent holder.</summary>
-    member _.HasPrimaryFacet = primary.IsSome
-
     /// <summary>The current authoritative primary state, boxed.</summary>
     member _.Current: obj =
         match primary with

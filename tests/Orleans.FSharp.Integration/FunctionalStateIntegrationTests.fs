@@ -508,6 +508,28 @@ type FunctionalStateTests(fixture: FunctionalStateClusterFixture) =
         }
 
     /// <remarks>
+    /// "An onDeactivate hook may explicitly write" — and that is the only way a write happens
+    /// during deactivation, since the runtime performs none of its own.
+    /// </remarks>
+    [<Fact>]
+    member _.``a deactivation hook can write explicitly and nothing else writes``() =
+        task {
+            let name = key "deactivatewrite"
+            let grainId = fixture.LedgerId name
+            let api = fixture.Ledger name
+
+            let! _ = api.append "in-memory"
+            do! api.armWritingDeactivation "written-on-stop"
+            Assert.Equal(0, StorageLog.countFor grainId "write")
+
+            do! fixture.Recycle name
+
+            // Exactly one write, issued by the hook, and the next activation loads it.
+            Assert.Equal(1, StorageLog.countFor grainId "write")
+            Assert.Equal(Some "v2:[activated,in-memory,written-on-stop]", StateProbe.tryGet $"activate:{grainId}")
+        }
+
+    /// <remarks>
     /// "Storage read, initializer, or hook failure fails activation." An activation which never
     /// reached its state has no primary value, so the functional deactivation hook must not run
     /// with one: the runtime logs that it skipped the hook instead of handing application code

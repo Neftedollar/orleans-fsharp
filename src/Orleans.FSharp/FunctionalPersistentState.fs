@@ -131,15 +131,6 @@ type internal FunctionalStateScope(grainTypeName: string, callbackName: string, 
 
     let mutable expired = 0
 
-    /// <summary>The grain type whose callback owns this scope.</summary>
-    member _.GrainTypeName = grainTypeName
-
-    /// <summary>A human-readable name of the owning callback, used only in diagnostics.</summary>
-    member _.CallbackName = callbackName
-
-    /// <summary>False in a <c>readOnly</c> or <c>alwaysInterleave</c> callback.</summary>
-    member _.AllowsMutation = allowsMutation
-
     /// <summary>True once the owning callback has completed.</summary>
     member _.IsExpired = Volatile.Read(&expired) = 1
 
@@ -175,9 +166,6 @@ type internal FunctionalStateScope(grainTypeName: string, callbackName: string, 
 [<Sealed>]
 type internal FunctionalPersistentStateFacade<'State>
     (inner: IPersistentState<'State>, descriptor: PersistentStateDescriptor, scope: FunctionalStateScope) =
-
-    /// <summary>The real Orleans facet behind this facade.</summary>
-    member internal _.Inner = inner
 
     interface IPersistentState<'State>
 
