@@ -34,8 +34,62 @@ jobs:
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
+      # `dotnet build` before any `dotnet test` step is deliberate, not incidental: the very
+      # first compile after a cold NuGet cache can, in rare cases, complete without Orleans'
+      # own source-generated codegen having been applied to every assembly in the same MSBuild
+      # invocation (see docs/functional-grains.md's "cold caches" note). A build here, once per
+      # matrix entry, establishes a warm and consistent state before any test step runs.
       - run: dotnet build --verbosity normal ${{ matrix.arg }}
       - run: dotnet test tests/Orleans.FSharp.Tests --verbosity normal ${{ matrix.arg }}
+      # spec 003: the functional grain runtime's Integration suite runs on both ends of the
+      # Orleans version matrix, not just the floor. ~100 tests, ~40s per matrix entry (~80s
+      # total added to this job) — Redis-gated tests inside this filter are skipped here (no
+      # Redis service in this job); they run non-skipped in redis-durability below.
+      - run: >
+          dotnet test tests/Orleans.FSharp.Integration
+          --filter "FullyQualifiedName~Functional"
+          --verbosity normal ${{ matrix.arg }}
+
+  redis-durability:
+    name: Redis Durability (Orleans ${{ matrix.label }})
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: floor
+            arg: ''
+          - label: 10.2.2 (newest)
+            arg: '-p:OrleansVersion=10.2.2'
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build --verbosity normal ${{ matrix.arg }}
+      # ORLEANS_FSHARP_REDIS makes RequiresRedisAttribute (RedisIntegrationTests.fs) admit
+      # rather than skip every test it gates, including spec 003's durability proof: stop and
+      # recreate the silo process while retaining Redis, then verify the same GrainId reloads
+      # committed state (FunctionalStateRestartTests.fs, "functional state committed to Redis
+      # reloads after the cluster is recreated").
+      - name: Run Redis-gated tests (non-skipped)
+        env:
+          ORLEANS_FSHARP_REDIS: localhost:6379
+        run: >
+          dotnet test tests/Orleans.FSharp.Integration
+          --filter "FullyQualifiedName~Redis"
+          --verbosity normal ${{ matrix.arg }}
 
   examples:
     name: Build Examples
