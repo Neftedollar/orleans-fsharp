@@ -104,7 +104,9 @@ activation, and for persistent state, a different durable record):
   variants, or changing a *mapped* codec's encode/decode pair so it produces different native
   values for the same domain key.
 
-**Does not change identity:**
+**Does not change identity** (when `grainType` is explicit -- see
+[Optional grainType](#optional-graintype-when-the-derived-default-is-safe) below for the derived
+case, where renaming the brand *does* change identity):
 
 - renaming the F# module, the API record type, or the actor-brand type (`RoomActor` above) --
   identity is carried by the explicit `grainType` string and the encoded key, never by CLR names;
@@ -121,6 +123,59 @@ forms) must satisfy, for its whole domain:
 
 Native keys (`stringKey`, `guidKey`, `int64Key`, and their compound forms) need no conversion
 functions at all -- the domain key type *is* the Orleans key type.
+
+### Optional grainType: when the derived default is safe
+
+`grainType` is optional. Omit it and the contract's grain type defaults to the actor brand's CLR
+*simple* name (`typeof<'Actor>.Name`, ordinal, as written -- `RoomActor` becomes `"RoomActor"`).
+The brand must be a simple, non-generic, non-nested CLR type for that to work:
+
+- a **generic** brand is rejected -- its `.Name` carries a backtick arity suffix (for example
+  ``"CounterActor`1"``), which is not a simple name;
+- a **nested** brand is rejected too -- and this catches more than you might expect. Every type an
+  F# `module` declares is a CLR-nested type (a '+' in its qualified name), even with no explicit
+  nested `module` block, unlike a `namespace`. The `RoomActor` example above is declared under
+  `namespace Chat.Contracts`, which is exactly why it qualifies; the same declaration under
+  `module Chat.Contracts` would not.
+
+Either case fails contract construction with a diagnostic demanding an explicit `grainType`.
+
+The trade-off is [Why the actor brand](#why-the-actor-brand)'s "renaming costs nothing" guarantee,
+inverted. That guarantee holds because the explicit `grainType` string, not the brand's CLR name,
+carries identity. With a **derived** grain type there is no such string -- the brand's simple name
+*is* the grain type -- so renaming the brand silently renames `grainType` too, moving routing and,
+worse, storage identity out from under any persisted state or durable reminder registered under
+the old name.
+
+That is why a definition which attaches `stateFrom`, `usePersistentState`, or declares
+`onReminder` requires its contract to carry an **explicit** `grainType` -- enforced both when the
+definition seals and again, redundantly, at silo registration. Ephemeral definitions (none of the
+three) have nothing durable to orphan, so they may rely on the derived default:
+
+```fsharp
+// Fine: ephemeral, so an accidental brand rename can never orphan anything durable.
+type CounterActor = private CounterActor of unit
+
+let counterContract =
+    grainContract<CounterActor, string, CounterApi> () { stringKey }  // grainType = "CounterActor"
+
+// Rejected at definition sealing: stateFrom needs an explicit grainType above, because renaming
+// CounterActor later would silently point every existing activation at a different (empty)
+// durable record under the new derived name.
+let counterDefinition =
+    grainFor counterContract {
+        defaultState (fun () -> { count = 0 })
+        stateFrom counterState
+        handle (_.increment) incrementHandler
+    }
+```
+
+One more hazard, independent of durability: the derived name has no namespace qualification, only
+the CLR simple name. Two actor brands with the same simple name in different namespaces (two
+`CounterActor` types) derive the identical grain type and collide -- caught by the same
+grain-type-uniqueness check that already rejects two *explicit* contracts sharing a `grainType`,
+but worth knowing before leaning on the derived default across a codebase with repeated type
+names.
 
 ## Operation rename and contract version
 
