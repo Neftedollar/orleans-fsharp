@@ -579,6 +579,14 @@ let ``the fixed transport types carry a serializer and a copier without any func
     // Regression pin: the fixed types appear in the signature of a grain interface, so Orleans
     // refuses to start a silo unless every one of them has a serializer and a copier. Nothing
     // here calls the functional registration path.
+    //
+    // The codecs arrive through the assembly-level manifest provider, which Orleans finds by
+    // scanning the assemblies of the process — so the abstractions assembly has to be LOADED
+    // before the serializer is built. That is automatic in a process whose entry assembly
+    // references the package; inside a test host it depends on what ran first, so force it
+    // here rather than inherit it from another test.
+    test <@ typeof<FunctionalRequestEnvelope>.Assembly.GetName().Name = "Orleans.FSharp.Abstractions" @>
+
     let collection = ServiceCollection()
     ServiceCollectionExtensions.AddSerializer(collection, Action<ISerializerBuilder>(fun _ -> ())) |> ignore
     use provider = collection.BuildServiceProvider()

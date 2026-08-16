@@ -651,8 +651,12 @@ let ``a bound call performs no reflection, selector evaluation, or generic closi
     let transport, reference = bindWith services target
 
     task {
-        // Warm the binding first, then observe only the calls.
+        // Warm every operation first — the once-per-payload-type codec build is not what this
+        // test is about — then observe only steady-state calls.
         do! reference.api.join "warm"
+        let! _ = reference.api.say { name = "warm"; bytes = [| 0uy |] }
+        let! _ = reference.api.history 1
+        do! reference.api.typing false
 
         let counters = FunctionalInstrumentation.start ()
 
@@ -669,7 +673,7 @@ let ``a bound call performs no reflection, selector evaluation, or generic closi
         finally
             FunctionalInstrumentation.stop ()
 
-        test <@ transport.Calls.Length = 5 @>
+        test <@ transport.Calls.Length = 8 @>
     }
 
 [<Fact>]
@@ -678,7 +682,14 @@ let ``binding evaluates no selector and closes no generic`` () =
     let target = newTarget services
     let transport = InMemoryTransport(services, target.Dispatch)
 
-    // The contract is already sealed at module initialization.
+    // Two things are per-CONTRACT, not per-binding, and both are lazy: this module's
+    // `let` values (F# initialises a file's values on first access, which builds the four
+    // module-level contracts and their API shapes) and `GrainContract.TargetMetadata`
+    // (a `lazy` that closes the target interface generic once). Force both with a throwaway
+    // binding, so what the counters see below is one ordinary binding of a sealed contract
+    // rather than whatever an arbitrary xUnit ordering left warm.
+    FunctionalGrain.rawRef contract transport "warm" |> ignore
+
     let counters = FunctionalInstrumentation.start ()
 
     try
