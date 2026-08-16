@@ -53,6 +53,36 @@ type ConfiguratorLastSiloConfigurator() =
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.AddFunctionalGrain probeDefinition |> ignore
 
+/// <summary>
+/// A silo whose functional <c>GrainTypeOptions</c> post-configure has been removed, so the
+/// closed marker and interface never reach the manifest. Silo startup validation must catch it.
+/// </summary>
+type BrokenManifestSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddFunctionalGrain probeDefinition |> ignore
+
+            let services = siloBuilder.Services
+
+            let postConfigure =
+                services
+                |> Seq.find (fun descriptor ->
+                    descriptor.ImplementationType = typeof<FunctionalGrainTypeOptionsPostConfigure>)
+
+            services.Remove postConfigure |> ignore
+
+/// <summary>A silo whose transport limit violates the ValidateOnStart rule.</summary>
+type InvalidLimitSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddFunctionalGrain probeDefinition |> ignore
+
+            siloBuilder.Services.Configure<FunctionalGrainTransportOptions>(fun
+                                                                                (options:
+                                                                                    FunctionalGrainTransportOptions) ->
+                options.MaxPayloadBytes <- 0)
+            |> ignore
+
 let private deploy<'Configurator when 'Configurator :> ISiloConfigurator and 'Configurator: (new: unit -> 'Configurator)>
     ()
     =
@@ -123,3 +153,49 @@ let ``both component-configurator orders produce the same final activator`` () =
 
     Assert.Equal(expected, firstActivator)
     Assert.Equal(expected, lastActivator)
+
+/// <summary>Every message of an exception chain, so a hosted-startup failure can be inspected.</summary>
+let rec private messages (error: exn) =
+    match error with
+    | null -> []
+    | :? AggregateException as aggregate ->
+        error.Message :: (aggregate.InnerExceptions |> Seq.collect messages |> List.ofSeq)
+    | _ -> error.Message :: messages error.InnerException
+
+let private deployExpectingFailure<'Configurator
+    when 'Configurator :> ISiloConfigurator and 'Configurator: (new: unit -> 'Configurator)>
+    ()
+    =
+    let builder = TestClusterBuilder 1s
+    builder.AddSiloBuilderConfigurator<'Configurator>() |> ignore
+    let cluster = builder.Build()
+
+    let error = Assert.ThrowsAny<exn>(fun () -> cluster.Deploy())
+
+    try
+        try
+            cluster.StopAllSilos()
+        with _ ->
+            ()
+    finally
+        cluster.Dispose()
+
+    messages error
+
+/// <remarks>
+/// Non-vacuity control for silo startup validation: with the functional post-configure removed
+/// the manifest disagrees with the registry, and the silo must refuse to start instead of
+/// serving a grain type Orleans cannot route.
+/// </remarks>
+[<Fact>]
+let ``silo startup validation rejects a manifest which disagrees with the registry`` () =
+    let reported = deployExpectingFailure<BrokenManifestSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "Orleans.FSharp functional silo startup"))
+    Assert.Contains(reported, (fun message -> message.Contains "post-configure did not run"))
+
+[<Fact>]
+let ``a non-positive payload limit fails silo startup`` () =
+    let reported = deployExpectingFailure<InvalidLimitSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "MaxPayloadBytes must be positive"))

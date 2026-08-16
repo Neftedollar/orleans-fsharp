@@ -666,3 +666,42 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
             // A handler failure is not dressed up as a transport diagnostic.
             Assert.DoesNotContain("Orleans.FSharp functional transport", error.Message)
         }
+
+    // ── F# payload types across the real wire ───────────────────────────────
+
+    /// <remarks>
+    /// Regression for the Phase-2 target-side defect: exact-type payload serialization makes
+    /// Orleans elide the field type, so a silo can only deserialize an application type it has
+    /// declared. Silo startup preflight declares every hosted argument and reply type; without
+    /// it this call fails on the target with a type-resolution error.
+    /// </remarks>
+    [<Fact>]
+    member _.``an F# record argument and union reply round-trip through the real transport``() =
+        task {
+            let probe = fixture.Probe $"note-{Guid.NewGuid():N}"
+
+            let note =
+                { title = "release"
+                  tags = [ "orleans"; "fsharp" ]
+                  author = Some "alice" }
+
+            let! reply = probe.api.note note
+
+            match reply with
+            | Accepted(id, echoed) ->
+                Assert.Equal(2, id)
+                Assert.Equal<Note>(note, echoed)
+                // Byte isolation: the reply is a fresh graph, never the caller's instance.
+                Assert.False(obj.ReferenceEquals(note, echoed))
+            | Rejected reason -> failwith $"unexpected rejection: {reason}"
+
+            let! rejected =
+                probe.api.note
+                    { title = "  "
+                      tags = []
+                      author = None }
+
+            match rejected with
+            | Rejected reason -> Assert.Contains("blank", reason)
+            | Accepted _ -> failwith "expected a rejection"
+        }

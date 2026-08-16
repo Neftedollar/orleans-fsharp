@@ -33,10 +33,14 @@ type RuntimeApi =
     { write: string -> Task<unit>
       read: unit -> Task<string>
       peek: unit -> Task<string>
+      ping: string -> Task<unit>
       notify: string -> Task<unit>
-      boom: string -> Task<string> }
+      boom: string -> Task<string>
+      storage: unit -> Task<string> }
 
 type RuntimeState = { last: string }
+
+let private runtimeState = PersistentState.create<RuntimeState> "state" "Default"
 
 let private contractFor<'Actor> (name: string) =
     grainContract<'Actor, string, RuntimeApi> () {
@@ -45,6 +49,7 @@ let private contractFor<'Actor> (name: string) =
         readOnly (_.read)
         readOnly (_.peek)
         alwaysInterleave (_.peek)
+        oneWay (_.ping)
         oneWay (_.notify)
         alwaysInterleave (_.notify)
     }
@@ -55,12 +60,19 @@ let private definitionFor (contract: GrainContract<'Actor, string, RuntimeApi>) 
         handle (_.write) (fun _ _ (value: string) -> task { return { last = value }, () })
         handle (_.read) (fun _ state () -> task { return state, state.last })
         handle (_.peek) (fun _ state () -> task { return { last = "discarded" }, state.last })
+        handle (_.ping) (fun _ _ (value: string) -> task { return { last = value }, () })
         handle (_.notify) (fun _ _ (value: string) -> task { return { last = value }, () })
 
         handle (_.boom) (fun _ state (message: string) ->
             task {
                 raise (ApplicationException message)
                 return state, message
+            })
+
+        handle (_.storage) (fun context state () ->
+            task {
+                let facet = context.persistentState runtimeState
+                return state, facet.State.last
             })
     }
 
@@ -600,8 +612,10 @@ let ``the hosted view preserves declaration order, tokens, and flags`` () =
             definition.Operations |> Array.map (fun operation -> operation.OperationId) = [| "write"
                                                                                              "read"
                                                                                              "peek"
+                                                                                             "ping"
                                                                                              "notify"
-                                                                                             "boom" |]
+                                                                                             "boom"
+                                                                                             "storage" |]
         @>
 
     let notify = (definition.TryFindOperation "notify").Value
@@ -620,3 +634,98 @@ let ``the hosted view decodes the key and creates the ephemeral state`` () =
 
     test <@ unbox<string> key = "abc" @>
     test <@ unbox<RuntimeState> (definition.CreateState key) = { last = "" } @>
+
+[<Fact>]
+let ``a sequential one-way handler publishes its returned state`` () =
+    let _, context, instance = createTarget (hosted runtimeDefinition) "dispatch-oneway"
+    let codec = payloadCodec context
+
+    task {
+        // oneWay alone is still sequential and state-replacing…
+        let! _ = dispatch instance (envelopeFor "ping" AdmissionFlags.OneWay (codec.Serialize<string> "pinged"))
+
+        let! afterPing =
+            dispatch instance (envelopeFor "read" AdmissionFlags.ReadOnly (codec.Serialize<unit> ()))
+
+        test <@ codec.Deserialize<string> afterPing.Payload = "pinged" @>
+
+        // …while oneWay + alwaysInterleave is state-neutral and discards its replacement.
+        let! _ =
+            dispatch
+                instance
+                (envelopeFor
+                    "notify"
+                    (AdmissionFlags.OneWay ||| AdmissionFlags.AlwaysInterleave)
+                    (codec.Serialize<string> "notified"))
+
+        let! afterNotify =
+            dispatch instance (envelopeFor "read" AdmissionFlags.ReadOnly (codec.Serialize<unit> ()))
+
+        test <@ codec.Deserialize<string> afterNotify.Payload = "pinged" @>
+    }
+
+[<Fact>]
+let ``persistent state is phase-gated until Phase 4`` () =
+    let _, context, instance = createTarget (hosted runtimeDefinition) "dispatch-storage"
+    let codec = payloadCodec context
+
+    task {
+        let! error =
+            Assert.ThrowsAsync<NotSupportedException>(fun () ->
+                (dispatch instance (envelopeFor "storage" 0uy (codec.Serialize<unit> ()))).AsTask() :> Task)
+
+        test <@ error.Message.Contains "Phase 4" @>
+        test <@ error.Message.Contains "state" @>
+        test <@ error.Message.Contains "runtime.probe" @>
+    }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Silo startup serializer preflight
+// ──────────────────────────────────────────────────────────────────────────────
+
+type PreflightActor = private PreflightActor of unit
+
+/// <summary>A payload type used by nothing else, so the declaration below is observable.</summary>
+type SiloOnlyPayload = { value: string }
+
+[<NoEquality; NoComparison>]
+type PreflightApi = { store: SiloOnlyPayload -> Task<SiloOnlyPayload> }
+
+let private preflightDefinition =
+    let contract =
+        grainContract<PreflightActor, string, PreflightApi> () {
+            grainType "preflight.probe"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { last = "" })
+        handle (_.store) (fun _ state (payload: SiloOnlyPayload) -> task { return state, payload })
+    }
+
+/// <remarks>
+/// This is the Phase-2 target-side defect in miniature: exact-type payload serialization makes
+/// Orleans elide the field type, so the receiving side can only resolve an application type it
+/// has declared. The cluster suite cannot prove this on its own, because a TestCluster client
+/// and its silos share one process and therefore one declaration table.
+/// </remarks>
+[<Fact>]
+let ``silo startup preflight declares every hosted argument and reply type`` () =
+    let bytes =
+        FSharpBinaryFormat.serializeWithType (box { value = "declared-by-preflight" }) typeof<SiloOnlyPayload>
+
+    // Before the hosted definition is preflighted, the elided-type path cannot resolve it.
+    let before =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FSharpBinaryFormat.deserializeWithType bytes null |> ignore)
+
+    test <@ before.Message.Contains "not found" @>
+
+    let services = activationServices ()
+    let definition = FunctionalHosted.create preflightDefinition
+    let provider = SerializerPreflight.providerOf services definition.GrainTypeName
+
+    SerializerPreflight.ensure provider definition.GrainTypeName definition.ApiType definition.DeclaredTypes
+
+    let restored = FSharpBinaryFormat.deserializeWithType bytes null
+    test <@ unbox<SiloOnlyPayload> restored = { value = "declared-by-preflight" } @>

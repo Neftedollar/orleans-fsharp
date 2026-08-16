@@ -41,6 +41,21 @@ type OtherActor = private OtherActor of unit
 type ProbeState = { last: string }
 
 /// <summary>
+/// An ordinary F# domain shape: a record holding a list and an option, replied to with a
+/// discriminated union. Neither has an Orleans <c>[GenerateSerializer]</c> attribute, so both
+/// cross the wire through the F# binary codec — which is exactly the path that needs the
+/// silo-side top-level payload type declaration.
+/// </summary>
+type Note =
+    { title: string
+      tags: string list
+      author: string option }
+
+type NoteResult =
+    | Accepted of id: int * echoed: Note
+    | Rejected of reason: string
+
+/// <summary>
 /// The API record every functional integration contract is built from. One record type,
 /// three actor brands, three explicit grain types.
 /// </summary>
@@ -65,7 +80,8 @@ type ProbeApi =
       stateRead: unit -> Task<string>
       boom: string -> Task<string>
       big: int -> Task<string>
-      sink: byte[] -> Task<int> }
+      sink: byte[] -> Task<int>
+      note: Note -> Task<NoteResult> }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cross-activation observation table
@@ -341,6 +357,14 @@ let private definitionFor (contract: GrainContract<'Actor, ProbeId, ProbeApi>) =
             })
 
         handle (_.big) (fun _ state (size: int) -> task { return state, String('x', size) })
+
+        handle (_.note) (fun _ state (note: Note) ->
+            task {
+                if String.IsNullOrWhiteSpace note.title then
+                    return state, Rejected "the title is blank"
+                else
+                    return state, Accepted(note.tags.Length, note)
+            })
 
         handle (_.sink) (fun context state (payload: byte[]) ->
             task {
