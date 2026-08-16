@@ -3,6 +3,7 @@ module Orleans.FSharp.Tests.FSharpBinaryCodecEdgeCases
 open System
 open System.IO
 open System.Text
+open System.Threading
 open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
@@ -199,3 +200,141 @@ type FSharpBinaryCodecEdgeCases() =
         let result = FSharpBinaryFormat.deserializeWithType bytes typeof<RecordWithOptions>
         let unboxed = unbox<RecordWithOptions> result
         test <@ unboxed.IntOpt = Some 42 @>
+
+
+// ── Codec build cell: concurrency and failed builds ──────────────────────────
+//
+// The codec cache publishes a forwarding codec before the real codec exists, so that
+// self-referential types have something to hold. These tests pin the two ways that
+// forwarder must NOT behave: it must not be handed to a racing thread that then
+// dereferences it back onto itself (that self-recursion overflows the stack, which is
+// unrecoverable — a regression aborts the whole test host rather than failing one case),
+// and it must not survive a failed build.
+
+/// <summary>
+/// Distinct closed instantiations of this record give a distinct — and cold — codec cell
+/// each, which is what makes the concurrent first-use race observable.
+/// </summary>
+type ColdPayload<'T> =
+    { id: 'T
+      name: string
+      blob: byte[]
+      tags: string list
+      lookup: Map<string, int>
+      stamp: DateTimeOffset }
+
+/// <summary>
+/// A cold SELF-referential type: its build hands the forwarder to its own element codec, which
+/// is the case the forwarder exists for — and the one a racing thread must not break.
+/// </summary>
+type ColdTree<'T> =
+    | ColdLeaf of 'T
+    | ColdNode of ColdTree<'T> * ColdTree<'T>
+
+let private coldPayload (id: 'T) : ColdPayload<'T> =
+    { id = id
+      name = "cold"
+      blob = [| 1uy; 2uy; 3uy |]
+      tags = [ "a"; "b" ]
+      lookup = Map.ofList [ "x", 1; "y", 2 ]
+      stamp = DateTimeOffset(2026, 8, 16, 12, 0, 0, TimeSpan.Zero) }
+
+/// <summary>
+/// Round-trips <paramref name="value"/> from several threads that all start at the same
+/// instant, so they reach the type's cold codec cell together.
+/// </summary>
+let private hammerFirstUse (t: Type) (value: obj) =
+    let threadCount = 8
+    use barrier = new Barrier(threadCount)
+    let results = Array.zeroCreate<obj> threadCount
+    let failures = ResizeArray<exn>()
+
+    let threads =
+        Array.init threadCount (fun index ->
+            let thread =
+                Thread(
+                    ThreadStart(fun () ->
+                        try
+                            barrier.SignalAndWait()
+                            let bytes = FSharpBinaryFormat.serialize value t
+                            results.[index] <- FSharpBinaryFormat.deserialize bytes t
+                        with e ->
+                            lock failures (fun () -> failures.Add e)),
+                    IsBackground = true
+                )
+
+            thread.Start()
+            thread)
+
+    for thread in threads do
+        test <@ thread.Join(TimeSpan.FromSeconds 30.0) @>
+
+    if failures.Count > 0 then
+        raise (AggregateException("concurrent first use failed", failures))
+
+    for result in results do
+        test <@ result = value @>
+
+/// <summary>
+/// Concurrent first use of a type whose codec has never been built must produce one usable
+/// codec for every thread — never a forwarder that resolves to itself.
+/// </summary>
+[<Fact>]
+let ``concurrent first use of a cold type never self-recurses`` () : unit =
+    hammerFirstUse typeof<ColdPayload<int>> (box (coldPayload 7))
+    hammerFirstUse typeof<ColdPayload<string>> (box (coldPayload "seven"))
+    hammerFirstUse typeof<ColdPayload<bool>> (box (coldPayload true))
+    hammerFirstUse typeof<ColdPayload<Guid>> (box (coldPayload (Guid("00000000-0000-0000-0000-0000000000aa"))))
+
+/// <summary>
+/// The same race on a self-referential type, where the forwarder is also handed to the type's
+/// own element codec during the build.
+/// </summary>
+[<Fact>]
+let ``concurrent first use of a cold recursive type never self-recurses`` () : unit =
+    let tree =
+        ColdNode(ColdLeaf 1, ColdNode(ColdLeaf 2, ColdNode(ColdLeaf 3, ColdLeaf 4)))
+
+    hammerFirstUse typeof<ColdTree<int>> (box tree)
+    hammerFirstUse typeof<ColdTree<string>> (box (ColdNode(ColdLeaf "a", ColdLeaf "b")))
+
+/// <summary>
+/// A build that throws must leave the cache clean: the second attempt reports the same
+/// diagnostic instead of picking up the forwarder the failed build installed.
+/// </summary>
+[<Fact>]
+let ``an unsupported type reports the same diagnostic on every attempt`` () : unit =
+    let attempt () =
+        try
+            FSharpBinaryFormat.serialize (box 1) typeof<IDisposable> |> ignore
+            "no exception"
+        with :? InvalidOperationException as e ->
+            e.Message
+
+    let first = attempt ()
+    let second = attempt ()
+    let third = attempt ()
+
+    test <@ first.Contains "unsupported type" @>
+    test <@ second = first @>
+    test <@ third = first @>
+
+/// <summary>
+/// The same, one level down: the failure happens inside a nested member's build, so both
+/// the inner and the outer cell have to be released.
+/// </summary>
+[<Fact>]
+let ``a type whose nested member is unsupported stays diagnosable`` () : unit =
+    let attempt () =
+        try
+            FSharpBinaryFormat.serialize (box (None: IDisposable option)) typeof<IDisposable option>
+            |> ignore
+            "no exception"
+        with :? InvalidOperationException as e ->
+            e.Message
+
+    let first = attempt ()
+    let second = attempt ()
+
+    test <@ first.Contains "unsupported type" @>
+    test <@ second = first @>

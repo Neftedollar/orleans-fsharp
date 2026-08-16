@@ -3,6 +3,7 @@ namespace Orleans.FSharp
 open System
 open System.Collections.Concurrent
 open System.IO
+open System.Threading
 open Microsoft.FSharp.Reflection
 open TypeShape.Core
 open TypeShape.Core.Core
@@ -47,14 +48,108 @@ module internal FSharpBinaryFormat =
         Read:  BinaryReader -> obj
     }
 
+    /// <summary>What a <see cref="CodecCell"/> hands back to a caller asking for its codec.</summary>
+    type private CodecClaim =
+        /// Use this codec: either the finished one, or a forwarder onto an in-flight build.
+        | UseCodec of TypeCodec
+        /// The caller now owns the build for this type and must run it.
+        | BuildIt
+
+    /// <summary>
+    /// The build state of one type's codec.
+    /// </summary>
+    /// <remarks>
+    /// A forwarding codec is published before the real codec exists so a self-referential type
+    /// (e.g. <c>Tree = Leaf | Branch of Tree * Tree</c>) and any thread racing the same first use
+    /// have something to hold. Invoking a forwarder whose build has not finished yet WAITS for the
+    /// builder; the earlier design dereferenced the still-forwarding cell and self-recursed until
+    /// the stack overflowed, which is unrecoverable. Only one thread ever builds a given type;
+    /// waiting happens at invocation time rather than at build time, so two threads building
+    /// mutually recursive types cannot deadlock on each other.
+    /// </remarks>
+    type private CodecCell() =
+        /// The finished codec. Read off the gate on the hot path, hence volatile.
+        [<VolatileField>]
+        let mutable real: TypeCodec option = None
+        /// The forwarder handed to re-entrant/racing callers; Some exactly while a build is in flight.
+        let mutable forwarder: TypeCodec option = None
+        /// Managed thread id of the thread building this type, 0 when no build is in flight.
+        let mutable builder = 0
+        let gate = obj ()
+
+        /// Upper bound on waiting for another thread's build, so a lost build can never hang a process.
+        static let buildTimeout = TimeSpan.FromSeconds 30.0
+
+        /// <summary>Claims the build for this thread, or returns the codec to use.</summary>
+        member this.Claim(t: Type) : CodecClaim =
+            lock gate (fun () ->
+                match real with
+                | Some c -> UseCodec c
+                | None ->
+                    match forwarder with
+                    | Some fwd when builder <> 0 -> UseCodec fwd
+                    | _ ->
+                        builder <- Environment.CurrentManagedThreadId
+
+                        forwarder <-
+                            Some
+                                { Write = fun bw v -> (this.Resolve t).Write bw v
+                                  Read = fun br -> (this.Resolve t).Read br }
+
+                        BuildIt)
+
+        /// <summary>Publishes a finished build and wakes every waiter.</summary>
+        member _.Publish(codec: TypeCodec) =
+            lock gate (fun () ->
+                real <- Some codec
+                builder <- 0
+                forwarder <- None
+                Monitor.PulseAll gate)
+
+        /// <summary>
+        /// Releases a failed build so a later caller retries it, instead of inheriting a
+        /// forwarder that can never resolve.
+        /// </summary>
+        member _.Abandon() =
+            lock gate (fun () ->
+                builder <- 0
+                forwarder <- None
+                Monitor.PulseAll gate)
+
+        /// <summary>Resolves a forwarder at invocation time, waiting out an in-flight build.</summary>
+        member private _.Resolve(t: Type) : TypeCodec =
+            match real with
+            | Some c -> c
+            | None ->
+                lock gate (fun () ->
+                    if builder = Environment.CurrentManagedThreadId then
+                        // A codec invoked during its own build would wait on itself forever.
+                        invalidOp
+                            $"FSharpBinaryCodec: the codec for '{t.FullName}' was invoked while it was still being built on this thread."
+
+                    let deadline = DateTime.UtcNow + buildTimeout
+
+                    while real.IsNone && builder <> 0 do
+                        let remaining = deadline - DateTime.UtcNow
+
+                        if remaining <= TimeSpan.Zero || not (Monitor.Wait(gate, remaining)) then
+                            invalidOp
+                                $"FSharpBinaryCodec: timed out waiting for the codec for '{t.FullName}' to be built on another thread."
+
+                    match real with
+                    | Some c -> c
+                    | None ->
+                        invalidOp
+                            $"FSharpBinaryCodec: the codec for '{t.FullName}' failed to build; the value cannot be serialized.")
+
     // ── Cache ───────────────────────────────────────────────────────────────
     // Two-level cache for thread-safety and recursive-type support:
-    //   codecRefs   – mutable ref cells, one per type, installed BEFORE building
-    //                 so that self-referential types (e.g. Tree = Leaf | Branch of Tree*Tree)
-    //                 find a forwarding codec instead of looping infinitely.
-    //   builtCodecs – immutable map of fully-built codecs for fast lookup.
+    //   codecCells  – one build cell per type, claimed by a single builder thread; every other
+    //                 caller (re-entrant or concurrent) gets a forwarder that resolves once the
+    //                 build finishes.
+    //   builtCodecs – lock-free map of fully-built codecs for fast lookup.
 
-    let private codecRefs  = ConcurrentDictionary<Type, TypeCodec option ref>()
+    let private codecCells = ConcurrentDictionary<Type, CodecCell>()
     let private builtCodecs = ConcurrentDictionary<Type, TypeCodec>()
 
     /// <summary>
@@ -85,23 +180,24 @@ module internal FSharpBinaryFormat =
                 { Write = parentCodec.Write
                   Read  = parentCodec.Read }
             else
-                let r = codecRefs.GetOrAdd(t, fun _ -> ref None)
-                match r.Value with
-                | Some c -> c  // forwarding (during recursive build) or real (concurrent thread)
-                | None ->
-                    // Install a forwarding codec BEFORE building so any re-entrant call
-                    // for the same type returns this forwarding instead of looping.
-                    let fwd = {
-                        Write = fun bw v -> r.Value.Value.Write bw v
-                        Read  = fun br  -> r.Value.Value.Read br
-                    }
-                    r.Value <- Some fwd
-                    let shape = TypeShape.Create(t)
+                let cell = codecCells.GetOrAdd(t, fun _ -> CodecCell())
+                match cell.Claim t with
+                | UseCodec c -> c // real, or a forwarder onto the build in flight
+                | BuildIt ->
                     let realCodec =
-                        shape.Accept { new ITypeVisitor<TypeCodec> with
-                            member _.Visit<'T>() = buildCodecFor<'T>() }
-                    // Populate the forwarding ref and add to fast cache
-                    r.Value <- Some realCodec
+                        try
+                            let shape = TypeShape.Create(t)
+
+                            shape.Accept
+                                { new ITypeVisitor<TypeCodec> with
+                                    member _.Visit<'T>() = buildCodecFor<'T>() }
+                        with _ ->
+                            // Release the claim so an unsupported type throws the same
+                            // diagnostic on every call instead of poisoning the cell.
+                            cell.Abandon()
+                            reraise ()
+
+                    cell.Publish realCodec
                     builtCodecs.TryAdd(t, realCodec) |> ignore
                     realCodec
 
