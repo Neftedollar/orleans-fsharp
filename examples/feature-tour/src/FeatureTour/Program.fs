@@ -38,9 +38,11 @@ open FeatureTour.Heterogeneous
 /// <remarks>
 /// Orleans snapshots application parts inside <c>UseOrleans</c>, before any of our configuration
 /// runs, and its Roslyn generators never run over F#, so an assembly reached only through an F#
-/// hop is invisible to that snapshot. <c>SiloConfig.applyToHost</c> pre-loads the two assemblies
-/// the F# surface itself needs (memory storage and <c>Orleans.FSharp</c>); anything else this
-/// process configures has to be touched here, before <c>applyToHost</c>.
+/// hop is invisible to that snapshot. Building a <c>siloConfig { }</c> value now pre-loads every
+/// Orleans assembly <c>Orleans.FSharp.Runtime</c> references — memory storage, reminders,
+/// streaming, broadcast channels, and the F# abstractions — so the first four touches below are
+/// redundant and kept only to state the dependency at the point of use. The LAST one is not:
+/// this process's own C# interop assembly is referenced only from F# and has to be touched here.
 /// </remarks>
 let private preloadTourAssemblies () =
     typeof<Orleans.Hosting.SiloBuilderReminderMemoryExtensions>.Assembly |> ignore // reminders
