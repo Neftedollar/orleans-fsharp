@@ -54,6 +54,42 @@ See [Functional grains](/orleans-fsharp/functional-grains/), "One operation, one
 | `onReminder` | `string -> TimeSpan -> TimeSpan -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> TickStatus -> Task<'State>)` | Declare a reminder: name, due time, period, handler |
 | `onTimer` | `string -> GrainTimerCreationOptions -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> Task<'State>)` | Declare a timer: name, creation options, handler |
 
+### Observer contract builder — `observerContract<'Brand, 'Api> ()`
+
+A handler record whose every field is `'Msg -> Task<unit>`. Push to a client-hosted observer with
+no application code generation; see
+[Functional grains](/orleans-fsharp/functional-grains/), "Push to clients: functional observers".
+
+| Keyword | Signature | Description |
+|---|---|---|
+| `observerType` | `string` | Wire identity of the observer; defaults to the brand's simple CLR name |
+| `version` | `int` | Contract version; defaults to `1` |
+
+A push operation's wire ID is always its handler-record field name — there is no `operationId`
+override, so the notifying and observing sides cannot drift apart.
+
+#### `FunctionalObserver`
+
+| Function | Signature | Description |
+|---|---|---|
+| `create` | `ObserverContract -> IClusterClient -> 'Api -> FunctionalObserverHandle<'Brand,'Api>` | Host a handler record and return a serializable typed handle |
+| `createFrom` | `ObserverContract -> IServiceProvider -> 'Api -> FunctionalObserverHandle<'Brand,'Api>` | The same, from any services carrying the functional transport (e.g. inside a silo) |
+| `notify` | `handle -> selector -> 'Msg -> Task<unit>` | Push one message; completes at the local send, not at delivery |
+| `unsubscribe` | `IGrainFactory -> handle -> unit` | Release the object reference; idempotent |
+
+#### `FunctionalObserverManager<'Brand,'Api>`
+
+| Member | Signature | Description |
+|---|---|---|
+| `.ctor` | `TimeSpan` | Liveness window a subscription must be refreshed within |
+| `Subscribe` | `handle -> unit` | Add or refresh a subscription |
+| `Unsubscribe` | `handle -> bool` | Remove one subscription |
+| `Notify` | `selector -> 'Msg -> Task<unit>` | Fan out to every live subscription |
+| `RemoveExpired` / `Clear` / `Count` | | Sweep, forget everything, live count |
+
+A manager is a mutable object held in **ephemeral** handler state. It holds live object
+references, so it must never be part of a persistent state type — the F# codec refuses one.
+
 ### Types
 
 | Type | Description |
@@ -63,6 +99,8 @@ See [Functional grains](/orleans-fsharp/functional-grains/), "One operation, one
 | `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context passed to every handler/hook/timer/reminder callback |
 | `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed wrapper: `key`, `api`, `call(selector, arg)`, `callCancellable(selector, arg, ct)` |
 | `OperationSelector<'Api,'Arg,'Reply>` | A field projection (`_.join`) |
+| `ObserverContract<'Brand, 'Api>` | Sealed result of `observerContract { }` |
+| `FunctionalObserverHandle<'Brand, 'Api>` | Serializable typed handle to a client-hosted observer; an operation argument or a tuple element, never an F# record field |
 | `PersistentStateRef<'State>` | Immutable descriptor returned by `PersistentState.create` |
 | `Handler<'Actor,'Key,'State,'Argument,'Reply>` | `FunctionalGrainContext<'Actor,'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>` |
 | `ActivateHook` / `DeactivateHook` / `ReminderHook` / `TimerHook` | Hook type aliases used by `onActivate` / `onDeactivate` / `onReminder` / `onTimer` |

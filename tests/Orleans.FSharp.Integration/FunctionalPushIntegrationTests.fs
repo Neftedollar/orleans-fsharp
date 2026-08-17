@@ -15,7 +15,12 @@ open System
 open System.Collections.Concurrent
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Extensions.DependencyInjection
 open Orleans.Hosting
+open Orleans.Serialization
+open Orleans.Serialization.Buffers
+open Orleans.Serialization.Codecs
+open Orleans.Serialization.WireProtocol
 open Orleans.TestingHost
 open Orleans.FSharp
 open Swensen.Unquote
@@ -35,11 +40,21 @@ type RoomObserverApi =
 let roomObserverContract =
     observerContract<RoomObserver, RoomObserverApi> () { observerType "push.room.observer" }
 
+/// <summary>A SECOND observer brand, so the open-generic handle codec is closed twice.</summary>
+type TickObserver = private TickObserver of unit
+
+[<NoEquality; NoComparison>]
+type TickObserverApi = { onTick: int -> Task<unit> }
+
+let tickObserverContract =
+    observerContract<TickObserver, TickObserverApi> () { observerType "push.tick.observer" }
+
 // ── The functional grain that pushes ─────────────────────────────────────────
 
 type PushRoomActor = private PushRoomActor of unit
 
 type PushHandle = FunctionalObserverHandle<RoomObserver, RoomObserverApi>
+type TickHandle = FunctionalObserverHandle<TickObserver, TickObserverApi>
 
 [<NoEquality; NoComparison>]
 type PushRoomApi =
@@ -48,7 +63,10 @@ type PushRoomApi =
       drop: PushHandle -> Task<int>
       say: ChatMessage -> Task<int>
       close: string -> Task<int>
-      liveCount: unit -> Task<int> }
+      liveCount: unit -> Task<int>
+      /// A handle of a DIFFERENT brand, on the same grain: the codec is generic in two
+      /// parameters and one brand alone never closes it twice.
+      tick: (TickHandle * int) -> Task<string> }
 
 type private PushRoomState =
     { observers: FunctionalObserverManager<RoomObserver, RoomObserverApi> }
@@ -104,6 +122,12 @@ module private PushRoomDefinition =
                 })
 
             handle (_.liveCount) (fun _ state () -> task { return state, state.observers.Count })
+
+            handle (_.tick) (fun _ state ((handle, value): TickHandle * int) ->
+                task {
+                    do! FunctionalObserver.notify handle (_.onTick) value
+                    return state, handle.ObserverType
+                })
         }
 
 // ── Cluster ──────────────────────────────────────────────────────────────────
@@ -160,6 +184,31 @@ type private Recorder() =
 
             return ok
         }
+
+/// <summary>The (field id, wire type) sequence of a serialized object, in wire order.</summary>
+/// <remarks>A byref reader cannot cross a computation expression, so the walk lives here.</remarks>
+let private walkFields (serializer: Serializer) (bytes: byte[]) =
+    use session = serializer.SessionPool.GetSession()
+    let mutable reader = Reader.Create(ReadOnlySpan<byte> bytes, session)
+    let mutable outer = Unchecked.defaultof<Field>
+    reader.ReadFieldHeader &outer
+
+    let observed = ResizeArray<uint32 * WireType>()
+    let mutable id = 0u
+    let mutable running = true
+
+    while running do
+        let mutable inner = Unchecked.defaultof<Field>
+        reader.ReadFieldHeader &inner
+
+        if inner.IsEndBaseOrEndObject then
+            running <- false
+        else
+            id <- id + inner.FieldIdDelta
+            observed.Add((id, inner.WireType))
+            SkipFieldExtension.SkipField(&reader, inner)
+
+    observed.ToArray()
 
 let private recordingApi (recorder: Recorder) =
     { onMessage = fun message -> task { recorder.Record $"{message.author}: {message.text}" }
@@ -314,6 +363,78 @@ type FunctionalPushTests(fixture: FunctionalPushClusterFixture) =
 
                 let! arrived = recorder.WaitFor(1, 5000)
                 test <@ arrived @>
+            finally
+                FunctionalObserver.unsubscribe fixture.Client handle
+        }
+
+    [<Fact>]
+    member _.``a second observer brand closes the handle codec independently``() =
+        task {
+            // Two brands, one grain, one process: the open-generic handle codec has to be closed
+            // over each pair separately, and Orleans has to have routed both to it rather than to
+            // the F# generalized codec that structurally also claims the handle class.
+            let room = pushRoomRef fixture.Client "push-two-brands"
+            let recorder = Recorder()
+            let roomHandle = FunctionalObserver.create roomObserverContract fixture.Client (recordingApi recorder)
+
+            let ticks = Recorder()
+
+            let tickHandle =
+                FunctionalObserver.create tickObserverContract fixture.Client
+                    { onTick = fun value -> task { ticks.Record $"tick:{value}" } }
+
+            try
+                let! subscribed = room.subscribe roomHandle
+                test <@ subscribed = 1 @>
+
+                let! observerType = room.tick (tickHandle, 7)
+                test <@ observerType = "push.tick.observer" @>
+
+                let! tickArrived = ticks.WaitFor(1, 5000)
+                test <@ tickArrived @>
+                test <@ ticks.Messages = [ "tick:7" ] @>
+
+                // The other brand's subscription is untouched by any of it.
+                let! notified = room.say { author = "grace"; text = "still here" }
+                test <@ notified = 1 @>
+
+                let! roomArrived = recorder.WaitFor(1, 5000)
+                test <@ roomArrived @>
+                test <@ recorder.Messages = [ "grace: still here" ] @>
+            finally
+                FunctionalObserver.unsubscribe fixture.Client roomHandle
+                FunctionalObserver.unsubscribe fixture.Client tickHandle
+        }
+
+    [<Fact>]
+    member _.``a handle's wire form is the object reference and its metadata, and nothing else``() =
+        task {
+            // Serializer instrumentation for the claim the specification makes: three fields, no
+            // observer contract, no handler record, no message types. A handler record captured
+            // into the payload would be both a correctness bug and an information leak.
+            let recorder = Recorder()
+            let handle = FunctionalObserver.create roomObserverContract fixture.Client (recordingApi recorder)
+
+            try
+                let serializer = fixture.Client.ServiceProvider.GetRequiredService<Serializer>()
+                let codec = FunctionalPayloadCodec(serializer, serializer.SessionPool)
+                let bytes = codec.Serialize<PushHandle> handle
+                let observed = walkFields serializer bytes
+
+                // Field 0 observer type, field 1 contract version, field 2 the reference.
+                test <@ observed.Length = 3 @>
+                test <@ (observed |> Array.map fst |> List.ofArray) = [ 0u; 1u; 2u ] @>
+
+                // The handler record's own type name never reaches the wire.
+                let text = Text.Encoding.UTF8.GetString bytes
+                test <@ text.Contains "push.room.observer" @>
+                test <@ not (text.Contains "RoomObserverApi") @>
+                test <@ not (text.Contains "ChatMessage") @>
+
+                // And it still works after a round-trip through those three fields.
+                let restored = codec.Deserialize<PushHandle> bytes
+                test <@ restored.ObserverType = "push.room.observer" @>
+                test <@ restored.ContractVersion = 1 @>
             finally
                 FunctionalObserver.unsubscribe fixture.Client handle
         }

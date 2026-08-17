@@ -40,7 +40,8 @@ Status means:
 | 5 | Cancellation | **supported** | `Cancellation.fs`, tour §5. `rawRef.callCancellable` cancelled mid-flight: the caller gets `OperationCanceledException`, and the target independently observes the trip on `context.cancellationToken`. Cooperative only — it rolls nothing back. |
 | 6 | Contract versioning | **supported** | `VersioningTour.fs`, tour §6. Two contracts over one `grainType` at versions 1 and 2. Matching succeeds; the mismatch is refused with `grain type 'tour.versioned' hosts contract version 1 but received version 2`. Matching is `=`, never `>=`: a version bump is a breaking wire change for every caller. |
 | 7 | Streams | **supported** | `Streams.fs`, tour §7. The producer is an ordinary handler: there is no `context.streamProvider`, because Orleans exposes `GetStreamProvider` only on `Grain`/`IGrainBase`/`IClusterClient` — so it resolves the named `IStreamProvider` as a **keyed service** off `context.services`. All three consumer arms receive every event: an external `IClusterClient` over the gateway, a functional grain subscribing from its own `onActivate`, and a subscription taken outside any grain context. |
-| 8 | Observers | **composed** | `ObserverTour.fs` + `src/TourInterop`, tour §8. `Observer.createRef` / `subscribe` / `notify` / `unsubscribe` all work from a functional grain — **provided the observer interface is declared in a C#-compiled assembly**. That requirement is Orleans': its proxy source generators are Roslyn generators and never run over F#, so an F#-declared `IGrainObserver` has no proxy and `CreateObjectReference` fails on it. Identical for the `grain { }` CE and for class grains. |
+| 8 | Observers (classic path) | **composed** | `ObserverTour.fs` + `src/TourInterop`, tour §8. `Observer.createRef` / `subscribe` / `notify` / `unsubscribe` all work from a functional grain — **provided the observer interface is declared in a C#-compiled assembly**. That requirement is Orleans': its proxy source generators are Roslyn generators and never run over F#, so an F#-declared `IGrainObserver` has no proxy and `CreateObjectReference` fails on it. Identical for the `grain { }` CE and for class grains. **This row is what the tour runs.** The library now also ships *functional observers*, which need no application C# at all — see the next row. |
+| 8b | Observers (functional) | **supported**, not exercised here | Not in this app, and deliberately: the tour's rule is that every row is backed by a line it prints, and retro-fitting §8 would replace the evidence for row 8 rather than add to it. The capability is proved elsewhere, end to end on a real cluster — `tests/Orleans.FSharp.Integration/FunctionalPushIntegrationTests.fs` (delivery, unsubscribe, a throwing observer, manager expiry, two brands, and the handle's wire form) and `examples/chat-room`, whose transcript shows `[push]` lines arriving between the calls and stopping after `unsubscribe`. `observerContract` + `FunctionalObserver.create` / `notify` + `FunctionalObserverManager`; no observer interface and no code generation in application code. |
 | 9 | Broadcast channels | **composed** | `Broadcast.fs` + `src/TourInterop`, tour §9. The **producer** is a plain functional handler (`BroadcastChannel.publish` over the keyed `IBroadcastChannelProvider`). The **consumer** is always a class grain — but it does **not** have to be C#. See ["An F#-only broadcast consumer"](#an-f-only-broadcast-consumer) below for the two things it needs. |
 | 10 | Heterogeneous cluster | **supported** | `Heterogeneous.fs`, tour §11. A two-silo cluster where `tour.regional` is registered only on the non-primary silo. Every call to it lands on that silo, while `tour.everywhere` spreads across both. Driven from an external client that installs the transport with `AddFunctionalGrainClient`. |
 | 11 | Implicit **stream** subscriptions for a functional grain | **wall** | Not in the app; the failure is reproduced and quoted in ["Implicit stream subscriptions"](#implicit-stream-subscriptions-the-exact-wall) below. Short version: the functional manifest publishes no stream-binding properties, and even when you add them by hand the activation has no stream consumer to hand the item to, so Orleans drops it. Closing this is a runtime feature, not a composition. |
@@ -91,9 +92,20 @@ not a legal value of an F# `list`. The tour prints the observation:
 hazard observed on clear: cleared facet State is a record whose 'events' list field is null
 ```
 
-Left alone, the next call that serializes that state dies far from the cause, with
-`ArgumentNullException: Value cannot be null. (Parameter 'source')` from inside the codec.
-**Re-seed the holder explicitly after every `ClearStateAsync`** (`Persistence.fs` does).
+**Re-seed the holder explicitly after every `ClearStateAsync`** (`Persistence.fs` does) — the
+initializer is not re-run, and the runtime deliberately does not re-initialize for you, because
+only the application knows what "empty" means.
+
+The *diagnostic* for forgetting has since been fixed. It used to die far from the cause, as
+`ArgumentNullException: Value cannot be null. (Parameter 'source')` raised inside whichever
+collection loop first touched the field. It now names the field, the record, and this cause:
+
+```text
+FSharpBinaryCodec: field 'events' of the record '…TourState' is null, but its declared type
+'…FSharpList`1[…]' has no null value. The usual cause is a persistent state that was cleared and
+not re-initialized: after ClearStateAsync the holder's State is a fresh uninitialized instance,
+so assign a freshly initialized state before the next write.
+```
 
 ### An application filter cannot type-test the functional request
 
