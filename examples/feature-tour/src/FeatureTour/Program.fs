@@ -11,8 +11,11 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Orleans
+open Orleans.Hosting
+open Orleans.Streams
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
+open Orleans.FSharp.Streaming
 
 open FeatureTour.Tour
 open FeatureTour.Persistence
@@ -21,6 +24,7 @@ open FeatureTour.CallFilters
 open FeatureTour.RequestContextTour
 open FeatureTour.Cancellation
 open FeatureTour.VersioningTour
+open FeatureTour.Streams
 
 // ── Silo ─────────────────────────────────────────────────────────────────────
 
@@ -37,6 +41,7 @@ open FeatureTour.VersioningTour
 let private preloadTourAssemblies () =
     typeof<Orleans.Hosting.SiloBuilderReminderMemoryExtensions>.Assembly |> ignore // reminders
     typeof<Orleans.Streams.IStreamProvider>.Assembly |> ignore // streams
+    typeof<Orleans.Providers.MemoryStreamQueueGrain>.Assembly |> ignore // memory stream grains
 
 let private siloConfiguration =
     siloConfig {
@@ -44,6 +49,7 @@ let private siloConfiguration =
         addMemoryStorage "Default"
         addMemoryStorage "Audit"
         addMemoryReminderService
+        addMemoryStreams TourStream.Provider
 
         addIncomingFilter (TourIncomingFilter GatewayApi.RejectedOperation :> IIncomingGrainCallFilter)
     }
@@ -247,6 +253,111 @@ let private runVersioning (factory: IGrainFactory) =
         verdict "SUPPORTED — the mismatch is refused before any handler runs, naming both versions"
     }
 
+let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider) =
+    task {
+        section 7 "Streams (EXPERIMENT) — producer from a handler, three consumer arms"
+
+        let producer = ProducerApi.ref factory "line-1"
+        let! probe = producer.providerProbe ()
+        say $"handler resolved the stream provider from context.services -> {probe}"
+        detail "there is no context.streamProvider: Orleans exposes GetStreamProvider only on"
+        detail "Grain / IGrainBase / IClusterClient, so a handler goes through the keyed service."
+
+        // Arm (b): a functional grain subscribing from its own onActivate hook. The first call is
+        // what activates it, so this has to happen BEFORE anything is published.
+        let consumer = ConsumerApi.ref factory "line-1"
+        let! initial = consumer.report ()
+        say $"arm (b) grain-side onActivate subscription -> {initial.subscribeOutcome}"
+
+        // Arm (c): a subscription taken outside any grain context, from the silo process's own
+        // service provider — the shape an in-process host reaches for first.
+        let outOfGrainSubscriber = "out-of-grain"
+
+        let outOfGrainOutcome =
+            try
+                let provider = siloServices.GetRequiredKeyedService<IStreamProvider> TourStream.Provider
+                let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
+
+                (Stream.subscribe stream (fun event -> task { StreamInbox.add outOfGrainSubscriber event }))
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                "subscribed"
+            with error ->
+                describe error
+
+        say $"arm (c) subscription from the silo service provider, no grain context -> {outOfGrainOutcome}"
+
+        // Arm (a): a genuinely external Orleans client, connected over the localhost gateway.
+        let externalSubscriber = "external-client"
+        let clientBuilder = Host.CreateApplicationBuilder()
+        clientBuilder.Logging.SetMinimumLevel LogLevel.Warning |> ignore
+
+        clientBuilder.UseOrleansClient(fun client ->
+            client.UseLocalhostClustering() |> ignore
+            client.AddMemoryStreams TourStream.Provider |> ignore
+            // Every process that BINDS a functional contract installs the fixed transport once.
+            client.AddFunctionalGrainClient() |> ignore)
+        |> ignore
+
+        use clientHost = clientBuilder.Build()
+        do! clientHost.StartAsync()
+        let clusterClient = clientHost.Services.GetRequiredService<IClusterClient>()
+
+        let externalOutcome =
+            try
+                let provider = clusterClient.GetStreamProvider TourStream.Provider
+                let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
+
+                (Stream.subscribe stream (fun event -> task { StreamInbox.add externalSubscriber event }))
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                "subscribed"
+            with error ->
+                describe error
+
+        say $"arm (a) subscription from an external IClusterClient over the gateway -> {externalOutcome}"
+
+        // While the external client is up, prove AddFunctionalGrainClient binds a contract too.
+        let! externalCall = (ProducerApi.ref clusterClient "line-1").providerProbe ()
+        say $"external client calling a functional grain -> {externalCall}"
+
+        let! _ = producer.publish "order-placed"
+        let! total = producer.publish "order-shipped"
+        say $"published {total} events through the producer's handler"
+
+        let expected = [ "order-placed"; "order-shipped" ]
+
+        let! _ =
+            waitUntil (TimeSpan.FromSeconds 20.0) (fun () ->
+                task {
+                    let! report = consumer.report ()
+
+                    return
+                        List.length report.received >= 2
+                        && List.length (StreamInbox.read outOfGrainSubscriber) >= 2
+                        && List.length (StreamInbox.read externalSubscriber) >= 2
+                })
+
+        let! finalReport = consumer.report ()
+        let outOfGrainReceived = StreamInbox.read outOfGrainSubscriber
+        let externalReceived = StreamInbox.read externalSubscriber
+
+        say $"arm (a) external client received -> {externalReceived}"
+        say $"arm (b) grain-side consumer received -> {finalReport.received}"
+        say $"arm (c) out-of-grain subscriber received -> {outOfGrainReceived}"
+
+        do! clientHost.StopAsync()
+
+        if finalReport.received = expected && externalReceived = expected then
+            verdict "SUPPORTED — publish from a handler, and all three consumer arms deliver"
+        else
+            verdict "PARTIAL — see the per-arm lines above and the README for the exact failure"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -263,6 +374,7 @@ let private runTour (host: IHost) =
         do! runRequestContext factory
         do! runCancellation factory
         do! runVersioning factory
+        do! runStreams factory host.Services
 
         printfn ""
         printfn "Tour complete. Shutting the silo down..."
@@ -286,7 +398,9 @@ let main _argv =
         silo.AddFunctionalGrain DownstreamDefinition.definition |> ignore
         silo.AddFunctionalGrain SlowDefinition.definition |> ignore
         // Deliberately ONLY version 1 of tour.versioned.
-        silo.AddFunctionalGrain VersionedDefinition.definition |> ignore)
+        silo.AddFunctionalGrain VersionedDefinition.definition |> ignore
+        silo.AddFunctionalGrain ProducerDefinition.definition |> ignore
+        silo.AddFunctionalGrain ConsumerDefinition.definition |> ignore)
     |> ignore
 
     let host = builder.Build()

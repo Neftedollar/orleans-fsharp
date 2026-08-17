@@ -15,6 +15,7 @@
     <Compile Include="RequestContextTour.fs" />
     <Compile Include="Cancellation.fs" />
     <Compile Include="VersioningTour.fs" />
+    <Compile Include="Streams.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
