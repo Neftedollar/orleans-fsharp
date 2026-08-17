@@ -129,3 +129,66 @@ type ReminderHook<'Actor, 'Key, 'State> =
 
 /// <summary>A timer hook; whole-state replacement under non-interleaving scheduling.</summary>
 type TimerHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> Task<'State>
+
+/// <summary>
+/// The closed set of documented Orleans grain-lifecycle stages an <c>onLifecycle</c> hook may
+/// target -- not arbitrary ints.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Mirrors <c>Orleans.Runtime.GrainLifecycleStage</c>'s own four documented constants exactly
+/// (verified by reflection against Orleans 10.1.0 and 10.2.2, identical on both:
+/// <c>First = System.Int32.MinValue</c>, <c>SetupState = 1000</c>, <c>Activate = 2000</c>,
+/// <c>Last = System.Int32.MaxValue</c>). <c>Activate</c> is accepted by this type but rejected by
+/// the <c>onLifecycle</c> custom operation at definition sealing -- see its remarks.
+/// </para>
+/// <para>
+/// <b>All four numbered stages run before <c>OnActivateAsync</c>, including <c>Last</c>.</b>
+/// Verified by an integration probe (not assumed): a raw witness subscribed directly at
+/// <c>GrainLifecycleStage.Activate</c> observes the order
+/// <c>First, SetupState, raw-Activate-stage, Last, OnActivateAsync</c>. Orleans runs the entire
+/// numbered <c>ObservableLifecycle</c> "OnStart" sequence (First through Last, in ascending
+/// order) to completion FIRST; <c>OnActivateAsync</c> -- and therefore the functional runtime's
+/// own state initialization, the <c>onActivate</c> hook, reminder reconciliation, and timer
+/// creation -- is a separate step that runs strictly after that whole sequence, not gated by any
+/// single stage number. So there is no "post-state" stage among the four: not even <c>Last</c>.
+/// </para>
+/// </remarks>
+type LifecycleStage =
+    /// <summary>The first valid stage in a grain's lifecycle -- before persistent-state facets
+    /// load, before <c>OnActivateAsync</c> and the ephemeral primary state it initializes.</summary>
+    | First
+    /// <summary>Orleans loads persistent-state facets here. Still strictly before
+    /// <c>OnActivateAsync</c>, so the functional runtime's own primary state (ephemeral or
+    /// facet-backed) is not yet initialized at this stage either.</summary>
+    | SetupState
+    /// <summary>Where application code could hook the numbered stage <c>OnActivateAsync</c> is
+    /// most closely associated with -- but <c>OnActivateAsync</c> itself (state initialization,
+    /// the <c>onActivate</c> hook, reminder reconciliation, timer creation, in that order) runs
+    /// AFTER this stage and <c>Last</c> both complete, not during it. Rejected by
+    /// <c>onLifecycle</c> regardless; use <c>onActivate</c> instead.</summary>
+    | Activate
+    /// <summary>The last of the four numbered stages -- still strictly BEFORE
+    /// <c>OnActivateAsync</c> runs, not after. Like <c>First</c> and <c>SetupState</c>, a hook
+    /// here has no meaningful primary state to read.</summary>
+    | Last
+
+/// <summary>Maps <see cref="T:Orleans.FSharp.LifecycleStage"/> to the Orleans
+/// <c>GrainLifecycleStage</c> int constant it mirrors.</summary>
+[<RequireQualifiedAccess>]
+module LifecycleStage =
+
+    /// <summary>The exact <c>Orleans.Runtime.GrainLifecycleStage</c> value of one stage.</summary>
+    let toOrleansStage =
+        function
+        | First -> GrainLifecycleStage.First
+        | SetupState -> GrainLifecycleStage.SetupState
+        | Activate -> GrainLifecycleStage.Activate
+        | Last -> GrainLifecycleStage.Last
+
+/// <summary>
+/// An <c>onLifecycle</c> hook. Deliberately state-free -- see the <c>onLifecycle</c> custom
+/// operation's remarks for why every accepted stage (not only the pre-state ones) uses this same
+/// shape rather than carrying <c>'State</c>.
+/// </summary>
+type LifecycleHook<'Actor, 'Key> = FunctionalGrainContext<'Actor, 'Key> -> Task<unit>

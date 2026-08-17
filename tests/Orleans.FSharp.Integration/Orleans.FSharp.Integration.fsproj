@@ -44,6 +44,7 @@
     <Compile Include="TemplateTests.fs" />
     <Compile Include="RedisIntegrationTests.fs" />
     <Compile Include="GrainResilienceIntegrationTests.fs" />
+    <Compile Include="FunctionalPlacementIntegrationTests.fs" />
     <Compile Include="FunctionalClusterFixture.fs" />
     <Compile Include="FunctionalManifestIntegrationTests.fs" />
     <Compile Include="FunctionalRuntimeIntegrationTests.fs" />

@@ -172,6 +172,45 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                     StartupStage
                     $"the functional activation target of grain type '{definition.GrainTypeName}' did not receive the supplied IGrainContext."
 
+            // "onLifecycle" hooks: subscribed directly on the Orleans-supplied observable
+            // lifecycle, exactly the seam persistent-state facets already use to load at
+            // SetupState (this method's own step-1 comment above) and the seam the classic
+            // grain{} CE's onLifecycleStage uses (Orleans.FSharp.Runtime.GrainDiscovery.fs). This
+            // subscription itself runs here, synchronously, during CreateInstance -- i.e. before
+            // any lifecycle stage of THIS activation starts -- so it is registered in time for
+            // every stage, including First. The callback body only runs later, once Orleans
+            // actually reaches that stage, by which point 'target' and every mutable wired above
+            // (deactivate, delay, ...) are already assigned; env's closures resolve to them
+            // correctly because env captures the mutable bindings, not a snapshot of their value
+            // at this point. allowsMutation=false: a lifecycle hook carries no state (see
+            // LifecycleHook's remarks) and does not participate in state publication, so its
+            // persistent-state facades permit reads but reject the setter and storage calls, the
+            // same rule an interleaved read-only handler call gets. Verified ordering (an
+            // integration probe, not an assumption -- see FunctionalPlacementIntegrationTests.fs):
+            // First, SetupState, and Last all fire before OnActivateAsync -- and therefore before
+            // FunctionalLifecycle.activate's state initialization, onActivate hook, reminders,
+            // and timers -- runs at all. OnActivateAsync is not gated by the numbered Activate
+            // stage; it is a separate step Orleans runs after the whole numbered stage sequence
+            // (First..Last) has completed.
+            for stage, adapter in definition.LifecycleHooks do
+                grainContext.ObservableLifecycle.Subscribe(
+                    $"Orleans.FSharp.Functional.{definition.GrainTypeName}.onLifecycle.{stage}",
+                    LifecycleStage.toOrleansStage stage,
+                    Func<CancellationToken, Task>(fun cancellationToken ->
+                        task {
+                            let scope =
+                                FunctionalStateScope(definition.GrainTypeName, $"onLifecycle:{stage}", false)
+
+                            try
+                                let core = FunctionalContextFactory.core env cancellationToken scope
+                                do! adapter.Invoke(env.Key, core)
+                            finally
+                                scope.Expire()
+                        }
+                        :> Task)
+                )
+                |> ignore
+
             box target
 
         member _.DisposeInstance(grainContext: IGrainContext, instance: obj) =

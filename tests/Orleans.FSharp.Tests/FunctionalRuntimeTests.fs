@@ -16,8 +16,10 @@ open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Options
 open Orleans
+open Orleans.Concurrency
 open Orleans.Configuration
 open Orleans.Metadata
+open Orleans.Placement
 open Orleans.Runtime
 open Orleans.Serialization
 open Orleans.FSharp
@@ -117,6 +119,26 @@ let private collectionAgeDefinition =
     grainFor collectionAgeContract {
         defaultState (fun () -> { touched = false })
         collectionAge (TimeSpan.FromMinutes 5.0)
+        handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+    }
+
+// Minimal, independent contracts used only to prove that 'statelessWorker' / 'placement' are
+// frozen into the well-known Orleans placement manifest properties, EXACTLY matching what the
+// corresponding stock Orleans attribute publishes (verified live against Orleans 10.1.0 and
+// 10.2.2 -- see FunctionalManifest.fs's Populate comment).
+type StatelessWorkerActor = private StatelessWorkerActor of unit
+type PreferLocalActor = private PreferLocalActor of unit
+
+let private statelessWorkerContract =
+    grainContract<StatelessWorkerActor, string, TinyApi> () {
+        grainType "runtime.statelessworker"
+        stringKey
+    }
+
+let private statelessWorkerDefinition =
+    grainFor statelessWorkerContract {
+        defaultState (fun () -> { touched = false })
+        statelessWorker 4
         handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
     }
 
@@ -515,6 +537,104 @@ let ``the properties provider freezes collectionAge into the idle-duration manif
 
     let parsed = TimeSpan.Parse ageProperties.[WellKnownGrainTypeProperties.IdleDeactivationPeriod]
     test <@ parsed = TimeSpan.FromMinutes 5.0 @>
+
+/// <summary>Populate a scratch dictionary through a live Orleans placement attribute, exactly
+/// the way <c>examples/feature-tour/src/FeatureTour/Placement.fs</c> already does, to get the
+/// real reference output rather than an assumed one.</summary>
+let private referencePropertiesOf (attribute: IGrainPropertiesProviderAttribute) =
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    attribute.Populate(null, typeof<obj>, GrainType.Create "reference-probe", properties)
+    properties
+
+/// <remarks>
+/// Spec item 4: "The registry properties provider publishes the same property keys Orleans' own
+/// attributes produce ... property keys must match EXACTLY, with a test comparing against an
+/// attribute-decorated reference class's published properties." This is that test, for
+/// <c>statelessWorker</c>: the reference is a real, live <c>StatelessWorkerAttribute(4)</c>
+/// (Orleans.Concurrency), not a transcribed assumption of what it publishes.
+/// </remarks>
+[<Fact>]
+let ``statelessWorker publishes exactly what a live StatelessWorkerAttribute(4) publishes`` () =
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create statelessWorkerDefinition)
+    registry.Freeze() |> ignore
+
+    let provider = FunctionalGrainPropertiesProvider registry :> IGrainPropertiesProvider
+    let marker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<StatelessWorkerActor>
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    properties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(marker, GrainType.Create "runtime.statelessworker", properties)
+
+    let reference = referencePropertiesOf (StatelessWorkerAttribute 4)
+
+    test <@ reference.Count = 4 @> // pins the reference itself: fails loudly if Orleans ever adds a 5th key
+    test <@ properties.[WellKnownGrainTypeProperties.PlacementStrategy] = reference.["placement-strategy"] @>
+    test <@ properties.["max-local-instances"] = reference.["max-local-instances"] @>
+    test <@ properties.["remove-idle-workers"] = reference.["remove-idle-workers"] @>
+    test <@ properties.[WellKnownGrainTypeProperties.Unordered] = reference.["unordered"] @>
+    test <@ properties.["max-local-instances"] = "4" @>
+    test <@ properties.["remove-idle-workers"] = "True" @> // bool.ToString() casing, NOT "true"
+    test <@ properties.[WellKnownGrainTypeProperties.Unordered] = "true" @> // literal, NOT bool.ToString()
+
+/// <remarks>
+/// The same exactness proof for every plain stock strategy the DU mirrors, each against its own
+/// live Orleans attribute. Random, PreferLocal, ActivationCountBased, and ResourceOptimized are
+/// all confirmed present with identical Populate() output on both Orleans 10.1.0 and 10.2.2.
+/// </remarks>
+[<Theory>]
+[<InlineData("Random", "runtime.placement.random")>]
+[<InlineData("PreferLocal", "runtime.placement.preferlocal")>]
+[<InlineData("ActivationCountBased", "runtime.placement.activationcountbased")>]
+[<InlineData("ResourceOptimized", "runtime.placement.resourceoptimized")>]
+let ``placement publishes exactly what the matching live Orleans placement attribute publishes``
+    (strategyName: string)
+    (grainTypeName: string)
+    =
+    let strategy =
+        match strategyName with
+        | "Random" -> Random
+        | "PreferLocal" -> PreferLocal
+        | "ActivationCountBased" -> ActivationCountBased
+        | "ResourceOptimized" -> ResourceOptimized
+        | other -> failwith $"unhandled strategy '{other}' in test data"
+
+    let referenceAttribute: IGrainPropertiesProviderAttribute =
+        match strategyName with
+        | "Random" -> RandomPlacementAttribute()
+        | "PreferLocal" -> PreferLocalPlacementAttribute()
+        | "ActivationCountBased" -> ActivationCountBasedPlacementAttribute()
+        | "ResourceOptimized" -> ResourceOptimizedPlacementAttribute()
+        | other -> failwith $"unhandled strategy '{other}' in test data"
+
+    let actor = typeof<PreferLocalActor> // a stand-in marker CLR type; only the grain-type match matters here
+
+    let contract =
+        grainContract<PreferLocalActor, string, TinyApi> () {
+            grainType grainTypeName
+            stringKey
+        }
+
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { touched = false })
+            placement strategy
+            handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+        }
+
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create definition)
+    registry.Freeze() |> ignore
+
+    let provider = FunctionalGrainPropertiesProvider registry :> IGrainPropertiesProvider
+    let marker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType actor
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    properties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(marker, GrainType.Create grainTypeName, properties)
+
+    let reference = referencePropertiesOf referenceAttribute
+
+    test <@ reference.Count = 1 @> // pins the reference: fails loudly if Orleans ever adds a key
+    test <@ properties.[WellKnownGrainTypeProperties.PlacementStrategy] = reference.["placement-strategy"] @>
 
 [<Fact>]
 let ``the properties provider fails startup on zero or multiple normalized entries`` () =

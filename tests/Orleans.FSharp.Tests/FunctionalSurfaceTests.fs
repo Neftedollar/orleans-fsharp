@@ -521,9 +521,12 @@ let ``the definition builder declares exactly the specified custom operations`` 
            "initialState"
            "onActivate"
            "onDeactivate"
+           "onLifecycle"
            "onReminder"
            "onTimer"
+           "placement"
            "stateFrom"
+           "statelessWorker"
            "usePersistentState" |]
 
     test <@ customOperations typeof<FunctionalGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>

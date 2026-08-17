@@ -122,6 +122,40 @@ type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistr
                 | Some age -> properties.[WellKnownGrainTypeProperties.IdleDeactivationPeriod] <- age.ToString()
                 | None -> ()
 
+                // "The registry properties provider publishes the same property keys Orleans' own
+                // attributes produce." Verified against a live IGrainPropertiesProviderAttribute.
+                // Populate() call on Orleans 10.1.0 and 10.2.2 (identical on both):
+                //   RandomPlacementAttribute()               -> placement-strategy=RandomPlacement
+                //   PreferLocalPlacementAttribute()           -> placement-strategy=PreferLocalPlacement
+                //   ActivationCountBasedPlacementAttribute()  -> placement-strategy=ActivationCountBasedPlacement
+                //   ResourceOptimizedPlacementAttribute()     -> placement-strategy=ResourceOptimizedPlacement
+                //   StatelessWorkerAttribute(n)                -> placement-strategy=StatelessWorkerPlacement,
+                //                                                  max-local-instances=n (exact string, no
+                //                                                  culture formatting), remove-idle-workers=True
+                //                                                  (bool.ToString() casing), unordered=true
+                //                                                  (lowercase literal -- NOT bool.ToString(),
+                //                                                  and NOT tied to the removeIdleWorkers ctor
+                //                                                  argument, which this runtime does not expose).
+                // "max-local-instances" and "remove-idle-workers" are StatelessWorkerAttribute-internal key
+                // names with no WellKnownGrainTypeProperties constant, so they are literals here too, exactly
+                // as examples/feature-tour/src/FeatureTour/Placement.fs already documents them.
+                match entry.Definition.Placement with
+                | Some(Strategy strategy) ->
+                    let value =
+                        match strategy with
+                        | Random -> "RandomPlacement"
+                        | PreferLocal -> "PreferLocalPlacement"
+                        | ActivationCountBased -> "ActivationCountBasedPlacement"
+                        | ResourceOptimized -> "ResourceOptimizedPlacement"
+
+                    properties.[WellKnownGrainTypeProperties.PlacementStrategy] <- value
+                | Some(StatelessWorker maxLocalWorkers) ->
+                    properties.[WellKnownGrainTypeProperties.PlacementStrategy] <- "StatelessWorkerPlacement"
+                    properties.["max-local-instances"] <- maxLocalWorkers.ToString CultureInfo.InvariantCulture
+                    properties.["remove-idle-workers"] <- true.ToString()
+                    properties.[WellKnownGrainTypeProperties.Unordered] <- "true"
+                | None -> ()
+
 /// <summary>
 /// Atomically freezes the registry, removes the open functional marker and target-interface
 /// definitions Orleans discovered by default, and adds only the registered closed types.

@@ -118,6 +118,12 @@ type internal FunctionalReminderAdapter = delegate of obj * FunctionalContextCor
 /// </summary>
 type internal FunctionalTimerAdapter = delegate of obj * FunctionalContextCore * obj -> Task<obj>
 
+/// <summary>
+/// The preclosed typed adapter of one declared <c>onLifecycle</c> hook. State-free by design (see
+/// the <c>onLifecycle</c> custom operation's remarks); it neither receives nor returns state.
+/// </summary>
+type internal FunctionalLifecycleAdapter = delegate of obj * FunctionalContextCore -> Task
+
 /// <summary>One declared reminder frozen into the hosted view: identity plus its preclosed adapter.</summary>
 [<ReferenceEquality>]
 type internal FunctionalHostedReminder =
@@ -204,7 +210,9 @@ type internal FunctionalHostedDefinition
         onDeactivate: FunctionalDeactivateAdapter option,
         collectionAge: TimeSpan option,
         reminders: FunctionalHostedReminder[],
-        timers: FunctionalHostedTimer[]
+        timers: FunctionalHostedTimer[],
+        placement: PlacementConfiguration option,
+        lifecycleHooks: (LifecycleStage * FunctionalLifecycleAdapter)[]
     ) =
 
     let facets =
@@ -286,6 +294,13 @@ type internal FunctionalHostedDefinition
 
     /// <summary>Declared timers in declaration order.</summary>
     member _.Timers = timers
+
+    /// <summary>The configured placement, when <c>statelessWorker</c> or <c>placement</c> was
+    /// declared.</summary>
+    member _.Placement = placement
+
+    /// <summary>Declared <c>onLifecycle</c> hooks with their preclosed adapters.</summary>
+    member _.LifecycleHooks = lifecycleHooks
 
     /// <summary>Look up a declared reminder by its exact ordinal name.</summary>
     member _.TryFindReminder(reminderName: string) =
@@ -391,6 +406,17 @@ module internal FunctionalHosted =
                   Adapter = adapter })
             |> List.toArray
 
+        let lifecycleHooks =
+            definition.LifecycleHooks
+            |> Map.toArray
+            |> Array.map (fun (stage, hook) ->
+                let adapter =
+                    FunctionalLifecycleAdapter(fun key core ->
+                        let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                        hook context :> Task)
+
+                stage, adapter)
+
         FunctionalHostedDefinition(
             box definition,
             contract.GrainTypeName,
@@ -410,5 +436,7 @@ module internal FunctionalHosted =
             onDeactivate,
             definition.CollectionAge,
             reminders,
-            timers
+            timers,
+            definition.Placement,
+            lifecycleHooks
         )

@@ -280,14 +280,251 @@ let ``a repeated collectionAge fails definition sealing`` () =
 
     test <@ error.Message.Contains "'collectionAge' is declared more than once" @>
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Hooks, reminders, and timers
-// ──────────────────────────────────────────────────────────────────────────────
-
 let private activateHook _ state = task { return state }
 let private deactivateHook _ (_: DeactivationReason) (_: RoomState) = task { return () }
 let private reminderHook _ state (_: TickStatus) = task { return state }
 let private timerHook _ state = task { return state }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Placement (spec 004 item 4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``statelessWorker is frozen into definition metadata`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            statelessWorker 4
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.Placement = Some(StatelessWorker 4) @>
+
+[<Fact>]
+let ``placement is frozen into definition metadata`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            placement PreferLocal
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.Placement = Some(Strategy PreferLocal) @>
+
+[<Fact>]
+let ``a non-positive maxLocalWorkers fails definition sealing`` () =
+    let zero =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 0
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let negative =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker -1
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ zero.Message.Contains "strictly positive" @>
+    test <@ negative.Message.Contains "strictly positive" @>
+
+[<Fact>]
+let ``statelessWorker and placement are mutually exclusive in either order`` () =
+    let statelessWorkerThenPlacement =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                placement PreferLocal
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let placementThenStatelessWorker =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                placement PreferLocal
+                statelessWorker 4
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let repeatedPlacement =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                placement PreferLocal
+                placement Random
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ statelessWorkerThenPlacement.Message.Contains "cannot be combined" @>
+    test <@ placementThenStatelessWorker.Message.Contains "cannot be combined" @>
+    test <@ repeatedPlacement.Message.Contains "cannot be combined" @>
+
+/// <remarks>
+/// Spec item 4: "statelessWorker rejects stateFrom, usePersistentState, and onReminder (durable
+/// identity is meaningless for multiplexed local activations) and rejects collectionAge." All
+/// four in both declaration orders (the rejected operation before or after 'statelessWorker'),
+/// since the check is deferred to sealing rather than order-dependent.
+/// </remarks>
+[<Fact>]
+let ``statelessWorker rejects stateFrom, usePersistentState, onReminder, and collectionAge`` () =
+    let rejectsStateFromBefore =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                stateFrom primary
+                statelessWorker 4
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let rejectsStateFromAfter =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                stateFrom primary
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let rejectsUsePersistentState =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                usePersistentState audit (fun _ -> { total = 0L })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let rejectsOnReminder =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                onReminder "sweep" (TimeSpan.FromMinutes 1.0) (TimeSpan.FromMinutes 5.0) reminderHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let rejectsCollectionAge =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                collectionAge (TimeSpan.FromMinutes 10.0)
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ rejectsStateFromBefore.Message.Contains "'statelessWorker' with 'stateFrom'" @>
+    test <@ rejectsStateFromAfter.Message.Contains "'statelessWorker' with 'stateFrom'" @>
+    test <@ rejectsUsePersistentState.Message.Contains "'statelessWorker' with 'usePersistentState'" @>
+    test <@ rejectsOnReminder.Message.Contains "'statelessWorker' with 'onReminder'" @>
+    test <@ rejectsCollectionAge.Message.Contains "'statelessWorker' with 'collectionAge'" @>
+
+/// <remarks>
+/// Regression control mirroring "stateFrom with an explicit grain type still seals" below: a
+/// non-stateless-worker definition combines 'placement' with a durable attachment freely, so the
+/// rejection above really is specific to 'statelessWorker' and not to 'placement' in general.
+/// </remarks>
+[<Fact>]
+let ``placement (non-stateless-worker) combines freely with stateFrom, reminders, and collectionAge`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            placement PreferLocal
+            stateFrom primary
+            collectionAge (TimeSpan.FromMinutes 10.0)
+            onReminder "sweep" (TimeSpan.FromMinutes 1.0) (TimeSpan.FromMinutes 5.0) reminderHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.Placement = Some(Strategy PreferLocal) @>
+    test <@ definition.Primary.IsSome @>
+    test <@ definition.CollectionAge = Some(TimeSpan.FromMinutes 10.0) @>
+    test <@ definition.Reminders |> List.map (fun reminder -> reminder.Name) = [ "sweep" ] @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Lifecycle-stage hooks (spec 004 item 8a)
+// ──────────────────────────────────────────────────────────────────────────────
+
+let private lifecycleHook _ = task { return () }
+
+[<Fact>]
+let ``onLifecycle hooks are frozen into definition metadata, keyed by stage`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            onLifecycle First lifecycleHook
+            onLifecycle SetupState lifecycleHook
+            onLifecycle Last lifecycleHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.LifecycleHooks.Count = 3 @>
+    test <@ definition.LifecycleHooks.ContainsKey First @>
+    test <@ definition.LifecycleHooks.ContainsKey SetupState @>
+    test <@ definition.LifecycleHooks.ContainsKey Last @>
+
+[<Fact>]
+let ``onLifecycle Activate is rejected -- use onActivate instead`` () =
+    let error =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onLifecycle Activate lifecycleHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'onLifecycle Activate' is rejected" @>
+    test <@ error.Message.Contains "onActivate" @>
+
+[<Fact>]
+let ``a repeated stage fails definition sealing -- each stage accepts at most one hook`` () =
+    let error =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onLifecycle First lifecycleHook
+                onLifecycle First lifecycleHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'onLifecycle First' is declared more than once" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Hooks, reminders, and timers
+// ──────────────────────────────────────────────────────────────────────────────
 
 [<Fact>]
 let ``lifecycle hooks are retained and may be declared once`` () =

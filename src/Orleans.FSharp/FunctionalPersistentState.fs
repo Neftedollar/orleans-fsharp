@@ -155,7 +155,7 @@ type internal FunctionalStateScope(grainTypeName: string, callbackName: string, 
         if not allowsMutation then
             fail
                 PersistentStage
-                $"{this.Describe descriptor} rejects '{memberName}' in the '{callbackName}' callback, which is declared readOnly or alwaysInterleave. Such a callback is state-neutral: it may read the holder but may not set it or issue storage calls."
+                $"{this.Describe descriptor} rejects '{memberName}' in the '{callbackName}' callback, which is state-neutral for this holder: it may read it but may not set it or issue storage calls."
 
 /// <summary>
 /// The invocation-bound <c>IPersistentState&lt;'State&gt;</c> handed to application code by

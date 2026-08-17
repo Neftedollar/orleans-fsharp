@@ -5,6 +5,40 @@ open System.Collections.Generic
 open Orleans.Runtime
 open Orleans.FSharp.FunctionalDiagnostics
 
+/// <summary>
+/// A closed set mirroring the Orleans stock placement strategies present on both supported
+/// Orleans versions (10.1.0 and 10.2.2 -- verified by reflection: identical types and identical
+/// <c>IGrainPropertiesProviderAttribute.Populate</c> output on both). <c>Random</c> is Orleans'
+/// own default and needs no explicit configuration; it is included so an application can still
+/// name it, matching the same brief's other cases rather than special-casing it away.
+/// </summary>
+/// <remarks>
+/// Orleans also ships <c>HashBasedPlacement</c>, <c>SiloRoleBasedPlacement</c>, and the internal
+/// <c>ClientObserversPlacement</c> / <c>SystemTargetPlacementStrategy</c>, all present on both
+/// versions too. They are deliberately not mirrored here: hash-based and silo-role placement
+/// address separate, more specialized concerns (consistent hashing and silo-role affinity) that
+/// spec 004 item 4's design sketch does not name as a candidate, and the other two are not
+/// meant for application grains at all. No strategy here is version-gated -- every case mirrors a
+/// type present, with identical published properties, on Orleans 10.1.0 and 10.2.2 alike.
+/// </remarks>
+type PlacementStrategy =
+    /// <summary>Orleans' default: activate anywhere.</summary>
+    | Random
+    /// <summary>Prefer activating on the silo that received the call, when eligible.</summary>
+    | PreferLocal
+    /// <summary>Balance placement across silos by relative recently-active-grain count.</summary>
+    | ActivationCountBased
+    /// <summary>Balance placement across silos by resource usage (CPU, memory).</summary>
+    | ResourceOptimized
+
+/// <summary>A definition's placement configuration: at most one of a stock strategy or
+/// stateless-worker multiplexing (mutually exclusive -- see <c>DefinitionDraft.run</c>).</summary>
+type internal PlacementConfiguration =
+    /// <summary>One stock Orleans placement strategy.</summary>
+    | Strategy of PlacementStrategy
+    /// <summary>Stateless-worker placement with the given maximum local activation count.</summary>
+    | StatelessWorker of maxLocalWorkers: int
+
 /// <summary>A declared reminder frozen into definition metadata.</summary>
 [<ReferenceEquality>]
 type internal ReminderDeclaration<'Actor, 'Key, 'State> =
@@ -50,6 +84,8 @@ type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
       OnDeactivate: DeactivateHook<'Actor, 'Key, 'State> option
       Reminders: ReminderDeclaration<'Actor, 'Key, 'State> list
       Timers: TimerDeclaration<'Actor, 'Key, 'State> list
+      Placement: PlacementConfiguration option
+      LifecycleHooks: Map<LifecycleStage, LifecycleHook<'Actor, 'Key>>
       Handlers: Map<int, obj> }
 
 /// <summary>
@@ -89,6 +125,13 @@ type FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
 
     /// <summary>Declared timers in declaration order.</summary>
     member internal _.Timers = state.Timers
+
+    /// <summary>The configured placement, when <c>statelessWorker</c> or <c>placement</c> was
+    /// declared.</summary>
+    member internal _.Placement = state.Placement
+
+    /// <summary>Declared lifecycle-stage hooks, keyed by their unique stage.</summary>
+    member internal _.LifecycleHooks = state.LifecycleHooks
 
     /// <summary>Boxed handlers keyed by API-record field index.</summary>
     member internal _.Handlers = state.Handlers
@@ -139,6 +182,8 @@ module internal DefinitionDraft =
               OnDeactivate = None
               Reminders = []
               Timers = []
+              Placement = None
+              LifecycleHooks = Map.empty
               Handlers = Map.empty }
         )
 
@@ -152,6 +197,23 @@ module internal DefinitionDraft =
             fail
                 DefinitionStage
                 $"'{operationName}' is declared more than once for grain type '{grainTypeName}'. A repeated singleton operation is a definition error."
+        | None -> Some value
+
+    /// <summary>
+    /// Reject a second placement operation: <c>statelessWorker</c> and <c>placement</c> are
+    /// mutually exclusive, in either order, so the message does not name which one came first.
+    /// </summary>
+    let singlePlacement
+        (operationName: string)
+        (grainTypeName: string)
+        (current: PlacementConfiguration option)
+        (value: PlacementConfiguration)
+        =
+        match current with
+        | Some _ ->
+            fail
+                DefinitionStage
+                $"'{operationName}' cannot be combined with an earlier 'statelessWorker' or 'placement' operation on grain type '{grainTypeName}'. At most one placement configuration is allowed."
         | None -> Some value
 
     /// <summary>Seal a draft into an immutable definition.</summary>
@@ -243,6 +305,39 @@ module internal DefinitionDraft =
                 DefinitionStage
                 $"'collectionAge' for grain type '{grainTypeName}' must be strictly positive, but {age} was supplied."
         | _ -> ()
+
+        // "statelessWorker rejects stateFrom, usePersistentState, onReminder (durable identity is
+        // meaningless for multiplexed local activations) and rejects collectionAge (Orleans
+        // ignores it for stateless workers)." Checked at sealing so it applies regardless of the
+        // order 'statelessWorker' and the rejected operation were declared in.
+        match state.Placement with
+        | Some(StatelessWorker maxLocalWorkers) ->
+            if maxLocalWorkers <= 0 then
+                fail
+                    DefinitionStage
+                    $"'statelessWorker' for grain type '{grainTypeName}' requires a strictly positive maxLocalWorkers, but {maxLocalWorkers} was supplied."
+
+            if state.Primary.IsSome then
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with 'stateFrom'. Durable identity is meaningless for multiplexed local activations that Orleans may create, deactivate, and re-create at will."
+
+            if not (List.isEmpty state.Additional) then
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with 'usePersistentState'. Durable identity is meaningless for multiplexed local activations that Orleans may create, deactivate, and re-create at will."
+
+            if not (List.isEmpty state.Reminders) then
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with 'onReminder'. Durable identity is meaningless for multiplexed local activations that Orleans may create, deactivate, and re-create at will."
+
+            if state.CollectionAge.IsSome then
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with 'collectionAge'. Orleans ignores the idle collection age for stateless-worker activations."
+        | Some(Strategy _)
+        | None -> ()
 
         let seenReminders = HashSet<string>(StringComparer.Ordinal)
 
@@ -503,3 +598,101 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.withState
             { draft with
                 Timers = draft.Timers @ [ declaration ] }
+
+    /// <summary>
+    /// Multiplex this grain type across up to <paramref name="maxLocalWorkers"/> local
+    /// activations per silo (Orleans' <c>StatelessWorkerPlacement</c>). Mutually exclusive with
+    /// <c>placement</c>; rejects <c>stateFrom</c>, <c>usePersistentState</c>, <c>onReminder</c>,
+    /// and <c>collectionAge</c> at sealing, in either declaration order -- durable identity and
+    /// idle collection age are both meaningless for activations Orleans may create, deactivate,
+    /// and re-create at will.
+    /// </summary>
+    [<CustomOperation("statelessWorker")>]
+    member _.StatelessWorker<'State>
+        (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, maxLocalWorkers: int)
+        =
+        let draft = state.State
+
+        DefinitionDraft.withState
+            { draft with
+                Placement =
+                    DefinitionDraft.singlePlacement
+                        "statelessWorker"
+                        draft.Contract.GrainTypeName
+                        draft.Placement
+                        (StatelessWorker maxLocalWorkers) }
+
+    /// <summary>
+    /// Select one stock Orleans placement strategy for this grain type. Mutually exclusive with
+    /// <c>statelessWorker</c> and with a second <c>placement</c> operation.
+    /// </summary>
+    [<CustomOperation("placement")>]
+    member _.Placement<'State>
+        (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, strategy: PlacementStrategy)
+        =
+        let draft = state.State
+
+        DefinitionDraft.withState
+            { draft with
+                Placement =
+                    DefinitionDraft.singlePlacement "placement" draft.Contract.GrainTypeName draft.Placement (Strategy strategy) }
+
+    /// <summary>
+    /// Hook one Orleans grain-lifecycle stage. Each stage accepts at most one hook.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b><c>Activate</c> is rejected.</b> Not because it coincides exactly with where
+    /// <c>OnActivateAsync</c> runs -- verified by an integration probe, it does not: Orleans runs
+    /// the entire numbered stage sequence <c>First, SetupState, Activate, Last</c> to completion
+    /// FIRST, and only then runs <c>OnActivateAsync</c> (state initialization, the
+    /// <c>onActivate</c> hook, reminders, timers, in that order -- see
+    /// <c>FunctionalLifecycle.activate</c>) as a separate later step; a hook at the numbered
+    /// <c>Activate</c> stage would in fact run BEFORE all of that, in the same no-state category
+    /// as <c>First</c> and <c>SetupState</c>. It is rejected because letting an application aim at
+    /// the stage literally named "Activate" while state is not yet initialized there would be a
+    /// footgun, and because "the operation for activation-time behavior" should have exactly one
+    /// name. <c>onActivate</c> is that name: declaring <c>onLifecycle Activate</c> fails at
+    /// sealing with a diagnostic pointing at it.
+    /// </para>
+    /// <para>
+    /// <b>Why the hook never carries <c>'State</c>, at any accepted stage.</b> All three accepted
+    /// stages -- <c>First</c>, <c>SetupState</c>, and <c>Last</c> -- run strictly before
+    /// <c>OnActivateAsync</c>, which is where the functional runtime's own primary state
+    /// initializes (<c>env.State.Initialize</c>, step 3 of the activation order). There is
+    /// therefore no "post-state" stage among the four at all -- not even <c>Last</c>, the final
+    /// one: <c>'State</c> cannot be meaningful at any of them, so the question of a
+    /// state-carrying hook shape for a post-state stage does not arise, and every accepted stage
+    /// uses the same context-only, no-state shape. A hook that genuinely needs to read the
+    /// current stored value can still do so explicitly through <c>context.persistentState</c> for
+    /// a persistent primary (Orleans' own pre-load value before <c>SetupState</c>, or the
+    /// unchanged prior value after); <c>onActivate</c> remains the one hook whose <c>'State</c>
+    /// parameter is the functional runtime's own, meaningfully initialized value.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("onLifecycle")>]
+    member _.OnLifecycle<'State>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            stage: LifecycleStage,
+            hook: LifecycleHook<'Actor, 'Key>
+        ) =
+        let draft = state.State
+        let grainTypeName = draft.Contract.GrainTypeName
+
+        if stage = Activate then
+            fail
+                DefinitionStage
+                $"'onLifecycle Activate' is rejected for grain type '{grainTypeName}': the Activate stage is where 'onActivate' already runs (state initialization, then onActivate, then reminders, then timers). Use 'onActivate' instead -- a single stage should not have two ways to hook it."
+
+        if draft.LifecycleHooks.ContainsKey stage then
+            fail
+                DefinitionStage
+                $"'onLifecycle {stage}' is declared more than once for grain type '{grainTypeName}'. Each lifecycle stage accepts at most one hook."
+
+        if obj.ReferenceEquals(hook, null) then
+            fail DefinitionStage $"'onLifecycle {stage}' for grain type '{grainTypeName}' requires a hook."
+
+        DefinitionDraft.withState
+            { draft with
+                LifecycleHooks = draft.LifecycleHooks.Add(stage, hook) }
