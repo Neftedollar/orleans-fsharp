@@ -18,6 +18,7 @@ open Orleans.Metadata
 open Orleans.Runtime
 open Orleans.TestingHost
 open Orleans.FSharp
+open Xunit
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Grain types
