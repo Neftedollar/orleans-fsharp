@@ -215,32 +215,226 @@ provider delivered.
 
 **Size:** M/L (as estimated). **Depended on:** nothing new.
 
-## 2. Distributed ACID transactions
+## 2. Distributed ACID transactions — RESOLVED
 
-**Gap:** the classic KEEP-path (`AddFSharpTransactionalGrain`) exists; the
-functional model has no transactional state.
+**Status: implemented.** Delivered on `feat/004-parity-phase-d`; the design sketch below has been
+replaced by the resolved design it turned into, and every claim here is backed by a test or by
+named Orleans source.
 
-**Design sketch:**
+**Gap (for the record):** the classic KEEP-path (`AddFSharpTransactionalGrain`,
+`FSharpTransactionalGrain<'State>`) existed and still does; the functional model had no
+transactional state and no way to declare a per-operation transaction policy.
 
-- `transactionalStateFrom (TransactionalState.create<'S> "name" "storage")`
-  attaches an `ITransactionalState<'S>` facet; `context.transactionalState
-  descriptor` returns it invocation-bound (facade rules mirror
-  `persistentState`: expiry, readOnly rejection).
-- Per-operation policy: `transactional TransactionOption.CreateOrJoin (_.op)`
-  on the contract; the descriptor's admission carries the option and dispatch
-  maps it onto Orleans' transactional request path.
-- Sealing rules: a transactional operation must not be `oneWay`
-  (no ack = no commit report), must not mix with `alwaysInterleave`;
-  transactional facets and ordinary persistent facets may coexist but a
-  handler is either transactional or not — decided by its operation.
+### The mechanism (normative)
 
-**Open questions:** whether `PerformRead`/`PerformUpdate` lambda shapes or a
-state-in/state-out handler adaptation fit better (the latter matches the
-runtime's idiom but transactions re-execute — handlers must be pure over the
-transactional read); exactly-once semantics documentation.
+All of it is Orleans' own, at both ends. The reason this item was the deepest in the spec is not
+that the machinery is hidden — it is that it lives in a place the functional transport had already
+built its own version of.
 
-**Size:** L. **Depends on:** nothing new, but the re-execution semantics need
-their own spec section as normative text.
+**The transaction rides the invokable, not the message.** `[Transaction(option)]` carries
+`[InvokableBaseType(typeof(GrainReference), typeof(Task<>), typeof(TransactionTaskRequest<>))]`
+(and three sibling declarations for `Task`/`ValueTask`/`ValueTask<>`), plus
+`[InvokableCustomInitializer("SetTransactionOptions")]`
+(`src/Orleans.Transactions/TransactionAttribute.cs`). Orleans' code generator therefore emits, for
+an attributed method, an invokable whose **base class** is `TransactionRequest`/
+`TransactionRequest<T>`/`TransactionTaskRequest`/`TransactionTaskRequest<T>` instead of the plain
+`Request`/`Request<T>`, and calls `SetTransactionOptions(option)` from its constructor. Verified
+by generating the code: a probe project with three `[Transaction]` methods emits
+`Invokable_IAccount_GrainReference_F65AF134 : global::Orleans.TransactionTaskRequest` with
+`SetTransactionOptions(global::Orleans.TransactionOption.CreateOrJoin)` in its constructor.
+
+Everything else follows from that base class, `TransactionRequestBase`:
+
+- **Caller side.** It implements `IOutgoingGrainCallFilter`, and
+  `OutgoingCallInvoker`'s constructor does `if (request is IOutgoingGrainCallFilter requestFilter)`
+  and runs the request itself as the last stage of the outgoing pipeline
+  (`src/Orleans.Core/Runtime/OutgoingCallInvoker.cs`). `GrainReferenceRuntime.InvokeMethodAsync`
+  routes through that pipeline whenever `request is IOutgoingGrainCallFilter`, even with no
+  application filters registered. The stage reads the ambient `TransactionInfo`, enforces `Join`
+  and `NotAllowed`, clears the context for `Create`/`Suppress`, **forks** the info into the
+  request, and on return joins the `TransactionInfo` the reply carried back.
+- **Target side.** It overrides `IInvokable.Invoke()` — the method the activation's message loop
+  calls. It starts a transaction when `IsTransactionRequired` and none arrived
+  (`ITransactionAgent.StartTransaction`, read-only when the request carries
+  `InvokeMethodOptions.ReadOnly`), sets `TransactionContext` (an `AsyncLocal<TransactionInfo>`)
+  around `BaseInvoke()`, and afterwards resolves or aborts the transaction it started and wraps the
+  reply in a `TransactionResponse` carrying the participant set.
+
+**The facets are a separate, differently-shaped seam.**
+`ITransactionalStateFactory.Create<TState>(TransactionalStateConfiguration)` takes **no**
+`IGrainContext` — unlike `IPersistentStateFactory.Create<TState>(context, configuration)` — and
+resolves the activation from `IGrainContextAccessor.GrainContext`, which is `RuntimeContext.Current`
+(`src/Orleans.Runtime/Activation/GrainContextAccessor.cs`). The created state subscribes to
+`GrainLifecycleStage.SetupState` from inside `Create` (`TransactionalStateFactory.Create` calls
+`state.Participate(context.ObservableLifecycle)`), so it has to exist before the lifecycle starts.
+Both conditions hold exactly where the functional runtime already builds persistent facets —
+`IGrainActivator.CreateInstance`, which `ActivationData.Start` runs as a work item on the
+activation's own scheduler, and `WorkItemGroup.Execute` wraps every work item in
+`RuntimeContext.SetExecutionContext(GrainContext)`.
+
+**The option set is stable across the supported range.** `Orleans.TransactionOption` has the same
+six members with the same values on 10.1.0 and 10.2.2 (`Suppress=0, CreateOrJoin=1, Create=2,
+Join=3, Supported=4, NotAllowed=5`), and `TransactionRequestBase` has the same shape on both,
+including the `UseExclusiveLock` property that the checked-in 10.1.0 API baseline
+(`src/api/Orleans.Transactions/Orleans.Transactions.cs`) does not list — verified by reflection
+over both `Orleans.Transactions.dll` assemblies, not from the baseline file.
+
+### Resolved design
+
+- **`FunctionalTransactionRequest : TransactionRequest<FunctionalReply>`** — a second invokable
+  shell for the fixed transport, used only for operations that declare a policy. Everything that
+  is not "which base class" moved into a shared `FunctionalRequestBody`, so the two shells cannot
+  drift. Its codec delegates the base segment to Orleans' generated
+  `IBaseCodec<TransactionRequestBase>` (resolved through `ICodecProvider.GetBaseCodec`, not by
+  generated type name) and hand-writes only the one derived field, the envelope; its copier
+  delegates to `IBaseCopier<TransactionRequestBase>` so a same-silo participant joins the
+  transaction on the local, copy-only path too.
+- **The option travels in the admission byte.** Bits 3-5 carry the `TransactionOption` value plus
+  one (`0` = not transactional, `7` unassigned); bits 6-7 stay reserved. Dispatch already compares
+  the whole admission byte against the hosted descriptor as step 3 of spec-003's normative
+  validation order, so a caller and a host that disagree about whether an operation is
+  transactional — or about which option it uses — produce a rejected request instead of a silently
+  non-transactional call. The receiving side derives the option from that byte rather than trusting
+  the copy Orleans' base codec also carries.
+- **`transactional Orleans.TransactionOption.X (_.op)`** on the contract, using Orleans' own enum
+  rather than a mirrored F# union: it is already the closed set, its values are identical across the
+  supported range, and the admission byte encodes the value directly, so there is no mapping to
+  drift. (`Orleans.FSharp.Transactions.TransactionOption`, the classic path's union, keeps its
+  simple name; the collision is documented.)
+- **`transactionalStateFrom (TransactionalState.create<'S> "name" "storage") initializer`** on the
+  definition, mirroring `usePersistentState`, plus `context.transactionalState descriptor` returning
+  an invocation-bound facade with `read` / `readWith` / `update` / `updateWith`.
+- **`FunctionalTransactionalBox<'S>`** — the runtime's own `class, new()` holder, and the reason an
+  ordinary immutable F# record can be transactional state at all. See ruling 1.
+- **Three registrations Orleans' defaults cannot supply**, added per attached facet at
+  `AddFunctionalGrain`: an exact-type `ITransactionDataCopier` for the box and for the stored value,
+  and the stored type's declaration as a top-level payload type. See ruling 4.
+
+### Rulings
+
+1. **Open question resolved: state-in/state-out, made possible by a runtime-owned box — not
+   `PerformRead`/`PerformUpdate` lambdas over the application's own type.** Orleans constrains
+   `ITransactionalState<TState>` to `TState : class, new()` and applies an update by **mutating the
+   instance it stores**: `PerformUpdate` hands the callback `record.State` and keeps whatever that
+   object looks like when the callback returns (`src/Orleans.Transactions/State/TransactionalState.cs`).
+   An F# record satisfies neither half. The classic KEEP-path's answer is visible in this repository
+   — `TransactionalGrainDefinition` carries a `CopyState: 'State -> 'State -> unit` field whose only
+   job is to copy a computed new state field-by-field into the instance Orleans owns. The functional
+   runtime instead stores a `FunctionalTransactionalBox<'S>`, which is the `class, new()` instance
+   Orleans mutates, and hands application code `'State -> 'State`. The mutation is one reference
+   assignment the runtime performs. This is not only more idiomatic, it is **enforcement**: an
+   application function that never receives the stored object cannot mutate transactional state in
+   place.
+
+   All four facade members take **synchronous** functions, also by necessity rather than taste:
+   Orleans runs them inside the transactional state's reader-writer lock and throws
+   `LockRecursionException` when the same state is re-entered from within one, so a function that
+   cannot be awaited cannot call another grain, another transactional state, or any I/O from inside
+   that lock.
+
+2. **Open question resolved: Orleans does not re-execute.** The sketch's premise — "transactions
+   re-execute, so handlers must be pure over the transactional read" — is false as stated, and the
+   normative text says so. There is no retry loop in `TransactionRequestBase.Invoke`, and
+   `ReaderWriterLock.EnterLock` builds a single `completion()` closure that either sets the result
+   of one `TaskCompletionSource` or its exception, so a read or update callback runs **exactly
+   once** (`src/Orleans.Transactions/State/ReaderWriterLock.cs`). On a participant fault, a lock
+   timeout, or a failed commit, the transaction aborts and the caller receives an
+   `OrleansTransactionException`. Measured rather than asserted: an aborted transfer enters each
+   participant's handler exactly once and never again, and the counter is shown to be live by an
+   application-driven retry moving it to two. The normative consequences — retry is the caller's
+   decision, "exactly once" holds per attempt and not across retries, and effects outside
+   transactional state are not covered — are in
+   `docs/functional-grains.md`, "Re-execution semantics (normative)".
+
+3. **A transaction-scoped operation is state-neutral for everything except its transactional
+   facets.** "Transaction-scoped" is exactly `Create`, `CreateOrJoin`, `Join` — the three for which
+   Orleans' own `TransactionRequestBase.IsTransactionRequired` is true. In such an operation the
+   handler's replacement primary state is **discarded** exactly as a `readOnly` handler's is, and
+   its persistent-state facades reject the `State` setter and every storage call with a diagnostic
+   naming the reason. Neither an in-memory publication nor a storage write has any participant that
+   could undo it, so allowing either would let one aborted transaction leave the activation
+   half-updated — and a caller that retried would then apply the non-transactional half twice.
+   `Supported`, `Suppress`, and `NotAllowed` are **not** transaction-scoped: Orleans starts no
+   transaction for them, so state publication and persistent facets behave exactly as for any other
+   operation. This is the rule that makes the two kinds of facet safe to coexist, which the sketch
+   asked for.
+
+4. **The functional runtime had to supply three things Orleans' transaction defaults assume.** All
+   three were found by the probe, none is optional, and each is registered per attached facet so it
+   cannot be forgotten:
+   - `DefaultTransactionDataCopier<TState>` asks the Orleans serializer for a
+     `DeepCopier<TState>`, which for the box needs one for the application's stored type. The
+     functional runtime deliberately registers the F# generalized codec **without** its generalized
+     copier (payloads cross an explicit byte boundary instead), so an ordinary F# record has no
+     Orleans copier at all. The facet registers its own exact-type `ITransactionDataCopier`, which
+     Microsoft.Extensions.DependencyInjection prefers over Orleans' open-generic default because an
+     exact closed service type matches before an open generic one.
+   - `TransactionalState.CopyResult<TResult>` resolves a **required**
+     `ITransactionDataCopier<TResult>` for whatever the callback returned, so an arbitrary
+     application result type would make every projection depend on a copier registration it cannot
+     have. The facade therefore keeps `TResult` to exactly two shapes: the stored type for `read()`,
+     whose result *is* the stored value and so must be isolated from it, and `bool` for every other
+     member, whose application-facing result is carried out of the callback in a captured cell —
+     sound precisely because the callback runs exactly once (ruling 2).
+   - Exact-type serialization makes Orleans elide the field type, so the F# binary codec resolves a
+     top-level payload type by name. Silo startup now declares transactional stored types the same
+     way it already declares argument, reply, and persistent stored types; without it a state type
+     from an application assembly serializes and then fails to deserialize on the way back out of
+     the snapshot copy.
+
+5. **Sealing and startup rejections.** Contract: `transactional` twice on one operation, an
+   undefined enum value, `transactional` with `oneWay` (no reply means the participants a call
+   enlisted are never reported back), and `transactional` with `alwaysInterleave` (Orleans admits an
+   always-interleave request before any interleaving policy is consulted, so two turns of one
+   activation could hold transactional locks on the same states). `readOnly` **composes**, and makes
+   the started transaction read-only. Definition: duplicate transactional state names; a
+   transactional facet no operation could reach (every callback other than `Create`/`CreateOrJoin`/
+   `Join`/`Supported` runs without a `TransactionContext`, which Orleans requires for both facet
+   members); `transactionalStateFrom` on a derived `grainType`; `transactionalStateFrom` with
+   `statelessWorker`. A `transactional` operation with **no** transactional facet is accepted — a
+   state-free participant is the orchestrator shape, and this repository's own classic
+   `FSharpAtmGrain` is an instance of it. Silo startup: no `UseTransactions()`, and a transactional
+   storage name that resolves to neither a keyed `ITransactionalStateStorageFactory` nor a keyed
+   `IGrainStorage`, which is the exact order `NamedTransactionalStateStorageFactory.Create` tries.
+   All twelve guards are mutation-checked.
+
+6. **The client needs nothing beyond `AddFunctionalGrainClient()`.** `TransactionRequestBase` reads
+   the transaction agent only inside `Invoke()`, which runs on the target, so a `Create` or
+   `CreateOrJoin` call from a client outside a transaction starts the transaction on the silo that
+   receives it. `UseTransactions()` on the client builder is needed only when the client itself
+   drives `ITransactionClient.RunTransaction`. Proven by the Phase D fixture, whose client builder
+   calls only `AddFunctionalGrainClient()`.
+
+### What this does NOT give you
+
+- **No automatic retry.** Nothing in the library re-runs an aborted transaction; a retry is an
+  application call, and every participant handler then runs again from the beginning.
+- **No transactional primary state.** `stateFrom` and `usePersistentState` are not participants, and
+  a transaction-scoped operation cannot write them at all (ruling 3). A grain whose durable state
+  must be transactional puts it in a `transactionalStateFrom` facet.
+- **No transactional timers, reminders, stream deliveries, or observer pushes.** None of them
+  carries a `TransactionContext`, so the facade refuses the facet inside them by name rather than
+  letting Orleans throw "did you forget a `[Transaction]` attribute?" about an attribute this API
+  does not have.
+- **No cross-cluster transactions**, because Orleans' transaction manager is per-cluster.
+- **The snapshot copy is a serializer round trip.** Before the first write of each transaction the
+  runtime copies the stored value through the exact-type payload codec: one serialize plus one
+  deserialize per transaction per written state. Orleans' own default also walks the whole graph, so
+  the order of cost is the same, but the extra byte buffer is real. The alternative — sharing the
+  value and relying on `'State -> 'State` never mutating it — was rejected because an application
+  that mutates its own state object in place would then corrupt the version an abort has to restore.
+- **`UseExclusiveLock` is not exposed.** Orleans' `[UseExclusiveLock]` sets a third field on the
+  transaction request; the functional contract has no operation for it, so every functional
+  transaction uses the ordinary read/write locking. Adding it later is one admission bit and one
+  contract operation, and it is not a wire-breaking change for callers that do not use it.
+- **No `TransactionOptionAlias`.** Orleans' alias enum maps onto the same six values with different
+  names (and one of them, `Suppress`, maps to a *different* option than the identically named member
+  of `TransactionOption`); exposing both would be a trap, and the aliases add nothing the six
+  canonical names do not say.
+
+**Size:** L — as estimated. The transaction plumbing itself was reachable in a day once the
+invokable-base mechanism was identified; the three registrations of ruling 4 and the re-execution
+question were the rest of it.
 
 ## 3. Event sourcing
 
@@ -795,7 +989,8 @@ nothing about streaming is implemented here.
   the resolved design.
 - **Phase C:** 5 (reentrancy), 7 (version tolerance) — both are admission-layer
   work and share tests.
-- **Phase D:** 2 (transactions).
+- **Phase D:** 2 (transactions). **Landed:** item 2 is implemented and its section
+  above is the resolved design.
 - **Phase E:** 3 (event sourcing) — after the provider-story decision.
 - **Phase F:** 6 (streaming replies) — largest; consider splitting into its
   own spec once A-C land.
