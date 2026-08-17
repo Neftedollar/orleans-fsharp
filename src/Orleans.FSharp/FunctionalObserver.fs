@@ -85,13 +85,6 @@ type ObserverContract<'Brand, 'Api>
     /// <summary>The handler-record type this contract was reflected from.</summary>
     member internal _.ApiType = shape.ApiType
 
-    /// <summary>Every message type this contract puts on the wire.</summary>
-    member internal _.MessageTypes =
-        operations |> Array.map (fun operation -> operation.MessageType)
-
-    /// <summary>Resolve one selector to its push descriptor.</summary>
-    member internal _.Resolve(entry: string, selector: OperationSelector<'Api, 'Msg, unit>) =
-        operations.[(ApiShape.resolve shape entry selector).Index]
 
 /// <summary>The mutable draft of an observer contract under construction.</summary>
 [<Sealed>]
