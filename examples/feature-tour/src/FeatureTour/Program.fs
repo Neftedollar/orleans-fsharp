@@ -116,7 +116,21 @@ let private runPersistence (factory: IGrainFactory) =
         detail "Orleans re-seeds a cleared facet with an uninitialized instance, so an F# record's"
         detail "reference fields come back null — re-seed explicitly after ClearStateAsync."
 
-        verdict "SUPPORTED — two independently-provided holders, explicit read/write/clear, RecordExists across deactivation"
+        let persistenceHolds =
+            written.balance = 375L
+            && written.primaryRecordExists
+            && written.auditRecordExists
+            && List.length written.auditEvents = 2
+            && reactivated
+            && afterIdle.balance = 375L
+            && reloaded = 375L
+            && not cleared.primaryRecordExists
+            && not cleared.auditRecordExists
+
+        if persistenceHolds then
+            verdict "SUPPORTED — two independently-provided holders, explicit read/write/clear, RecordExists across deactivation"
+        else
+            verdict "FAILED — one of the persistence observations above did not hold"
     }
 
 let private runScheduling (factory: IGrainFactory) =
@@ -151,7 +165,10 @@ let private runScheduling (factory: IGrainFactory) =
         detail "the one-minute floor is ReminderOptions.MinimumReminderPeriod and applies to the PERIOD only;"
         detail "the due time is unconstrained, which is what lets a reminder genuinely fire inside a short run."
 
-        verdict "SUPPORTED — timer ticks observed; reminder registered in the real reminder table and fired"
+        if fired && later.ticks > first.ticks && List.contains SchedulerDefinition.ReminderName first.registeredReminders then
+            verdict "SUPPORTED — timer ticks observed; reminder registered in the real reminder table and fired"
+        else
+            verdict "FAILED — the timer did not tick, or the reminder was not registered or did not fire"
     }
 
 let private runCallFilters (factory: IGrainFactory) =
@@ -193,7 +210,19 @@ let private runCallFilters (factory: IGrainFactory) =
             detail
                 $"{call.grainType} {call.operationId} v{call.contractVersion} readOnly={call.isReadOnly} oneWay={call.isOneWay} interleave={call.isAlwaysInterleave} payload={call.payloadLength}B rejected={call.rejected}"
 
-        verdict "SUPPORTED — metadata readable, rejection surfaces to the caller before the handler runs"
+        let observedFlags = FilterLog.forGrainType "tour.gateway"
+
+        let filtersHold =
+            rejection.Contains "filter rejected operation 'forbidden'"
+            && observedFlags |> List.exists _.isReadOnly
+            && observedFlags |> List.exists _.isOneWay
+            && observedFlags |> List.exists _.isAlwaysInterleave
+            && observedFlags |> List.exists _.rejected
+
+        if filtersHold then
+            verdict "SUPPORTED — metadata readable, rejection surfaces to the caller before the handler runs"
+        else
+            verdict "FAILED — the rejection did not surface, or an admission flag was never observed"
     }
 
 let private runRequestContext (factory: IGrainFactory) =
@@ -213,7 +242,15 @@ let private runRequestContext (factory: IGrainFactory) =
         say $"downstream grain saw correlation -> {report.correlationSeenByDownstream}"
         say $"downstream grain saw hop         -> {report.hopSeenByDownstream}"
 
-        verdict "SUPPORTED — client-to-grain and grain-to-grain propagation both observed"
+        let contextHolds =
+            report.correlationSeenByFront = Some correlationId
+            && report.correlationSeenByDownstream = Some correlationId
+            && report.hopSeenByDownstream = Some report.hopSetByFront
+
+        if contextHolds then
+            verdict "SUPPORTED — client-to-grain and grain-to-grain propagation both observed"
+        else
+            verdict "FAILED — a request-context value did not reach one of the two hops"
     }
 
 let private runCancellation (factory: IGrainFactory) =
@@ -250,7 +287,16 @@ let private runCancellation (factory: IGrainFactory) =
 
         detail "cancellation is cooperative: it does not roll back anything the handler already did."
 
-        verdict "SUPPORTED — both sides observe the cancellation"
+        let observations = TargetObservation.all ()
+
+        let cancellationHolds =
+            callerOutcome.Contains "OperationCanceledException"
+            && observations |> List.exists (fun text -> text.Contains "observed cancellation")
+
+        if cancellationHolds then
+            verdict "SUPPORTED — both sides observe the cancellation"
+        else
+            verdict "FAILED — one of the two sides did not observe the cancellation"
     }
 
 let private runVersioning (factory: IGrainFactory) =
@@ -275,7 +321,14 @@ let private runVersioning (factory: IGrainFactory) =
         say $"caller on version 2, same grainType '{VersioningTour.VersionedApi.GrainType}' ->"
         detail mismatch
 
-        verdict "SUPPORTED — the mismatch is refused before any handler runs, naming both versions"
+        let versioningHolds =
+            reply.Contains "version-1 handler"
+            && mismatch.Contains "hosts contract version 1 but received version 2"
+
+        if versioningHolds then
+            verdict "SUPPORTED — the mismatch is refused before any handler runs, naming both versions"
+        else
+            verdict "FAILED — the matching call or the version rejection did not behave as documented"
     }
 
 let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider) =
@@ -622,4 +675,14 @@ let main _argv =
 
     let host = builder.Build()
     (runTour host).GetAwaiter().GetResult()
-    0
+
+    match failedVerdicts () with
+    | [] -> 0
+    | failures ->
+        printfn ""
+        printfn "%d section(s) did NOT pass:" (List.length failures)
+
+        for failure in failures do
+            printfn "   %s" failure
+
+        1

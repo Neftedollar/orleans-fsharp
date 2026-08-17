@@ -19,8 +19,29 @@ let say (text: string) = printfn "   %s" text
 /// <summary>Print an indented sub-observation line.</summary>
 let detail (text: string) = printfn "     %s" text
 
-/// <summary>Print the verdict line a README status-matrix row is derived from.</summary>
-let verdict (text: string) = printfn "   -> %s" text
+/// <summary>Every verdict the run produced, so the process can fail if one regressed.</summary>
+let private verdicts = System.Collections.Concurrent.ConcurrentQueue<string>()
+
+/// <summary>
+/// Print the verdict line a README status-matrix row is derived from, and record it.
+/// </summary>
+/// <remarks>
+/// A verdict is derived from what the section actually observed, never hardcoded — that is the
+/// whole difference between a demo and evidence. <c>SUPPORTED</c> and <c>COMPOSED</c> are the
+/// only passing outcomes; anything else fails the process, so a regression in any section is a
+/// non-zero exit rather than a line nobody reads.
+/// </remarks>
+let verdict (text: string) =
+    verdicts.Enqueue text
+    printfn "   -> %s" text
+
+/// <summary>Verdicts that are not a pass.</summary>
+let failedVerdicts () =
+    verdicts
+    |> Seq.filter (fun text ->
+        not (text.StartsWith("SUPPORTED", StringComparison.Ordinal))
+        && not (text.StartsWith("COMPOSED", StringComparison.Ordinal)))
+    |> List.ofSeq
 
 /// <summary>Render an exception the way the tour reports a deliberate failure.</summary>
 let rec describe (error: exn) =
