@@ -446,6 +446,220 @@ let ``statelessWorker rejects stateFrom, usePersistentState, onReminder, and col
     test <@ rejectsOnReminder.Message.Contains "'statelessWorker' with 'onReminder'" @>
     test <@ rejectsCollectionAge.Message.Contains "'statelessWorker' with 'collectionAge'" @>
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Implicit subscriptions (spec 004 item 1)
+// ──────────────────────────────────────────────────────────────────────────────
+
+let private streamHook _ state (_: string) = task { return state }
+
+[<Fact>]
+let ``onStream and onBroadcast are frozen into definition metadata`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            onStream "Streams" "chat.messages" streamHook
+            onStream "Streams" "chat.presence" (fun _ state (_: int) -> task { return state })
+            onBroadcast "Channels" "chat.control" streamHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    let bindings = definition.StreamBindings
+    test <@ bindings.Length = 3 @>
+
+    test
+        <@
+            bindings
+            |> List.map (fun binding -> binding.OperationName, binding.ProviderName, binding.Namespace) = [ "onStream",
+                                                                                                            "Streams",
+                                                                                                            "chat.messages"
+                                                                                                            "onStream",
+                                                                                                            "Streams",
+                                                                                                            "chat.presence"
+                                                                                                            "onBroadcast",
+                                                                                                            "Channels",
+                                                                                                            "chat.control" ]
+        @>
+
+    // The item type is captured from the hook, one per declaration.
+    test <@ bindings |> List.map (fun binding -> binding.ItemType) = [ typeof<string>; typeof<int>; typeof<string> ] @>
+    test <@ bindings |> List.map (fun binding -> binding.IsStream) = [ true; true; false ] @>
+
+/// <remarks>
+/// The uniqueness key is (transport, provider, namespace), not the namespace alone: the same
+/// namespace on two different providers is two different streams, and the delivery path matches
+/// on both, so both may be declared. Mutation-checked in both directions — the accepted case is
+/// asserted as well as the rejected one, so a rule that rejected everything would fail here.
+/// </remarks>
+[<Fact>]
+let ``onStream rejects a repeated (provider, namespace) pair but allows the same namespace on another provider`` () =
+    let repeated =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onStream "Streams" "chat.messages" streamHook
+                onStream "Streams" "chat.messages" streamHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let repeatedChannel =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onBroadcast "Channels" "chat.control" streamHook
+                onBroadcast "Channels" "chat.control" streamHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let twoProviders =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            onStream "Streams" "chat.messages" streamHook
+            onStream "OtherStreams" "chat.messages" streamHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    // A stream and a channel may share a namespace: they are different binding types, and
+    // Orleans accepts both attributes on one class.
+    let bothTransports =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            onStream "Streams" "chat.shared" streamHook
+            onBroadcast "Channels" "chat.shared" streamHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ repeated.Message.Contains "'onStream' is declared more than once" @>
+    test <@ repeated.Message.Contains "chat.messages" @>
+    test <@ repeatedChannel.Message.Contains "'onBroadcast' is declared more than once" @>
+    test <@ twoProviders.StreamBindings.Length = 2 @>
+    test <@ bothTransports.StreamBindings.Length = 2 @>
+
+[<Fact>]
+let ``onStream and onBroadcast reject a blank provider or namespace`` () =
+    let blankProvider =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onStream "  " "chat.messages" streamHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let blankNamespace =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onStream "Streams" "" streamHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let blankChannelNamespace =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onBroadcast "Channels" "   " streamHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let missingHook =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onStream "Streams" "chat.messages" Unchecked.defaultof<StreamHook<RoomActor, string, RoomState, string>>
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ blankProvider.Message.Contains "blank provider name" @>
+    test <@ blankNamespace.Message.Contains "blank namespace" @>
+    test <@ blankChannelNamespace.Message.Contains "blank namespace" @>
+    test <@ missingHook.Message.Contains "requires a hook" @>
+
+/// <remarks>
+/// Orleans' own <c>SiloStreamProviderRuntime.BindExtension</c> throws "The extension ... cannot
+/// be bound to a Stateless Worker", so a stateless worker can never host a consumer extension —
+/// and implicit delivery addresses one activation identity derived from the stream key, which
+/// multiplexed local activations cannot honor. Rejected at sealing in both declaration orders,
+/// and mutation-checked against a non-stateless-worker placement, which combines freely.
+/// </remarks>
+[<Fact>]
+let ``statelessWorker rejects onStream and onBroadcast in either order`` () =
+    let streamAfter =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                onStream "Streams" "chat.messages" streamHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let streamBefore =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                onStream "Streams" "chat.messages" streamHook
+                statelessWorker 4
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let broadcastAfter =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                onBroadcast "Channels" "chat.control" streamHook
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let placementCombinesFreely =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            placement PreferLocal
+            onStream "Streams" "chat.messages" streamHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ streamAfter.Message.Contains "'statelessWorker' with 'onStream'" @>
+    test <@ streamBefore.Message.Contains "'statelessWorker' with 'onStream'" @>
+    test <@ broadcastAfter.Message.Contains "'statelessWorker' with 'onBroadcast'" @>
+    test <@ placementCombinesFreely.StreamBindings.Length = 1 @>
+
+/// <remarks>
+/// Mutation control for every rejection above: a definition with no implicit subscription at all
+/// still seals and carries an empty binding list, so the new sealing block cannot be passing by
+/// rejecting or accepting everything.
+/// </remarks>
+[<Fact>]
+let ``a definition without onStream or onBroadcast carries no bindings`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.StreamBindings.IsEmpty @>
+
 /// <remarks>
 /// Regression control mirroring "stateFrom with an explicit grain type still seals" below: a
 /// non-stateless-worker definition combines 'placement' with a durable attachment freely, so the

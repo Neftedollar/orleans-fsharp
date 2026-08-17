@@ -244,3 +244,38 @@ public interface ICancellableFacade
 {
     Task Join(string user, CancellationToken cancellationToken);
 }
+
+// ── Implicit-subscription reference classes (spec 004 item 1) ────────────────
+//
+// Attribute-decorated classes whose published manifest bindings are the reference the functional
+// runtime's own binding publication is compared against, byte for byte. They live in C# for the
+// same reason the facades above do: this is literally what a consumer writes, and running
+// Orleans' own AttributeGrainBindingsProvider over a decorated class is the only way to get the
+// real property keys and values rather than a transcription of them.
+//
+// They deliberately implement NO grain-key interface (IGrainWithStringKey and friends), because
+// the functional marker class FunctionalGrainMarker<TActor> implements none either -- and
+// LegacyGrainId.IsLegacyGrainType, which the attributes consult, keys off exactly those
+// interfaces. A reference class that implemented one would publish an extra
+// "legacy-grain-key-type" binding key the functional grain type does not have, and the exactness
+// test would (correctly) fail.
+
+/// One implicit stream subscription, the shape `onStream provider "ns"` publishes.
+[ImplicitStreamSubscription(ImplicitSubscriptionNamespaces.Stream)]
+public sealed class ImplicitStreamReference
+{
+}
+
+/// One implicit broadcast-channel subscription, the shape `onBroadcast provider "ns"` publishes.
+[ImplicitChannelSubscription(ImplicitSubscriptionNamespaces.Channel)]
+public sealed class ImplicitChannelReference
+{
+}
+
+/// The namespaces the reference classes above are decorated with, so the F# test and the C#
+/// attribute cannot drift apart.
+public static class ImplicitSubscriptionNamespaces
+{
+    public const string Stream = "orleans.fsharp.tests.implicit.stream";
+    public const string Channel = "orleans.fsharp.tests.implicit.channel";
+}

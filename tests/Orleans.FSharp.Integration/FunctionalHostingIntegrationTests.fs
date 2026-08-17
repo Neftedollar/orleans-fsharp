@@ -191,6 +191,80 @@ type TooFastReminderSiloConfigurator() =
 
             siloBuilder.AddFunctionalGrain tooFastReminderDefinition |> ignore
 
+// ──────────────────────────────────────────────────────────────────────────────
+// A definition whose implicit subscriptions name providers the silo may not have
+// (spec 004 item 1)
+// ──────────────────────────────────────────────────────────────────────────────
+
+type SubscriberActor = private SubscriberActor of unit
+
+[<NoEquality; NoComparison>]
+type SubscriberApi = { touch: unit -> Task<unit> }
+
+type SubscriberState = { seen: int }
+
+[<Literal>]
+let private SubscriberStreamProvider = "SubscriberStreams"
+
+[<Literal>]
+let private SubscriberChannelProvider = "SubscriberChannels"
+
+let private streamSubscriberDefinition =
+    let contract =
+        grainContract<SubscriberActor, string, SubscriberApi> () {
+            grainType "functional.streamsubscriber"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { seen = 0 })
+
+        onStream SubscriberStreamProvider "hosting.items" (fun _ state (_: string) ->
+            task { return { seen = state.seen + 1 } })
+
+        handle (_.touch) (fun _ state () -> task { return state, () })
+    }
+
+type ChannelSubscriberActor = private ChannelSubscriberActor of unit
+
+let private channelSubscriberDefinition =
+    let contract =
+        grainContract<ChannelSubscriberActor, string, SubscriberApi> () {
+            grainType "functional.channelsubscriber"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { seen = 0 })
+
+        onBroadcast SubscriberChannelProvider "hosting.control" (fun _ state (_: string) ->
+            task { return { seen = state.seen + 1 } })
+
+        handle (_.touch) (fun _ state () -> task { return state, () })
+    }
+
+/// <summary>The stream provider the declaration names is registered: the silo must start.</summary>
+type StreamProviderPresentSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage "PubSubStore" |> ignore
+            siloBuilder.AddMemoryStreams SubscriberStreamProvider |> ignore
+            siloBuilder.AddBroadcastChannel SubscriberChannelProvider |> ignore
+            siloBuilder.AddFunctionalGrain streamSubscriberDefinition |> ignore
+            siloBuilder.AddFunctionalGrain channelSubscriberDefinition |> ignore
+
+/// <summary>The named stream provider is absent: startup validation has to reject it.</summary>
+type MissingStreamProviderSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddFunctionalGrain streamSubscriberDefinition |> ignore
+
+/// <summary>The named broadcast-channel provider is absent.</summary>
+type MissingChannelProviderSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddFunctionalGrain channelSubscriberDefinition |> ignore
+
 let private deploy<'Configurator when 'Configurator :> ISiloConfigurator and 'Configurator: (new: unit -> 'Configurator)>
     ()
     =
@@ -378,6 +452,56 @@ let ``a non-positive payload limit fails silo startup`` () =
     let reported = deployExpectingFailure<InvalidLimitSiloConfigurator> ()
 
     Assert.Contains(reported, (fun message -> message.Contains "MaxPayloadBytes must be positive"))
+
+/// <remarks>
+/// Spec 004 item 1: "a definition with stream hooks requires the silo to have the named
+/// provider (startup validation, like storage providers)". Without this check an unregistered
+/// stream provider is SILENT — the binding is still published, Orleans still activates the grain
+/// on a publish, and the delivery is simply dropped with a warning nobody is watching for.
+/// </remarks>
+[<Fact>]
+let ``a definition naming an unregistered stream provider fails silo startup`` () =
+    let reported = deployExpectingFailure<MissingStreamProviderSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "Orleans.FSharp functional silo startup"))
+    Assert.Contains(reported, (fun message -> message.Contains "'onStream'"))
+    Assert.Contains(reported, (fun message -> message.Contains SubscriberStreamProvider))
+    Assert.Contains(reported, (fun message -> message.Contains "which is not registered on this silo"))
+    Assert.Contains(reported, (fun message -> message.Contains "AddMemoryStreams"))
+
+[<Fact>]
+let ``a definition naming an unregistered broadcast-channel provider fails silo startup`` () =
+    let reported = deployExpectingFailure<MissingChannelProviderSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "'onBroadcast'"))
+    Assert.Contains(reported, (fun message -> message.Contains SubscriberChannelProvider))
+    Assert.Contains(reported, (fun message -> message.Contains "AddBroadcastChannel"))
+
+/// <remarks>
+/// The non-vacuity control for the two rejections above: the same two definitions, on a silo
+/// where both named providers ARE registered, start cleanly and publish their bindings.
+/// </remarks>
+[<Fact>]
+let ``a definition whose named stream and channel providers are registered starts cleanly`` () =
+    let cluster = deploy<StreamProviderPresentSiloConfigurator> ()
+
+    try
+        let manifest =
+            (siloServices cluster)
+                .GetRequiredService<IClusterManifestProvider>()
+                .LocalGrainManifest
+
+        let bindingCount (grainTypeName: string) =
+            manifest.Grains.[GrainType.Create grainTypeName].Properties.Keys
+            |> Seq.filter (fun key -> key.StartsWith("binding.", StringComparison.Ordinal))
+            |> Seq.length
+
+        // Three keys per binding group, one group per declaration.
+        Assert.Equal(3, bindingCount "functional.streamsubscriber")
+        Assert.Equal(3, bindingCount "functional.channelsubscriber")
+    finally
+        cluster.StopAllSilos()
+        cluster.Dispose()
 
 /// <remarks>
 /// Spec "Lifecycle hooks, timers, and reminders": "Silo startup validates every declared period

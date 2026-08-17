@@ -16,6 +16,7 @@ open Orleans
 open Orleans.GrainReferences
 open Orleans.Hosting
 open Orleans.Runtime
+open Orleans.Streams
 open Orleans.FSharp
 
 type SurfaceActor = private SurfaceActor of unit
@@ -52,10 +53,11 @@ type private StrictlyIncreasingTimeProvider(start: DateTimeOffset) =
         current <- current.AddTicks 1L
         current
 
-let private makeContextWith
+let private makeContextWithToken
     (timeProvider: TimeProvider)
     (resolve: PersistentStateDescriptor -> obj)
     (token: CancellationToken)
+    (sequenceToken: StreamSequenceToken)
     =
     let mutable deactivated = 0
     let mutable delayed = TimeSpan.Zero
@@ -68,12 +70,20 @@ let private makeContextWith
           TimeProvider = timeProvider
           UtcNow = timeProvider.GetUtcNow()
           CancellationToken = token
+          StreamSequenceToken = sequenceToken
           DeactivateOnIdle = fun () -> deactivated <- deactivated + 1
           DelayDeactivation = fun span -> delayed <- span
           ResolvePersistentState = resolve }
 
     let context = FunctionalGrainContext<SurfaceActor, string>("general", core)
     context, (fun () -> deactivated), (fun () -> delayed)
+
+let private makeContextWith
+    (timeProvider: TimeProvider)
+    (resolve: PersistentStateDescriptor -> obj)
+    (token: CancellationToken)
+    =
+    makeContextWithToken timeProvider resolve token null
 
 let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: CancellationToken) =
     makeContextWith TimeProvider.System resolve token
@@ -119,6 +129,25 @@ let ``the context carries the callback cancellation token`` () =
     test <@ not context.cancellationToken.IsCancellationRequested @>
     source.Cancel()
     test <@ context.cancellationToken.IsCancellationRequested @>
+
+/// <remarks>
+/// Spec 004 item 1: the stream cursor is exposed on the context and is <c>None</c> everywhere
+/// except an <c>onStream</c> delivery on a rewindable provider — which is exactly the difference
+/// between a null and a non-null <c>StreamSequenceToken</c> in the context core.
+/// </remarks>
+[<Fact>]
+let ``the context exposes the stream sequence token only when a delivery carries one`` () =
+    let withoutToken, _, _ = makeContext (fun _ -> null) CancellationToken.None
+
+    let sequenceToken =
+        Orleans.Providers.Streams.Common.EventSequenceTokenV2(7L, 3) :> StreamSequenceToken
+
+    let withToken, _, _ =
+        makeContextWithToken TimeProvider.System (fun _ -> null) CancellationToken.None sequenceToken
+
+    test <@ withoutToken.streamSequenceToken = None @>
+    test <@ withToken.streamSequenceToken = Some sequenceToken @>
+    test <@ withToken.streamSequenceToken |> Option.map (fun token -> token.SequenceNumber) = Some 7L @>
 
 [<Fact>]
 let ``the context wraps the Orleans deactivation methods`` () =
@@ -520,9 +549,11 @@ let ``the definition builder declares exactly the specified custom operations`` 
            "handle"
            "initialState"
            "onActivate"
+           "onBroadcast"
            "onDeactivate"
            "onLifecycle"
            "onReminder"
+           "onStream"
            "onTimer"
            "placement"
            "stateFrom"
@@ -545,6 +576,7 @@ let ``the invocation context declares exactly the specified public members`` () 
            "removeRequestContext"
            "services"
            "setRequestContext"
+           "streamSequenceToken"
            "timeProvider"
            "tryGetRequestContext"
            "utcNow" |]
