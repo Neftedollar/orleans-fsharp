@@ -10,6 +10,7 @@ using Orleans.Serialization.Codecs;
 using Orleans.Serialization.Configuration;
 using Orleans.Serialization.Serializers;
 using Orleans.Serialization.WireProtocol;
+using Orleans.Transactions;
 
 // The fixed transport types appear in the signature of a grain interface
 // (IFunctionalGrainTarget<TActor>.DispatchAsync), and Orleans validates at silo startup that
@@ -82,6 +83,30 @@ internal sealed class FunctionalRequestActivator : IActivator<FunctionalRequest>
 {
     /// <inheritdoc />
     public FunctionalRequest Create() => new();
+}
+
+/// <summary>
+/// Creates uninitialized transactional requests for the deserializer. The two constructor
+/// arguments are the ones <c>TransactionRequestBase</c> declares with
+/// <c>[GeneratedActivatorConstructor]</c>, resolved from the container of the receiving process
+/// exactly as Orleans' own generated invokable activators resolve them.
+/// </summary>
+internal sealed class FunctionalTransactionRequestActivator : IActivator<FunctionalTransactionRequest>
+{
+    private readonly Serializer<OrleansTransactionAbortedException> _exceptionSerializer;
+    private readonly IServiceProvider _services;
+
+    /// <summary>Create the activator from the transaction machinery's own dependencies.</summary>
+    public FunctionalTransactionRequestActivator(
+        Serializer<OrleansTransactionAbortedException> exceptionSerializer,
+        IServiceProvider services)
+    {
+        _exceptionSerializer = exceptionSerializer;
+        _services = services;
+    }
+
+    /// <inheritdoc />
+    public FunctionalTransactionRequest Create() => new(_exceptionSerializer, _services);
 }
 
 /// <summary>
@@ -387,6 +412,123 @@ internal sealed class FunctionalRequestCodec : IFieldCodec<FunctionalRequest>
 }
 
 /// <summary>
+/// Explicit serializer for <see cref="FunctionalTransactionRequest"/>: the three fields Orleans'
+/// own <c>TransactionRequestBase</c> declares, written by Orleans' own base codec, then the same
+/// single derived field the non-transactional request has — the envelope.
+/// </summary>
+/// <remarks>
+/// The base segment is deliberately not hand-written. <c>TransactionRequestBase</c> is
+/// <c>[GenerateSerializer]</c>, so Orleans generates <c>IBaseCodec&lt;TransactionRequestBase&gt;</c>
+/// inside <c>Orleans.Transactions</c> and every generated transactional invokable's codec resolves
+/// exactly that service and calls it first, followed by <c>WriteEndBase()</c>. Doing the same here
+/// means the transaction fields — including <c>TransactionInfo</c>, whose shape is Orleans'
+/// business and has already changed once (<c>UseExclusiveLock</c> is newer than the checked-in
+/// 10.1.0 API baseline) — are always written by the version of Orleans that owns them.
+/// </remarks>
+internal sealed class FunctionalTransactionRequestCodec : IFieldCodec<FunctionalTransactionRequest>
+{
+    private const string TypeName = nameof(FunctionalTransactionRequest);
+    private const uint RequiredFields = 0b1u;
+
+    private readonly Type _codecFieldType = typeof(FunctionalTransactionRequest);
+    private readonly ICodecProvider _codecProvider;
+    private readonly IActivator<FunctionalTransactionRequest> _activator;
+    private readonly IBaseCodec<TransactionRequestBase> _baseCodec;
+    private IFieldCodec<FunctionalRequestEnvelope>? _envelopeCodec;
+
+    /// <summary>Create the codec with the shared codec provider and the request activator.</summary>
+    public FunctionalTransactionRequestCodec(
+        ICodecProvider codecProvider,
+        IActivator<FunctionalTransactionRequest> activator)
+    {
+        _codecProvider = codecProvider;
+        _activator = activator;
+        _baseCodec = codecProvider.GetBaseCodec<TransactionRequestBase>();
+    }
+
+    private IFieldCodec<FunctionalRequestEnvelope> EnvelopeCodec =>
+        _envelopeCodec ??= _codecProvider.GetCodec<FunctionalRequestEnvelope>();
+
+    /// <inheritdoc />
+    public void WriteField<TBufferWriter>(
+        ref Writer<TBufferWriter> writer,
+        uint fieldIdDelta,
+        Type expectedType,
+        FunctionalTransactionRequest value)
+        where TBufferWriter : IBufferWriter<byte>
+    {
+        if (value is null)
+        {
+            ReferenceCodec.WriteNullReference(ref writer, fieldIdDelta);
+            return;
+        }
+
+        ReferenceCodec.MarkValueField(writer.Session);
+        writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
+        _baseCodec.Serialize(ref writer, value);
+        writer.WriteEndBase();
+        EnvelopeCodec.WriteField(ref writer, 0U, typeof(FunctionalRequestEnvelope), value.Envelope);
+        writer.WriteEndObject();
+    }
+
+    /// <inheritdoc />
+    public FunctionalTransactionRequest ReadValue<TInput>(ref Reader<TInput> reader, Field field)
+    {
+        if (field.IsReference)
+        {
+            return ReferenceCodec.ReadReference<FunctionalTransactionRequest, TInput>(ref reader, field);
+        }
+
+        field.EnsureWireTypeTagDelimited();
+        ReferenceCodec.MarkValueField(reader.Session);
+
+        var result = _activator.Create();
+        _baseCodec.Deserialize(ref reader, result);
+
+        FunctionalRequestEnvelope? envelope = null;
+
+        var seen = 0u;
+        var id = 0u;
+        Field header = default;
+
+        while (true)
+        {
+            reader.ReadFieldHeader(ref header);
+
+            if (header.IsEndBaseOrEndObject)
+            {
+                break;
+            }
+
+            id += header.FieldIdDelta;
+            FunctionalWire.MarkSeen(TypeName, ref seen, id);
+
+            switch (id)
+            {
+                case 0U:
+                    envelope = EnvelopeCodec.ReadValue(ref reader, header);
+                    break;
+                default:
+                    throw FunctionalWire.UnknownField(TypeName, id);
+            }
+        }
+
+        if (seen != RequiredFields || envelope is null)
+        {
+            throw FunctionalWire.MissingFields(TypeName, seen, RequiredFields);
+        }
+
+        result.SetEnvelope(envelope);
+
+        // The received request carries its scheduling flags and its transaction option in the
+        // envelope; both are restored from those validated flags rather than trusted from the
+        // wire copy Orleans' base codec also carries.
+        result.ApplyAdmissionOptions();
+        return result;
+    }
+}
+
+/// <summary>
 /// Local copier for <see cref="FunctionalRequestEnvelope"/>. The envelope is immutable after
 /// construction, so a local copy shares it.
 /// </summary>
@@ -442,7 +584,65 @@ internal sealed class FunctionalRequestCopier : IDeepCopier<FunctionalRequest>
 }
 
 /// <summary>
-/// The type filter of the fixed transport: it claims exactly the three fixed transport types
+/// Local copier for <see cref="FunctionalTransactionRequest"/>. It preserves everything the
+/// non-transactional copier preserves and additionally lets Orleans' own base copier carry the
+/// transaction option and the forked <c>TransactionInfo</c> across the copy — a local call never
+/// serializes the request, so without this a same-silo participant would join no transaction.
+/// </summary>
+internal sealed class FunctionalTransactionRequestCopier : IDeepCopier<FunctionalTransactionRequest>
+{
+    private readonly Serializer<OrleansTransactionAbortedException> _exceptionSerializer;
+    private readonly IServiceProvider _services;
+    private readonly IBaseCopier<TransactionRequestBase> _baseCopier;
+
+    /// <summary>Create the copier with the request dependencies and Orleans' transaction base copier.</summary>
+    public FunctionalTransactionRequestCopier(
+        ICodecProvider codecProvider,
+        Serializer<OrleansTransactionAbortedException> exceptionSerializer,
+        IServiceProvider services)
+    {
+        _exceptionSerializer = exceptionSerializer;
+        _services = services;
+        _baseCopier = codecProvider.GetBaseCopier<TransactionRequestBase>();
+    }
+
+    /// <inheritdoc />
+    public FunctionalTransactionRequest DeepCopy(FunctionalTransactionRequest input, CopyContext context)
+    {
+        if (input is null)
+        {
+            return null!;
+        }
+
+        if (context.TryGetCopy<FunctionalTransactionRequest>(input, out var existing) && existing is not null)
+        {
+            return existing;
+        }
+
+        var copy = new FunctionalTransactionRequest(
+            _exceptionSerializer,
+            _services,
+            input.Envelope,
+            input.CallerToken);
+
+        context.RecordCopy(input, copy);
+
+        _baseCopier.DeepCopy(input, copy, context);
+        copy.AddInvokeMethodOptions(input.Options);
+
+        // Only real caller-side metadata is carried over: the fallback the request reports
+        // until metadata is stored must not be promoted into a stored value by a copy.
+        if (input.HasCallFilterMetadata)
+        {
+            copy.SetCallerMetadata(input.GetInterfaceType(), input.GetMethod());
+        }
+
+        return copy;
+    }
+}
+
+/// <summary>
+/// The type filter of the fixed transport: it claims exactly the four fixed transport types
 /// and nothing else. Contracts, API records, selectors, reflection metadata, persistent-state
 /// descriptors, and services are never claimed and therefore never enter request bytes through
 /// this filter.
@@ -470,11 +670,12 @@ internal sealed class FunctionalTransportManifestProvider : TypeManifestProvider
 /// </summary>
 internal static class FunctionalTransportSerialization
 {
-    /// <summary>True for exactly the three fixed transport types.</summary>
+    /// <summary>True for exactly the four fixed transport types.</summary>
     public static bool IsFixedTransportType(Type type) =>
         type == typeof(FunctionalRequestEnvelope)
         || type == typeof(FunctionalReply)
-        || type == typeof(FunctionalRequest);
+        || type == typeof(FunctionalRequest)
+        || type == typeof(FunctionalTransactionRequest);
 
     /// <summary>
     /// Register the explicit fixed-transport serialization on a serializer builder. Repeated
@@ -508,13 +709,16 @@ internal static class FunctionalTransportSerialization
         config.Serializers.Add(typeof(FunctionalRequestEnvelopeCodec));
         config.Serializers.Add(typeof(FunctionalReplyCodec));
         config.Serializers.Add(typeof(FunctionalRequestCodec));
+        config.Serializers.Add(typeof(FunctionalTransactionRequestCodec));
 
         config.Copiers.Add(typeof(FunctionalRequestEnvelopeCopier));
         config.Copiers.Add(typeof(FunctionalReplyCopier));
         config.Copiers.Add(typeof(FunctionalRequestCopier));
+        config.Copiers.Add(typeof(FunctionalTransactionRequestCopier));
 
         config.Activators.Add(typeof(FunctionalRequestEnvelopeActivator));
         config.Activators.Add(typeof(FunctionalReplyActivator));
         config.Activators.Add(typeof(FunctionalRequestActivator));
+        config.Activators.Add(typeof(FunctionalTransactionRequestActivator));
     }
 }

@@ -14,6 +14,24 @@ type internal FunctionalActivationFacet =
     }
 
 /// <summary>
+/// One attached transactional facet of one activation: its blueprint, the real Orleans
+/// <c>ITransactionalState</c> instance created for this activation (boxed), and the boxed initial
+/// value a read of a never-written state observes.
+/// </summary>
+[<ReferenceEquality>]
+type internal FunctionalActivationTransactionalFacet =
+    {
+        /// The stored-type-closed blueprint of the attached transactional facet.
+        Blueprint: FunctionalTransactionalBlueprint
+        /// The Orleans facet created for this activation, boxed as
+        /// <c>ITransactionalState&lt;FunctionalTransactionalBox&lt;_&gt;&gt;</c>.
+        Instance: obj
+        /// The declared initial value for this activation's key, boxed. Computed once per
+        /// activation rather than per call, exactly like a persistent facet's initializer.
+        Initial: obj
+    }
+
+/// <summary>
 /// The primary in-memory state of one activation, plus every attached facet.
 /// </summary>
 /// <remarks>
@@ -29,7 +47,11 @@ type internal FunctionalActivationFacet =
 /// </remarks>
 [<Sealed>]
 type internal FunctionalActivationState
-    (definition: FunctionalHostedDefinition, facets: FunctionalActivationFacet[]) =
+    (
+        definition: FunctionalHostedDefinition,
+        facets: FunctionalActivationFacet[],
+        transactionalFacets: FunctionalActivationTransactionalFacet[]
+    ) =
 
     let primary =
         match definition.PrimaryFacet with
@@ -45,11 +67,25 @@ type internal FunctionalActivationState
 
         map
 
+    let byTransactionalDescriptor =
+        let map =
+            Dictionary<TransactionalStateDescriptor, FunctionalActivationTransactionalFacet>(
+                HashIdentity.Structural
+            )
+
+        for facet in transactionalFacets do
+            map.[facet.Blueprint.Descriptor] <- facet
+
+        map
+
     let mutable ephemeral: obj = null
     let mutable initialized = false
 
     /// <summary>Every attached facet of this activation, primary first.</summary>
     member _.Facets = facets
+
+    /// <summary>Every attached transactional facet of this activation, in declaration order.</summary>
+    member _.TransactionalFacets = transactionalFacets
 
     /// <summary>
     /// True once activation step 3 has run. An activation whose storage read, initializer, or
@@ -94,6 +130,12 @@ type internal FunctionalActivationState
     /// <summary>Resolve an attached facet by its logical descriptor.</summary>
     member _.TryResolve(descriptor: PersistentStateDescriptor) =
         match byDescriptor.TryGetValue descriptor with
+        | true, facet -> Some facet
+        | _ -> None
+
+    /// <summary>Resolve an attached transactional facet by its logical descriptor.</summary>
+    member _.TryResolveTransactional(descriptor: TransactionalStateDescriptor) =
+        match byTransactionalDescriptor.TryGetValue descriptor with
         | true, facet -> Some facet
         | _ -> None
 

@@ -80,6 +80,12 @@ module internal FunctionalContextFactory =
             fun descriptor ->
                 match env.State.TryResolve descriptor with
                 | Some facet -> facet.Blueprint.Facade facet.Instance scope
+                | None -> null
+          ResolveTransactionalState =
+            fun descriptor ->
+                match env.State.TryResolveTransactional descriptor with
+                | Some facet ->
+                    facet.Blueprint.Facade facet.Instance facet.Initial env.Definition.GrainTypeName scope
                 | None -> null }
 
     /// <summary>
@@ -213,10 +219,34 @@ module internal FunctionalDispatch =
         // A read-only or state-neutral interleaved callback discards its replacement state, so
         // its persistent-state facades permit getters and reject the setter and every storage
         // call. The scope expires as soon as the callback's task completes.
-        let stateNeutral = operation.IsReadOnly || operation.IsAlwaysInterleave
+        //
+        // Spec 004 item 2 adds the third case, for the same reason and with the same mechanism: a
+        // transaction-scoped operation (Create, CreateOrJoin, Join) can have every durable effect
+        // it made undone by an abort, and neither an in-memory state publication nor a persistent
+        // storage write has any participant that could undo it. Rather than let one aborted
+        // transaction leave an activation half-updated, such an operation is state-neutral for
+        // everything except its transactional facets: the transactional facade is enabled by the
+        // separate TransactionalAccess axis below, so the two rules do not fight.
+        let stateNeutral =
+            operation.IsReadOnly || operation.IsAlwaysInterleave || operation.IsTransactionScoped
+
+        // Which transactional facet operations this callback may perform. 'Supported' is included
+        // because Orleans forwards a caller's ambient context to it; Suppress and NotAllowed never
+        // have one, so they get the same rejection an ordinary operation gets.
+        let transactionalAccess =
+            match operation.Transaction with
+            | Some Orleans.TransactionOption.Create
+            | Some Orleans.TransactionOption.CreateOrJoin
+            | Some Orleans.TransactionOption.Join
+            | Some Orleans.TransactionOption.Supported ->
+                if operation.IsReadOnly then
+                    ReadOnlyTransaction
+                else
+                    ReadWriteTransaction
+            | _ -> Unavailable
 
         let scope =
-            FunctionalStateScope(grainTypeName, operation.OperationId, not stateNeutral)
+            FunctionalStateScope(grainTypeName, operation.OperationId, not stateNeutral, transactionalAccess)
 
         let invocation =
             { Key = env.Key
@@ -246,8 +276,8 @@ module internal FunctionalDispatch =
                                         scope.Expire()
                                 }
 
-                            // Read-only and state-neutral interleaved operations discard their
-                            // replacement.
+                            // Read-only, state-neutral interleaved, and transaction-scoped
+                            // operations discard their replacement.
                             if not stateNeutral then
                                 env.State.Publish nextState
 

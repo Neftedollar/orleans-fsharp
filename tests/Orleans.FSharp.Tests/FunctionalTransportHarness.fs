@@ -122,6 +122,21 @@ type InMemoryTransport(services: IServiceProvider, dispatch: GrainId -> Function
                     cancellationToken.ThrowIfCancellationRequested()
                     dispatch grainId envelope
 
+                // The in-memory transport has no Orleans transaction machinery behind it, so a
+                // transactional send is recorded and dispatched exactly like an ordinary one. The
+                // unit tests that use this harness assert on the recorded envelope (the admission
+                // byte carries the transaction option), never on commit behaviour, which only the
+                // integration cluster can prove.
+                member _.SendTransactionalAsync(envelope, cancellationToken) =
+                    recorded.Enqueue
+                        { GrainId = grainId
+                          Metadata = metadata
+                          Envelope = envelope
+                          IsOneWay = false }
+
+                    cancellationToken.ThrowIfCancellationRequested()
+                    dispatch grainId envelope
+
                 member _.SendOneWay envelope =
                     recorded.Enqueue
                         { GrainId = grainId

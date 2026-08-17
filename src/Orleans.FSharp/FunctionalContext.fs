@@ -46,6 +46,9 @@ type internal FunctionalContextCore =
         DelayDeactivation: TimeSpan -> unit
         /// Typed lookup of an attached persistent state facet, boxed as <c>IPersistentState&lt;_&gt;</c>.
         ResolvePersistentState: PersistentStateDescriptor -> obj
+        /// Typed lookup of an attached transactional state facet, boxed as
+        /// <c>FunctionalTransactionalState&lt;_&gt;</c>.
+        ResolveTransactionalState: TransactionalStateDescriptor -> obj
     }
 
 /// <summary>
@@ -130,6 +133,26 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
             fail
                 DefinitionStage
                 $"no persistent state named '{descriptor.StateName}' with provider '{descriptor.ProviderName}' and stored type '{descriptor.StoredType.FullName}' is attached to this definition."
+
+    /// <summary>Look up an attached transactional state facet by its logical descriptor.</summary>
+    /// <remarks>
+    /// The returned facade is bound to this invocation and to this callback's transaction access:
+    /// it rejects every member once the callback has completed, rejects reads and updates in a
+    /// callback that can never carry a transaction context, and rejects updates in a
+    /// <c>readOnly</c> transactional operation.
+    /// </remarks>
+    member _.transactionalState<'State>(state: TransactionalStateRef<'State>) : FunctionalTransactionalState<'State> =
+        if obj.ReferenceEquals(state, null) then
+            fail TransactionalStage "transactionalState requires a TransactionalStateRef value."
+
+        match core.ResolveTransactionalState state.Descriptor with
+        | :? FunctionalTransactionalState<'State> as facet -> facet
+        | _ ->
+            let descriptor = state.Descriptor
+
+            fail
+                TransactionalStage
+                $"no transactional state named '{descriptor.StateName}' with storage '{descriptor.StorageName}' and stored type '{descriptor.StoredType.FullName}' is attached to this definition."
 
     /// <summary>Read a typed value from the Orleans request context.</summary>
     member _.tryGetRequestContext<'Value>(name: string) : 'Value option =

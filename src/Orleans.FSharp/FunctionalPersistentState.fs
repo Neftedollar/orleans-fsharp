@@ -120,16 +120,53 @@ module internal StoredStateType =
             None
 
 /// <summary>
-/// The lifetime and mutability guard shared by every persistent-state facade handed to one
-/// callback. A facade is bound to its invocation: once the callback's task has completed the
-/// facade rejects every member, and in a <c>readOnly</c> or <c>alwaysInterleave</c> callback it
-/// permits getters while rejecting the <c>State</c> setter and both overloads of
-/// <c>ReadStateAsync</c>, <c>WriteStateAsync</c>, and <c>ClearStateAsync</c>.
+/// What a callback may do with the transactional facets of its activation.
+/// </summary>
+/// <remarks>
+/// A transactional read and a transactional update both require an ambient
+/// <c>TransactionContext</c>: <c>TransactionalState&lt;TState&gt;.PerformRead</c> and
+/// <c>PerformUpdate</c> both start with <c>TransactionContext.GetRequiredTransactionInfo()</c>,
+/// which throws when none is set. Only a request whose operation declares a transaction option
+/// that carries a context ever has one, so every other callback kind gets
+/// <see cref="F:Orleans.FSharp.TransactionalAccess.Unavailable"/> and a diagnostic that names the
+/// declaration it is missing rather than Orleans' "did you forget a [Transaction] attribute?".
+/// </remarks>
+type internal TransactionalAccess =
+    /// <summary>No ambient transaction is possible in this callback; reads and updates are rejected.</summary>
+    | Unavailable
+    /// <summary>
+    /// A transaction context is available but the transaction is read-only, so an update is
+    /// rejected. Orleans would reject it too — <c>PerformUpdate</c> throws
+    /// <c>OrleansReadOnlyViolatedException</c> when <c>TransactionInfo.IsReadOnly</c> — but only
+    /// for a transaction this call started; the rejection here is unconditional and names the
+    /// <c>readOnly</c> declaration that caused it.
+    /// </summary>
+    | ReadOnlyTransaction
+    /// <summary>Reads and updates are both available.</summary>
+    | ReadWriteTransaction
+
+/// <summary>
+/// The lifetime and mutability guard shared by every state facade handed to one callback. A
+/// facade is bound to its invocation: once the callback's task has completed the facade rejects
+/// every member, and in a <c>readOnly</c> or <c>alwaysInterleave</c> callback it permits getters
+/// while rejecting the <c>State</c> setter and both overloads of <c>ReadStateAsync</c>,
+/// <c>WriteStateAsync</c>, and <c>ClearStateAsync</c>. The transactional axis is separate:
+/// see <see cref="T:Orleans.FSharp.TransactionalAccess"/>.
 /// </summary>
 [<Sealed>]
-type internal FunctionalStateScope(grainTypeName: string, callbackName: string, allowsMutation: bool) =
+type internal FunctionalStateScope
+    (
+        grainTypeName: string,
+        callbackName: string,
+        allowsMutation: bool,
+        transactionalAccess: TransactionalAccess
+    ) =
 
     let mutable expired = 0
+
+    /// <summary>The ordinary scope of a callback which can never carry a transaction context.</summary>
+    new(grainTypeName: string, callbackName: string, allowsMutation: bool) =
+        FunctionalStateScope(grainTypeName, callbackName, allowsMutation, Unavailable)
 
     /// <summary>True once the owning callback has completed.</summary>
     member _.IsExpired = Volatile.Read(&expired) = 1
@@ -156,6 +193,43 @@ type internal FunctionalStateScope(grainTypeName: string, callbackName: string, 
             fail
                 PersistentStage
                 $"{this.Describe descriptor} rejects '{memberName}' in the '{callbackName}' callback, which is state-neutral for this holder: it may read it but may not set it or issue storage calls."
+
+    /// <summary>
+    /// Reject a transactional read in a callback which can carry no transaction context, or one
+    /// whose facade has already expired.
+    /// </summary>
+    /// <param name="description">
+    /// The transactional facet, already described by its facade — the scope deliberately knows
+    /// nothing about transactional descriptors, so it stays declared before them.
+    /// </param>
+    /// <param name="memberName">The facade member being used.</param>
+    member _.EnsureTransactionalRead(description: string, memberName: string) =
+        if Volatile.Read(&expired) = 1 then
+            fail
+                TransactionalStage
+                $"{description} was used through '{memberName}' after the '{callbackName}' callback which resolved it had already completed. A transactional-state facade is bound to its invocation."
+
+        match transactionalAccess with
+        | Unavailable ->
+            fail
+                TransactionalStage
+                $"{description} rejects '{memberName}' in the '{callbackName}' callback, which never runs inside an Orleans transaction. Only an operation declared 'transactional' with Create, CreateOrJoin, Join, or Supported carries a transaction context; timers, reminders, lifecycle hooks, and stream deliveries never do."
+        | ReadOnlyTransaction
+        | ReadWriteTransaction -> ()
+
+    /// <summary>Reject a transactional update in a read-only or non-transactional callback.</summary>
+    /// <param name="description">The transactional facet, already described by its facade.</param>
+    /// <param name="memberName">The facade member being used.</param>
+    member this.EnsureTransactionalUpdate(description: string, memberName: string) =
+        this.EnsureTransactionalRead(description, memberName)
+
+        match transactionalAccess with
+        | ReadOnlyTransaction ->
+            fail
+                TransactionalStage
+                $"{description} rejects '{memberName}' in the '{callbackName}' callback, which is declared 'readOnly'. A read-only transaction refuses every update: Orleans throws OrleansReadOnlyViolatedException from PerformUpdate when TransactionInfo.IsReadOnly."
+        | Unavailable
+        | ReadWriteTransaction -> ()
 
 /// <summary>
 /// The invocation-bound <c>IPersistentState&lt;'State&gt;</c> handed to application code by

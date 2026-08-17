@@ -79,6 +79,15 @@ type internal IFunctionalRequestSender =
     abstract SendAsync:
         envelope: FunctionalRequestEnvelope * cancellationToken: CancellationToken -> Task<FunctionalReply>
 
+    /// <summary>
+    /// Send an acknowledged request under Orleans' transactional invokable base and await the
+    /// fixed reply. Separate from <see cref="SendAsync"/> because the transaction machinery lives
+    /// in the invokable's base class, so which base class the request uses is decided here, at
+    /// send time, from the operation's declared transaction option.
+    /// </summary>
+    abstract SendTransactionalAsync:
+        envelope: FunctionalRequestEnvelope * cancellationToken: CancellationToken -> Task<FunctionalReply>
+
     /// <summary>Send a one-way request; completion means the local send path accepted it.</summary>
     abstract SendOneWay: envelope: FunctionalRequestEnvelope -> unit
 
@@ -279,6 +288,25 @@ module internal SerializerPreflight =
         for stateName, storedType in states do
             checkType provider grainTypeName "stored state" $"persistent state '{stateName}'" storedType
 
+    /// <summary>
+    /// Validate the stored type of every attached transactional state of one hosted definition.
+    /// </summary>
+    /// <remarks>
+    /// Same reason as the persistent variant, plus one that is specific to transactions: the
+    /// runtime snapshots a transactional value through the exact-type payload codec before the
+    /// first write of every transaction, and exact-type serialization makes Orleans elide the
+    /// field type — so the stored type has to be resolvable by name, which is precisely what
+    /// declaring it here arranges. Without the declaration a state type from an application
+    /// assembly serializes and then fails to deserialize on the way back out of the snapshot.
+    /// </remarks>
+    let ensureTransactionalStoredTypes
+        (provider: ICodecProvider)
+        (grainTypeName: string)
+        (states: (string * Type)[])
+        =
+        for stateName, storedType in states do
+            checkType provider grainTypeName "stored state" $"transactional state '{stateName}'" storedType
+
 /// <summary>
 /// The preclosed pair of client closures of one bound operation: the bound API-record field
 /// and its cancellable form. Both are boxed values of the field's exact function type.
@@ -312,6 +340,11 @@ type internal FunctionalCallSite
     ) =
 
     let isOneWay = admissionFlags &&& AdmissionFlags.OneWay <> AdmissionFlags.None
+
+    // Which Orleans invokable base this operation's requests use. Read from the same admission
+    // byte dispatch compares against the hosted descriptor, so caller and host cannot disagree
+    // about whether a call is transactional without the call being rejected.
+    let isTransactional = AdmissionFlags.isTransactional admissionFlags
 
     /// <summary>
     /// Validate the fixed reply shape, its protocol token, and the local reply-size limit
@@ -368,7 +401,12 @@ type internal FunctionalCallSite
                     sender.SendOneWay envelope
                     return Unchecked.defaultof<'Reply>
                 else
-                    let! reply = sender.SendAsync(envelope, cancellationToken)
+                    let! reply =
+                        if isTransactional then
+                            sender.SendTransactionalAsync(envelope, cancellationToken)
+                        else
+                            sender.SendAsync(envelope, cancellationToken)
+
                     this.ValidateReply reply
                     return codec.Deserialize<'Reply> reply.Payload
             }

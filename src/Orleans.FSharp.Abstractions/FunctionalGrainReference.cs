@@ -1,5 +1,8 @@
 using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
 using Orleans.Runtime;
+using Orleans.Serialization;
+using Orleans.Transactions;
 
 namespace Orleans.FSharp;
 
@@ -13,6 +16,13 @@ internal sealed class FunctionalGrainReference : GrainReference
 {
     private readonly IFunctionalPayloadCodec _payloadCodec;
     private readonly IServiceProvider _services;
+
+    /// <summary>
+    /// The exception serializer every transactional request needs, resolved on first
+    /// transactional send. Non-transactional contracts never touch it, so a process that never
+    /// calls a transactional operation never resolves it.
+    /// </summary>
+    private Serializer<OrleansTransactionAbortedException>? _transactionExceptionSerializer;
 
     /// <summary>Create a reference over the shared state built by the functional provider.</summary>
     internal FunctionalGrainReference(
@@ -65,6 +75,32 @@ internal sealed class FunctionalGrainReference : GrainReference
             CancellationToken.None);
 
         Invoke(request);
+    }
+
+    /// <summary>
+    /// Send an acknowledged transactional request and await the fixed reply. The request rides
+    /// Orleans' own transactional invokable base, so the ambient transaction is joined (or a new
+    /// one started) by <c>TransactionRequestBase</c> itself, on both the caller and target sides.
+    /// </summary>
+    internal Task<FunctionalReply> SendTransactionalAsync(
+        FunctionalRequestEnvelope envelope,
+        Type closedInterfaceType,
+        MethodInfo dispatchMethod,
+        CancellationToken cancellationToken)
+    {
+        var exceptionSerializer =
+            _transactionExceptionSerializer ??=
+                _services.GetRequiredService<Serializer<OrleansTransactionAbortedException>>();
+
+        var request = new FunctionalTransactionRequest(
+            exceptionSerializer,
+            _services,
+            envelope,
+            cancellationToken);
+
+        request.SetCallerMetadata(closedInterfaceType, dispatchMethod);
+        request.ApplyAdmissionOptions();
+        return InvokeAsync<FunctionalReply>(request).AsTask();
     }
 
     private static FunctionalRequest CreateRequest(

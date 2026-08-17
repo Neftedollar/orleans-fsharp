@@ -10,6 +10,7 @@ open Orleans.BroadcastChannel
 open Orleans.Metadata
 open Orleans.Runtime
 open Orleans.Streams.Core
+open Orleans.Transactions.Abstractions
 open Orleans.FSharp.FunctionalDiagnostics
 open Orleans.FSharp.FunctionalSiloDiagnostics
 
@@ -153,6 +154,46 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                         { Blueprint = blueprint
                           Instance = blueprint.Create stateFactory grainContext })
 
+            // Step 1b, same reasoning and the same moment: Orleans' transactional states subscribe
+            // to GrainLifecycleStage.SetupState from inside ITransactionalStateFactory.Create
+            // (TransactionalStateFactory.Create calls state.Participate(context.ObservableLifecycle)),
+            // so they too must exist before the lifecycle starts.
+            //
+            // Unlike IPersistentStateFactory.Create, the transactional factory takes NO grain
+            // context: TransactionalStateFactory reads IGrainContextAccessor.GrainContext, which is
+            // RuntimeContext.Current. Orleans runs IGrainActivator.CreateInstance from
+            // ActivationData.Start, which runs as a work item on the activation's own scheduler
+            // (WorkItemGroup.Execute wraps every work item in RuntimeContext.SetExecutionContext),
+            // so the ambient context IS this activation. That is a real invariant of Orleans'
+            // scheduler rather than a property of our code, so it is checked rather than assumed:
+            // a silent mismatch would build every transactional facet against the wrong grain.
+            let transactionalFacets =
+                if definition.TransactionalFacets.Length = 0 then
+                    Array.empty
+                else
+                    let contextAccessor = services.GetRequiredService<IGrainContextAccessor>()
+                    let ambient = contextAccessor.GrainContext
+
+                    if not (obj.ReferenceEquals(ambient, grainContext)) then
+                        let ambientId =
+                            if isNull (box ambient) then
+                                "<none>"
+                            else
+                                string ambient.GrainId
+
+                        fail
+                            StartupStage
+                            $"the functional activation of grain type '{definition.GrainTypeName}' cannot create its transactional state: Orleans resolves a transactional facet against the ambient grain context (IGrainContextAccessor.GrainContext), which is '{ambientId}' here rather than this activation's '{grainContext.GrainId}'."
+
+                    let transactionalFactory =
+                        services.GetRequiredService<ITransactionalStateFactory>()
+
+                    definition.TransactionalFacets
+                    |> Array.map (fun blueprint ->
+                        { Blueprint = blueprint
+                          Instance = blueprint.Create transactionalFactory
+                          Initial = blueprint.Initialize key })
+
             let mutable deactivate = fun () -> ()
             let mutable delay = fun (_: TimeSpan) -> ()
             let mutable registerReminder = fun (_: string) (_: TimeSpan) (_: TimeSpan) -> Unchecked.defaultof<Task<IGrainReminder>>
@@ -168,7 +209,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                   Codec = codec
                   MaxPayloadBytes = FunctionalTransportConfiguration.maxPayloadBytes services
                   Key = key
-                  State = FunctionalActivationState(definition, facets)
+                  State = FunctionalActivationState(definition, facets, transactionalFacets)
                   DeactivateOnIdle = fun () -> deactivate ()
                   DelayDeactivation = fun timeSpan -> delay timeSpan
                   RegisterReminder = fun name dueTime period -> registerReminder name dueTime period

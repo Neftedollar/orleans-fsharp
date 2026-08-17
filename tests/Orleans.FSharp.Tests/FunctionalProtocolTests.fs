@@ -136,7 +136,8 @@ let ``the admission-flag layout matches the specification`` () =
     test <@ AdmissionFlags.ReadOnly = 0x01uy @>
     test <@ AdmissionFlags.OneWay = 0x02uy @>
     test <@ AdmissionFlags.AlwaysInterleave = 0x04uy @>
-    test <@ AdmissionFlags.Reserved = 0xF8uy @>
+    test <@ AdmissionFlags.TransactionMask = 0x38uy @>
+    test <@ AdmissionFlags.Reserved = 0xC0uy @>
 
 [<Fact>]
 let ``every policy combination composes the expected flag byte`` () =
@@ -151,14 +152,64 @@ let ``every policy combination composes the expected flag byte`` () =
           (true, true, true), 0x07uy ]
 
     for (readOnly, oneWay, alwaysInterleave), expected in cases do
-        test <@ AdmissionFlags.compose readOnly oneWay alwaysInterleave = expected @>
+        test <@ AdmissionFlags.compose readOnly oneWay alwaysInterleave None = expected @>
+
+[<Fact>]
+let ``every transaction option composes its own admission code`` () =
+    // Spec 004 item 2: bits 3-5 carry the Orleans TransactionOption value plus one, so 0 stays
+    // free for "not transactional" and code 7 stays unassigned.
+    let cases =
+        [ Orleans.TransactionOption.Suppress, 1uy
+          Orleans.TransactionOption.CreateOrJoin, 2uy
+          Orleans.TransactionOption.Create, 3uy
+          Orleans.TransactionOption.Join, 4uy
+          Orleans.TransactionOption.Supported, 5uy
+          Orleans.TransactionOption.NotAllowed, 6uy ]
+
+    for option, code in cases do
+        let flags = AdmissionFlags.compose false false false (Some option)
+        test <@ flags = (code <<< AdmissionFlags.TransactionShift) @>
+        test <@ AdmissionFlags.transactionCode flags = code @>
+        test <@ AdmissionFlags.isTransactional flags @>
+        test <@ AdmissionFlags.hasValidTransactionField flags @>
+        test <@ AdmissionFlags.tryTransactionOption flags = Some option @>
+        test <@ not (AdmissionFlags.hasReserved flags) @>
+
+    // The three policy flags and the transaction field occupy disjoint bits.
+    let combined =
+        AdmissionFlags.compose true false false (Some Orleans.TransactionOption.CreateOrJoin)
+
+    test <@ combined = 0x11uy @>
+
+[<Fact>]
+let ``a non-transactional flag byte decodes to no transaction option`` () =
+    for flags in 0uy .. 7uy do
+        test <@ not (AdmissionFlags.isTransactional flags) @>
+        test <@ AdmissionFlags.tryTransactionOption flags = None @>
+        test <@ AdmissionFlags.hasValidTransactionField flags @>
+
+[<Fact>]
+let ``the unassigned transaction code is rejected rather than decoded`` () =
+    let flags =
+        AdmissionFlags.UnassignedTransactionCode <<< AdmissionFlags.TransactionShift
+
+    test <@ flags = 0x38uy @>
+    test <@ AdmissionFlags.isTransactional flags @>
+    test <@ not (AdmissionFlags.hasValidTransactionField flags) @>
+    test <@ AdmissionFlags.tryTransactionOption flags = None @>
+    test <@ not (AdmissionFlags.hasReserved flags) @>
 
 [<Fact>]
 let ``reserved bits are detected and valid combinations are not`` () =
     for flags in 0uy .. 7uy do
         test <@ not (AdmissionFlags.hasReserved flags) @>
 
-    for bit in 3 .. 7 do
+    // Bits 3-5 are the transaction field since spec 004 item 2, so only bits 6 and 7 are reserved.
+    for bit in 3 .. 5 do
+        let flags = 1uy <<< bit
+        test <@ not (AdmissionFlags.hasReserved flags) @>
+
+    for bit in 6 .. 7 do
         let flags = 1uy <<< bit
         test <@ AdmissionFlags.hasReserved flags @>
 

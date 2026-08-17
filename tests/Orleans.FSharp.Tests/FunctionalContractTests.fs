@@ -510,6 +510,7 @@ let ``oneWay on a non-unit reply is rejected defensively`` () =
           ReadOnly = Set.empty
           OneWay = Set.ofList [ 1 ]
           AlwaysInterleave = Set.empty
+          Transactions = Map.empty
           SinceVersions = Map.empty
           OperationIds = Map.empty }
 

@@ -62,6 +62,8 @@
     <Compile Include="FunctionalStreamIntegrationTests.fs" />
     <Compile Include="FunctionalPhaseCFixture.fs" />
     <Compile Include="FunctionalPhaseCIntegrationTests.fs" />
+    <Compile Include="FunctionalPhaseDFixture.fs" />
+    <Compile Include="FunctionalPhaseDIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

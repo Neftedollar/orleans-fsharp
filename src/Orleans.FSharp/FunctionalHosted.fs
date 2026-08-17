@@ -172,6 +172,15 @@ type internal FunctionalHostedOperation =
         IsOneWay: bool
         /// Always-interleave admission.
         IsAlwaysInterleave: bool
+        /// The declared Orleans transaction option, when the operation is declared
+        /// <c>transactional</c>.
+        Transaction: Orleans.TransactionOption option
+        /// True when Orleans creates or joins a transaction before this operation's handler runs
+        /// -- the three options for which <c>TransactionRequestBase.IsTransactionRequired</c> is
+        /// true. Such an operation is state-neutral: its replacement primary state is discarded
+        /// and its persistent-state facades reject every mutation, because neither could be
+        /// rolled back if the transaction aborts.
+        IsTransactionScoped: bool
         /// The contract version this operation was introduced at.
         SinceVersion: int
         /// The lowest request version this definition admits; the index origin of
@@ -237,6 +246,7 @@ type internal FunctionalHostedDefinition
         declaredTypes: (string * Type * Type)[],
         primaryFacet: FunctionalFacetBlueprint option,
         additionalFacets: FunctionalFacetBlueprint[],
+        transactionalFacets: FunctionalTransactionalBlueprint[],
         onActivate: FunctionalActivateAdapter option,
         onDeactivate: FunctionalDeactivateAdapter option,
         collectionAge: TimeSpan option,
@@ -343,6 +353,9 @@ type internal FunctionalHostedDefinition
     /// <summary>Every attached facet: the primary one first, then the additional ones.</summary>
     member _.Facets = facets
 
+    /// <summary>Attached transactional facets in declaration order.</summary>
+    member _.TransactionalFacets = transactionalFacets
+
     /// <summary>The preclosed activation-hook adapter, when the definition declares one.</summary>
     member _.OnActivate = onActivate
 
@@ -433,6 +446,8 @@ module internal FunctionalHosted =
                   IsReadOnly = operation.IsReadOnly
                   IsOneWay = operation.IsOneWay
                   IsAlwaysInterleave = operation.IsAlwaysInterleave
+                  Transaction = operation.Transaction
+                  IsTransactionScoped = operation.IsTransactionScoped
                   SinceVersion = operation.SinceVersion
                   MinAcceptedVersion = minAcceptedVersion
                   VersionTokens = versionTokens
@@ -529,6 +544,7 @@ module internal FunctionalHosted =
             contract.DeclaredTypes,
             primaryFacet,
             List.toArray definition.Additional,
+            List.toArray definition.TransactionalFacets,
             onActivate,
             onDeactivate,
             definition.CollectionAge,

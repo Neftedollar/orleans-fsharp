@@ -31,6 +31,10 @@ module internal FunctionalDiagnostics =
     [<Literal>]
     let PersistentStage = "Orleans.FSharp persistent state"
 
+    /// <summary>Prefix identifying the validation stage in every transactional-state diagnostic.</summary>
+    [<Literal>]
+    let TransactionalStage = "Orleans.FSharp transactional state"
+
     /// <summary>Prefix identifying the validation stage in every reference-binding diagnostic.</summary>
     [<Literal>]
     let BindingStage = "Orleans.FSharp functional binding"

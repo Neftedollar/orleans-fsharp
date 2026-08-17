@@ -284,13 +284,42 @@ let ``every valid admission-flag combination round-trips`` () =
 
 [<Fact>]
 let ``a set reserved bit invalidates the request on read`` () =
-    for bit in 3 .. 7 do
+    // Bits 3-5 became the transaction field in spec 004 item 2; bits 6-7 are still reserved.
+    for bit in 6 .. 7 do
         let flags = 1uy <<< bit
         let bytes = handWriteEnvelope "chat.room" 1 "join" flags
 
         let error = Assert.Throws<InvalidOperationException>(fun () -> readEnvelope bytes |> ignore)
 
         test <@ error.Message.Contains "reserved bit" @>
+
+[<Fact>]
+let ``a transaction-field bit is accepted on read`` () =
+    // The complement of the reserved-bit test above: a byte whose only set bits are in the
+    // transaction field is a valid envelope, and the declared option round-trips through the wire.
+    let roundTrip (declared: Orleans.TransactionOption) =
+        let flags = AdmissionFlags.compose false false false (Some declared)
+        let restored = readEnvelope (handWriteEnvelope "chat.room" 1 "join" flags)
+
+        test <@ restored.AdmissionFlags = flags @>
+        test <@ AdmissionFlags.tryTransactionOption restored.AdmissionFlags = Some declared @>
+
+    roundTrip Orleans.TransactionOption.Suppress
+    roundTrip Orleans.TransactionOption.CreateOrJoin
+    roundTrip Orleans.TransactionOption.Create
+    roundTrip Orleans.TransactionOption.Join
+    roundTrip Orleans.TransactionOption.Supported
+    roundTrip Orleans.TransactionOption.NotAllowed
+
+[<Fact>]
+let ``the unassigned transaction code is refused when Orleans request options are restored`` () =
+    let flags =
+        AdmissionFlags.UnassignedTransactionCode <<< AdmissionFlags.TransactionShift
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () -> FunctionalRequest.OptionsFor flags |> ignore)
+
+    test <@ error.Message.Contains "unassigned transaction code" @>
 
 [<Fact>]
 let ``reserved flags are refused when Orleans request options are restored`` () =

@@ -152,6 +152,7 @@ type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
       Initializer: 'Key -> 'State
       Primary: PersistentStateRef<'State> option
       Additional: FunctionalFacetBlueprint list
+      TransactionalFacets: FunctionalTransactionalBlueprint list
       CollectionAge: TimeSpan option
       OnActivate: ActivateHook<'Actor, 'Key, 'State> option
       OnDeactivate: DeactivateHook<'Actor, 'Key, 'State> option
@@ -184,6 +185,9 @@ type FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
 
     /// <summary>Additional attached persistent states in declaration order.</summary>
     member internal _.Additional = state.Additional
+
+    /// <summary>Attached transactional states in declaration order.</summary>
+    member internal _.TransactionalFacets = state.TransactionalFacets
 
     /// <summary>The configured idle collection age, when present.</summary>
     member internal _.CollectionAge = state.CollectionAge
@@ -254,6 +258,7 @@ module internal DefinitionDraft =
               Initializer = initializer
               Primary = None
               Additional = []
+              TransactionalFacets = []
               CollectionAge = None
               OnActivate = None
               OnDeactivate = None
@@ -309,12 +314,13 @@ module internal DefinitionDraft =
         let hasDurableAttachment =
             state.Primary.IsSome
             || not (List.isEmpty state.Additional)
+            || not (List.isEmpty state.TransactionalFacets)
             || not (List.isEmpty state.Reminders)
 
         if hasDurableAttachment && not state.Contract.IsGrainTypeExplicit then
             fail
                 DefinitionStage
-                $"grain type '{grainTypeName}' attaches 'stateFrom', 'usePersistentState', or declares 'onReminder', but its contract derives 'grainType' from the actor brand '{typeof<'Actor>.FullName}' instead of declaring one explicitly. A brand rename would then silently move routing AND storage identity, orphaning persisted state and losing durable reminders. Declare an explicit 'grainType' on the contract before attaching durable state or a reminder."
+                $"grain type '{grainTypeName}' attaches 'stateFrom', 'usePersistentState', 'transactionalStateFrom', or declares 'onReminder', but its contract derives 'grainType' from the actor brand '{typeof<'Actor>.FullName}' instead of declaring one explicitly. A brand rename would then silently move routing AND storage identity, orphaning persisted state and losing durable reminders. Declare an explicit 'grainType' on the contract before attaching durable state or a reminder."
 
         // Exactly one handler for every API-record field.
         let missing =
@@ -377,6 +383,43 @@ module internal DefinitionDraft =
                     $"the stored type '{descriptor.StoredType.FullName}' of persistent state '{descriptor.StateName}' (provider '{descriptor.ProviderName}') attached to grain type '{grainTypeName}' cannot be held in an Orleans IPersistentState: {reason}."
             | None -> ()
 
+        // Spec 004 item 2. Unique transactional state names. The name is the durable identity of
+        // the participant: Orleans builds the ParticipantId Orleans addresses during the commit
+        // protocol from it, and the storage key too, so two facets under one name are one
+        // participant with two states.
+        let seenTransactional =
+            Dictionary<string, TransactionalStateDescriptor>(StringComparer.Ordinal)
+
+        for blueprint in state.TransactionalFacets do
+            let descriptor = blueprint.Descriptor
+
+            match seenTransactional.TryGetValue descriptor.StateName with
+            | true, existing ->
+                fail
+                    DefinitionStage
+                    $"transactional stateName '{descriptor.StateName}' is attached more than once to grain type '{grainTypeName}' (storages '{existing.StorageName}' and '{descriptor.StorageName}', stored types '{existing.StoredType.FullName}' and '{descriptor.StoredType.FullName}')."
+            | _ -> seenTransactional.[descriptor.StateName] <- descriptor
+
+        // Spec 004 item 2. A transactional facet no operation can reach is a definition error, not
+        // a harmless one: both ITransactionalState members begin with
+        // TransactionContext.GetRequiredTransactionInfo(), so without an operation that carries a
+        // transaction context the facet's storage is configured, its participant registered, and
+        // every use of it throws.
+        if not (List.isEmpty state.TransactionalFacets) then
+            let carriers =
+                state.Contract.Operations
+                |> Array.filter (fun operation -> operation.CanCarryTransaction)
+
+            if carriers.Length = 0 then
+                let names =
+                    state.TransactionalFacets
+                    |> List.map (fun blueprint -> $"'{blueprint.Descriptor.StateName}'")
+                    |> String.concat ", "
+
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' attaches transactional state {names} but declares no 'transactional' operation that can carry a transaction context. Declare at least one operation 'transactional' with Create, CreateOrJoin, Join, or Supported; every other callback runs without a TransactionContext, which Orleans requires for both PerformRead and PerformUpdate."
+
         match state.CollectionAge with
         | Some age when age <= TimeSpan.Zero ->
             fail
@@ -404,6 +447,11 @@ module internal DefinitionDraft =
                 fail
                     DefinitionStage
                     $"grain type '{grainTypeName}' combines 'statelessWorker' with 'usePersistentState'. Durable identity is meaningless for multiplexed local activations that Orleans may create, deactivate, and re-create at will."
+
+            if not (List.isEmpty state.TransactionalFacets) then
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with 'transactionalStateFrom'. Durable identity is meaningless for multiplexed local activations that Orleans may create, deactivate, and re-create at will, and a transactional participant is addressed by a ParticipantId built from the grain reference and the state name."
 
             if not (List.isEmpty state.Reminders) then
                 fail
@@ -593,6 +641,60 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.withState
             { draft with
                 Additional = draft.Additional @ [ attached ] }
+
+    /// <summary>Attach a named Orleans transactional state.</summary>
+    /// <param name="transactionalState">
+    /// The descriptor built by <c>TransactionalState.create</c>: state name, storage name, and the
+    /// exact stored type.
+    /// </param>
+    /// <param name="initializer">
+    /// The value a transactional state that has never been written reads as. Orleans materializes
+    /// an unwritten transactional state with <c>new TState()</c> and has no "record exists" flag,
+    /// so the declared initial value is what a first read observes; it is stored only when an
+    /// update actually writes.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// The facet is reachable only from an operation declared <c>transactional</c> with
+    /// <c>Create</c>, <c>CreateOrJoin</c>, <c>Join</c>, or <c>Supported</c> — every other callback
+    /// runs without a <c>TransactionContext</c>, which Orleans requires for both
+    /// <c>PerformRead</c> and <c>PerformUpdate</c>. Sealing rejects a definition that attaches a
+    /// transactional state no operation could ever use.
+    /// </para>
+    /// <para>
+    /// The stored type is never handed to Orleans directly. It rides inside a
+    /// <c>FunctionalTransactionalBox</c>, which is the <c>class, new()</c> instance Orleans
+    /// mutates, so an ordinary immutable F# record, union, or tuple is a usable transactional
+    /// state type — and application code, which only ever sees <c>'State -&gt; 'State</c>, has no
+    /// way to mutate the stored object in place.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("transactionalStateFrom")>]
+    member _.TransactionalStateFrom<'State, 'StoredState>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            transactionalState: TransactionalStateRef<'StoredState>,
+            initializer: 'Key -> 'StoredState
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(transactionalState, null) then
+            fail DefinitionStage "'transactionalStateFrom' requires a TransactionalStateRef value."
+
+        if obj.ReferenceEquals(initializer, null) then
+            fail
+                DefinitionStage
+                $"'transactionalStateFrom' for stateName '{transactionalState.StateName}' requires an initializer."
+
+        // The blueprint is closed over the exact stored type here, where 'StoredState is still
+        // a type parameter of this custom operation. No silo-side code ever closes it again.
+        let attached =
+            FunctionalTransactionalFacet.blueprint transactionalState (fun key ->
+                box (initializer (unbox<'Key> key)))
+
+        DefinitionDraft.withState
+            { draft with
+                TransactionalFacets = draft.TransactionalFacets @ [ attached ] }
 
     /// <summary>Set the Orleans idle collection age for this grain type.</summary>
     [<CustomOperation("collectionAge")>]

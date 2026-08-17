@@ -106,18 +106,79 @@ module internal AdmissionFlags =
     [<Literal>]
     let AlwaysInterleave = 0x04uy
 
-    /// <summary>Bits 3-7 — reserved; a set reserved bit invalidates the request.</summary>
+    /// <summary>
+    /// Bits 3-5 — the transaction field: <c>0</c> for a non-transactional operation, otherwise
+    /// the <c>Orleans.TransactionOption</c> value plus one. Code <c>7</c> is unassigned.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The option travels in the admission byte rather than beside it because dispatch already
+    /// compares that byte against the hosted descriptor as a whole (spec 003's normative
+    /// validation order). Carrying the transaction policy there makes a caller and a host that
+    /// disagree about whether an operation is transactional — or about which option it uses — a
+    /// rejected request rather than a silently non-transactional call.
+    /// </para>
+    /// <para>
+    /// The six option values and their numeric encodings are identical on Orleans 10.1.0 and
+    /// 10.2.2 (verified by reflection over both <c>Orleans.Transactions.dll</c> assemblies:
+    /// <c>Suppress=0, CreateOrJoin=1, Create=2, Join=3, Supported=4, NotAllowed=5</c>), so
+    /// <c>value + 1</c> is a stable encoding across the supported range.
+    /// </para>
+    /// </remarks>
     [<Literal>]
-    let Reserved = 0xF8uy
+    let TransactionMask = 0x38uy
 
-    /// <summary>Compose the flag byte from the three policy decisions.</summary>
-    let compose (isReadOnly: bool) (isOneWay: bool) (isAlwaysInterleave: bool) =
+    /// <summary>The bit position of the low bit of <see cref="TransactionMask"/>.</summary>
+    [<Literal>]
+    let TransactionShift = 3
+
+    /// <summary>The one code in <see cref="TransactionMask"/> that no transaction option uses.</summary>
+    [<Literal>]
+    let UnassignedTransactionCode = 7uy
+
+    /// <summary>Bits 6-7 — reserved; a set reserved bit invalidates the request.</summary>
+    [<Literal>]
+    let Reserved = 0xC0uy
+
+    /// <summary>Encode one transaction option into the transaction field.</summary>
+    let encodeTransaction (option: Orleans.TransactionOption) =
+        (byte (int option + 1)) <<< TransactionShift
+
+    /// <summary>Compose the flag byte from the three policy decisions and the transaction option.</summary>
+    let compose
+        (isReadOnly: bool)
+        (isOneWay: bool)
+        (isAlwaysInterleave: bool)
+        (transaction: Orleans.TransactionOption option)
+        =
         (if isReadOnly then ReadOnly else None)
         ||| (if isOneWay then OneWay else None)
         ||| (if isAlwaysInterleave then AlwaysInterleave else None)
+        ||| (match transaction with
+             | Some option -> encodeTransaction option
+             | Option.None -> None)
 
     /// <summary>True when the value sets at least one reserved bit.</summary>
     let hasReserved (flags: byte) = flags &&& Reserved <> None
+
+    /// <summary>The raw transaction code carried in bits 3-5.</summary>
+    let transactionCode (flags: byte) = (flags &&& TransactionMask) >>> TransactionShift
+
+    /// <summary>True when the operation declares a transaction option.</summary>
+    let isTransactional (flags: byte) = flags &&& TransactionMask <> None
+
+    /// <summary>True unless bits 3-5 carry the one unassigned code.</summary>
+    let hasValidTransactionField (flags: byte) =
+        transactionCode flags <> UnassignedTransactionCode
+
+    /// <summary>Decode the transaction field; <c>None</c> for a non-transactional operation.</summary>
+    let tryTransactionOption (flags: byte) : Orleans.TransactionOption option =
+        let code = transactionCode flags
+
+        if code = 0uy || code = UnassignedTransactionCode then
+            Option.None
+        else
+            Some(enum<Orleans.TransactionOption> (int code - 1))
 
 /// <summary>The reserved Orleans identifiers of the functional transport family.</summary>
 [<RequireQualifiedAccess>]

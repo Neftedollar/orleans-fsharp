@@ -15,6 +15,8 @@ open Orleans.Metadata
 open Orleans.Runtime
 open Orleans.Storage
 open Orleans.Streams
+open Orleans.Transactions
+open Orleans.Transactions.Abstractions
 open Orleans.FSharp.FunctionalDiagnostics
 open Orleans.FSharp.FunctionalSiloDiagnostics
 
@@ -82,6 +84,12 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                 (definition.Facets
                  |> Array.map (fun facet -> facet.Descriptor.StateName, facet.Descriptor.StoredType))
 
+            SerializerPreflight.ensureTransactionalStoredTypes
+                provider
+                definition.GrainTypeName
+                (definition.TransactionalFacets
+                 |> Array.map (fun facet -> facet.Descriptor.StateName, facet.Descriptor.StoredType))
+
         // "Silo startup validates every declared period against the configured
         // ReminderOptions.MinimumReminderPeriod." The real reminder service enforces the same
         // floor lazily, at first RegisterOrUpdateReminder call during activation (an
@@ -115,6 +123,63 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                     fail
                         StartupStage
                         $"the persistent state '{descriptor.StateName}' (stored type '{descriptor.StoredType.FullName}') of grain type '{definition.GrainTypeName}' names storage provider '{descriptor.ProviderName}', which is not registered on this silo. Add that named IGrainStorage (for example AddMemoryGrainStorage \"{descriptor.ProviderName}\") to every silo which hosts this definition."
+
+        // Spec 004 item 2. A definition that declares any transaction option, or attaches any
+        // transactional state, needs UseTransactions() on this silo; and every named transactional
+        // storage must resolve the way NamedTransactionalStateStorageFactory.Create resolves it —
+        // a keyed ITransactionalStateStorageFactory first, then a keyed IGrainStorage. Both are
+        // checked here rather than left to the first call: without UseTransactions the transaction
+        // agent is simply absent and the first transactional request fails with Orleans'
+        // OrleansTransactionsDisabledException, and an unresolvable storage name fails the
+        // activation.
+        let needsTransactions =
+            snapshot
+            |> Array.exists (fun entry ->
+                entry.Definition.TransactionalFacets.Length > 0
+                || entry.Definition.Operations
+                   |> Array.exists (fun operation -> operation.Transaction.IsSome))
+
+        if needsTransactions then
+            let declaringGrainTypes =
+                snapshot
+                |> Array.filter (fun entry ->
+                    entry.Definition.TransactionalFacets.Length > 0
+                    || entry.Definition.Operations
+                       |> Array.exists (fun operation -> operation.Transaction.IsSome))
+                |> Array.map (fun entry -> $"'{entry.GrainTypeName}'")
+                |> String.concat ", "
+
+            if isNull (box (services.GetService<ITransactionAgent>())) then
+                fail
+                    StartupStage
+                    $"grain type(s) {declaringGrainTypes} declare 'transactional' operations or attach transactional state, but this silo has no Orleans transaction agent. Call UseTransactions() on the silo builder (and on the client builder of every process which calls a transactional operation)."
+
+            if isNull (box (services.GetService<ITransactionalStateFactory>())) then
+                fail
+                    StartupStage
+                    $"grain type(s) {declaringGrainTypes} declare 'transactional' operations or attach transactional state, but this silo has no ITransactionalStateFactory. Call UseTransactions() on the silo builder."
+
+            for entry in snapshot do
+                let definition = entry.Definition
+
+                for blueprint in definition.TransactionalFacets do
+                    let descriptor = blueprint.Descriptor
+
+                    let resolved =
+                        not (
+                            isNull (
+                                box (
+                                    services.GetKeyedService<ITransactionalStateStorageFactory>
+                                        descriptor.StorageName
+                                )
+                            )
+                        )
+                        || not (isNull (box (services.GetKeyedService<IGrainStorage> descriptor.StorageName)))
+
+                    if not resolved then
+                        fail
+                            StartupStage
+                            $"the transactional state '{descriptor.StateName}' (stored type '{descriptor.StoredType.FullName}') of grain type '{definition.GrainTypeName}' names storage '{descriptor.StorageName}', which resolves to neither a named ITransactionalStateStorageFactory nor a named IGrainStorage on this silo. Add that named storage (for example AddMemoryGrainStorage \"{descriptor.StorageName}\") to every silo which hosts this definition."
 
         // Every named stream or broadcast-channel provider of every declared implicit
         // subscription must be registered on this silo, for the same reason the storage-provider
@@ -243,6 +308,14 @@ module internal FunctionalSiloServices =
     /// <summary>Register one hosted definition together with the silo-side services.</summary>
     let addTo (services: IServiceCollection) (definition: FunctionalHostedDefinition) =
         FunctionalClientServices.addTo services |> ignore
+
+        // Spec 004 item 2: each attached transactional facet registers its own exact-type
+        // ITransactionDataCopier. Orleans' open-generic default would ask the serializer for a
+        // DeepCopier of the application's stored type, which the functional runtime deliberately
+        // does not register a generalized copier for.
+        for blueprint in definition.TransactionalFacets do
+            blueprint.RegisterServices services
+
         (registryOf services).Add definition
 
 /// <summary>

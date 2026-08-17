@@ -73,7 +73,8 @@ let private makeContextWithToken
           StreamSequenceToken = sequenceToken
           DeactivateOnIdle = fun () -> deactivated <- deactivated + 1
           DelayDeactivation = fun span -> delayed <- span
-          ResolvePersistentState = resolve }
+          ResolvePersistentState = resolve
+          ResolveTransactionalState = fun _ -> null }
 
     let context = FunctionalGrainContext<SurfaceActor, string>("general", core)
     context, (fun () -> deactivated), (fun () -> delayed)
@@ -541,6 +542,7 @@ let ``the contract builder declares exactly the specified custom operations`` ()
            "sinceVersion"
            "stringKey"
            "stringKeyMapped"
+           "transactional"
            "version" |]
 
     test <@ customOperations typeof<GrainContractBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
@@ -562,6 +564,7 @@ let ``the definition builder declares exactly the specified custom operations`` 
            "placement"
            "stateFrom"
            "statelessWorker"
+           "transactionalStateFrom"
            "usePersistentState" |]
 
     test <@ customOperations typeof<FunctionalGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
@@ -582,6 +585,7 @@ let ``the invocation context declares exactly the specified public members`` () 
            "setRequestContext"
            "streamSequenceToken"
            "timeProvider"
+           "transactionalState"
            "tryGetRequestContext"
            "utcNow" |]
 

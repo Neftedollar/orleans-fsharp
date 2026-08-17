@@ -53,6 +53,9 @@ type internal FunctionalOperation =
         IsOneWay: bool
         /// Always-interleave admission; valid only with read-only or one-way.
         IsAlwaysInterleave: bool
+        /// The declared Orleans transaction option, when the operation is declared
+        /// <c>transactional</c>.
+        Transaction: Orleans.TransactionOption option
         /// The contract version this operation was introduced at; <c>1</c> unless declared.
         SinceVersion: int
         /// The precomputed request-direction protocol token.
@@ -65,6 +68,32 @@ type internal FunctionalOperation =
         /// reply types while the contract was sealed.
         ClosureFactory: Func<FunctionalCallSite, BoundCall>
     }
+
+    /// <summary>
+    /// True when this operation runs <b>inside</b> a transaction: the three options for which
+    /// Orleans' own <c>TransactionRequestBase.IsTransactionRequired</c> is true, so a transaction
+    /// is created or joined before the handler runs and the reply carries the participant set.
+    /// </summary>
+    /// <remarks>
+    /// <c>Supported</c> is deliberately not in this set. Orleans forwards an ambient transaction
+    /// context to a <c>Supported</c> call but starts none, so whether such a call has a
+    /// transaction is a run-time property of its caller, not a declaration — which is exactly why
+    /// the state-neutrality rule (a transaction-scoped operation publishes no primary state and
+    /// gets read-only persistent facades) applies to the three declared options and not to it.
+    /// </remarks>
+    member this.IsTransactionScoped =
+        match this.Transaction with
+        | Some Orleans.TransactionOption.Create
+        | Some Orleans.TransactionOption.CreateOrJoin
+        | Some Orleans.TransactionOption.Join -> true
+        | _ -> false
+
+    /// <summary>
+    /// True when this operation can see a transaction context at all — the transaction-scoped
+    /// options plus <c>Supported</c>, which forwards a caller's context without starting one.
+    /// </summary>
+    member this.CanCarryTransaction =
+        this.IsTransactionScoped || this.Transaction = Some Orleans.TransactionOption.Supported
 
 /// <summary>
 /// The non-generic view of a sealed contract.
@@ -224,6 +253,7 @@ type internal ContractDraftState<'Key> =
       ReadOnly: Set<int>
       OneWay: Set<int>
       AlwaysInterleave: Set<int>
+      Transactions: Map<int, Orleans.TransactionOption>
       SinceVersions: Map<int, int>
       OperationIds: Map<int, string> }
 
@@ -252,6 +282,7 @@ module internal ContractDraft =
               ReadOnly = Set.empty
               OneWay = Set.empty
               AlwaysInterleave = Set.empty
+              Transactions = Map.empty
               SinceVersions = Map.empty
               OperationIds = Map.empty }
         )
@@ -382,6 +413,7 @@ module internal ContractDraft =
                 let isReadOnly = state.ReadOnly.Contains field.Index
                 let isOneWay = state.OneWay.Contains field.Index
                 let isAlwaysInterleave = state.AlwaysInterleave.Contains field.Index
+                let transaction = state.Transactions |> Map.tryFind field.Index
 
                 if isOneWay && field.ReplyType <> typeof<unit> then
                     fail
@@ -392,6 +424,29 @@ module internal ContractDraft =
                     fail
                         ContractStage
                         $"API field '{field.FieldName}' of '{grainTypeName}' combines 'oneWay' with 'readOnly', which is rejected."
+
+                // Spec 004 item 2. A transactional call must be acknowledged: Orleans' transaction
+                // machinery reports the participant set back to the caller inside a
+                // TransactionResponse, and TransactionRequestBase's outgoing call filter joins it
+                // into the caller's TransactionInfo when the call returns. A one-way send
+                // completes at the local acknowledgement and has no response at all, so the
+                // participants this call enlisted would never be reported and the transaction
+                // could neither commit them nor abort them.
+                if transaction.IsSome && isOneWay then
+                    fail
+                        ContractStage
+                        $"API field '{field.FieldName}' of '{grainTypeName}' combines 'transactional' with 'oneWay'. A one-way call has no reply, so the participants it enlists are never reported back to the transaction and could neither be committed nor aborted."
+
+                // Spec 004 item 2. Orleans admits an AlwaysInterleave message before it consults
+                // any interleaving policy, so an always-interleaving transactional operation would
+                // run concurrently with another turn of the same activation while both hold
+                // transactional locks on the same states -- the lock-recursion and
+                // broken-lock paths of ReaderWriterLock exist precisely for that shape. The
+                // combination is rejected rather than left to fail at run time.
+                if transaction.IsSome && isAlwaysInterleave then
+                    fail
+                        ContractStage
+                        $"API field '{field.FieldName}' of '{grainTypeName}' combines 'transactional' with 'alwaysInterleave'. Orleans admits an always-interleave request before any interleaving policy is consulted, so two turns of this activation could hold transactional locks on the same states at once."
 
                 if isAlwaysInterleave && not (isReadOnly || isOneWay) then
                     fail
@@ -465,10 +520,11 @@ module internal ContractDraft =
                   IsReadOnly = isReadOnly
                   IsOneWay = isOneWay
                   IsAlwaysInterleave = isAlwaysInterleave
+                  Transaction = transaction
                   SinceVersion = sinceVersion
                   RequestToken = ProtocolToken.request grainTypeName version operationId
                   ReplyToken = ProtocolToken.reply grainTypeName version operationId
-                  AdmissionFlags = AdmissionFlags.compose isReadOnly isOneWay isAlwaysInterleave
+                  AdmissionFlags = AdmissionFlags.compose isReadOnly isOneWay isAlwaysInterleave transaction
                   ClosureFactory = BoundClosure.precompute field.ArgumentType field.ReplyType })
 
         let seen = Dictionary<string, string>(StringComparer.Ordinal)
@@ -750,6 +806,64 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         ContractDraft.withState<'Actor, 'Key, 'Api>
             { state.State with
                 AlwaysInterleave = ContractDraft.addPolicy "alwaysInterleave" state.State.AlwaysInterleave operation }
+
+    /// <summary>
+    /// Run one operation under an Orleans distributed transaction, with the given
+    /// <see cref="T:Orleans.TransactionOption"/>.
+    /// </summary>
+    /// <param name="option">
+    /// Orleans' own option enum, used unchanged rather than mirrored into an F# union: it is the
+    /// closed set, its six members and their numeric values are identical on Orleans 10.1.0 and
+    /// 10.2.2, and the admission byte encodes the value directly, so there is no mapping to drift.
+    /// Note that <c>Orleans.TransactionOption</c> (this one) and the legacy
+    /// <c>Orleans.FSharp.Transactions.TransactionOption</c> union of the classic KEEP-path share a
+    /// simple name; open only the one you mean.
+    /// </param>
+    /// <param name="selector">The API field to declare transactional.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Create, CreateOrJoin and Join are transaction-scoped</b> — Orleans creates or joins a
+    /// transaction before the handler runs. In such an operation the ONLY durable effect available
+    /// is a <c>transactionalStateFrom</c> facet: the handler's replacement primary state is
+    /// discarded exactly as a <c>readOnly</c> handler's is, and its persistent-state facades
+    /// reject the setter and every storage call. Nothing can roll back an in-memory publication or
+    /// a storage write when the transaction aborts, so allowing either would let one aborted call
+    /// leave the activation half-updated.
+    /// </para>
+    /// <para>
+    /// <b>Supported, Suppress and NotAllowed are not transaction-scoped.</b> They declare how the
+    /// operation behaves towards a caller's ambient transaction — forward it, hide it, or refuse
+    /// the call — and leave state publication and persistent facets exactly as they are for an
+    /// ordinary operation.
+    /// </para>
+    /// <para>
+    /// <b>readOnly composes.</b> A transaction started by a <c>readOnly</c> transactional
+    /// operation is started read-only (<c>TransactionRequestBase.Invoke</c> passes
+    /// <c>Options.HasFlag(InvokeMethodOptions.ReadOnly)</c> to
+    /// <c>ITransactionAgent.StartTransaction</c>), and the transactional facade rejects every
+    /// update.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("transactional")>]
+    member _.Transactional<'Argument, 'Reply>
+        (
+            state: GrainContractDraft<'Actor, 'Key, 'Api>,
+            option: Orleans.TransactionOption,
+            selector: OperationSelector<'Api, 'Argument, 'Reply>
+        ) =
+        if not (Enum.IsDefined(typeof<Orleans.TransactionOption>, option)) then
+            fail
+                ContractStage
+                $"'transactional' received the undefined Orleans.TransactionOption value {int option}."
+
+        let operation = ApiShape.resolve state.State.Shape "transactional" selector
+
+        if state.State.Transactions.ContainsKey operation.Index then
+            fail ContractStage $"'transactional' is applied more than once to API field '{operation.FieldName}'."
+
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                Transactions = state.State.Transactions.Add(operation.Index, option) }
 
     /// <summary>Override the stable wire ID of one operation, keeping it across a field rename.</summary>
     [<CustomOperation("operationId")>]

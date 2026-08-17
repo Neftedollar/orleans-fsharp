@@ -42,6 +42,7 @@
     <Compile Include="FunctionalApiShape.fs" />
     <Compile Include="FunctionalProtocol.fs" />
     <Compile Include="FunctionalPersistentState.fs" />
+    <Compile Include="FunctionalTransactionalState.fs" />
     <Compile Include="FunctionalKeyCodec.fs" />
     <Compile Include="FunctionalContext.fs" />
     <Compile Include="FunctionalTransport.fs" />

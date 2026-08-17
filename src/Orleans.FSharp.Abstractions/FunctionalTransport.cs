@@ -66,11 +66,94 @@ internal static class FunctionalAdmissionFlags
     /// <summary>Bit 2 — always-interleave admission.</summary>
     public const byte AlwaysInterleave = 0x04;
 
-    /// <summary>Bits 3-7 — reserved; a set reserved bit invalidates the request.</summary>
-    public const byte Reserved = 0xF8;
+    /// <summary>
+    /// Bits 3-5 — the transaction field: <c>0</c> for a non-transactional operation, otherwise
+    /// the <see cref="Orleans.TransactionOption"/> value plus one. Code <c>7</c> is unassigned.
+    /// </summary>
+    public const byte TransactionMask = 0x38;
+
+    /// <summary>The bit position of the low bit of <see cref="TransactionMask"/>.</summary>
+    public const int TransactionShift = 3;
+
+    /// <summary>The one code in <see cref="TransactionMask"/> that no transaction option uses.</summary>
+    public const byte UnassignedTransactionCode = 7;
+
+    /// <summary>Bits 6-7 — reserved; a set reserved bit invalidates the request.</summary>
+    public const byte Reserved = 0xC0;
 
     /// <summary>True when the value sets at least one reserved bit.</summary>
     public static bool HasReservedBits(byte flags) => (flags & Reserved) != 0;
+
+    /// <summary>The raw transaction code carried in bits 3-5.</summary>
+    public static byte TransactionCode(byte flags) => (byte)((flags & TransactionMask) >> TransactionShift);
+
+    /// <summary>True when the operation declares a transaction option.</summary>
+    public static bool IsTransactional(byte flags) => (flags & TransactionMask) != 0;
+
+    /// <summary>True unless bits 3-5 carry the one unassigned code.</summary>
+    public static bool IsTransactionFieldValid(byte flags) => TransactionCode(flags) != UnassignedTransactionCode;
+
+    /// <summary>Encode one transaction option into the transaction field.</summary>
+    public static byte EncodeTransaction(TransactionOption option) =>
+        (byte)((((byte)option) + 1) << TransactionShift);
+
+    /// <summary>Decode the transaction field; <c>false</c> for a non-transactional operation.</summary>
+    public static bool TryGetTransactionOption(byte flags, out TransactionOption option)
+    {
+        var code = TransactionCode(flags);
+
+        if (code is 0 or UnassignedTransactionCode)
+        {
+            option = default;
+            return false;
+        }
+
+        option = (TransactionOption)(code - 1);
+        return true;
+    }
+}
+
+/// <summary>
+/// The runtime-owned mutable cell that holds one functional transactional state.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Orleans' <c>ITransactionalState&lt;TState&gt;</c> requires <c>TState : class, new()</c> and
+/// applies an update by <b>mutating</b> the stored instance in place —
+/// <c>TransactionalState&lt;TState&gt;.PerformUpdate</c> hands the update function
+/// <c>record.State</c> and keeps whatever that object looks like when the function returns. An
+/// ordinary F# state type is an immutable record, a union, or a tuple: it has neither a
+/// parameterless constructor nor a way to be mutated.
+/// </para>
+/// <para>
+/// This box is the adapter. It is the only thing Orleans ever stores, copies, or serializes for a
+/// functional transactional facet; the application's value rides in <see cref="Value"/> and is
+/// replaced by a single reference assignment the runtime performs. The application function is
+/// <c>'State -&gt; 'State</c> and never sees the box, so it cannot mutate transactional state in
+/// place even by accident.
+/// </para>
+/// </remarks>
+/// <typeparam name="TValue">The application's transactional state type.</typeparam>
+[GenerateSerializer]
+public sealed class FunctionalTransactionalBox<TValue>
+{
+    /// <summary>The application value currently held by this transactional state.</summary>
+    [Id(0)]
+    public TValue Value { get; set; } = default!;
+
+    /// <summary>
+    /// False until an update has stored a value into <see cref="Value"/>.
+    /// </summary>
+    /// <remarks>
+    /// A transactional state has no "record exists" flag: Orleans materializes a state that was
+    /// never written by calling <c>new TState()</c>, which is exactly why it constrains
+    /// <c>TState : class, new()</c>. For an F# state type <c>default</c> is a null reference or a
+    /// zeroed struct, neither of which is necessarily the value the definition declared, so the
+    /// runtime distinguishes "never written" from "written" explicitly and substitutes the
+    /// declared initial value on a read of an unwritten state.
+    /// </remarks>
+    [Id(1)]
+    public bool HasValue { get; set; }
 }
 
 /// <summary>Shared diagnostic vocabulary of the fixed transport.</summary>

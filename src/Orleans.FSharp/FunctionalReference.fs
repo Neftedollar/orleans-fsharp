@@ -86,6 +86,14 @@ type internal FunctionalReferenceSender(reference: FunctionalGrainReference, met
         member _.SendAsync(envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
             reference.SendAsync(envelope, metadata.InterfaceType, metadata.DispatchMethod, cancellationToken)
 
+        member _.SendTransactionalAsync(envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
+            reference.SendTransactionalAsync(
+                envelope,
+                metadata.InterfaceType,
+                metadata.DispatchMethod,
+                cancellationToken
+            )
+
         member _.SendOneWay(envelope: FunctionalRequestEnvelope) =
             reference.SendOneWay(envelope, metadata.InterfaceType, metadata.DispatchMethod)
 
