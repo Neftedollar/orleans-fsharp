@@ -188,6 +188,6 @@ let! result = GrainRef.invoke counterRef (fun g -> g.Increment())
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md) -- configure the silo that this client connects to
-- [Streaming](streaming.md) -- publish and subscribe to streams from the client
-- [Security](security.md) -- TLS and mTLS in depth
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) -- configure the silo that this client connects to
+- [Streaming](/orleans-fsharp/streaming/) -- publish and subscribe to streams from the client
+- [Security](/orleans-fsharp/security/) -- TLS and mTLS in depth

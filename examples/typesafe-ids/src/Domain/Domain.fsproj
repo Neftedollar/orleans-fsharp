@@ -1,11 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- Task 8 deprecation pass (ruling 6): this example keeps its grain{} demos running
+         beside their functional-runtime twin (UserGrainFunctional.fs) on purpose. -->
+    <NoWarn>$(NoWarn);FS0044</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Include="Ids.fs" />
     <Compile Include="Routing.fs" />
     <Compile Include="UserGrain.fs" />
+    <Compile Include="UserGrainFunctional.fs" />
     <Compile Include="OrderGrain.fs" />
+    <Compile Include="OrderGrainFunctional.fs" />
     <Compile Include="RouterGrain.fs" />
+    <Compile Include="RouterGrainFunctional.fs" />
   </ItemGroup>
 
   <ItemGroup>

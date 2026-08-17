@@ -44,20 +44,24 @@
         };
 
         connection.on("ReceiveMetrics", function (update) {
+            // SignalR's default Hub protocol (System.Text.Json) serializes with camelCase
+            // property names, not the F# record's PascalCase -- so this reads update.metrics /
+            // m.name / m.value / m.timestamp / update.sequenceNumber, not the PascalCase names
+            // the record declares.
             metricsEl.innerHTML = "";
-            if (update.Metrics) {
-                update.Metrics.forEach(function (m) {
+            if (update.metrics) {
+                update.metrics.forEach(function (m) {
                     const card = document.createElement("div");
                     card.className = "metric-card";
-                    const unit = units[m.Name] || "";
+                    const unit = units[m.name] || "";
                     card.innerHTML =
-                        '<div class="name">' + m.Name.replace(/_/g, " ") + '</div>' +
-                        '<div class="value">' + m.Value + unit + '</div>' +
-                        '<div class="timestamp">' + new Date(m.Timestamp).toLocaleTimeString() + '</div>';
+                        '<div class="name">' + m.name.replace(/_/g, " ") + '</div>' +
+                        '<div class="value">' + m.value + unit + '</div>' +
+                        '<div class="timestamp">' + new Date(m.timestamp).toLocaleTimeString() + '</div>';
                     metricsEl.appendChild(card);
                 });
             }
-            sequenceEl.textContent = "Update #" + update.SequenceNumber;
+            sequenceEl.textContent = "Update #" + update.sequenceNumber;
         });
 
         connection.onclose(function () {

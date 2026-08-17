@@ -16,11 +16,14 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 [<Collection("ClusterCollection")>]
 type HandleStateWithContextIntegrationTests(fixture: ClusterFixture) =
 
     // ── pure state accumulation ───────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     let ``SWCAdd: single add updates SWCSum and SWCSteps`` () =
         task {
@@ -131,3 +134,5 @@ type HandleStateWithContextIntegrationTests(fixture: ClusterFixture) =
             let! s = Eventually.until (fun s -> s.SWCSum = 13) (fun () -> FSharpGrain.send GetSWCState g)
             test <@ s.SWCSum = 13 @>
         }
+
+#warnon "44"

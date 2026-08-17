@@ -249,7 +249,51 @@ module SiloConfig =
             invalidOp
                 $"Extension method '{methodName}' not found. Install the NuGet package '{packageHint}' and ensure it is referenced in your project."
 
+    /// <summary>
+    /// Every Orleans assembly this one references, loaded once. These are the assemblies Orleans
+    /// has to see before it snapshots the grain manifest.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Orleans builds its grain manifest from assemblies carrying the code-generated
+    /// [assembly: ApplicationPart] / [assembly: TypeManifestProvider] attributes, and takes that
+    /// snapshot the FIRST time AddSerializer runs. Orleans' generators are Roslyn generators, so
+    /// an F# assembly never carries those attributes and an assembly reached only through an F#
+    /// hop is invisible to that first scan. In a standalone F# host that means the first call
+    /// needing one of its grains dies with "Could not find an implementation for interface ...":
+    /// IMemoryStorageGrain for <c>addMemoryStorage</c> (Orleans.Persistence.Memory),
+    /// IReminderTableGrain for <c>addMemoryReminderService</c> (Orleans.Reminders), the memory
+    /// stream queue grains for <c>addMemoryStreams</c> (Orleans.Streaming), and FSharpGrainImpl /
+    /// the functional transport proxies (Orleans.FSharp.Abstractions).
+    /// </para>
+    /// <para>
+    /// The set is DERIVED from this assembly's own Orleans references rather than hand-written,
+    /// so a package added to Orleans.FSharp.Runtime cannot be forgotten here — three separate
+    /// applications had to hand-write the missing touch before the derivation replaced the
+    /// two-entry list. Loading an already-loaded assembly is a dictionary hit, and the whole set
+    /// is forced once, so every entry point can run this rather than only the one owning the host.
+    /// See docs/functional-grains.md, "Running a silo from a standalone F# process".
+    /// </para>
+    /// </remarks>
+    let internal manifestAssemblies =
+        lazy
+            (Reflection.Assembly.GetExecutingAssembly().GetReferencedAssemblies()
+             |> Array.filter (fun reference ->
+                 not (isNull reference.Name)
+                 && reference.Name.StartsWith("Orleans", StringComparison.Ordinal))
+             |> Array.choose (fun reference ->
+                 try
+                     Some(Reflection.Assembly.Load reference)
+                 with _ ->
+                     None))
+
+    let private preloadManifestAssemblies () = manifestAssemblies.Force() |> ignore
+
     let applyToSiloBuilder (config: SiloConfig) (siloBuilder: ISiloBuilder) : unit =
+        // A consumer who composes an ISiloBuilder directly — the shape both shipped examples
+        // use — never runs applyToHost, so the pre-load has to happen on this path too.
+        preloadManifestAssemblies ()
+
         // Apply clustering
         match config.ClusteringMode with
         | Some Localhost -> siloBuilder.UseLocalhostClustering() |> ignore
@@ -422,6 +466,12 @@ module SiloConfig =
     /// <param name="config">The silo configuration to apply.</param>
     /// <param name="builder">The HostApplicationBuilder to configure.</param>
     let applyToHost (config: SiloConfig) (builder: HostApplicationBuilder) : unit =
+        // Before UseOrleans, not inside it: the manifest snapshot is taken while UseOrleans
+        // constructs the silo builder, so applyToSiloBuilder's own pre-load runs a step too
+        // late on this path. It stays there for the standalone ISiloBuilder consumers, and the
+        // touch is idempotent, so running it twice costs nothing.
+        preloadManifestAssemblies ()
+
         builder.UseOrleans(fun siloBuilder -> applyToSiloBuilder config siloBuilder)
         |> ignore
 
@@ -1062,7 +1112,18 @@ type SiloConfigBuilder() =
         { config with GrainCollectionAge = Some age }
 
     /// <summary>Returns the completed silo configuration.</summary>
-    member _.Run(config: SiloConfig) = config
+    /// <remarks>
+    /// Building the configuration is also where the manifest pre-load runs, and that placement is
+    /// the point: <c>applyToSiloBuilder</c> pre-loads too, but a WebApplicationBuilder host calls
+    /// it from INSIDE <c>builder.Host.UseOrleans(...)</c>, and UseOrleans has already taken the
+    /// manifest snapshot by the time it invokes that callback. <c>let config = siloConfig { ... }</c>
+    /// evaluates before UseOrleans in every host shape, so the assemblies are loaded in time
+    /// without the application hand-writing a force-load of its own.
+    /// See <see cref="M:Orleans.FSharp.Runtime.SiloConfig.manifestAssemblies"/>.
+    /// </remarks>
+    member _.Run(config: SiloConfig) =
+        SiloConfig.manifestAssemblies.Force() |> ignore
+        config
 
 /// <summary>
 /// Module containing the siloConfig computation expression builder instance.

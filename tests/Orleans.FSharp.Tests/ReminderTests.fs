@@ -11,18 +11,24 @@ open Orleans
 open Orleans.Runtime
 open Orleans.FSharp
 
+
 // --- GrainDefinition.ReminderHandlers field tests ---
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``GrainDefinition has ReminderHandlers field`` () =
     let defType = typeof<GrainDefinition<int, string>>
 
+#warnon "44"
     let field =
         defType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
         |> Array.tryFind (fun p -> p.Name = "ReminderHandlers")
 
     test <@ field.IsSome @>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``ReminderHandlers defaults to empty map`` () =
     let def: GrainDefinition<int, string> =
@@ -33,11 +39,14 @@ let ``ReminderHandlers defaults to empty map`` () =
 
     test <@ def.ReminderHandlers |> Map.isEmpty @>
 
+#warnon "44"
 [<Fact>]
 let ``onReminder CE keyword adds handler to GrainDefinition`` () =
     let handler (_state: int) (_name: string) (_status: TickStatus) =
         task { return _state + 1 }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState 0
@@ -47,6 +56,7 @@ let ``onReminder CE keyword adds handler to GrainDefinition`` () =
 
     test <@ def.ReminderHandlers |> Map.containsKey "MyReminder" @>
 
+#warnon "44"
 [<Fact>]
 let ``multiple onReminder calls register multiple handlers`` () =
     let handler1 (_state: int) (_name: string) (_status: TickStatus) =
@@ -55,6 +65,8 @@ let ``multiple onReminder calls register multiple handlers`` () =
     let handler2 (_state: int) (_name: string) (_status: TickStatus) =
         task { return _state + 10 }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState 0
@@ -67,6 +79,7 @@ let ``multiple onReminder calls register multiple handlers`` () =
     test <@ def.ReminderHandlers |> Map.containsKey "Reminder1" @>
     test <@ def.ReminderHandlers |> Map.containsKey "Reminder2" @>
 
+#warnon "44"
 [<Fact>]
 let ``onReminder handler has correct signature`` () =
     let mutable handlerCalled = false
@@ -77,6 +90,8 @@ let ``onReminder handler has correct signature`` () =
             return state + 1
         }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState 42
@@ -91,6 +106,7 @@ let ``onReminder handler has correct signature`` () =
 
 // --- Reminder module type signature tests ---
 
+#warnon "44"
 [<Fact>]
 let ``Reminder module exists in Orleans.FSharp assembly`` () =
     let reminderModule =
@@ -170,6 +186,8 @@ let ``Reminder module functions do not return FSharpAsync`` () =
 // FsCheck property tests
 // ---------------------------------------------------------------------------
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Property>]
 let ``onReminder stores correct name for any non-whitespace reminder name`` (name: NonNull<string>) =
     String.IsNullOrWhiteSpace name.Get
@@ -204,3 +222,5 @@ let ``onReminder later registration with same name replaces earlier`` (first: in
     let handler = def.ReminderHandlers.["dup"]
     def.ReminderHandlers |> Map.count = 1
     && handler 0 "dup" (TickStatus()) |> _.GetAwaiter().GetResult() = second
+
+#warnon "44"

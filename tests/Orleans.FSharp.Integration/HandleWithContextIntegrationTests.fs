@@ -17,6 +17,7 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
@@ -31,6 +32,8 @@ type HandleWithContextIntegrationTests(fixture: ClusterFixture) =
 
     // ── basic grain-to-grain forwarding ──────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     let ``ForwardPing calls peer grain and records peer count`` () =
         task {
@@ -121,3 +124,5 @@ type HandleWithContextIntegrationTests(fixture: ClusterFixture) =
             let! s = Eventually.until (fun s -> s.PingsSent = 1) (fun () -> FSharpGrain.send GetRelayState relay)
             test <@ s.PingsSent = 1 @>
         }
+
+#warnon "44"

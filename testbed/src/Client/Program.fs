@@ -8,6 +8,7 @@ open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.FSharp
 open Testbed.Shared
+open Testbed.Shared.CounterFunctionalContract
 
 // No CodeGen needed — uses IFSharpGrain universal interface via FSharpGrain.ref
 
@@ -34,6 +35,10 @@ let runStressTest () =
             |> ignore
 
             clientBuilder.UseRedisClustering(redisConn) |> ignore
+            // Spec 003: this is a genuinely separate client process, so the functional runtime's
+            // client-side services (reference activator, fixed transport serializers) must be
+            // registered here — the silo's AddFunctionalGrain does not reach across processes.
+            clientBuilder.AddFunctionalGrainClient() |> ignore
             Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
                 clientBuilder.Services,
                 Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
@@ -57,6 +62,25 @@ let runStressTest () =
         // Typed grain handle factories — no per-grain interfaces needed
         let counter key = FSharpGrain.ref<CounterState, CounterCommand> factory key
         let chat key = FSharpGrain.ref<ChatState, ChatCommand> factory key
+
+        // ============================================================
+        // TEST 0: functional-runtime twin (spec 003) — same counter domain,
+        // driven from this client-only process through the typed API record
+        // instead of FSharpGrain.ref + send. Deliberately small: the point is
+        // that a client process can call a functional grain at all, not throughput.
+        // ============================================================
+        printfn "TEST 0: functional-runtime counter twin (testbed.counter.functional)..."
+        let counterFn = CounterApi.ref factory "functional-smoke"
+
+        let! fn1 = counterFn.increment ()
+        let! fn2 = counterFn.increment ()
+        let! fn3 = counterFn.decrement ()
+        let! fnValue = counterFn.value ()
+
+        printfn "  increment -> %d, increment -> %d, decrement -> %d, value -> %d %s"
+            fn1 fn2 fn3 fnValue
+            (if (fn1, fn2, fn3, fnValue) = (1, 2, 1, 1) then "OK" else "FAIL")
+        printfn ""
 
         // ============================================================
         // TEST 1: 1000 counter grains — parallel activation

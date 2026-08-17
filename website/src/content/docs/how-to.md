@@ -7,6 +7,12 @@ description: Step-by-step guide to building distributed systems with Orleans.FSh
 
 Orleans.FSharp provides idiomatic F# computation expressions for Microsoft Orleans, the virtual actor framework. This guide walks you through the entire process — from installing the .NET SDK to running a production-ready silo with grains, state persistence, and property-based tests.
 
+> **Note.** This tutorial is written against the `grain { }` CE, which now carries `[<Obsolete>]`
+> (warning, not error) -- every step still works exactly as written. For the current grain authoring
+> model (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) see
+> [functional-grains.md](/orleans-fsharp/functional-grains/); the silo, persistence and testing steps are the same
+> under both models.
+
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download) or later
@@ -95,6 +101,98 @@ let account =
 
 The F# compiler ensures every state-command combination is handled. Invalid transitions are caught at compile time, not runtime.
 
+## Step 4 (functional equivalent): the current authoring model
+
+Step 4 above uses the deprecated `grain { }` CE. The functional runtime -- the current model -- gives
+the same domain a **contract** (wire identity + key codec + policies) and an **API record** of typed
+operations, instead of one boxed message DU:
+
+```fsharp
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type AccountActor = private AccountActor of unit
+
+[<NoEquality; NoComparison>]
+type AccountApi =
+    { deposit: decimal -> Task<decimal>
+      withdraw: decimal -> Task<Result<decimal, string>>
+      getBalance: unit -> Task<decimal>
+      close: unit -> Task<bool> }
+
+[<RequireQualifiedAccess>]
+module AccountApi =
+    let contract =
+        grainContract<AccountActor, string, AccountApi> () {
+            grainType "account"
+            version 1
+            stringKey
+
+            readOnly (_.getBalance)
+        }
+
+    let ref = FunctionalGrain.ref contract
+
+let accountDefinition =
+    grainFor AccountApi.contract {
+        defaultState (fun () -> Inactive)
+
+        handle
+            (_.deposit)
+            (fun _context state amount ->
+                task {
+                    if amount <= 0m then
+                        return state, (match state with Active b -> b | Inactive -> 0m)
+                    else
+                        match state with
+                        | Inactive -> return Active amount, amount
+                        | Active balance ->
+                            let next = balance + amount
+                            return Active next, next
+                })
+
+        handle
+            (_.withdraw)
+            (fun _context state amount ->
+                task {
+                    match state with
+                    | Active balance when amount > 0m && amount <= balance ->
+                        let next = balance - amount
+                        if next = 0m then return Inactive, Ok 0m else return Active next, Ok next
+                    | Active _ -> return state, Error "invalid withdrawal amount"
+                    | Inactive -> return state, Error "account is inactive"
+                })
+
+        handle
+            (_.getBalance)
+            (fun _context state () -> task { return state, (match state with Active b -> b | Inactive -> 0m) })
+
+        handle
+            (_.close)
+            (fun _context state () ->
+                task {
+                    match state with
+                    | Active _ -> return Inactive, true
+                    | Inactive -> return Inactive, false
+                })
+    }
+```
+
+Reuses the exact same `AccountState` DU from Step 3. `readOnly (_.getBalance)` tells the runtime the
+handler's returned state is discarded and lets it interleave with other read-only calls. Register
+with `siloBuilder.AddFunctionalGrain(accountDefinition)` on the silo builder (inside the
+`builder.UseOrleans(fun siloBuilder -> ...)` delegate), then call it with a typed record instead of a
+boxed message:
+
+```fsharp
+let account = AccountApi.ref factory "account-1"
+let! balance = account.deposit 100m
+let! result = account.withdraw 40m
+```
+
+See [functional-grains.md](/orleans-fsharp/functional-grains/) for the complete guide, including
+persistence, timers, reminders, and multi-provider writes.
+
 ## Step 5: Configure the silo
 
 Use the `siloConfig {}` CE to configure Microsoft Orleans clustering, storage, and streaming:
@@ -181,13 +279,14 @@ Orleans.FSharp supports all Microsoft Orleans production features:
 - **Security**: TLS/mTLS, call filters, request context propagation
 - **Observability**: OpenTelemetry, health checks, Orleans Dashboard
 
-See the [Silo Configuration](/orleans-fsharp/guides/silo-configuration/) and [Security](/orleans-fsharp/guides/security/) guides for production setup.
+See the [Silo Configuration](/orleans-fsharp/silo-configuration/) and [Security](/orleans-fsharp/security/) guides for production setup.
 
 ## Next steps
 
-- [Grain Definition](/orleans-fsharp/guides/grain-definition/) -- all 31 keywords in the `grain {}` CE
-- [Event Sourcing](/orleans-fsharp/guides/event-sourcing/) -- CQRS with `eventSourcedGrain {}`
-- [Testing](/orleans-fsharp/guides/testing/) -- TestHarness, GrainMock, and property tests
+- [Functional Grain Runtime](/orleans-fsharp/functional-grains/) -- the current authoring model, full guide
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- all 31 keywords in the `grain {}` CE (deprecated model, kept for reference)
+- [Event Sourcing](/orleans-fsharp/event-sourcing/) -- CQRS with `eventSourcedGrain {}`
+- [Testing](/orleans-fsharp/testing/) -- TestHarness, GrainMock, and property tests
 - [API Reference](/orleans-fsharp/api-reference/) -- complete module and function reference
 
 <script type="application/ld+json">
@@ -222,8 +321,8 @@ See the [Silo Configuration](/orleans-fsharp/guides/silo-configuration/) and [Se
     },
     {
       "@type": "HowToStep",
-      "name": "Implement the grain with the grain {} computation expression",
-      "text": "Use the grain {} CE with defaultState, handle, and persist keywords to define grain behavior declaratively.",
+      "name": "Implement the grain with the grain {} computation expression (deprecated; see the functional grain runtime)",
+      "text": "Use the grain {} CE with defaultState, handle, and persist keywords to define grain behavior declaratively. This CE is deprecated; new code should use the functional grain runtime (grainContract / grainFor / AddFunctionalGrain).",
       "position": 4
     },
     {

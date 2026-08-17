@@ -11,7 +11,8 @@ License: MIT
 - Comparison: https://neftedollar.com/orleans-fsharp/comparison/
 
 ## Core Docs
-- Grain definition: https://neftedollar.com/orleans-fsharp/grain-definition/
+- Functional grain runtime (current authoring model): https://neftedollar.com/orleans-fsharp/functional-grains/
+- Grain definition (deprecated `grain {}` model, still supported): https://neftedollar.com/orleans-fsharp/grain-definition/
 - Silo configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
 - Client configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
 - Serialization: https://neftedollar.com/orleans-fsharp/serialization/

@@ -114,6 +114,8 @@ module TestHarness =
         }
 
     // ── FSharpGrain helpers ──────────────────────────────────────────
+    // deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
 
     /// <summary>
     /// Gets an FSharpGrain handle from the test harness using a string key.
@@ -124,6 +126,7 @@ module TestHarness =
     /// <typeparam name="'State">The grain state type.</typeparam>
     /// <typeparam name="'Message">The grain message/command type.</typeparam>
     /// <returns>An FSharpGrainHandle for the specified grain.</returns>
+    [<Obsolete("TestHarness.getFSharpGrain serves the superseded grain{} message-passing cluster: for functional grains define the grain with grainContract<...> / grainFor, register it on the TestingHost silo with AddFunctionalGrain, and get a typed API record with FunctionalGrain.ref contract harness.Client key. See docs/functional-grains.md for the migration.", false)>]
     let getFSharpGrain<'State, 'Message>
         (harness: TestHarness)
         (key: string)
@@ -139,6 +142,7 @@ module TestHarness =
     /// <typeparam name="'State">The grain state type.</typeparam>
     /// <typeparam name="'Message">The grain message/command type.</typeparam>
     /// <returns>An FSharpGrainGuidHandle for the specified grain.</returns>
+    [<Obsolete("TestHarness.getFSharpGrainGuid serves the superseded grain{} message-passing cluster: for functional grains define the grain with grainContract<...> / grainFor over a Guid key, register it on the TestingHost silo with AddFunctionalGrain, and get a typed API record with FunctionalGrain.ref contract harness.Client key. See docs/functional-grains.md for the migration.", false)>]
     let getFSharpGrainGuid<'State, 'Message>
         (harness: TestHarness)
         (key: Guid)
@@ -154,11 +158,13 @@ module TestHarness =
     /// <typeparam name="'State">The grain state type.</typeparam>
     /// <typeparam name="'Message">The grain message/command type.</typeparam>
     /// <returns>An FSharpGrainIntHandle for the specified grain.</returns>
+    [<Obsolete("TestHarness.getFSharpGrainInt serves the superseded grain{} message-passing cluster: for functional grains define the grain with grainContract<...> / grainFor over an int64 key, register it on the TestingHost silo with AddFunctionalGrain, and get a typed API record with FunctionalGrain.ref contract harness.Client key. See docs/functional-grains.md for the migration.", false)>]
     let getFSharpGrainInt<'State, 'Message>
         (harness: TestHarness)
         (key: int64)
         : FSharpGrainIntHandle<'State, 'Message> =
         FSharpGrain.refInt<'State, 'Message> harness.Cluster.GrainFactory key
+#warnon "44"
 
     /// <summary>
     /// Gets a typed grain reference from the test harness using a string key.

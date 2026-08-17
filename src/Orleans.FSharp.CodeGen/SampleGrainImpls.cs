@@ -48,7 +48,9 @@ public class CounterGrainImpl : Grain, ICounterGrain
 
     public async Task<object> HandleMessage(CounterCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(CounterGrainDef.counter, _current, cmd);
+#pragma warning restore CS0618
         _current = next; _state.State.State = next; await _state.WriteStateAsync();
         return result;
     }
@@ -68,7 +70,9 @@ public class EchoGrainImpl : Grain, IEchoGrain
 
     public async Task<object> HandleMessage(EchoCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(EchoGrainDef.echo, _current, cmd);
+#pragma warning restore CS0618
         _current = next; return result;
     }
 }
@@ -91,7 +95,9 @@ public class OrderGrainImpl : Grain, IOrderGrain
 
     public async Task<object> HandleMessage(OrderCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(OrderGrainDef.order, _current, cmd);
+#pragma warning restore CS0618
         _current = next; _state.State.State = next; await _state.WriteStateAsync();
         return result;
     }
@@ -111,7 +117,9 @@ public class ProcessorGrainImpl : Grain, IProcessorGrain
 
     public async Task<object> HandleMessage(ProcessorCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(ProcessorGrainDef.processor, _current, cmd);
+#pragma warning restore CS0618
         _current = next; return result;
     }
 }
@@ -152,7 +160,9 @@ public class ReminderTestGrainImpl : Grain, IReminderTestGrain, IRemindable
 
     public async Task ReceiveReminder(string reminderName, TickStatus status)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         _current = await GrainDefinition.invokeReminderHandler(ReminderTestGrainDef.reminderTestGrain, _current, reminderName, status);
+#pragma warning restore CS0618
         _state.State.ReminderFireCount = _current;
         await _state.WriteStateAsync();
     }
@@ -183,7 +193,9 @@ public class TimerTestGrainImpl : Grain, ITimerTestGrain
 
     public async Task<object> HandleMessage(TimerCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(TimerTestGrainDef.timerTestGrain, _current, cmd);
+#pragma warning restore CS0618
         _current = next; return result;
     }
 }
@@ -200,7 +212,9 @@ public class SequentialGrainImpl : Grain, ISequentialGrain
 
     public async Task<object> HandleMessage(SequentialCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(SequentialGrainDef.sequential, _current, cmd);
+#pragma warning restore CS0618
         _current = next; return result;
     }
 }
@@ -218,7 +232,9 @@ public class AggregatorGrainImpl : Grain, IAggregatorGrain
 
     public async Task<object> HandleMessage(AggregatorCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(AggregatorGrainDef.aggregator, _current, cmd);
+#pragma warning restore CS0618
         _current = next; return result;
     }
 }
@@ -241,7 +257,9 @@ public class AggregatorGrainImpl : Grain, IAggregatorGrain
 /// </summary>
 public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
 {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
     private readonly GrainDefinition<LifecycleState, LifecycleTestCommand> _def;
+#pragma warning restore CS0618
     private readonly IPersistentState<LifecycleState> _state;
     private LifecycleState _current;
 
@@ -251,7 +269,9 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     /// <c>IPersistentState</c> is injected with the "Default" storage provider.
     /// </summary>
     public LifecycleTestGrainImpl(
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         GrainDefinition<LifecycleState, LifecycleTestCommand> definition,
+#pragma warning restore CS0618
         [PersistentState("state", "Default")] IPersistentState<LifecycleState> state)
     {
         _def = definition;
@@ -268,7 +288,9 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
         if (_state.RecordExists)
             _current = _state.State;
 
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         _current = await GrainDefinition.invokeOnActivate(_def, _current);
+#pragma warning restore CS0618
     }
 
     /// <summary>
@@ -276,7 +298,9 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     /// </summary>
     public override async Task OnDeactivateAsync(DeactivationReason reason, CancellationToken ct)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         await GrainDefinition.invokeOnDeactivate(_def, _current);
+#pragma warning restore CS0618
     }
 
     /// <summary>
@@ -285,7 +309,9 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     /// </summary>
     public async Task<object> HandleMessage(LifecycleTestCommand cmd)
     {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var (next, result) = await GrainDefinition.invokeHandler(_def, _current, cmd);
+#pragma warning restore CS0618
         _current = next;
         _state.State = _current;
         await _state.WriteStateAsync();
@@ -310,7 +336,9 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
 /// </summary>
 public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
 {
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
     private readonly GrainDefinition<AdditionalState, AdditionalStateCommand> _def;
+#pragma warning restore CS0618
     private readonly IPersistentState<AdditionalState> _state;
     private AdditionalState _current;
 
@@ -324,7 +352,9 @@ public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
     /// handler registry, which would cause <c>IFSharpGrain</c> ambiguity.
     /// </summary>
     public AdditionalStateTestGrainImpl(
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         GrainDefinition<AdditionalState, AdditionalStateCommand> definition,
+#pragma warning restore CS0618
         [PersistentState("state", "Default")] IPersistentState<AdditionalState> state)
     {
         _def = definition;
@@ -342,8 +372,10 @@ public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
         if (_state.RecordExists)
             _current = _state.State;
 
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         _additionalStates = await Orleans.FSharp.Runtime.GrainDefinition.initAdditionalStates(
             _def, ServiceProvider, this.GrainContext.GrainId);
+#pragma warning restore CS0618
     }
 
     /// <summary>
@@ -355,8 +387,10 @@ public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
     {
         // GrainContext module compiles as GrainContextModule in C# (F# appends "Module" suffix
         // when a module shares the same name as a type in the same namespace).
+#pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         var ctx = Orleans.FSharp.GrainContextModule.forCSharp(GrainFactory, ServiceProvider, _additionalStates, this.GrainContext.GrainId);
         var (next, result) = await GrainDefinition.invokeContextHandler(_def, ctx, _current, cmd);
+#pragma warning restore CS0618
         _current = next;
         _state.State = _current;
         await _state.WriteStateAsync();

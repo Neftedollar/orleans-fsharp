@@ -7,6 +7,12 @@ description: "Transactions, grain directory, OpenTelemetry, shutdown, state migr
 
 **Transactions, grain directory, OpenTelemetry, shutdown, state migration, and serialization.**
 
+> **Note.** The `grain { }` CE, `AddFSharpGrain` and the `FSharpGrain.*` handle module used in the
+> reminder, timer and multi-silo examples below now carry `[<Obsolete>]` (warning, not error) --
+> they still work exactly as described. For the current grain authoring model see
+> [functional-grains.md](/orleans-fsharp/functional-grains/). Transactions (`TransactionalGrainDefinition`) and
+> the other topics on this page are not affected.
+
 ## What you'll learn
 
 - How to use Orleans transactions from F#
@@ -868,6 +874,6 @@ assembly dependency on the Kubernetes hosting package.
 
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- use these features in grain definitions
-- [Silo Configuration](silo-configuration.md) -- configure providers for these features
-- [API Reference](api-reference.md) -- complete list of all public types and functions
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- use these features in grain definitions
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) -- configure providers for these features
+- [API Reference](/orleans-fsharp/api-reference/) -- complete list of all public types and functions

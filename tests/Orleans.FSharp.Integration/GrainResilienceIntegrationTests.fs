@@ -7,6 +7,7 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 // ---------------------------------------------------------------------------
 // GrainResilience integration tests
 // ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ type GrainResilienceIntegrationTests(fixture: ClusterFixture) =
 
     // ── retry — succeeds on the first attempt ────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``retry with 0 failures needed succeeds on first call`` () =
         task {
@@ -63,6 +66,7 @@ type GrainResilienceIntegrationTests(fixture: ClusterFixture) =
 
     // ── retry — exhausts all retries ─────────────────────────────────────────
 
+#warnon "44"
     [<Fact>]
     member _.``retry throws after all attempts are exhausted`` () =
         task {
@@ -99,6 +103,8 @@ type GrainResilienceIntegrationTests(fixture: ClusterFixture) =
 
     // ── retry — grain call succeeds on retry ────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``retry returns correct grain result after retries`` () =
         task {
@@ -174,6 +180,7 @@ type GrainResilienceIntegrationTests(fixture: ClusterFixture) =
 
     // ── buildPipeline — zero retries smoke test ──────────────────────────────
 
+#warnon "44"
     [<Fact>]
     member _.``buildPipeline with MaxRetryAttempts 0 executes lambda exactly once`` () =
         task {
@@ -193,6 +200,8 @@ type GrainResilienceIntegrationTests(fixture: ClusterFixture) =
 
     // ── multiple grain calls via retry ───────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``retry does not mix up results from different grain calls`` () =
         task {
@@ -231,3 +240,5 @@ type GrainResilienceIntegrationTests(fixture: ClusterFixture) =
 
             test <@ count = 1 @>
         }
+
+#warnon "44"

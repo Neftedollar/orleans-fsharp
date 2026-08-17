@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- Task 8 deprecation pass (ruling 6): this example keeps its AddFSharpGrain registration
+         running beside its functional-runtime twin (AddFunctionalGrain) on purpose. -->
+    <NoWarn>$(NoWarn);FS0044</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

@@ -9,10 +9,13 @@ open FsCheck.Xunit
 open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 
+
 [<Fact>]
 let ``GrainContext deactivateOnIdle calls the registered function`` () =
     let mutable deactivateCalled = false
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let ctx: GrainContext =
         {
             GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
@@ -27,10 +30,13 @@ let ``GrainContext deactivateOnIdle calls the registered function`` () =
     GrainContext.deactivateOnIdle ctx
     test <@ deactivateCalled @>
 
+#warnon "44"
 [<Fact>]
 let ``GrainContext delayDeactivation calls the registered function with correct delay`` () =
     let mutable receivedDelay = TimeSpan.Zero
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let ctx: GrainContext =
         {
             GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
@@ -76,11 +82,14 @@ let ``GrainContext delayDeactivation throws when None`` () =
 
     raises<InvalidOperationException> <@ GrainContext.delayDeactivation ctx (TimeSpan.FromMinutes(1.0)) @>
 
+#warnon "44"
 [<Fact>]
 let ``grain CE handler can use deactivateOnIdle via context`` () =
     task {
         let mutable deactivateCalled = false
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -108,11 +117,14 @@ let ``grain CE handler can use deactivateOnIdle via context`` () =
         test <@ deactivateCalled @>
     }
 
+#warnon "44"
 [<Fact>]
 let ``grain CE handler can use delayDeactivation via context`` () =
     task {
         let mutable receivedDelay = TimeSpan.Zero
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -163,3 +175,5 @@ let ``deactivateOnIdle always calls the registered function`` (value: int) =
             DeactivateOnIdle = Some(fun () -> called <- true) }
     GrainContext.deactivateOnIdle ctx
     called
+
+#warnon "44"

@@ -7,12 +7,20 @@ description: "Zero to working grain in 15 minutes."
 
 **Zero to working grain in 15 minutes.**
 
+> **Note.** This guide teaches the **functional grain runtime** (`grainContract` / `grainFor` /
+> `FunctionalGrain.ref` / `AddFunctionalGrain`) first -- it is the current grain authoring model. The
+> original `grain { }` CE and universal `FSharpGrain.ref`/`send`/`ask` pattern still compile and run
+> exactly as described, and are kept below under
+> [Classic model (deprecated)](#classic-model-deprecated); their public surface now carries
+> `[<Obsolete>]` (warning, not error). See [functional-grains.md](/orleans-fsharp/functional-grains/) for the
+> complete guide to the current model.
+
 ## What you'll learn
 
-- How to define a grain with plain F# types — no attributes, no C# stubs
+- How to define a grain contract and API record with plain F# types — no C# interfaces to write
 - How to configure and start a silo
-- How to call your grain with the universal `FSharpGrain.ref` pattern
-- How to write a property test with FsCheck
+- How to call your grain through a typed API record with `FunctionalGrain.ref`
+- Where the classic `grain { }` CE walkthrough lives, if you are maintaining code on that model
 
 ## Prerequisites
 
@@ -37,11 +45,175 @@ dotnet new console -lang F# -n MyCounter.Silo
 cd MyCounter.Silo
 dotnet add package Orleans.FSharp
 dotnet add package Orleans.FSharp.Runtime
-dotnet add package Orleans.FSharp.Abstractions   # C# shim — enables Orleans proxy generation
 dotnet add package Microsoft.Orleans.Server
 ```
 
-## Step 2: Define state and commands
+`Orleans.FSharp.Abstractions` -- the C# assembly the functional runtime's pre-generated proxies live
+in -- comes in transitively through `Orleans.FSharp`; you do not add it, or write a bridge project of
+your own, to call a functional grain.
+
+## Step 2: Define the contract and API record
+
+A **contract** gives your grain a stable wire identity (a `grainType` string and a key codec); the
+**API record** is a plain F# record of functions describing what you can call. No `[<GenerateSerializer>]`
+or `[<Id>]` attributes needed anywhere — the built-in `FSharpBinaryCodec` handles serialization
+automatically.
+
+```fsharp
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type CounterActor = private CounterActor of unit
+
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { increment: unit -> Task<int>
+      decrement: unit -> Task<int>
+      value: unit -> Task<int> }
+
+[<RequireQualifiedAccess>]
+module CounterApi =
+    let contract =
+        grainContract<CounterActor, string, CounterApi> () {
+            grainType "counter"
+            version 1
+            stringKey
+        }
+
+    let ref = FunctionalGrain.ref contract
+```
+
+`CounterActor` is a phantom brand type -- it never gets constructed, it only ties the contract, the
+API record, and every `FunctionalGrain.ref` call site to the same grain identity at compile time.
+Every field of `CounterApi` is one callable **operation**; its wire ID defaults to the field name.
+
+## Step 3: Define the grain
+
+`grainFor { }` attaches state and handlers to the contract. Each handler receives the invocation
+context, the current state, and the exact argument, and returns `(newState, reply)`:
+
+```fsharp
+module Definition =
+    let counterDefinition =
+        grainFor CounterApi.contract {
+            defaultState (fun () -> 0)
+
+            handle
+                (_.increment)
+                (fun _context state () ->
+                    task {
+                        let next = state + 1
+                        return next, next
+                    })
+
+            handle
+                (_.decrement)
+                (fun _context state () ->
+                    task {
+                        let next = max 0 (state - 1)
+                        return next, next
+                    })
+
+            handle (_.value) (fun _context state () -> task { return state, state })
+        }
+```
+
+This counter's state is ephemeral (no `stateFrom`) -- it lives only as long as the activation does.
+For durable state, attach `addMemoryStorage "provider-name"` on the silo plus `stateFrom` on the
+definition; see the persistence model in [functional-grains.md](/orleans-fsharp/functional-grains/).
+
+## Step 4: Configure the silo
+
+```fsharp
+let config = siloConfig {
+    useLocalhostClustering
+}
+```
+
+`useLocalhostClustering` runs a single-silo cluster — perfect for local development. `siloConfig { }`
+is unaffected by the functional/classic split; it configures the silo either way.
+
+## Step 5: Register the grain and start the host
+
+```fsharp
+open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.DependencyInjection
+open Orleans.FSharp
+open Orleans.FSharp.Runtime
+
+[<EntryPoint>]
+let main _ =
+    let builder = HostApplicationBuilder()
+    SiloConfig.applyToHost config builder
+
+    // AddFunctionalGrain is enough for a colocated process: the same IGrainFactory that hosts
+    // the definition also binds its own functional references. A genuinely separate
+    // client-only process would call `clientBuilder.AddFunctionalGrainClient()` instead.
+    builder.UseOrleans(fun siloBuilder ->
+        siloBuilder.AddFunctionalGrain(Definition.counterDefinition) |> ignore)
+    |> ignore
+
+    let host = builder.Build()
+    host.Start()
+
+    let factory = host.Services.GetRequiredService<Orleans.IGrainFactory>()
+
+    // Bind a typed API record — no generated interface required.
+    let api = CounterApi.ref factory "my-counter"
+
+    let count1 = (api.increment ()).GetAwaiter().GetResult()
+    printfn "Count after increment = %d" count1
+
+    let count2 = (api.value ()).GetAwaiter().GetResult()
+    printfn "Current count = %d" count2
+
+    printfn "Silo running. Press Enter to stop."
+    System.Console.ReadLine() |> ignore
+    host.StopAsync().GetAwaiter().GetResult()
+    0
+```
+
+`api` is a plain `CounterApi` value -- calling `api.increment ()` calls the operation directly, with
+no intermediate handle type and no boxed reply to unwrap.
+
+## Step 6: Key types at a glance
+
+| Name | Purpose |
+|---|---|
+| `grainContract<'Actor,'Key,'Api>() { }` | Computation expression defining the contract: identity, key codec, per-operation policies |
+| `grainFor contract { }` | Computation expression defining state, handlers, persistence, lifecycle hooks, timers, reminders |
+| `FunctionalGrain.ref` | Bind a typed API record: `IGrainFactory -> 'Key -> 'Api` |
+| `FunctionalGrain.rawRef` | Bind the typed `FunctionalGrainRef` wrapper (`key`, `api`, `call`, `callCancellable`) |
+| `AddFunctionalGrain` | Register a `grainFor` definition on the silo builder |
+| `AddFunctionalGrainClient` | Register the client-side transport on a client-only process |
+| `siloConfig { }` | Computation expression to configure the silo |
+
+## Step 7: Test it
+
+Unlike the classic `grain { }` CE, a `FunctionalGrainDefinition` exposes no handler-extraction
+function comparable to `GrainDefinition.getHandler` -- but you already hold your own handler (the
+plain function you passed to `handle`), so a handler that ignores `context` is directly callable in
+a unit test. A handler that reads `context` (services, persistent state, grain factory) needs a real
+activation, since `FunctionalGrainContext`'s constructor is internal. See [Testing](/orleans-fsharp/testing/) for
+both patterns, including the full TestingHost-backed integration-test recipe.
+
+## Step 8: Run it
+
+```bash
+dotnet build
+dotnet run --project MyCounter.Silo
+dotnet test
+```
+
+## Classic model (deprecated)
+
+Everything below this heading is the original `grain { }` CE and universal `FSharpGrain.ref`/`send`/
+`ask` pattern from earlier Orleans.FSharp releases. It still compiles and runs exactly as described;
+its public surface now carries `[<Obsolete>]` (warning, not error). New code should use the
+functional runtime above -- see [functional-grains.md](/orleans-fsharp/functional-grains/) for the complete
+before/after mapping.
+
+### Define state and commands
 
 Define your state and commands as plain F# types. **No `[<GenerateSerializer>]` or `[<Id>]` attributes needed** — the built-in `FSharpBinaryCodec` handles serialization automatically.
 
@@ -59,7 +231,7 @@ type CounterCommand =
     | GetValue
 ```
 
-## Step 3: Define the grain
+### Define the grain
 
 Use the `grain { }` computation expression. `handleTyped` is the most convenient handler variant — it auto-boxes the result so you never write `box` by hand:
 
@@ -85,7 +257,7 @@ Use `handle` (manual `box`) when the return type varies per command case; use `h
 when you only care about state and don't need to return a separate result.
 The `persist` keyword names the storage provider for durable state.
 
-## Step 4: Configure the silo
+### Configure the silo
 
 ```fsharp
 let config = siloConfig {
@@ -94,9 +266,9 @@ let config = siloConfig {
 }
 ```
 
-`useLocalhostClustering` runs a single-silo cluster — perfect for local development. `addMemoryStorage "Default"` wires in-memory state storage (data is cleared on restart; swap for Redis or Azure in production).
+`addMemoryStorage "Default"` wires in-memory state storage for the `persist "Default"` keyword above (data is cleared on restart; swap for Redis or Azure in production).
 
-## Step 5: Register the grain and start the host
+### Register the grain and start the host
 
 ```fsharp
 open Microsoft.Extensions.Hosting
@@ -136,7 +308,7 @@ let main _ =
 
 `FSharpGrain.ref` returns a zero-allocation struct handle (`FSharpGrainHandle<CounterState, CounterCommand>`). Piping commands through `FSharpGrain.send` (returns state) or `FSharpGrain.post` (fire-and-forget) keeps call sites clean.
 
-## Step 6: Key types at a glance
+### Key types at a glance
 
 | Name | Purpose |
 |---|---|
@@ -150,7 +322,7 @@ let main _ =
 | `FSharpGrain.post` | Fire-and-forget command |
 | `AddFSharpGrain<S,M>` | Register a grain definition in DI |
 
-## Step 7: GUID and integer keys
+### GUID and integer keys
 
 ```fsharp
 open System
@@ -164,7 +336,7 @@ let intHandle = FSharpGrain.refInt<CounterState, CounterCommand> factory 42L
 do! intHandle |> FSharpGrain.postInt Increment
 ```
 
-## Step 8: Model a state machine
+### Model a state machine
 
 A classic F# pattern is a DU state machine where the compiler enforces valid transitions:
 
@@ -206,7 +378,7 @@ let order =
 
 The F# compiler enforces exhaustive matching — illegal state/command pairs are compile errors.
 
-## Step 9: Write a property test with FsCheck
+### Write a property test with FsCheck
 
 ```bash
 dotnet add package Orleans.FSharp.Testing
@@ -240,7 +412,7 @@ let ``GetValue never changes state`` (state: CounterState) =
     ns = state
 ```
 
-## Step 10: Run it
+### Run it
 
 ```bash
 dotnet build
@@ -252,10 +424,11 @@ dotnet test
 
 | Guide | Description |
 |---|---|
-| [Grain Definition](grain-definition.md) | Complete `grain { }` CE reference — all 31 keywords |
-| [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
-| [Serialization](serialization.md) | FSharpBinaryCodec, JSON fallback, Orleans native |
-| [Streaming](streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](event-sourcing.md) | CQRS with `eventSourcedGrain { }` |
-| [Testing](testing.md) | TestHarness, GrainMock, property tests |
-| [API Reference](api-reference.md) | All public modules and functions |
+| [Functional Grain Runtime](/orleans-fsharp/functional-grains/) | The complete guide to the current authoring model |
+| [Grain Definition](/orleans-fsharp/grain-definition/) | Complete `grain { }` CE reference — all 31 keywords (deprecated model, kept for reference) |
+| [Silo Configuration](/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
+| [Serialization](/orleans-fsharp/serialization/) | FSharpBinaryCodec, JSON fallback, Orleans native |
+| [Streaming](/orleans-fsharp/streaming/) | Publish, subscribe, TaskSeq, broadcast |
+| [Event Sourcing](/orleans-fsharp/event-sourcing/) | CQRS with `eventSourcedGrain { }` |
+| [Testing](/orleans-fsharp/testing/) | TestHarness, GrainMock, property tests, and testing functional grains |
+| [API Reference](/orleans-fsharp/api-reference/) | All public modules and functions |

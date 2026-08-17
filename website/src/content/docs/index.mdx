@@ -58,11 +58,20 @@ let counter = grain {
 
 The F# version is shorter, immutable, and the compiler checks exhaustive pattern matching.
 
+:::note[Two grain authoring models]
+The `grain { }` computation expression above still compiles and runs, but its public surface now
+carries `[<Obsolete>]` (warning, not error). New code should use the **functional grain runtime**
+(`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) — see
+[Functional Grain Runtime](/orleans-fsharp/functional-grains/) for the before/after mapping of
+every deprecated entry point. The `siloConfig { }`, `clientConfig { }` and `eventSourcedGrain { }`
+CEs are unaffected.
+:::
+
 ## Features
 
 <CardGrid>
-  <Card title="grain { } CE" icon="puzzle">
-    Define grains declaratively with rich CE keywords: state machines, handlers, lifecycle hooks, reminders, timers, and persistence in idiomatic F#.
+  <Card title="Functional grain runtime" icon="puzzle">
+    The current grain authoring model: user-authored API record contracts, explicit key codecs, and immutable state — no C# CodeGen interfaces. The older `grain { }` CE still works but is deprecated.
   </Card>
   <Card title="siloConfig { } CE" icon="gear">
     Configure clustering, storage, streaming, TLS, health checks, and runtime services without extension-method boilerplate.
@@ -107,7 +116,7 @@ A working Orleans.FSharp solution with a counter grain, FsCheck property tests, 
 
 <CardGrid>
   <Card title="Orleans.FSharp">
-    Core developer surface: grain CE, GrainRef, streaming, logging, reminders, timers, observers, serialization.
+    Core developer surface: the functional grain runtime (`grainContract`/`grainFor`), GrainRef, streaming, logging, reminders, timers, observers, serialization, and the deprecated `grain {}` CE.
   </Card>
   <Card title="Orleans.FSharp.Runtime">
     Hosting and client runtime: `siloConfig {}` and `clientConfig {}` builders for production setup.
@@ -147,8 +156,9 @@ Every major Orleans capability, wrapped in idiomatic F#:
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
   <LinkCard title="How To" href="/orleans-fsharp/how-to/" description="Step-by-step distributed system tutorial." />
-  <LinkCard title="Grain Definition" href="/orleans-fsharp/guides/grain-definition/" description="Complete grain { } CE reference with all 36+ keywords." />
+  <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-grains/" description="The current grain authoring model, and the map off the deprecated one." />
+  <LinkCard title="Grain Definition" href="/orleans-fsharp/grain-definition/" description="Complete grain { } CE reference (deprecated model, still supported)." />
   <LinkCard title="API Reference" href="/orleans-fsharp/api-reference/" description="Every public module, type, and function." />
   <LinkCard title="Comparison" href="/orleans-fsharp/comparison/" description="Orleans.FSharp vs C# Orleans vs Akkling vs Proto.Actor." />
-  <LinkCard title="Security" href="/orleans-fsharp/guides/security/" description="TLS, mTLS, call filters, secrets management." />
+  <LinkCard title="Security" href="/orleans-fsharp/security/" description="TLS, mTLS, call filters, secrets management." />
 </CardGrid>

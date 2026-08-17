@@ -9,6 +9,7 @@ open FsCheck.Xunit
 open Orleans.Runtime
 open Orleans.FSharp
 
+
 /// <summary>
 /// Tests verifying that reminder handler exceptions are handled gracefully.
 /// A throwing handler should not prevent future reminder ticks from being processed.
@@ -28,6 +29,8 @@ let ``Reminder handler that throws does not corrupt state`` () =
                 return state + 1
         }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState 0
@@ -53,11 +56,14 @@ let ``Reminder handler that throws does not corrupt state`` () =
     let result3 = registeredHandler 1 "FaultyReminder" dummyStatus |> fun t -> t.Result
     test <@ result3 = 2 @>
 
+#warnon "44"
 [<Fact>]
 let ``GrainDefinition with throwing reminder handler has handler registered`` () =
     let handler (_state: int) (_name: string) (_status: TickStatus) =
         task { return raise (InvalidOperationException("Always throws")) }
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState 0
@@ -85,11 +91,14 @@ let ``reminder handler returning state + delta works for any initial state and d
     let result = handler initial "AddDelta" (TickStatus()) |> fun t -> t.Result
     result = initial + delta
 
+#warnon "44"
 [<Property>]
 let ``multiple reminder handlers registered with distinct names all survive`` (n: PositiveInt) =
     let count = min n.Get 5
     let names = List.init count (fun i -> $"Reminder{i}")
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let mutable def =
         grain {
             defaultState 0
@@ -100,3 +109,5 @@ let ``multiple reminder handlers registered with distinct names all survive`` (n
         def <- { def with ReminderHandlers = def.ReminderHandlers |> Map.add name (fun s _n _t -> task { return s }) }
 
     def.ReminderHandlers |> Map.count = count
+
+#warnon "44"

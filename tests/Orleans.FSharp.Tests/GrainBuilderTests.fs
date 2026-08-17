@@ -10,6 +10,13 @@ open FsCheck.Xunit
 open Orleans.Runtime
 open Orleans.FSharp
 
+// Task 8 deprecation pass: every declaration in this file exercises the pre-functional-runtime
+// grain{} / FSharpGrain.* API on purpose, so the suppression is file-wide. F# 10 does support
+// scoped #nowarn "44" ... #warnon "44" brackets (used elsewhere in this suite); here they would
+// wrap essentially the whole file, so they would add noise without narrowing anything.
+#nowarn "44"
+
+
 [<Fact>]
 let ``grain CE sets defaultState`` () =
     let def =

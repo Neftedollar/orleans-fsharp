@@ -11,6 +11,9 @@ open Orleans
 /// </summary>
 /// <typeparam name="'State">The grain's state type, returned from send operations.</typeparam>
 /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+// deprecated API self-reference (spec-003 deprecation pass)
+#nowarn "44"
+[<Obsolete("FSharpGrainHandle (the string-keyed grain{} handle) is superseded by the functional grain runtime: get a typed API record with FunctionalGrain.ref contract factory key and call its operations directly. See docs/functional-grains.md for the before/after mapping.", false)>]
 [<Struct>]
 type FSharpGrainHandle<'State, 'Command> =
     internal
@@ -24,6 +27,7 @@ type FSharpGrainHandle<'State, 'Command> =
 /// </summary>
 /// <typeparam name="'State">The grain's state type.</typeparam>
 /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+[<Obsolete("FSharpGrainGuidHandle (the Guid-keyed grain{} handle) is superseded by the functional grain runtime: get a typed API record with FunctionalGrain.ref contract factory key and call its operations directly. See docs/functional-grains.md for the before/after mapping.", false)>]
 [<Struct>]
 type FSharpGrainGuidHandle<'State, 'Command> =
     internal
@@ -37,6 +41,7 @@ type FSharpGrainGuidHandle<'State, 'Command> =
 /// </summary>
 /// <typeparam name="'State">The grain's state type.</typeparam>
 /// <typeparam name="'Command">The grain's command/message type.</typeparam>
+[<Obsolete("FSharpGrainIntHandle (the int64-keyed grain{} handle) is superseded by the functional grain runtime: get a typed API record with FunctionalGrain.ref contract factory key and call its operations directly. See docs/functional-grains.md for the before/after mapping.", false)>]
 [<Struct>]
 type FSharpGrainIntHandle<'State, 'Command> =
     internal
@@ -73,6 +78,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A typed grain handle.</returns>
+    [<Obsolete("FSharpGrain.ref (grain{} universal message-passing handle) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and get a typed API record with FunctionalGrain.ref contract factory key, then call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let ref<'State, 'Command> (factory: IGrainFactory) (key: string) : FSharpGrainHandle<'State, 'Command> =
         { Grain = factory.GetGrain<IFSharpGrain>(key) }
 
@@ -84,6 +90,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A typed grain handle.</returns>
+    [<Obsolete("FSharpGrain.refGuid (grain{} universal message-passing handle) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor over a Guid key and get a typed API record with FunctionalGrain.ref contract factory key. See docs/functional-grains.md for the before/after mapping.", false)>]
     let refGuid<'State, 'Command> (factory: IGrainFactory) (key: Guid) : FSharpGrainGuidHandle<'State, 'Command> =
         { Grain = factory.GetGrain<IFSharpGrainWithGuidKey>(key) }
 
@@ -95,6 +102,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A typed grain handle.</returns>
+    [<Obsolete("FSharpGrain.refInt (grain{} universal message-passing handle) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor over an int64 key and get a typed API record with FunctionalGrain.ref contract factory key. See docs/functional-grains.md for the before/after mapping.", false)>]
     let refInt<'State, 'Command> (factory: IGrainFactory) (key: int64) : FSharpGrainIntHandle<'State, 'Command> =
         { Grain = factory.GetGrain<IFSharpGrainWithIntKey>(key) }
 
@@ -108,6 +116,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    [<Obsolete("FSharpGrain.send (grain{} universal message-passing) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, get a typed API record with FunctionalGrain.ref contract factory key, and call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let send<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainHandle<'State, 'Command>) : Task<'State> =
         task {
             let! result = handle.Grain.HandleMessage(box cmd)
@@ -130,6 +139,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task that completes once the one-way message has been sent.</returns>
+    [<Obsolete("FSharpGrain.post (grain{} universal one-way message-passing) is superseded by the functional grain runtime: declare the operation as oneWay (_.op) in grainContract<...> and call it through the typed API record returned by FunctionalGrain.ref. See docs/functional-grains.md for the before/after mapping.", false)>]
     let post<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainHandle<'State, 'Command>) : Task =
         handle.Grain.HandleMessageOneWay(box cmd)
 
@@ -141,6 +151,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    [<Obsolete("FSharpGrain.sendGuid (grain{} universal GUID-keyed message-passing) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, get a typed API record with FunctionalGrain.ref contract factory key, and call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let sendGuid<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainGuidHandle<'State, 'Command>) : Task<'State> =
         task {
             let! result = handle.Grain.HandleMessage(box cmd)
@@ -158,6 +169,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task that completes once the one-way message has been sent.</returns>
+    [<Obsolete("FSharpGrain.postGuid (grain{} universal GUID-keyed one-way message-passing) is superseded by the functional grain runtime: declare the operation as oneWay (_.op) in grainContract<...> and call it through the typed API record returned by FunctionalGrain.ref. See docs/functional-grains.md for the before/after mapping.", false)>]
     let postGuid<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainGuidHandle<'State, 'Command>) : Task =
         handle.Grain.HandleMessageOneWay(box cmd)
 
@@ -169,6 +181,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    [<Obsolete("FSharpGrain.sendInt (grain{} universal integer-keyed message-passing) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, get a typed API record with FunctionalGrain.ref contract factory key, and call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let sendInt<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainIntHandle<'State, 'Command>) : Task<'State> =
         task {
             let! result = handle.Grain.HandleMessage(box cmd)
@@ -186,6 +199,7 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task that completes once the one-way message has been sent.</returns>
+    [<Obsolete("FSharpGrain.postInt (grain{} universal integer-keyed one-way message-passing) is superseded by the functional grain runtime: declare the operation as oneWay (_.op) in grainContract<...> and call it through the typed API record returned by FunctionalGrain.ref. See docs/functional-grains.md for the before/after mapping.", false)>]
     let postInt<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainIntHandle<'State, 'Command>) : Task =
         handle.Grain.HandleMessageOneWay(box cmd)
 
@@ -205,6 +219,7 @@ module FSharpGrain =
     /// <exception cref="System.InvalidCastException">
     /// Thrown if the handler's result value cannot be cast to <typeparamref name="'Result"/>.
     /// </exception>
+    [<Obsolete("FSharpGrain.ask (grain{} universal request/response) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and call the typed API record operation returned by FunctionalGrain.ref, which already returns Task<'Reply> without boxing. See docs/functional-grains.md for the before/after mapping.", false)>]
     let ask<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainHandle<'State, 'Command>) : Task<'Result> =
         task {
             let! result = handle.Grain.HandleMessage(box cmd)
@@ -221,6 +236,7 @@ module FSharpGrain =
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <typeparam name="'Result">The expected result type returned by the handler.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    [<Obsolete("FSharpGrain.askGuid (grain{} universal GUID-keyed request/response) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and call the typed API record operation returned by FunctionalGrain.ref, which already returns Task<'Reply> without boxing. See docs/functional-grains.md for the before/after mapping.", false)>]
     let askGuid<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainGuidHandle<'State, 'Command>) : Task<'Result> =
         task {
             let! result = handle.Grain.HandleMessage(box cmd)
@@ -237,11 +253,13 @@ module FSharpGrain =
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <typeparam name="'Result">The expected result type returned by the handler.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    [<Obsolete("FSharpGrain.askInt (grain{} universal integer-keyed request/response) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and call the typed API record operation returned by FunctionalGrain.ref, which already returns Task<'Reply> without boxing. See docs/functional-grains.md for the before/after mapping.", false)>]
     let askInt<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainIntHandle<'State, 'Command>) : Task<'Result> =
         task {
             let! result = handle.Grain.HandleMessage(box cmd)
             return result :?> 'Result
         }
+#warnon "44"
 
 // ---------------------------------------------------------------------------
 // Event-sourced grain handles

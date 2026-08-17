@@ -2,6 +2,12 @@
 
 **Transactions, grain directory, OpenTelemetry, shutdown, state migration, and serialization.**
 
+> **Note.** The `grain { }` CE, `AddFSharpGrain` and the `FSharpGrain.*` handle module used in the
+> reminder, timer and multi-silo examples below now carry `[<Obsolete>]` (warning, not error) --
+> they still work exactly as described. For the current grain authoring model see
+> [functional-grains.md](functional-grains.md). Transactions (`TransactionalGrainDefinition`) and
+> the other topics on this page are not affected.
+
 ## What you'll learn
 
 - How to use Orleans transactions from F#

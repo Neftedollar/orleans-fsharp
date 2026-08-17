@@ -22,6 +22,15 @@ Orleans is a powerful virtual actor framework, but using it from F# means fighti
 
 ## Quick Start
 
+> **Two grain authoring models.** The `grain { }` CE below still compiles and runs, but its public
+> surface (`grain { }`, `GrainDefinition`, the old `GrainContext`, `[<FSharpGrain>]`,
+> `AddFSharpGrain(sFromAssembly)`, `FSharpGrain.*`, `Timers`, `Reminder`) now carries
+> `[<Obsolete>]` -- a **warning, not an error**. New code should use the functional grain runtime
+> (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`); see
+> [Functional Grain Runtime](docs/functional-grains.md) for the before/after mapping of every
+> deprecated entry point. `siloConfig { }`, `clientConfig { }` and `eventSourcedGrain { }` are
+> unaffected.
+
 ```fsharp
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
@@ -52,7 +61,7 @@ let config = siloConfig {
 
 ## Feature Showcase
 
-### `grain { }` -- Grain Definition
+### `grain { }` -- Grain Definition *(deprecated -- see [Functional Grain Runtime](docs/functional-grains.md))*
 
 | Keyword | Description |
 |---|---|
@@ -212,7 +221,9 @@ dotnet new orleans-fsharp -n MyApp
 ## Upgrading to 3.0
 
 3.0 is a **breaking major**. The Universal Grain Pattern (`AddFSharpGrain` +
-`FSharpGrain.ref`/`send`/`ask`/`post`) is now the canonical path, and the non-functional
+`FSharpGrain.ref`/`send`/`ask`/`post`) became the canonical path within the `grain { }` model --
+note that the whole `grain { }` model is now itself deprecated in favour of the
+[functional grain runtime](docs/functional-grains.md), though it keeps working. The non-functional
 `grain { }` CE keywords that were deprecated in 2.x have been **removed**: `reentrant`,
 `statelessWorker`, `maxActivations`, the old string-based `mayInterleave`, `interleave`,
 `oneWay`, `readOnly`, `grainType`, `deactivationTimeout`, `implicitStreamSubscription`, and the
@@ -228,7 +239,8 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 | Guide | Description |
 |---|---|
 | [Getting Started](docs/getting-started.md) | Zero to working grain in 15 minutes |
-| [Grain Definition](docs/grain-definition.md) | Complete `grain { }` CE reference |
+| [Grain Definition](docs/grain-definition.md) | Complete `grain { }` CE reference (deprecated authoring model) |
+| [Functional Grain Runtime](docs/functional-grains.md) | User-authored API records: contracts, key codecs, delivery semantics, immutable state |
 | [Silo Configuration](docs/silo-configuration.md) | Complete `siloConfig { }` CE reference |
 | [Client Configuration](docs/client-configuration.md) | `clientConfig { }` CE reference |
 | [Serialization](docs/serialization.md) | 3 modes: F# Binary, JSON, Orleans Native |

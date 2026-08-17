@@ -2,6 +2,14 @@
 
 This document contains exhaustive keyword references for all Orleans.FSharp computation expressions.
 
+> **Note.** The `grain { }` CE, `AddFSharpGrain` and the `FSharpGrain.*` handle module tabulated
+> below now carry `[<Obsolete>]` (warning, not error) -- they still work exactly as documented. The
+> current grain authoring model is the functional grain runtime (`grainContract` / `grainFor` /
+> `FunctionalGrain.ref` / `AddFunctionalGrain`); see
+> [docs/functional-grains.md](docs/functional-grains.md) for the before/after mapping of every
+> deprecated entry point. `siloConfig { }`, `clientConfig { }` and `eventSourcedGrain { }` are
+> unaffected.
+
 ---
 
 ## `grain { }` — Grain Definition

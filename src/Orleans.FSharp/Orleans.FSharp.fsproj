@@ -32,10 +32,27 @@
     <Compile Include="GrainBatch.fs" />
     <Compile Include="StreamProviders.fs" />
     <Compile Include="Kubernetes.fs" />
+    <!-- The instrumentation counters precede the binary codec: the codec's build step counts
+         its own reflection so the hot-path tests genuinely cover it. -->
+    <Compile Include="FunctionalInstrumentation.fs" />
     <Compile Include="FSharpSerialization.fs" />
     <Compile Include="FSharpBinaryCodec.fs" />
     <Compile Include="Scripting.fs" />
     <Compile Include="FSharpGrainRef.fs" />
+    <Compile Include="FunctionalApiShape.fs" />
+    <Compile Include="FunctionalProtocol.fs" />
+    <Compile Include="FunctionalPersistentState.fs" />
+    <Compile Include="FunctionalKeyCodec.fs" />
+    <Compile Include="FunctionalContext.fs" />
+    <Compile Include="FunctionalTransport.fs" />
+    <Compile Include="FunctionalReference.fs" />
+    <Compile Include="FunctionalContract.fs" />
+    <Compile Include="FunctionalDefinition.fs" />
+    <Compile Include="FunctionalHosted.fs" />
+    <Compile Include="FunctionalBinding.fs" />
+    <Compile Include="FunctionalObserver.fs" />
+    <Compile Include="FunctionalBuilders.fs" />
+    <Compile Include="FunctionalHosting.fs" />
     <Compile Include="AssemblyInfo.fs" />
   </ItemGroup>
 

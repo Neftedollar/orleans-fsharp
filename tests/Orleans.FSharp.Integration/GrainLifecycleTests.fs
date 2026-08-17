@@ -5,6 +5,7 @@ open Swensen.Unquote
 open Orleans.FSharp
 open Orleans.FSharp.Sample
 
+
 [<Collection("ClusterCollection")>]
 type GrainLifecycleTests(fixture: ClusterFixture) =
 
@@ -162,6 +163,8 @@ type GrainRefIntegrationTests(fixture: ClusterFixture) =
 [<Collection("ClusterCollection")>]
 type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``deactivateOnIdle inside universal grain handler does not throw`` () =
         task {
@@ -201,6 +204,7 @@ type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
             test <@ afterRequest.Processed = 10 @>
         }
 
+#warnon "44"
 /// <summary>
 /// Integration tests verifying that <c>GrainContext.primaryKeyString</c> returns the
 /// correct value when called from inside a universal-pattern grain handler.
@@ -212,6 +216,8 @@ type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
 [<Collection("ClusterCollection")>]
 type GrainKeyIntegrationTests(fixture: ClusterFixture) =
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``primaryKeyString inside universal grain handler returns the grain key`` () =
         task {
@@ -243,6 +249,7 @@ type GrainKeyIntegrationTests(fixture: ClusterFixture) =
             test <@ k1 <> k2 @>
         }
 
+#warnon "44"
 /// <summary>
 /// Integration tests verifying that <c>GrainContext.primaryKeyGuid</c> returns the
 /// correct value when called from inside a GUID-keyed universal grain handler
@@ -254,6 +261,8 @@ type GrainKeyIntegrationTests(fixture: ClusterFixture) =
 [<Collection("ClusterCollection")>]
 type GrainGuidKeyIntegrationTests(fixture: ClusterFixture) =
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``primaryKeyGuid inside universal grain handler returns the grain guid key`` () =
         task {
@@ -286,6 +295,7 @@ type GrainGuidKeyIntegrationTests(fixture: ClusterFixture) =
             test <@ k1 <> k2 @>
         }
 
+#warnon "44"
 /// <summary>
 /// Integration tests verifying that <c>GrainContext.primaryKeyInt64</c> returns the
 /// correct value when called from inside an integer-keyed universal grain handler
@@ -294,6 +304,8 @@ type GrainGuidKeyIntegrationTests(fixture: ClusterFixture) =
 [<Collection("ClusterCollection")>]
 type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``primaryKeyInt64 inside universal grain handler returns the grain int key`` () =
         task {
@@ -355,6 +367,7 @@ type GrainIntKeyIntegrationTests(fixture: ClusterFixture) =
             test <@ returnedKey = guidKey @>
         }
 
+#warnon "44"
 /// <summary>
 /// Integration tests verifying that <c>onActivate</c> and <c>onDeactivate</c> lifecycle
 /// hooks defined in the <c>grain { }</c> CE are correctly executed by the Orleans runtime

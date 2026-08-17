@@ -44,6 +44,18 @@
     <Compile Include="TemplateTests.fs" />
     <Compile Include="RedisIntegrationTests.fs" />
     <Compile Include="GrainResilienceIntegrationTests.fs" />
+    <Compile Include="FunctionalClusterFixture.fs" />
+    <Compile Include="FunctionalManifestIntegrationTests.fs" />
+    <Compile Include="FunctionalRuntimeIntegrationTests.fs" />
+    <Compile Include="FunctionalHostingIntegrationTests.fs" />
+    <Compile Include="FunctionalStateFixture.fs" />
+    <Compile Include="FunctionalStateIntegrationTests.fs" />
+    <Compile Include="FunctionalStateRestartTests.fs" />
+    <Compile Include="FunctionalPhase5Fixture.fs" />
+    <Compile Include="FunctionalPhase5IntegrationTests.fs" />
+    <Compile Include="ChatRoomSampleIntegrationTests.fs" />
+    <Compile Include="FunctionalObserverIntegrationTests.fs" />
+    <Compile Include="FunctionalPushIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

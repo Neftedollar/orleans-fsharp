@@ -9,6 +9,7 @@ open Swensen.Unquote
 open Orleans.Runtime
 open Orleans.FSharp
 
+
 /// <summary>
 /// FsCheck property tests verifying that reminder handlers registered in GrainDefinition
 /// preserve the invariant that state is correctly updated through any sequence of reminder firings.
@@ -21,6 +22,8 @@ type ReminderTick =
     | Tick of reminderName: string
     | NoOp
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 /// <summary>
 /// Property: for any sequence of reminder ticks, the state accumulated by reminder handlers
 /// equals the expected fold result.
@@ -48,9 +51,12 @@ let ``Reminder handler fold is consistent with sequential application`` (ticks: 
             let result = handler state "TestReminder" dummyStatus
             state <- result.Result
 
+#warnon "44"
     let expectedCount = ticks |> List.filter id |> List.length
     state = expectedCount
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 /// <summary>
 /// Property: registering multiple reminder handlers and firing them in any order
 /// produces the expected aggregate state.
@@ -87,6 +93,7 @@ let ``Multiple reminder handlers compose correctly`` (ticksA: bool list) (ticksB
         if paddedB.[i] then
             state <- (handlerB state "ReminderB" dummyStatus).Result
 
+#warnon "44"
     let expectedA = ticksA |> List.filter id |> List.length
     let expectedB = ticksB |> List.filter id |> List.length
     state = expectedA + (expectedB * 10)

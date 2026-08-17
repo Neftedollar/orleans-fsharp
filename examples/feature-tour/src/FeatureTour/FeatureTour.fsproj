@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The tour is a NEW-API showcase: nothing here touches the deprecated grain { } cluster,
+         so there is deliberately no FS0044 suppression (unlike the sibling examples, which keep
+         a classic twin alive on purpose). -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Tour.fs" />
+    <Compile Include="Persistence.fs" />
+    <Compile Include="Scheduling.fs" />
+    <Compile Include="CallFilters.fs" />
+    <Compile Include="RequestContextTour.fs" />
+    <Compile Include="Cancellation.fs" />
+    <Compile Include="VersioningTour.fs" />
+    <Compile Include="Streams.fs" />
+    <Compile Include="ObserverTour.fs" />
+    <Compile Include="Broadcast.fs" />
+    <Compile Include="Placement.fs" />
+    <Compile Include="Heterogeneous.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The heterogeneous-cluster section builds a real two-silo cluster in process. The
+         repository's docker testbed is the other way to show this, but it needs Docker and
+         Redis, so it cannot run from `dotnet run` or in the examples CI job. -->
+    <PackageReference Include="Microsoft.Orleans.TestingHost" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+    <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
+    <!-- The C# half of the tour. Orleans' proxy and implicit-subscription generators are Roslyn
+         generators and never run over F#, so the observer interface and the broadcast-channel
+         consumer grain have to be declared there. -->
+    <ProjectReference Include="..\TourInterop\TourInterop.csproj" />
+  </ItemGroup>
+
+</Project>

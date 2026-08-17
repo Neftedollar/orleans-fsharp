@@ -3,6 +3,12 @@ title: Frequently Asked Questions
 description: Common questions about Orleans.FSharp — the idiomatic F# API for Microsoft Orleans
 ---
 
+> **Note.** Grain authoring has two models. The `grain { }` CE shown on this page still compiles and
+> runs, but its public surface now carries `[<Obsolete>]` (warning, not error); new code should use
+> the functional grain runtime (`grainContract` / `grainFor` / `FunctionalGrain.ref` /
+> `AddFunctionalGrain`). See [functional-grains.md](/orleans-fsharp/functional-grains/). `siloConfig { }`,
+> `clientConfig { }` and `eventSourcedGrain { }` are unaffected.
+
 ## What is Orleans.FSharp?
 
 Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (`grain {}`, `siloConfig {}`, `eventSourcedGrain {}`) that let you define distributed actors using pure F# — no C# boilerplate needed. It has Orleans 10 parity and 1500+ tests across unit and integration suites.
@@ -54,17 +60,56 @@ let counter =
 
 See the [Getting Started](/orleans-fsharp/getting-started/) guide for a full walkthrough.
 
+**Functional-runtime equivalent** (the current authoring model — same increment/decrement/value domain, a typed API record instead of a boxed message):
+
+```fsharp
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type CounterActor = private CounterActor of unit
+
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { increment: unit -> Task<int>
+      decrement: unit -> Task<int>
+      value: unit -> Task<int> }
+
+[<RequireQualifiedAccess>]
+module CounterApi =
+    let contract =
+        grainContract<CounterActor, string, CounterApi> () {
+            grainType "counter"
+            version 1
+            stringKey
+        }
+
+    let ref = FunctionalGrain.ref contract
+
+let counterDefinition =
+    grainFor CounterApi.contract {
+        defaultState (fun () -> 0)
+
+        handle (_.increment) (fun _context state () -> task { let next = state + 1 in return next, next })
+        handle (_.decrement) (fun _context state () -> task { let next = max 0 (state - 1) in return next, next })
+        handle (_.value) (fun _context state () -> task { return state, state })
+    }
+```
+
+Register with `siloBuilder.AddFunctionalGrain(counterDefinition)`, then call it as
+`let api = CounterApi.ref factory "my-counter" in api.increment ()` — no boxed reply, no separate
+handle type. See [Getting Started](/orleans-fsharp/getting-started/) for the complete functional-first walkthrough.
+
 ## How does Orleans.FSharp compare to using Microsoft Orleans from C#?
 
 Orleans.FSharp provides the same functionality as the C# Microsoft Orleans API but with idiomatic F# syntax. Instead of inheriting from `Grain` base classes and writing imperative C#, you use computation expressions. Key differences:
 
 | Feature | C# Orleans | Orleans.FSharp |
 |---------|-----------|---------------|
-| Grain definition | Class inheritance | `grain { }` CE |
-| State management | Mutable properties | DU state machines |
+| Grain definition | Class inheritance | `grainContract` + `grainFor` (current); `grain { }` CE (deprecated) |
+| State management | Mutable properties | Immutable state returned from handlers |
 | Configuration | Extension method chains | `siloConfig { }` CE |
-| Type safety | Runtime errors | Compile-time constraints |
-| Testing | Manual mocking | GrainArbitrary + FsCheck |
+| Type safety | Runtime errors | Compile-time constraints, typed API records |
+| Testing | Manual mocking | TestingHost + GrainArbitrary + FsCheck |
 
 There is zero overhead — benchmarks show ~8 nanoseconds per grain call, unmeasurable vs network latency.
 
@@ -154,7 +199,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What is Orleans.FSharp?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (grain {}, siloConfig {}, eventSourcedGrain {}) that let you define distributed actors using pure F# — no C# boilerplate needed. It has Orleans 10 parity and 1500+ tests."
+        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (siloConfig {}, eventSourcedGrain {}) and the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) that let you define distributed actors using pure F# — no C# boilerplate needed. The original grain {} computation expression still works but is deprecated. It has Orleans 10 parity and 1500+ tests."
       }
     },
     {
@@ -162,7 +207,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "How do I use Microsoft Orleans with F#?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the grain {} computation expression to define grains declaratively. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.Abstractions provides the C# shim for Orleans proxy generation."
+        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) to define grains declaratively; the older grain {} computation expression still works but is deprecated. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.Abstractions provides the C# shim for Orleans proxy generation."
       }
     },
     {

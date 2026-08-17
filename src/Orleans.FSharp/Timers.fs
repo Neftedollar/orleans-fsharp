@@ -12,6 +12,7 @@ open Orleans
 /// All functions use Task (not Async) to align with Orleans runtime conventions.
 /// </summary>
 [<RequireQualifiedAccess>]
+[<Obsolete("Timers is superseded for functional-runtime grains by the 'onTimer' operation in grainFor { }. On a class grain (third authoring style), call Grain.RegisterGrainTimer directly instead of this module. See docs/functional-grains.md for the migration.", false)>]
 module Timers =
 
     /// <summary>

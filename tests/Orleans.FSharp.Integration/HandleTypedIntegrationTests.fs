@@ -10,11 +10,14 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 [<Collection("ClusterCollection")>]
 type HandleTypedTests(fixture: ClusterFixture) =
 
     // ── Basic ask with handleTyped grain ─────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``handleTyped grain: AddValues returns correct int result`` () =
         task {
@@ -103,3 +106,5 @@ type HandleTypedTests(fixture: ClusterFixture) =
             let! ops = handle |> FSharpGrain.ask<CalcState, CalcCommand, int> GetOpCount
             test <@ ops = 5 @>
         }
+
+#warnon "44"

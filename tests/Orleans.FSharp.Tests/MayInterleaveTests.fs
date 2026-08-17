@@ -19,6 +19,7 @@ open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
+
 // ── Test types (unique to this file; see module doc) ─────────────────────────
 
 /// Registered directly via FSharpInterleaveRegistry.Register.
@@ -70,6 +71,8 @@ let ``FSharpInterleaveRegistry MayInterleave is false for null`` () =
 
 // ── grain CE: interleaveMessage records the message type ─────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``grain CE default has empty InterleaveMessageTypes`` () =
     let def =
@@ -110,6 +113,7 @@ let ``grain CE interleaveMessage dedups a repeated registration`` () =
 
 // ── AddFSharpGrain pushes interleavable types into the static registry ────────
 
+#warnon "44"
 [<Fact>]
 let ``AddFSharpGrain pushes interleavable message types into the static registry`` () =
     // Before registration the type is not interleavable.
@@ -117,6 +121,8 @@ let ``AddFSharpGrain pushes interleavable message types into the static registry
 
     let services = ServiceCollection()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let def =
         grain {
             defaultState { N = 0 }
@@ -130,6 +136,7 @@ let ``AddFSharpGrain pushes interleavable message types into the static registry
 
 // ── Assignability path: DU case subtypes interleave via the registered DU type ──
 
+#warnon "44"
 [<Fact>]
 let ``registered DU type interleaves its field-carrying nested case types`` () =
     FSharpInterleaveRegistry.Register(typeof<IlvQuery>)

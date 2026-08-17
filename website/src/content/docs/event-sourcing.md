@@ -334,6 +334,6 @@ let config = siloConfig {
 
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- standard `grain { }` CE for non-event-sourced grains
-- [Testing](testing.md) -- property testing of event-sourced grains
-- [Advanced](advanced.md) -- transactions, state migration, and more
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- standard `grain { }` CE for non-event-sourced grains (deprecated; see [functional-grains.md](/orleans-fsharp/functional-grains/))
+- [Testing](/orleans-fsharp/testing/) -- property testing of event-sourced grains
+- [Advanced](/orleans-fsharp/advanced/) -- transactions, state migration, and more

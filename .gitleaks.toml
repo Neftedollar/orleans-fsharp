@@ -1,0 +1,22 @@
+# Gitleaks configuration. Extends the default ruleset; the allowlist below
+# covers false positives that are provably not secrets:
+#
+# - The two SHA-256 golden vectors are PUBLIC protocol constants defined in
+#   specs/003-functional-grain-runtime/spec.md ("Protocol token" section) and
+#   asserted verbatim by the wire tests — they are documentation, not keys.
+# - `0123456789abcdef0123456789abcdef` is the synthetic sequential-hex Guid
+#   used by the key-codec tests; its value is its own description.
+# - `int64CompoundKey` is an F# custom-operation identifier that the
+#   generic-api-key rule mistakes for a credential assignment.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Spec golden vectors, synthetic test keys, and F# identifiers"
+regexes = [
+  '''525f112d5114016be421e973fee8aa7e4b439b560f29b419fd374e48336c430e''',
+  '''2a2e7b5513cb992ef81759d0e761ef0071ec634be2d8d3b0931f961641ad61bf''',
+  '''0123456789abcdef0123456789abcdef''',
+  '''int64CompoundKey''',
+]

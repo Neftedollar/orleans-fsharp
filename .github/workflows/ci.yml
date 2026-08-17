@@ -36,11 +36,92 @@ jobs:
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
+      # `dotnet build` before any `dotnet test` step is deliberate, not incidental: the very
+      # first compile after a cold NuGet cache can, in rare cases, complete without Orleans'
+      # own source-generated codegen having been applied to every assembly in the same MSBuild
+      # invocation (see docs/functional-grains.md's "cold caches" note). A build here, once per
+      # matrix entry, establishes a warm and consistent state before any test step runs.
       - run: dotnet build --verbosity normal ${{ matrix.arg }}
       - run: dotnet test tests/Orleans.FSharp.Tests --verbosity normal ${{ matrix.arg }}
+      # spec 003: the functional grain runtime's Integration suite runs on both ends of the
+      # Orleans version matrix, not just the floor. 101 tests, ~40s per matrix entry (~80s
+      # total added to this job) — Redis-gated tests inside this filter are skipped here (no
+      # Redis service in this job); they run non-skipped in redis-durability below.
+      #
+      # The second clause is NOT redundant: the chat-room sample's end-to-end test lives in
+      # ChatRoomSampleIntegrationTests and its fully-qualified name contains no "Functional"
+      # substring, so `~Functional` alone would silently leave the sample unverified on PRs and
+      # at 10.2.2. Adding or renaming a functional test class? Check it still matches one of
+      # these two clauses with `dotnet test ... --list-tests`.
+      - run: >
+          dotnet test tests/Orleans.FSharp.Integration
+          --filter "FullyQualifiedName~Functional|FullyQualifiedName~ChatRoomSample"
+          --verbosity normal ${{ matrix.arg }}
+      # The sample is a real console process, not a test host: `dotnet build` alone would not
+      # notice it crashing on its first grain call — which is exactly how it stayed broken for as
+      # long as it did (see docs/functional-grains.md, "Running a silo from a standalone F#
+      # process"). Run it and require the functional chat-room transcript AND a clean exit, on
+      # both Orleans versions. ~3s locally; budget a few seconds per matrix entry.
+      - name: Run the sample process end to end
+        timeout-minutes: 5 # a silo that fails to shut down must not burn the whole job budget
+        run: |
+          set -o pipefail   # without this, `tee` would mask a crashed sample process
+          dotnet run --project src/Orleans.FSharp.Sample --no-build ${{ matrix.arg }} | tee sample.out
+          grep -q -- "--- Functional Grain Runtime Demo (chat.room) ---" sample.out
+          grep -q "alice and bob joined #general" sample.out
+          grep -q "carol (not a member) says .* Error NotAMember" sample.out
+          # The counter twin is the only functional grain with a runtime assertion in CI:
+          # it must both appear and produce the right numbers (the old grain{} counter prints
+          # "After Increment", capitalised, so these lines are unambiguous).
+          grep -q -- "--- Functional Grain Runtime Demo (counter.functional) ---" sample.out
+          grep -q -x "After increment: 1" sample.out
+          grep -q -x "After increment: 2" sample.out
+          grep -q -x "After decrement: 1" sample.out
+          grep -q "Sample complete" sample.out
+
+  redis-durability:
+    name: Redis Durability (Orleans ${{ matrix.label }})
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: floor
+            arg: ''
+          - label: 10.2.2 (newest)
+            arg: '-p:OrleansVersion=10.2.2'
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build --verbosity normal ${{ matrix.arg }}
+      # ORLEANS_FSHARP_REDIS makes RequiresRedisAttribute (RedisIntegrationTests.fs) admit
+      # rather than skip every test it gates, including spec 003's durability proof: stop and
+      # recreate the silo process while retaining Redis, then verify the same GrainId reloads
+      # committed state (FunctionalStateRestartTests.fs, "functional state committed to Redis
+      # reloads after the cluster is recreated").
+      - name: Run Redis-gated tests (non-skipped)
+        env:
+          ORLEANS_FSHARP_REDIS: localhost:6379
+        run: >
+          dotnet test tests/Orleans.FSharp.Integration
+          --filter "FullyQualifiedName~Redis"
+          --verbosity normal ${{ matrix.arg }}
 
   examples:
-    name: Build Examples
+    name: Build Examples & Testbed
     runs-on: ubuntu-latest
     needs: build-and-test
     timeout-minutes: 20
@@ -61,6 +142,18 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+      # The testbed is the same shape of out-of-root-solution code as the examples (its own
+      # Testbed.slnx, ProjectReferences into src/) and rots the same way, so it is built in this
+      # job rather than a new one. Build only: running it needs Redis and a multi-silo Docker
+      # Compose stack, which is out of scope for a per-PR job.
+      #
+      # Release, like the examples: Testbed.slnx now lists Orleans.FSharp.Sample and
+      # Orleans.FSharp.Generator as solution members so CodeGen's generator finds the Sample
+      # under bin/$(Configuration). (During a solution build MSBuild unsets Configuration for a
+      # ProjectReference that is not itself a solution member — the historical Release failure
+      # before those two entries existed.)
+      - name: Build the testbed solution
+        run: dotnet build testbed/Testbed.slnx -c Release --nologo
 
   quick-integration:
     runs-on: ubuntu-latest
@@ -71,6 +164,10 @@ jobs:
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
+      # `dotnet build` before `dotnet test` is deliberate, not incidental: this job runs on a
+      # fresh runner with a cold NuGet cache, so it is exactly the cold-cache silent-codegen-skip
+      # hazard docs/functional-grains.md documents (see build-and-test's identical comment above).
+      - run: dotnet build --verbosity normal
       - name: Run quick integration tests
         run: >
           dotnet test tests/Orleans.FSharp.Integration
@@ -90,8 +187,48 @@ jobs:
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.x'
+      # `dotnet build` before `dotnet test` is deliberate, not incidental: this job runs on a
+      # fresh runner with a cold NuGet cache, so it is exactly the cold-cache silent-codegen-skip
+      # hazard docs/functional-grains.md documents (see build-and-test's identical comment above).
+      - run: dotnet build --verbosity normal
       - name: Run all integration tests
         run: dotnet test tests/Orleans.FSharp.Integration --verbosity quiet
+
+  # ── Documentation invariants ──────────────────────────────────────
+  docs-deprecation-signal:
+    name: Docs Deprecation Signal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      # spec 003: a doc that teaches the deprecated grain{} model without naming its
+      # replacement is a shipped false signal. This re-derives the affected file set on
+      # every run instead of asserting a count, so a NEW un-signalled doc fails the PR —
+      # two earlier rounds each claimed "the N docs that still teach grain{}" and each
+      # claim was wrong. See scripts/check-deprecation-signal.py for the exemption list.
+      - name: Every doc teaching grain{} points at the functional runtime
+        run: python3 scripts/check-deprecation-signal.py
+      # docs/ and website/src/content/docs/ are hand-maintained twins with nothing keeping
+      # them in sync, which is how four deprecation banners landed in docs/ only while the
+      # live site kept teaching the deprecated model unmarked.
+      - name: docs/ and its published mirror agree
+        run: python3 scripts/check-docs-mirror.py
+      # The published site is what ships; docs.yml only builds it on push to main, so a
+      # PR that adds a page, a sidebar entry or a cross-doc link gets no feedback there.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Build the docs site
+        working-directory: website
+        run: npm ci && npm run build
+      # Checks the emitted HTML, both link forms: an absolute href under the base path that
+      # points at no emitted page, and a relative `page.md` href — Astro copies the latter
+      # through verbatim and never emits a .md file, so it 404s from every page that carries
+      # it. The first version of this check skipped relative hrefs and reported "0 broken"
+      # over 67 of them.
+      - name: No broken internal links in the built site
+        run: python3 scripts/check-docs-links.py
 
   # ── Security scanning ─────────────────────────────────────────────
   secrets-scan:

@@ -78,12 +78,32 @@
     <Compile Include="FSharpGrainRefTests.fs" />
     <Compile Include="UniversalGrainHandlerTests.fs" />
     <Compile Include="AddFSharpGrainTests.fs" />
+    <Compile Include="AddFSharpGrainsFromAssemblyTests.fs" />
     <Compile Include="HandlerCompositionProperties.fs" />
     <Compile Include="GrainHandlerStateMachineProperties.fs" />
     <Compile Include="SiloIdentityTests.fs" />
     <Compile Include="ClientConfigIdentityTests.fs" />
     <Compile Include="GrainResilienceTests.fs" />
     <Compile Include="GrainBatchTests.fs" />
+    <Compile Include="FunctionalTransportHarness.fs" />
+    <Compile Include="FunctionalPointFreeFixture.fs" />
+    <Compile Include="GrainTypeDerivationFixtures.fs" />
+    <Compile Include="FunctionalCompileFixtures.fs" />
+    <Compile Include="FunctionalShapeTests.fs" />
+    <Compile Include="FunctionalContractTests.fs" />
+    <Compile Include="FunctionalKeyCodecTests.fs" />
+    <Compile Include="FunctionalDefinitionTests.fs" />
+    <Compile Include="FunctionalSurfaceTests.fs" />
+    <Compile Include="FunctionalProtocolTests.fs" />
+    <Compile Include="FunctionalCodecTests.fs" />
+    <Compile Include="FunctionalBindingTests.fs" />
+    <Compile Include="FunctionalTupleCodecTests.fs" />
+    <Compile Include="FunctionalObserverContractTests.fs" />
+    <Compile Include="FunctionalPersistentStateTests.fs" />
+    <Compile Include="FunctionalRuntimeTests.fs" />
+    <Compile Include="FunctionalCollisionPayload.fs" />
+    <Compile Include="FunctionalSerializerRegistrationTests.fs" />
+    <Compile Include="FunctionalCompileFailureTests.fs" />
     <Compile Include="AnalyzerTests.fs" />
   </ItemGroup>
 

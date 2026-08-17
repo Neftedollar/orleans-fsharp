@@ -21,6 +21,12 @@ builder.Host.UseOrleans(fun siloBuilder ->
 |> ignore
 
 builder.Services.AddFSharpGrain<DashboardState, DashboardCommand>(DashboardGrainDef.dashboard) |> ignore
+
+// Functional-runtime equivalent of the grain above -- see DashboardGrainFunctional.fs.
+builder.Host.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddFunctionalGrain(DashboardFunctionalDef.dashboard) |> ignore)
+|> ignore
+
 builder.Services.AddSignalR() |> ignore
 
 let app = builder.Build()
@@ -29,15 +35,33 @@ app.UseDefaultFiles() |> ignore
 app.UseStaticFiles() |> ignore
 app.MapHub<DashboardHub>("/dashboard") |> ignore
 
+(*
+    Classic grain { } model -- cannot run standalone.
+
+    F# assemblies carry none of Orleans' source-generated
+    [assembly: ApplicationPart] / [assembly: TypeManifestProvider] attributes (Roslyn generators
+    never run on an F# project), so a bare `factory.GetGrain<IDashboardGrain>(...)` fails with
+    "Could not find an implementation for interface IDashboardGrain" the moment it runs. See
+    docs/functional-grains.md, "Running a silo from a standalone F# process" for the exact
+    mechanism, and "Migrating from the grain { } CE" for the rewrite this file demonstrates.
+
+    let factory = app.Services.GetRequiredService<IGrainFactory>()
+    let dashboard = factory.GetGrain<IDashboardGrain>("default")
+    // Activate the grain by sending a command. The declarative timer will start automatically.
+    let! _ = dashboard.HandleMessage(GetSequenceNumber)
+*)
+
 // The dashboard grain's timer starts automatically on activation via the declarative onTimer.
-// Just activate the grain so the timer begins firing.
+// Just activate the grain so the timer begins firing -- the same "default" key the hub
+// (DashboardHub.fs) talks to, so the hub's first connection sees a grain that has already been
+// ticking for a moment.
 let startDashboard () =
     task {
         let factory = app.Services.GetRequiredService<IGrainFactory>()
-        let dashboard = factory.GetGrain<IDashboardGrain>("default")
-        // Activate the grain by sending a command. The declarative timer will start automatically.
-        let! _ = dashboard.HandleMessage(GetSequenceNumber)
-        printfn "--- SignalR Realtime: Dashboard grain activated with timer ---"
+        let dashboardFn = DashboardApi.ref factory "default"
+        let! seeded = dashboardFn.sequenceNumber ()
+        printfn "--- SignalR Realtime: Dashboard grain activated with timer (Functional Grain Runtime) ---"
+        printfn "Sequence number at activation: %d" seeded
         printfn "Open http://localhost:5000 in your browser to see live metrics."
         printfn "Press Ctrl+C to stop."
     }

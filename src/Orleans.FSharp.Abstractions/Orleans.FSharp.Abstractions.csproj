@@ -13,6 +13,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The fixed functional transport (envelope, request, reply, dispatch target, marker) is
+         internal: only IFunctionalRequestMetadata and FunctionalGrainTransportOptions are part
+         of the application surface. The upper layers and the test projects need the internals. -->
+    <InternalsVisibleTo Include="Orleans.FSharp" />
+    <InternalsVisibleTo Include="Orleans.FSharp.Runtime" />
+    <InternalsVisibleTo Include="Orleans.FSharp.Tests" />
+    <InternalsVisibleTo Include="Orleans.FSharp.Integration" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Orleans.Sdk brings in source generators that produce Proxy_IFSharpGrain* classes
          and the Metadata manifest — all within this assembly, no cross-assembly access issues. -->
     <PackageReference Include="Microsoft.Orleans.Sdk" />

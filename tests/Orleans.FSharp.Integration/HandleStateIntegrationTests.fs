@@ -14,11 +14,14 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 [<Collection("ClusterCollection")>]
 type HandleStateTests(fixture: ClusterFixture) =
 
     // ── Basic send returning state ────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     member _.``handleState: send returns updated state after AddPoints`` () =
         task {
@@ -123,3 +126,5 @@ type HandleStateTests(fixture: ClusterFixture) =
             test <@ s1.Score = 100 @>
             test <@ s2.Score = 50  @>
         }
+
+#warnon "44"

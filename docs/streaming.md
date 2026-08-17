@@ -2,6 +2,10 @@
 
 **Guide to Orleans streaming with F#-idiomatic APIs.**
 
+> **Note.** The streaming APIs on this page are current. The `grain { }` CE used in the examples to
+> host them now carries `[<Obsolete>]` (warning, not error); see
+> [functional-grains.md](functional-grains.md) for the current grain authoring model.
+
 ## What you'll learn
 
 - How to publish events to streams

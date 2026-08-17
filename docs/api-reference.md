@@ -2,6 +2,12 @@
 
 **Quick reference for all public modules, types, and functions in Orleans.FSharp.**
 
+> **Note.** Entries for the `grain { }` cluster -- `GrainBuilder`/`grain`, `GrainDefinition`, the old
+> `GrainContext`, `AdditionalStateSpec`, `FSharpGrainAttribute`, `IFSharpGrain*`, the
+> `FSharpGrainHandle*` types, the `FSharpGrain.*` module, `AddFSharpGrain(sFromAssembly)`, `Timers`
+> and `Reminder` -- now carry `[<Obsolete>]` (warning, not error). See
+> [functional-grains.md](functional-grains.md) for the replacement of each.
+
 ---
 
 ## Orleans.FSharp (Core)

@@ -9,6 +9,9 @@ open FsCheck
 open FsCheck.Xunit
 open Orleans.FSharp
 
+
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 [<Fact>]
 let ``GrainContext includes ServiceProvider`` () =
     let ctx: GrainContext =
@@ -24,12 +27,15 @@ let ``GrainContext includes ServiceProvider`` () =
 
     test <@ not (isNull (box ctx.ServiceProvider |> ignore; ctx.ServiceProvider)) || true @>
 
+#warnon "44"
 [<Fact>]
 let ``GrainContext.getService resolves registered service`` () =
     let services = Microsoft.Extensions.DependencyInjection.ServiceCollection()
     services.AddSingleton<TimeProvider>(TimeProvider.System) |> ignore
     let provider = services.BuildServiceProvider()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let ctx: GrainContext =
         {
             GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
@@ -44,11 +50,14 @@ let ``GrainContext.getService resolves registered service`` () =
     let resolved = GrainContext.getService<TimeProvider> ctx
     test <@ not (isNull resolved) @>
 
+#warnon "44"
 [<Fact>]
 let ``GrainContext.getService throws for unregistered service`` () =
     let services = Microsoft.Extensions.DependencyInjection.ServiceCollection()
     let provider = services.BuildServiceProvider()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let ctx: GrainContext =
         {
             GrainFactory = Unchecked.defaultof<Orleans.IGrainFactory>
@@ -79,6 +88,7 @@ let ``grain CE handleWithServices registers context handler with ServiceProvider
 
     test <@ def.ContextHandler |> Option.isSome @>
 
+#warnon "44"
 [<Fact>]
 let ``grain CE handleWithServices handler receives working ServiceProvider`` () =
     task {
@@ -86,6 +96,8 @@ let ``grain CE handleWithServices handler receives working ServiceProvider`` () 
         services.AddSingleton<TimeProvider>(TimeProvider.System) |> ignore
         let provider = services.BuildServiceProvider()
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -142,3 +154,5 @@ let ``handleWithServices ContextHandler is Some after registration`` () =
                 task { return s, box s })
         }
     def.ContextHandler |> Option.isSome
+
+#warnon "44"

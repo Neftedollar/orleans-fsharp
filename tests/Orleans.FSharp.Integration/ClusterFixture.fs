@@ -10,6 +10,7 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.EventSourcing
 
+
 /// <summary>
 /// Deterministic convergence helper for observing the effect of a true one-way
 /// <c>FSharpGrain.post</c> call. Because a one-way request returns once the message
@@ -70,6 +71,8 @@ type TextCommand =
     | [<Orleans.Id(0u)>] Append of string
     | [<Orleans.Id(1u)>] GetText
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 /// <summary>Definition of the ping grain used to test <c>FSharpGrain.ref</c>.</summary>
 [<AutoOpen>]
 module TestGrains =
@@ -105,6 +108,7 @@ module TestGrains =
                 })
         }
 
+#warnon "44"
 /// <summary>
 /// State for the query grain used to test <c>FSharpGrain.ask</c> — the handler returns typed
 /// values (<c>int</c>, <c>string</c>) that are distinct from the state type.
@@ -123,6 +127,8 @@ type QueryCommand =
     | [<Orleans.Id(3u)>] GetLabel      // returns string, not QueryState
     | [<Orleans.Id(4u)>] GetSnapshot   // returns (int * string), not QueryState
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains2 =
     /// <summary>
     /// Query grain used to verify <c>FSharpGrain.ask</c>: every command returns a typed result
@@ -149,6 +155,7 @@ module TestGrains2 =
         }
 
 
+#warnon "44"
 /// <summary>State for the calculator grain used to test <c>handleTyped</c>.</summary>
 [<Orleans.GenerateSerializer>]
 type CalcState =
@@ -163,6 +170,8 @@ type CalcCommand =
     | [<Orleans.Id(2u)>] GetLastResult
     | [<Orleans.Id(3u)>] GetOpCount
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains3 =
     /// <summary>
     /// Calculator grain defined with <c>handleTyped</c>: every command returns an <c>int</c>
@@ -188,6 +197,7 @@ module TestGrains3 =
                 })
         }
 
+#warnon "44"
 /// <summary>State for the handleState score accumulator grain.</summary>
 [<Orleans.GenerateSerializer>]
 type ScoreState =
@@ -201,6 +211,8 @@ type ScoreCommand =
     | [<Orleans.Id(1u)>] SubtractPoints of int
     | [<Orleans.Id(2u)>] ResetScore
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains4 =
     /// <summary>
     /// Score accumulator defined with <c>handleState</c>: every command returns only the
@@ -222,6 +234,7 @@ module TestGrains4 =
 
 // ── handleWithContext test grain ──────────────────────────────────────────────
 
+#warnon "44"
 /// <summary>
 /// State for the relay grain that uses <c>handleWithContext</c> to call another grain
 /// via <c>ctx.GrainFactory</c> — the core test for context-aware grain handlers.
@@ -239,6 +252,8 @@ type RelayCommand =
     /// <summary>Returns the relay grain's current state snapshot.</summary>
     | [<Orleans.Id(1u)>] GetRelayState
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains5 =
     /// <summary>
     /// Relay grain defined with <c>handleWithContext</c>.  On <c>ForwardPing peerKey</c>,
@@ -266,6 +281,7 @@ module TestGrains5 =
 
 // ── handleStateCancellable test grain ────────────────────────────────────────
 
+#warnon "44"
 /// <summary>State for the cancellable accumulator grain.</summary>
 [<Orleans.GenerateSerializer>]
 type CancellableAccState =
@@ -278,6 +294,8 @@ type CancellableAccCommand =
     | [<Orleans.Id(0u)>] Accumulate of int
     | [<Orleans.Id(1u)>] GetAcc
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains6 =
     /// <summary>
     /// Cancellable accumulator using <c>handleStateCancellable</c>.
@@ -298,6 +316,7 @@ module TestGrains6 =
 
 // ── handleStateWithContext test grain ────────────────────────────────────────
 
+#warnon "44"
 /// <summary>State for the state-with-context grain.</summary>
 [<Orleans.GenerateSerializer>]
 type StateWithCtxState =
@@ -312,6 +331,8 @@ type StateWithCtxCommand =
     | [<Orleans.Id(1u)>] SWCForwardPing of peerKey: string
     | [<Orleans.Id(2u)>] GetSWCState
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains10 =
     /// <summary>
     /// State-with-context grain defined with <c>handleStateWithContext</c>.
@@ -338,6 +359,7 @@ module TestGrains10 =
 
 // ── handleTypedWithContext test grain ────────────────────────────────────────
 
+#warnon "44"
 /// <summary>State for the typed-with-context calculator grain.</summary>
 [<Orleans.GenerateSerializer>]
 type TypedWithCtxState =
@@ -352,6 +374,8 @@ type TypedWithCtxCommand =
     | [<Orleans.Id(2u)>] GetTWCLastResult
     | [<Orleans.Id(3u)>] GetTWCOps
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains11 =
     /// <summary>
     /// Typed-with-context calculator defined with <c>handleTypedWithContext</c>.
@@ -380,6 +404,7 @@ module TestGrains11 =
 
 // ── handleStateWithContextCancellable test grain ─────────────────────────────
 
+#warnon "44"
 /// <summary>State for the state-with-context-cancellable grain.</summary>
 [<Orleans.GenerateSerializer>]
 type SWCCState =
@@ -393,6 +418,8 @@ type SWCCCommand =
     | [<Orleans.Id(1u)>] SWCCForwardPing of peerKey: string
     | [<Orleans.Id(2u)>] GetSWCCState
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains12 =
     /// <summary>
     /// State-with-context-cancellable grain using <c>handleStateWithContextCancellable</c>.
@@ -418,6 +445,7 @@ module TestGrains12 =
 
 // ── handleTypedWithContextCancellable test grain ──────────────────────────────
 
+#warnon "44"
 /// <summary>State for the typed-with-context-cancellable calculator grain.</summary>
 [<Orleans.GenerateSerializer>]
 type TWCCState =
@@ -432,6 +460,8 @@ type TWCCCommand =
     | [<Orleans.Id(2u)>] GetTWCCLastResult
     | [<Orleans.Id(3u)>] GetTWCCOps
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains13 =
     /// <summary>
     /// Typed-with-context-cancellable calculator using <c>handleTypedWithContextCancellable</c>.
@@ -459,6 +489,7 @@ module TestGrains13 =
 
 // ── handleCancellable (raw) test grain ───────────────────────────────────────
 
+#warnon "44"
 /// <summary>State for the raw cancellable accumulator grain.</summary>
 [<Orleans.GenerateSerializer>]
 type RawCancState =
@@ -471,6 +502,8 @@ type RawCancCommand =
     | [<Orleans.Id(0u)>] RawCancAdd of int
     | [<Orleans.Id(1u)>] GetRawCancState
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains8 =
     /// <summary>
     /// Raw cancellable accumulator defined with <c>handleCancellable</c>.
@@ -493,6 +526,7 @@ module TestGrains8 =
 
 // ── handleTypedCancellable test grain ────────────────────────────────────────
 
+#warnon "44"
 /// <summary>State for the typed-cancellable calculator grain.</summary>
 [<Orleans.GenerateSerializer>]
 type TypedCancState =
@@ -507,6 +541,8 @@ type TypedCancCommand =
     | [<Orleans.Id(2u)>] GetTypedCancLastResult
     | [<Orleans.Id(3u)>] GetTypedCancOps
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains9 =
     /// <summary>
     /// Typed-cancellable calculator defined with <c>handleTypedCancellable</c>.
@@ -534,6 +570,7 @@ module TestGrains9 =
 
 // ── handleWithContextCancellable test grain ──────────────────────────────────
 
+#warnon "44"
 /// <summary>State for the context-cancellable accumulator grain.</summary>
 [<Orleans.GenerateSerializer>]
 type CtxCancAccState =
@@ -551,6 +588,8 @@ type CtxCancAccCommand =
     /// <summary>Returns current state without side effects.</summary>
     | [<Orleans.Id(2u)>] GetCtxCancState
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains7 =
     /// <summary>
     /// Context-cancellable accumulator defined with <c>handleWithContextCancellable</c>.
@@ -579,6 +618,7 @@ module TestGrains7 =
 
 // ── Flaky grain for GrainResilience integration tests ───────────────────────
 
+#warnon "44"
 /// <summary>
 /// State for the flaky grain used to test <c>GrainResilience.retry</c>.
 /// The grain fails the first <see cref="FailUntilCall"/> attempts, then succeeds.
@@ -632,6 +672,8 @@ type DeactivationCtrlCommand =
     /// </summary>
     | [<Orleans.Id(3u)>] DeactivCtrlGetOwnKey
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains16 =
     /// <summary>
     /// Grain that exposes <c>DeactivCtrlRequestDeactivation</c> — a command that calls
@@ -665,6 +707,7 @@ module TestGrains16 =
 
 // ── GrainKey grain — verifies GrainContext.primaryKeyString in universal path ─────
 
+#warnon "44"
 /// <summary>Marker state for the grain-key test grain (no payload needed).</summary>
 [<Orleans.GenerateSerializer>]
 type GrainKeyState =
@@ -679,6 +722,8 @@ type GrainKeyCommand =
     /// </summary>
     | [<Orleans.Id(0u)>] GetOwnPrimaryKey
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains17 =
     /// <summary>
     /// Grain that returns its own primary key string from the handler context.
@@ -700,6 +745,7 @@ module TestGrains17 =
 
 // ── GrainGuidKey grain — verifies GrainContext.primaryKeyGuid in universal path ──────
 
+#warnon "44"
 /// <summary>Commands for the GUID-keyed grain-key test grain.</summary>
 [<Orleans.GenerateSerializer>]
 type GrainGuidKeyCommand =
@@ -708,6 +754,8 @@ type GrainGuidKeyCommand =
     /// </summary>
     | [<Orleans.Id(0u)>] GetOwnPrimaryKeyGuid
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains18 =
     /// <summary>
     /// Grain that returns its own GUID primary key from the handler context.
@@ -730,6 +778,7 @@ module TestGrains18 =
 
 // ── GrainIntKey grain — verifies GrainContext.primaryKeyInt64 in universal path ─────
 
+#warnon "44"
 /// <summary>Commands for the integer-keyed grain-key test grain.</summary>
 [<Orleans.GenerateSerializer>]
 type GrainIntKeyCommand =
@@ -738,6 +787,8 @@ type GrainIntKeyCommand =
     /// </summary>
     | [<Orleans.Id(0u)>] GetOwnPrimaryKeyInt64
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
 module TestGrains19 =
     /// <summary>
     /// Grain that returns its own int64 primary key from the handler context.
@@ -876,6 +927,7 @@ type TestSiloConfigurator() =
             // Register in-memory grain storage for the transactional state store.
             siloBuilder.AddMemoryGrainStorage("TransactionStore") |> ignore
 
+#warnon "44"
 /// <summary>
 /// Client configurator that ensures the CodeGen assembly is loaded on the client side
 /// for type alias resolution.
@@ -906,6 +958,8 @@ type ClusterFixture() =
     /// <summary>Gets the GrainFactory for creating grain references.</summary>
     member _.GrainFactory = cluster.GrainFactory
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     /// <summary>Gets the cluster client for advanced operations like streaming.</summary>
     member _.Client = cluster.Client
 
@@ -921,6 +975,7 @@ type ClusterFixture() =
                 let abstractionsAssembly = typeof<Orleans.FSharp.IFSharpGrain>.Assembly
                 let _ = abstractionsAssembly.GetTypes()
 
+#warnon "44"
                 let builder = TestClusterBuilder()
                 builder.Options.InitialSilosCount <- 1s
                 builder.AddSiloBuilderConfigurator<TestSiloConfigurator>() |> ignore

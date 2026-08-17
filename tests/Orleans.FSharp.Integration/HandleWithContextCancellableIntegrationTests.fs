@@ -21,11 +21,14 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 [<Collection("ClusterCollection")>]
 type HandleWithContextCancellableIntegrationTests(fixture: ClusterFixture) =
 
     // ── pure accumulation (no context access) ────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     let ``CtxCancAdd: single add updates Sum and Steps`` () =
         task {
@@ -153,3 +156,5 @@ type HandleWithContextCancellableIntegrationTests(fixture: ClusterFixture) =
             let! s = Eventually.until (fun (s: CtxCancAccState) -> s.Sum = 9) (fun () -> FSharpGrain.send GetCtxCancState g)
             test <@ s.Sum = 9 @>
         }
+
+#warnon "44"

@@ -1,0 +1,688 @@
+/// <summary>
+/// The feature-tour driver: one clearly-labeled section per Orleans feature, each driven for
+/// real against a live silo. See README.md for the status matrix this transcript backs.
+/// </summary>
+module FeatureTour.Program
+
+open System
+open System.Threading
+open System.Threading.Tasks
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.Logging
+open Orleans
+open Orleans.Concurrency
+open Orleans.Hosting
+open Orleans.Streams
+open Orleans.FSharp
+open Orleans.FSharp.Runtime
+open Orleans.FSharp.Streaming
+
+open FeatureTour.Tour
+open FeatureTour.Persistence
+open FeatureTour.Scheduling
+open FeatureTour.CallFilters
+open FeatureTour.RequestContextTour
+open FeatureTour.Cancellation
+open FeatureTour.VersioningTour
+open FeatureTour.Streams
+open FeatureTour.ObserverTour
+open FeatureTour.Broadcast
+open FeatureTour.Interop
+open FeatureTour.Placement
+open FeatureTour.Heterogeneous
+
+// ── Silo ─────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Assemblies Orleans must already have loaded when it takes its first manifest snapshot.
+/// </summary>
+/// <remarks>
+/// Orleans snapshots application parts inside <c>UseOrleans</c>, before any of our configuration
+/// runs, and its Roslyn generators never run over F#, so an assembly reached only through an F#
+/// hop is invisible to that snapshot. Building a <c>siloConfig { }</c> value now pre-loads every
+/// Orleans assembly <c>Orleans.FSharp.Runtime</c> references — memory storage, reminders,
+/// streaming, broadcast channels, and the F# abstractions — so the first four touches below are
+/// redundant and kept only to state the dependency at the point of use. The LAST one is not:
+/// this process's own C# interop assembly is referenced only from F# and has to be touched here.
+/// </remarks>
+let private preloadTourAssemblies () =
+    typeof<Orleans.Hosting.SiloBuilderReminderMemoryExtensions>.Assembly |> ignore // reminders
+    typeof<Orleans.Streams.IStreamProvider>.Assembly |> ignore // streams
+    typeof<Orleans.Providers.MemoryStreamQueueGrain>.Assembly |> ignore // memory stream grains
+    typeof<Orleans.BroadcastChannel.IBroadcastChannelProvider>.Assembly |> ignore // broadcast channels
+    // The C# interop assembly carries the Orleans-generated observer proxy AND the implicit
+    // broadcast-channel consumer grain. It is reached only through an F# reference, so without
+    // this touch it is absent from Orleans' first manifest snapshot and the consumer grain is
+    // simply not part of the cluster.
+    typeof<ITourObserver>.Assembly |> ignore
+
+let private siloConfiguration =
+    siloConfig {
+        useLocalhostClustering
+        addMemoryStorage "Default"
+        addMemoryStorage "Audit"
+        addMemoryReminderService
+        addMemoryStreams TourStream.Provider
+        addBroadcastChannel TourChannels.Provider
+
+        addIncomingFilter (TourIncomingFilter GatewayApi.RejectedOperation :> IIncomingGrainCallFilter)
+    }
+
+// ── Sections ─────────────────────────────────────────────────────────────────
+
+let private runPersistence (factory: IGrainFactory) =
+    task {
+        section 1 "Persistence — stateFrom + a second usePersistentState holder"
+
+        let ledger = LedgerApi.ref factory "acct-1"
+
+        let! before = ledger.snapshot ()
+        say $"before any write: balance={before.balance} primaryRecordExists={before.primaryRecordExists} auditRecordExists={before.auditRecordExists}"
+
+        let! after1 = ledger.deposit 250L
+        let! after2 = ledger.deposit 125L
+        say $"deposit 250 -> {after1}; deposit 125 -> {after2}"
+
+        let! written = ledger.snapshot ()
+        say $"after two explicit WriteStateAsync calls: balance={written.balance} entries={written.entries} primaryRecordExists={written.primaryRecordExists} auditRecordExists={written.auditRecordExists}"
+        say $"second holder ('audit' on provider 'Audit'): {written.auditEvents}"
+        say $"activations of this grain so far: {written.activations}"
+
+        do! ledger.goIdle ()
+        say "goIdle: context.deactivateOnIdle() requested — the activation ends after this turn"
+
+        let! reactivated =
+            waitUntil (TimeSpan.FromSeconds 30.0) (fun () ->
+                task {
+                    let! snapshot = ledger.snapshot ()
+                    return snapshot.activations > written.activations
+                })
+
+        let! afterIdle = ledger.snapshot ()
+
+        if reactivated then
+            say $"after deactivation + a fresh call: activations={afterIdle.activations} balance={afterIdle.balance} primaryRecordExists={afterIdle.primaryRecordExists}"
+        else
+            say $"deactivation was NOT observed within 30s (activations={afterIdle.activations}) — reporting what was seen"
+
+        let! reloaded = ledger.reload ()
+        say $"explicit ReadStateAsync re-read from storage -> balance={reloaded}"
+
+        let! clearObservation = ledger.clear ()
+        let! cleared = ledger.snapshot ()
+        say $"explicit ClearStateAsync on both holders: balance={cleared.balance} primaryRecordExists={cleared.primaryRecordExists} auditRecordExists={cleared.auditRecordExists}"
+        say $"hazard observed on clear: {clearObservation}"
+        detail "Orleans re-seeds a cleared facet with an uninitialized instance, so an F# record's"
+        detail "reference fields come back null — re-seed explicitly after ClearStateAsync."
+
+        let persistenceHolds =
+            written.balance = 375L
+            && written.primaryRecordExists
+            && written.auditRecordExists
+            && List.length written.auditEvents = 2
+            && reactivated
+            && afterIdle.balance = 375L
+            && reloaded = 375L
+            && not cleared.primaryRecordExists
+            && not cleared.auditRecordExists
+
+        if persistenceHolds then
+            verdict "SUPPORTED — two independently-provided holders, explicit read/write/clear, RecordExists across deactivation"
+        else
+            verdict "FAILED — one of the persistence observations above did not hold"
+    }
+
+let private runScheduling (factory: IGrainFactory) =
+    task {
+        section 2 "Timers and reminders — onTimer / onReminder on the definition"
+
+        let scheduler = SchedulerApi.ref factory "clock-1"
+
+        let! first = scheduler.report ()
+        say $"first call (activation starts the timer): ticks={first.ticks}"
+        say $"reminder table for this grain right after activation: {first.registeredReminders}"
+
+        do! Task.Delay 1200
+        let! later = scheduler.report ()
+        say $"after ~1.2s of a 200ms onTimer: ticks={later.ticks} (grew by {later.ticks - first.ticks})"
+
+        let! fired =
+            waitUntil (TimeSpan.FromSeconds 40.0) (fun () ->
+                task {
+                    let! report = scheduler.report ()
+                    return report.reminderFires >= 1
+                })
+
+        let! reminded = scheduler.report ()
+
+        if fired then
+            say $"onReminder '{SchedulerDefinition.ReminderName}' fired: reminderFires={reminded.reminderFires} at {reminded.lastReminderAt}"
+        else
+            say $"onReminder '{SchedulerDefinition.ReminderName}' did NOT fire within 40s (fires={reminded.reminderFires})"
+
+        detail $"declared dueTime={SchedulerDefinition.dueTime} period={SchedulerDefinition.period}"
+        detail "the one-minute floor is ReminderOptions.MinimumReminderPeriod and applies to the PERIOD only;"
+        detail "the due time is unconstrained, which is what lets a reminder genuinely fire inside a short run."
+
+        if fired && later.ticks > first.ticks && List.contains SchedulerDefinition.ReminderName first.registeredReminders then
+            verdict "SUPPORTED — timer ticks observed; reminder registered in the real reminder table and fired"
+        else
+            verdict "FAILED — the timer did not tick, or the reminder was not registered or did not fire"
+    }
+
+let private runCallFilters (factory: IGrainFactory) =
+    task {
+        section 3 "Grain call filters — IIncomingGrainCallFilter over IFunctionalRequestMetadata"
+
+        let gateway = GatewayApi.ref factory "gate-1"
+
+        let! allowed = gateway.allowed "ping"
+        say $"allowed(\"ping\") -> {allowed}"
+
+        let! peeked = gateway.peek ()
+        say $"peek() -> {peeked}"
+
+        do! gateway.note "filed for later"
+        say "note(\"filed for later\") -> acknowledged locally (oneWay: no target reply, ever)"
+
+        // A oneWay call completes at the local send, so the filter may not have seen it yet.
+        let! _ =
+            waitUntil (TimeSpan.FromSeconds 5.0) (fun () ->
+                Task.FromResult(
+                    FilterLog.forGrainType "tour.gateway"
+                    |> List.exists (fun call -> call.operationId = "note")))
+
+        let! rejection =
+            task {
+                try
+                    let! reply = gateway.forbidden "secret"
+                    return $"NO REJECTION — handler replied {reply}"
+                with error ->
+                    return describe error
+            }
+
+        say $"forbidden(\"secret\") -> {rejection}"
+
+        say "what the filter saw (grain type / operation / version / readOnly / oneWay / interleave / payload bytes / rejected):"
+
+        for call in FilterLog.forGrainType "tour.gateway" do
+            detail
+                $"{call.grainType} {call.operationId} v{call.contractVersion} readOnly={call.isReadOnly} oneWay={call.isOneWay} interleave={call.isAlwaysInterleave} payload={call.payloadLength}B rejected={call.rejected}"
+
+        let observedFlags = FilterLog.forGrainType "tour.gateway"
+
+        let filtersHold =
+            rejection.Contains "filter rejected operation 'forbidden'"
+            && observedFlags |> List.exists _.isReadOnly
+            && observedFlags |> List.exists _.isOneWay
+            && observedFlags |> List.exists _.isAlwaysInterleave
+            && observedFlags |> List.exists _.rejected
+
+        if filtersHold then
+            verdict "SUPPORTED — metadata readable, rejection surfaces to the caller before the handler runs"
+        else
+            verdict "FAILED — the rejection did not surface, or an admission flag was never observed"
+    }
+
+let private runRequestContext (factory: IGrainFactory) =
+    task {
+        section 4 "Request context — client-set correlation id and a handler-set hop"
+
+        let correlationId = $"corr-{Guid.NewGuid().ToString().Substring(0, 8)}"
+        RequestCtx.set ContextKeys.Correlation correlationId
+        say $"client: RequestCtx.set \"{ContextKeys.Correlation}\" = {correlationId}"
+
+        let front = FrontApi.ref factory "front-1"
+        let! report = front.trace ()
+        RequestCtx.remove ContextKeys.Correlation
+
+        say $"front grain read context.tryGetRequestContext -> {report.correlationSeenByFront}"
+        say $"front grain set context.setRequestContext \"{ContextKeys.Hop}\" = {report.hopSetByFront}"
+        say $"downstream grain saw correlation -> {report.correlationSeenByDownstream}"
+        say $"downstream grain saw hop         -> {report.hopSeenByDownstream}"
+
+        let contextHolds =
+            report.correlationSeenByFront = Some correlationId
+            && report.correlationSeenByDownstream = Some correlationId
+            && report.hopSeenByDownstream = Some report.hopSetByFront
+
+        if contextHolds then
+            verdict "SUPPORTED — client-to-grain and grain-to-grain propagation both observed"
+        else
+            verdict "FAILED — a request-context value did not reach one of the two hops"
+    }
+
+let private runCancellation (factory: IGrainFactory) =
+    task {
+        section 5 "Cancellation — rawRef.callCancellable and context.cancellationToken"
+
+        let slow = SlowApi.rawRef factory "slow-1"
+        use cancellation = new CancellationTokenSource()
+
+        let call = slow.callCancellable (_.slow) 10000 cancellation.Token
+        do! Task.Delay 500
+        say "caller: cancelling a 10s call after 500ms"
+        cancellation.Cancel()
+
+        let! callerOutcome =
+            task {
+                try
+                    let! reply = call
+                    return $"call returned normally: {reply}"
+                with error ->
+                    return describe error
+            }
+
+        say $"caller side  -> {callerOutcome}"
+
+        // The caller's task completes as cancelled the moment the token trips; the target only
+        // notices when its own await throws, which is strictly later.
+        let! _ =
+            waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                Task.FromResult(List.length (TargetObservation.all ()) >= 2))
+
+        for observation in TargetObservation.all () do
+            say $"target side  -> {observation}"
+
+        detail "cancellation is cooperative: it does not roll back anything the handler already did."
+
+        let observations = TargetObservation.all ()
+
+        let cancellationHolds =
+            callerOutcome.Contains "OperationCanceledException"
+            && observations |> List.exists (fun text -> text.Contains "observed cancellation")
+
+        if cancellationHolds then
+            verdict "SUPPORTED — both sides observe the cancellation"
+        else
+            verdict "FAILED — one of the two sides did not observe the cancellation"
+    }
+
+let private runVersioning (factory: IGrainFactory) =
+    task {
+        section 6 "Contract versioning — exact match, no rolling-upgrade tolerance"
+
+        let matching = VersioningTour.VersionedApi.refV1 factory "doc-1"
+        let! reply = matching.hosted ()
+        say $"caller on version 1 (silo hosts version 1) -> {reply}"
+
+        let ahead = VersioningTour.VersionedApi.refV2 factory "doc-1"
+
+        let! mismatch =
+            task {
+                try
+                    let! reply = ahead.hosted ()
+                    return $"NO REJECTION — handler replied {reply}"
+                with error ->
+                    return describe error
+            }
+
+        say $"caller on version 2, same grainType '{VersioningTour.VersionedApi.GrainType}' ->"
+        detail mismatch
+
+        let versioningHolds =
+            reply.Contains "version-1 handler"
+            && mismatch.Contains "hosts contract version 1 but received version 2"
+
+        if versioningHolds then
+            verdict "SUPPORTED — the mismatch is refused before any handler runs, naming both versions"
+        else
+            verdict "FAILED — the matching call or the version rejection did not behave as documented"
+    }
+
+let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider) =
+    task {
+        section 7 "Streams (EXPERIMENT) — producer from a handler, three consumer arms"
+
+        let producer = ProducerApi.ref factory "line-1"
+        let! probe = producer.providerProbe ()
+        say $"handler resolved the stream provider from context.services -> {probe}"
+        detail "there is no context.streamProvider: Orleans exposes GetStreamProvider only on"
+        detail "Grain / IGrainBase / IClusterClient, so a handler goes through the keyed service."
+
+        // Arm (b): a functional grain subscribing from its own onActivate hook. The first call is
+        // what activates it, so this has to happen BEFORE anything is published.
+        let consumer = ConsumerApi.ref factory "line-1"
+        let! initial = consumer.report ()
+        say $"arm (b) grain-side onActivate subscription -> {initial.subscribeOutcome}"
+
+        // Arm (c): a subscription taken outside any grain context, from the silo process's own
+        // service provider — the shape an in-process host reaches for first.
+        let outOfGrainSubscriber = "out-of-grain"
+
+        let outOfGrainOutcome =
+            try
+                let provider = siloServices.GetRequiredKeyedService<IStreamProvider> TourStream.Provider
+                let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
+
+                (Stream.subscribe stream (fun event -> task { StreamInbox.add outOfGrainSubscriber event }))
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                "subscribed"
+            with error ->
+                describe error
+
+        say $"arm (c) subscription from the silo service provider, no grain context -> {outOfGrainOutcome}"
+
+        // Arm (a): a genuinely external Orleans client, connected over the localhost gateway.
+        let externalSubscriber = "external-client"
+        let clientBuilder = Host.CreateApplicationBuilder()
+        clientBuilder.Logging.SetMinimumLevel LogLevel.Error |> ignore
+
+        clientBuilder.UseOrleansClient(fun client ->
+            client.UseLocalhostClustering() |> ignore
+            client.AddMemoryStreams TourStream.Provider |> ignore
+            // Every process that BINDS a functional contract installs the fixed transport once.
+            client.AddFunctionalGrainClient() |> ignore)
+        |> ignore
+
+        use clientHost = clientBuilder.Build()
+        do! clientHost.StartAsync()
+        let clusterClient = clientHost.Services.GetRequiredService<IClusterClient>()
+
+        let externalOutcome =
+            try
+                let provider = clusterClient.GetStreamProvider TourStream.Provider
+                let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
+
+                (Stream.subscribe stream (fun event -> task { StreamInbox.add externalSubscriber event }))
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                "subscribed"
+            with error ->
+                describe error
+
+        say $"arm (a) subscription from an external IClusterClient over the gateway -> {externalOutcome}"
+
+        // While the external client is up, prove AddFunctionalGrainClient binds a contract too.
+        let! externalCall = (ProducerApi.ref clusterClient "line-1").providerProbe ()
+        say $"external client calling a functional grain -> {externalCall}"
+
+        let! _ = producer.publish "order-placed"
+        let! total = producer.publish "order-shipped"
+        say $"published {total} events through the producer's handler"
+
+        let expected = [ "order-placed"; "order-shipped" ]
+
+        let! _ =
+            waitUntil (TimeSpan.FromSeconds 20.0) (fun () ->
+                task {
+                    let! report = consumer.report ()
+
+                    return
+                        List.length report.received >= 2
+                        && List.length (StreamInbox.read outOfGrainSubscriber) >= 2
+                        && List.length (StreamInbox.read externalSubscriber) >= 2
+                })
+
+        let! finalReport = consumer.report ()
+        let outOfGrainReceived = StreamInbox.read outOfGrainSubscriber
+        let externalReceived = StreamInbox.read externalSubscriber
+
+        say $"arm (a) external client received -> {externalReceived}"
+        say $"arm (b) grain-side consumer received -> {finalReport.received}"
+        say $"arm (c) out-of-grain subscriber received -> {outOfGrainReceived}"
+
+        do! clientHost.StopAsync()
+
+        if finalReport.received = expected && externalReceived = expected then
+            verdict "SUPPORTED — publish from a handler, and all three consumer arms deliver"
+        else
+            verdict "PARTIAL — see the per-arm lines above and the README for the exact failure"
+    }
+
+let private runObservers (factory: IGrainFactory) =
+    task {
+        section 8 "Observers (EXPERIMENT) — Observer.createRef against a C#-declared interface"
+
+        let notifier = NotifierApi.ref factory "room-1"
+        let observer = RecordingObserver()
+
+        let! outcome =
+            task {
+                try
+                    // The whole experiment in one line: does CreateObjectReference find a
+                    // generated proxy for an interface declared in a C# project that this F#
+                    // project references?
+                    let observerRef = Observer.createRef<ITourObserver> factory observer
+                    let! count = notifier.subscribe observerRef
+                    say $"Observer.createRef succeeded; subscriber count = {count}"
+
+                    let! notified = notifier.notify "deployment finished"
+                    let! notifiedAgain = notifier.notify "all green"
+                    say $"notify() reached {notified} then {notifiedAgain} subscriber(s)"
+
+                    let! delivered =
+                        waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                            Task.FromResult(List.length observer.Received >= 2))
+
+                    say $"observer received -> {observer.Received}"
+
+                    let! remaining = notifier.unsubscribe observerRef
+                    say $"after unsubscribe, subscriber count = {remaining}"
+
+                    Observer.deleteRef<ITourObserver> factory observerRef
+
+                    return
+                        if delivered then
+                            "SUPPORTED"
+                        else
+                            "PARTIAL — reference created and subscribed, but notifications did not arrive"
+                with error ->
+                    say $"Observer.createRef / subscribe FAILED -> {describe error}"
+                    return "WALL"
+            }
+
+        detail "the observer interface is declared in the sibling C# project (TourInterop) because"
+        detail "Orleans' proxy source generators are Roslyn generators and never run over F#."
+
+        if outcome = "SUPPORTED" then
+            verdict "SUPPORTED — with the requirement that the observer interface lives in a C#-compiled assembly"
+        else
+            verdict $"{outcome} — see the lines above and the README"
+    }
+
+let private runBroadcast (factory: IGrainFactory) =
+    task {
+        section 9 "Broadcast channels (EXPERIMENT) — functional producer, two consumer arms"
+
+        let announcer = AnnouncerApi.ref factory "region-eu"
+        let! probe = announcer.providerProbe ()
+        say $"handler resolved the broadcast-channel provider from context.services -> {probe}"
+
+        let! _ = announcer.announce "maintenance window opens"
+        let! total = announcer.announce "maintenance window closes"
+        say $"published {total} announcements from a functional handler"
+
+        let consumer = factory.GetGrain<IBroadcastConsumerGrain> "region-eu"
+
+        let! delivered =
+            waitUntil (TimeSpan.FromSeconds 20.0) (fun () ->
+                task {
+                    let! received = consumer.Received()
+                    return received.Count >= 2
+                })
+
+        let! received = consumer.Received()
+        say $"arm (a) C#-declared consumer grain received -> {List.ofSeq received}"
+
+        // Arm (b): the same attribute and the same interface on an F# class grain, with NO C#
+        // assembly involved — hand-registered in GrainTypeOptions.Classes because an F# assembly
+        // carries no Orleans application-part attributes.
+        let! fsharpDelivered =
+            waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                Task.FromResult(List.length (BroadcastInbox.all ()) >= 2))
+
+        let fsharpReceived = BroadcastInbox.all ()
+        say $"arm (b) F#-ONLY class grain consumer received -> {fsharpReceived}"
+
+        detail "the PRODUCER is a plain functional handler — nothing extra needed."
+        detail "the CONSUMER is a class grain either way: an F# one works, but ONLY if it also"
+        detail "implements IGrainWithStringKey (so Orleans can build an activator for it) and is"
+        detail "hand-added to GrainTypeOptions.Classes. Without IGrainWithStringKey the publish is"
+        detail "routed and then fails with 'Unable to find an IGrainContextActivatorProvider'."
+
+        if delivered && fsharpDelivered then
+            verdict "COMPOSED — functional producer; consumer is a class grain, and an F#-only one works"
+        elif delivered then
+            verdict "COMPOSED — functional producer + C#-declared consumer; the F#-only arm did not deliver"
+        else
+            verdict "WALL — publish succeeded but no consumer delivery was observed; see the README"
+    }
+
+let private runHeterogeneous () =
+    task {
+        section 11 "Heterogeneous cluster — one grain type advertised by only one silo"
+
+        say "deploying a two-silo cluster (Microsoft.Orleans.TestingHost, in-process silos)..."
+        let! observation = HeterogeneousRun.run ()
+
+        say $"silos: {observation.siloNames}"
+        say $"'{Cluster.RegionalGrainType}' appears in the local grain manifest of: {observation.regionalHostSilos}"
+
+        let everywhereSilos =
+            observation.everywherePlacements |> List.map snd |> List.distinct |> List.sort
+
+        let regionalSilos =
+            observation.regionalPlacements |> List.map snd |> List.distinct |> List.sort
+
+        say $"'{Cluster.EverywhereGrainType}' activations landed on: {everywhereSilos}"
+        say $"'{Cluster.RegionalGrainType}' activations landed on: {regionalSilos}"
+
+        for key, silo in observation.regionalPlacements do
+            detail $"{Cluster.RegionalGrainType}/{key} ran on {silo}"
+
+        let routedAway =
+            regionalSilos = observation.regionalHostSilos
+            && not (List.contains Cluster.PrimarySiloName regionalSilos)
+
+        if routedAway && List.length everywhereSilos > 1 then
+            verdict "SUPPORTED — the everywhere grain spreads over both silos; every regional call routes to the only silo advertising it"
+        elif routedAway then
+            verdict "SUPPORTED (partial spread) — regional calls route correctly, but the everywhere grain happened to land on one silo"
+        else
+            verdict "UNEXPECTED — regional placements did not match the advertising silos; see the per-key lines above"
+    }
+
+let private runPlacement (factory: IGrainFactory) =
+    task {
+        section 10 "Stateless workers and flexible placement — composed, not built in"
+
+        let worker = WorkerApi.ref factory "batch-1"
+        let! reports, elapsed = WorkerRun.concurrentBatch worker 8 400
+
+        let activations = reports |> Array.map _.activation |> Array.distinct
+
+        say $"8 concurrent 400ms calls to ONE grain id finished in {elapsed}ms"
+        let rendered = String.Join(", ", activations)
+        say $"distinct activations that served them: {activations.Length} -> [{rendered}]"
+
+        detail $"the contract has no 'placement' operation, so this is composed: an application"
+        detail $"IGrainPropertiesProvider applies StatelessWorkerAttribute {WorkerApi.MaxLocalWorkers} to grain type"
+        detail $"'{WorkerApi.GrainType}' by NAME, because a functional grain's class is the library's own"
+        detail "FunctionalGrainMarker<'Actor> and cannot carry the attribute itself."
+        detail "properties written: placement-strategy, max-local-instances, remove-idle-workers, unordered."
+
+        if activations.Length > 1 then
+            verdict $"COMPOSED — stateless-worker placement works today; a first-class contract operation is still backlog"
+        else
+            verdict "WALL — the placement properties did not take effect; see the README"
+    }
+
+// ── Entry point ──────────────────────────────────────────────────────────────
+
+let private runTour (host: IHost) =
+    task {
+        do! host.StartAsync()
+        let factory = host.Services.GetRequiredService<IGrainFactory>()
+
+        printfn ""
+        printfn "Orleans.FSharp feature tour — every section below runs for real against a live silo."
+
+        do! runPersistence factory
+        do! runScheduling factory
+        do! runCallFilters factory
+        do! runRequestContext factory
+        do! runCancellation factory
+        do! runVersioning factory
+        do! runStreams factory host.Services
+        do! runObservers factory
+        do! runBroadcast factory
+        do! runPlacement factory
+
+        printfn ""
+        printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
+        do! host.StopAsync()
+
+        do! runHeterogeneous ()
+
+        printfn ""
+        printfn "Tour complete." 
+    }
+
+[<EntryPoint>]
+let main _argv =
+    preloadTourAssemblies ()
+
+    let builder = Host.CreateApplicationBuilder()
+    // Error, not Warning: a clean transcript is the point of this example. Orleans logs a
+    // ServerGC advisory at startup and a "Connection reset by peer" warning when the tour's
+    // external client host shuts down; both are expected and would only obscure the sections.
+    // Genuine failures are logged at Error and still appear.
+    builder.Logging.SetMinimumLevel LogLevel.Error |> ignore
+
+    SiloConfig.applyToHost siloConfiguration builder
+
+    builder.UseOrleans(fun silo ->
+        silo.AddFunctionalGrain LedgerDefinition.definition |> ignore
+        silo.AddFunctionalGrain SchedulerDefinition.definition |> ignore
+        silo.AddFunctionalGrain GatewayDefinition.definition |> ignore
+        silo.AddFunctionalGrain FrontDefinition.definition |> ignore
+        silo.AddFunctionalGrain DownstreamDefinition.definition |> ignore
+        silo.AddFunctionalGrain SlowDefinition.definition |> ignore
+        // Deliberately ONLY version 1 of tour.versioned.
+        silo.AddFunctionalGrain VersionedDefinition.definition |> ignore
+        silo.AddFunctionalGrain ProducerDefinition.definition |> ignore
+        silo.AddFunctionalGrain ConsumerDefinition.definition |> ignore
+        silo.AddFunctionalGrain NotifierDefinition.definition |> ignore
+        silo.AddFunctionalGrain AnnouncerDefinition.definition |> ignore
+        silo.AddFunctionalGrain WorkerDefinition.definition |> ignore
+
+        // Feature 11: stateless-worker placement for a functional grain, applied by name through
+        // a stock IGrainPropertiesProvider because the library's closed marker class cannot
+        // carry [<StatelessWorker>] itself.
+        silo.Services.AddSingleton<Orleans.Metadata.IGrainPropertiesProvider>(fun services ->
+            FunctionalPlacementProvider(
+                services,
+                WorkerApi.GrainType,
+                StatelessWorkerAttribute WorkerApi.MaxLocalWorkers
+            )
+            :> Orleans.Metadata.IGrainPropertiesProvider)
+        |> ignore
+
+        // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
+        // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the
+        // silo. If Orleans accepts it, no C# bridge is needed for a broadcast consumer.
+        silo.Services.Configure<Orleans.Configuration.GrainTypeOptions>(fun (options: Orleans.Configuration.GrainTypeOptions) ->
+            options.Classes.Add typeof<FSharpBroadcastConsumer> |> ignore)
+        |> ignore)
+    |> ignore
+
+    let host = builder.Build()
+    (runTour host).GetAwaiter().GetResult()
+
+    match failedVerdicts () with
+    | [] -> 0
+    | failures ->
+        printfn ""
+        printfn "%d section(s) did NOT pass:" (List.length failures)
+
+        for failure in failures do
+            printfn "   %s" failure
+
+        1

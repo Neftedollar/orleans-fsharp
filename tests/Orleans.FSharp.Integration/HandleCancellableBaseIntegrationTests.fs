@@ -16,11 +16,14 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 [<Collection("ClusterCollection")>]
 type HandleCancellableBaseIntegrationTests(fixture: ClusterFixture) =
 
     // ── basic accumulation ────────────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     let ``RawCancAdd: single add updates RawSum and RawSteps`` () =
         task {
@@ -108,3 +111,5 @@ type HandleCancellableBaseIntegrationTests(fixture: ClusterFixture) =
             let! s = Eventually.until (fun s -> s.RawSum = 11) (fun () -> FSharpGrain.send GetRawCancState g)
             test <@ s.RawSum = 11 @>
         }
+
+#warnon "44"

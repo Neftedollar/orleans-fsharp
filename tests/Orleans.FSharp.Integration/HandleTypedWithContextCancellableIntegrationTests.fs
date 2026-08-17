@@ -13,11 +13,14 @@ open Xunit
 open Swensen.Unquote
 open Orleans.FSharp
 
+
 [<Collection("ClusterCollection")>]
 type HandleTypedWithContextCancellableIntegrationTests(fixture: ClusterFixture) =
 
     // ── typed result via ask ──────────────────────────────────────────────────
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     [<Fact>]
     let ``TWCCAdd: returns correct int result`` () =
         task {
@@ -88,3 +91,5 @@ type HandleTypedWithContextCancellableIntegrationTests(fixture: ClusterFixture) 
                     g |> FSharpGrain.ask<TWCCState, TWCCCommand, int> GetTWCCLastResult)
             test <@ last = 30 @>
         }
+
+#warnon "44"

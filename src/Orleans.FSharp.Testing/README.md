@@ -2,6 +2,15 @@
 
 Test utilities for Orleans.FSharp grains -- in-process clusters, mocks, property-based testing, and log capture.
 
+> **Note.** Several examples below drive the `grain {}` CE and the universal
+> `FSharpGrain.ref`/`send`/`ask` surface, which now carry `[<Obsolete>]` (warning, not error).
+> `getFSharpGrain`/`getFSharpGrainGuid`/`getFSharpGrainInt` and `GrainMock.withFSharpGrain*` exist
+> only to test that older authoring model, so they now carry `[<Obsolete>]` too; they stay
+> supported for as long as the model does. For grains written
+> against the functional runtime (`grainContract` / `grainFor`), call them through
+> `FunctionalGrain.ref` on `harness.Client` instead. See
+> [docs/functional-grains.md](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md).
+
 ## Components
 
 ### TestHarness

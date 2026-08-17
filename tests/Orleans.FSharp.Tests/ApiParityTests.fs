@@ -13,6 +13,7 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.Streaming
 
+
 // ============================================================================
 // GAP #1: Cluster identity config
 // ============================================================================
@@ -142,6 +143,8 @@ let ``siloConfig default has no grainCollectionAge`` () =
 let ``GrainContext has GrainId field`` () =
     let gid = GrainId.Create("test/grain", "key-1")
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let ctx: GrainContext =
         {
             GrainFactory = Unchecked.defaultof<IGrainFactory>
@@ -155,10 +158,13 @@ let ``GrainContext has GrainId field`` () =
 
     test <@ ctx.GrainId = Some gid @>
 
+#warnon "44"
 [<Fact>]
 let ``GrainContext.grainId returns GrainId when available`` () =
     let gid = GrainId.Create("test/grain", "key-1")
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let ctx: GrainContext =
         {
             GrainFactory = Unchecked.defaultof<IGrainFactory>
@@ -202,10 +208,13 @@ let ``GrainContext.primaryKeyString returns string key`` () =
 
     test <@ GrainContext.primaryKeyString ctx = "my-key" @>
 
+#warnon "44"
 [<Fact>]
 let ``GrainContext.primaryKeyGuid returns Guid key`` () =
     let guid = Guid.Parse("12345678-1234-1234-1234-123456789abc")
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
     let ctx: GrainContext =
         {
             GrainFactory = Unchecked.defaultof<IGrainFactory>
@@ -279,12 +288,15 @@ let ``GrainContext.primaryKeyInt64 throws when None`` () =
 
     raises<InvalidOperationException> <@ GrainContext.primaryKeyInt64 ctx @>
 
+#warnon "44"
 [<Fact>]
 let ``grain CE handleWithContext receives GrainId in context`` () =
     task {
         let gid = GrainId.Create("test/grain", "key-1")
         let mutable receivedGrainId = Unchecked.defaultof<GrainId>
 
+// Task 8 deprecation pass: exercises the pre-functional-runtime grain{} / FSharpGrain.* API on purpose.
+#nowarn "44"
         let def =
             grain {
                 defaultState 0
@@ -316,6 +328,7 @@ let ``grain CE handleWithContext receives GrainId in context`` () =
 // GAP #5: Call timeouts on grain references
 // ============================================================================
 
+#warnon "44"
 /// <summary>Test grain interface for timeout tests.</summary>
 type ISlowGrain =
     inherit IGrainWithStringKey

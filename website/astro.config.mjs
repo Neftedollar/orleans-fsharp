@@ -24,6 +24,7 @@ export default defineConfig({
 				{
 					label: 'Core Guides',
 					items: [
+						{ label: 'Functional Grain Runtime', link: '/functional-grains' },
 						{ label: 'Grain Definition', link: '/grain-definition' },
 						{ label: 'Silo Configuration', link: '/silo-configuration' },
 						{ label: 'Client Configuration', link: '/client-configuration' },

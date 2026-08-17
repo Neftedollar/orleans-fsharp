@@ -280,3 +280,84 @@ let ``SiloConfig.validate with missing clustering always returns error list`` ()
 let ``SiloConfig.validate returns empty list when clustering is set`` () =
     let config = siloConfig { useLocalhostClustering }
     SiloConfig.validate config = []
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Manifest pre-load
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <remarks>
+/// <para>
+/// Orleans snapshots its grain manifest from the assemblies already loaded when AddSerializer
+/// first runs, and an Orleans assembly reached only through an F# hop is not among them unless
+/// something touches it first. The pre-load derives that set from Orleans.FSharp.Runtime's own
+/// Orleans references; this test re-derives the same ground truth independently and requires the
+/// two to agree, so an Orleans package added to the runtime project — or one that fails to load
+/// at run time and is silently skipped — fails here instead of at a consumer's first grain call.
+/// </para>
+/// <para>
+/// What it does NOT prove: that the pre-load is what loaded a given assembly in this process.
+/// Everything here is already loaded by the time a test host runs, so causality is out of reach;
+/// the assertion is about the SET the pre-load resolves, which is the part that used to drift.
+/// </para>
+/// </remarks>
+[<Fact>]
+let ``the manifest pre-load covers every Orleans assembly the runtime references`` () =
+    let runtime = typeof<SiloConfig>.Assembly
+
+    let expected =
+        runtime.GetReferencedAssemblies()
+        |> Array.choose (fun reference ->
+            if not (isNull reference.Name) && reference.Name.StartsWith("Orleans", StringComparison.Ordinal) then
+                Some reference.Name
+            else
+                None)
+        |> Array.sort
+
+    let preloaded =
+        SiloConfig.manifestAssemblies.Value
+        |> Array.map (fun assembly -> assembly.GetName().Name)
+        |> Array.sort
+
+    test <@ preloaded = expected @>
+
+/// <remarks>
+/// The four assemblies whose grains an F# host reaches only through an F# hop, named so the
+/// symptom each one causes is greppable: IMemoryStorageGrain, IReminderTableGrain, the memory
+/// stream queue grains, and FSharpGrainImpl / the functional transport proxies. Each is also
+/// checked to really carry Orleans' code-generated ApplicationPart attribute, which is what
+/// makes loading it early matter at all.
+/// </remarks>
+[<Fact>]
+let ``the pre-loaded set includes every assembly an F# host reaches only through an F# hop`` () =
+    let byName =
+        SiloConfig.manifestAssemblies.Value
+        |> Array.map (fun assembly -> assembly.GetName().Name, assembly)
+        |> Map.ofArray
+
+    let required =
+        [ "Orleans.Persistence.Memory" // IMemoryStorageGrain, for addMemoryStorage
+          "Orleans.Reminders" // IReminderTableGrain, for addMemoryReminderService
+          "Orleans.Streaming" // the memory stream queue grains, for addMemoryStreams
+          "Orleans.FSharp.Abstractions" ] // FSharpGrainImpl and the functional transport proxies
+
+    for name in required do
+        test <@ byName.ContainsKey name @>
+
+        let contributesToTheManifest =
+            byName.[name].GetCustomAttributesData()
+            |> Seq.exists (fun attribute' -> attribute'.AttributeType.Name = "ApplicationPartAttribute")
+
+        test <@ contributesToTheManifest @>
+
+/// <remarks>
+/// A WebApplicationBuilder host calls <c>SiloConfig.applyToSiloBuilder</c> from inside
+/// <c>builder.Host.UseOrleans(...)</c>, by which point UseOrleans has already taken the manifest
+/// snapshot — so the pre-load also has to run when the configuration VALUE is built, which every
+/// host shape does before UseOrleans.
+/// </remarks>
+[<Fact>]
+let ``building a silo config forces the manifest pre-load`` () =
+    let config = siloConfig { useLocalhostClustering }
+
+    test <@ config.ClusteringMode |> Option.exists isLocalhost @>
+    test <@ SiloConfig.manifestAssemblies.IsValueCreated @>

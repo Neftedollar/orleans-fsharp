@@ -1,7 +1,5 @@
 namespace Orleans.FSharp.Testing
 
-#nowarn "44"
-
 open System
 open System.Net.Http
 open System.Threading.Tasks
@@ -77,6 +75,12 @@ module WebTestHarness =
         if hasRegistration then
             raise (InvalidOperationException grainFactoryConflictMessage)
 
+    // ASP.NET Core's OWN obsoletions (aka.ms/aspnet/deprecate/004 and /008), NOT a spec-003
+    // deprecation self-reference: WebHostBuilder is obsolete in favour of HostBuilder /
+    // WebApplicationBuilder, and TestServer's IWebHost ctor with it. Microsoft.AspNetCore.TestHost
+    // exposes no non-obsolete way to build a TestServer from an IWebHostBuilder, so the two call
+    // sites below are bracketed rather than file-wide suppressed.
+#nowarn "44"
     let private buildTestServer
         (configureWeb: IWebHostBuilder -> unit)
         (configureRequiredServices: IServiceCollection -> unit)
@@ -93,6 +97,7 @@ module WebTestHarness =
         |> ignore
 
         new TestServer(webHostBuilder)
+#warnon "44"
 
     /// <summary>
     /// Creates a WebTestHarness with custom silo and web host configuration.

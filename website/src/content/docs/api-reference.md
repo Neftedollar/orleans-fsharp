@@ -7,6 +7,141 @@ description: "Quick reference for all public modules, types, and functions in Or
 
 **Quick reference for all public modules, types, and functions in Orleans.FSharp.**
 
+> **Note.** Entries for the `grain { }` cluster -- `GrainBuilder`/`grain`, `GrainDefinition`, the old
+> `GrainContext`, `AdditionalStateSpec`, `FSharpGrainAttribute`, `IFSharpGrain*`, the
+> `FSharpGrainHandle*` types, the `FSharpGrain.*` module, `AddFSharpGrain(sFromAssembly)`, `Timers`
+> and `Reminder` -- now carry `[<Obsolete>]` (warning, not error). See
+> [functional-grains.md](/orleans-fsharp/functional-grains/) for the replacement of each.
+
+---
+
+## Functional Grain Runtime
+
+**The current grain authoring model.** User-authored API records instead of C# CodeGen interfaces.
+See [Functional Grain Runtime](/orleans-fsharp/functional-grains/) for the full guide.
+
+### Contract builder — `grainContract<'Actor, 'Key, 'Api> ()`
+
+| Keyword | Signature | Description |
+|---|---|---|
+| `grainType` | `string -> ...` | The wire `GrainType` string — routing and storage identity |
+| `version` | `int -> ...` | Contract version — every call is matched exactly, no rolling tolerance |
+| `stringKey` / `guidKey` / `int64Key` | `unit -> ...` | Native key codec — the domain key type *is* the Orleans key type |
+| `stringKeyMapped` / `guidKeyMapped` / `int64KeyMapped` | `encode -> decode -> ...` | Mapped key codec over a domain key type |
+| `guidCompoundKey` / `int64CompoundKey` | `unit -> ...` | Native compound key (Guid/int64 + string extension) |
+| `guidCompoundKeyMapped` / `int64CompoundKeyMapped` | `encode -> decode -> ...` | Mapped compound key |
+| `readOnly` | `selector -> ...` | Handler's returned state is discarded; interleaves with other read-only calls |
+| `oneWay` | `selector -> ...` | Caller's `Task` completes once the message enters the local send path |
+| `alwaysInterleave` | `selector -> ...` | Interleaves regardless of `readOnly`/`oneWay` |
+| `operationId` | `string -> selector -> ...` | Override an operation's wire ID, decoupling it from the F# field name |
+
+Every API field takes exactly one argument; a multi-input operation groups its inputs in a tuple
+(`typing: (string * bool) -> Task<unit>`). A field spelled curried fails contract construction.
+See [Functional grains](/orleans-fsharp/functional-grains/), "One operation, one argument".
+
+### Definition builder — `grainFor contract { }`
+
+| Keyword | Handler signature | Description |
+|---|---|---|
+| `defaultState` | `unit -> 'State` | Ephemeral state factory, called once per activation |
+| `initialState` | `'Key -> 'State` | Key-aware ephemeral state factory |
+| `handle` | `selector -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> 'Arg -> Task<'State * 'Reply>)` | Attach a handler to one API operation |
+| `stateFrom` | `PersistentStateRef<'State>` | Attach the primary persistent-state descriptor |
+| `usePersistentState` | `PersistentStateRef<'S> -> ('Key -> 'S)` | Attach an additional named persistent-state descriptor (repeatable) |
+| `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
+| `onActivate` | `FunctionalGrainContext<'Actor,'Key> -> 'State -> Task<'State>` | Activation hook |
+| `onDeactivate` | `FunctionalGrainContext<'Actor,'Key> -> DeactivationReason -> 'State -> Task<unit>` | Deactivation hook |
+| `onReminder` | `string -> TimeSpan -> TimeSpan -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> TickStatus -> Task<'State>)` | Declare a reminder: name, due time, period, handler |
+| `onTimer` | `string -> GrainTimerCreationOptions -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> Task<'State>)` | Declare a timer: name, creation options, handler |
+
+### Observer contract builder — `observerContract<'Brand, 'Api> ()`
+
+A handler record whose every field is `'Msg -> Task<unit>`. Push to a client-hosted observer with
+no application code generation; see
+[Functional grains](/orleans-fsharp/functional-grains/), "Push to clients: functional observers".
+
+| Keyword | Signature | Description |
+|---|---|---|
+| `observerType` | `string` | Wire identity of the observer; defaults to the brand's simple CLR name |
+| `version` | `int` | Contract version; defaults to `1` |
+
+A push operation's wire ID is always its handler-record field name — there is no `operationId`
+override, so the notifying and observing sides cannot drift apart.
+
+#### `FunctionalObserver`
+
+| Function | Signature | Description |
+|---|---|---|
+| `create` | `ObserverContract -> IClusterClient -> 'Api -> FunctionalObserverHandle<'Brand,'Api>` | Host a handler record and return a serializable typed handle |
+| `createFrom` | `ObserverContract -> IServiceProvider -> 'Api -> FunctionalObserverHandle<'Brand,'Api>` | The same, from any services carrying the functional transport (e.g. inside a silo) |
+| `notify` | `handle -> selector -> 'Msg -> Task<unit>` | Push one message; resolves its selector on every call — the convenience form |
+| `notifier` | `handle -> selector -> ('Msg -> Task<unit>)` | Resolve once, return a preclosed push function — the hot-path form |
+| `unsubscribe` | `IGrainFactory -> handle -> unit` | Release the object reference; idempotent |
+
+#### `FunctionalObserverManager<'Brand,'Api>`
+
+| Member | Signature | Description |
+|---|---|---|
+| `.ctor` | `TimeSpan` | Liveness window a subscription must be refreshed within |
+| `Subscribe` | `handle -> unit` | Add or refresh a subscription |
+| `Unsubscribe` | `handle -> bool` | Remove one subscription |
+| `Notify` | `selector -> 'Msg -> Task<unit>` | Fan out to every live subscription; resolves its selector once per call, not once per subscriber |
+| `RemoveExpired` / `Clear` / `Count` | | Sweep, forget everything, live count |
+
+A manager is a mutable object held in **ephemeral** handler state. It holds live object
+references, so it must never be part of a persistent state type — the F# codec refuses one.
+
+### Types
+
+| Type | Description |
+|---|---|
+| `GrainContract<'Actor, 'Key, 'Api>` | Sealed result of `grainContract { }` |
+| `FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>` | Sealed result of `grainFor { }` |
+| `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context passed to every handler/hook/timer/reminder callback |
+| `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed wrapper: `key`, `api`, `call(selector, arg)`, `callCancellable(selector, arg, ct)` |
+| `OperationSelector<'Api,'Arg,'Reply>` | A field projection (`_.join`) |
+| `ObserverContract<'Brand, 'Api>` | Sealed result of `observerContract { }` |
+| `FunctionalObserverHandle<'Brand, 'Api>` | Serializable typed handle to a client-hosted observer; an operation argument or a tuple element, never an F# record field |
+| `PersistentStateRef<'State>` | Immutable descriptor returned by `PersistentState.create` |
+| `Handler<'Actor,'Key,'State,'Argument,'Reply>` | `FunctionalGrainContext<'Actor,'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>` |
+| `ActivateHook` / `DeactivateHook` / `ReminderHook` / `TimerHook` | Hook type aliases used by `onActivate` / `onDeactivate` / `onReminder` / `onTimer` |
+
+#### `FunctionalGrainContext<'Actor, 'Key>` members
+
+| Member | Type | Description |
+|---|---|---|
+| `key` | `'Key` | The domain key decoded from the grain identity |
+| `grainId` | `GrainId` | The Orleans identity of this activation |
+| `grainFactory` | `IGrainFactory` | Bind further grain references |
+| `services` | `IServiceProvider` | Resolve DI services registered on the silo |
+| `logger` | `ILogger` | Logger scoped to this activation |
+| `timeProvider` | `TimeProvider` | The registered time provider |
+| `utcNow` | `DateTimeOffset` | Frozen at context creation — stable across the whole callback |
+| `cancellationToken` | `CancellationToken` | Selected by callback kind |
+| `deactivateOnIdle()` / `delayDeactivation(ts)` | `unit -> unit` / `TimeSpan -> unit` | Lifetime control |
+| `persistentState(descriptor)` | `PersistentStateRef<'State> -> IPersistentState<'State>` | Look up an attached persistent-state facet |
+| `tryGetRequestContext` / `setRequestContext` / `removeRequestContext` | — | Typed Orleans request-context access |
+
+### `FunctionalGrain`
+
+| Function | Signature | Description |
+|---|---|---|
+| `FunctionalGrain.ref` | `contract -> IGrainFactory -> 'Key -> 'Api` | Bind a typed API record |
+| `FunctionalGrain.rawRef` | `contract -> IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor,'Key,'Api>` | Bind the typed wrapper |
+
+### `PersistentState`
+
+| Function | Signature | Description |
+|---|---|---|
+| `PersistentState.create<'State>` | `string -> string -> PersistentStateRef<'State>` | `stateName -> providerName -> descriptor` |
+
+### Hosting extensions
+
+| Method | Signature | Description |
+|---|---|---|
+| `AddFunctionalGrain` | `ISiloBuilder -> FunctionalGrainDefinition<...> -> ISiloBuilder` | Register a hosted definition (`Orleans.FSharp.Runtime`) |
+| `AddFunctionalGrainClient` | `IClientBuilder -> IClientBuilder` | Register the client-side transport on a client-only process (`Orleans.FSharp`) |
+
 ---
 
 ## Orleans.FSharp (Core)
@@ -57,7 +192,7 @@ description: "Quick reference for all public modules, types, and functions in Or
 | `onTimer` | `string * TimeSpan * TimeSpan * ('State -> Task<'State>)` | Declarative timer: name, dueTime, period, handler |
 | `interleaveMessage` | `System.Type` | Allow a message type to interleave (`interleaveMessage typeof<Query>`) |
 
-See [Grain Definition guide](grain-definition.md) for the full keyword list. Per-grain Orleans
+See [Grain Definition guide](/orleans-fsharp/grain-definition/) for the full keyword list. Per-grain Orleans
 attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
 `[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
 
@@ -249,7 +384,7 @@ services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
 
 #### `GrainResilience` — Polly v8 resilience wrappers
 
-Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](resilience.md).
+Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](/orleans-fsharp/resilience/).
 
 | Type | Description |
 |---|---|

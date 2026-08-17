@@ -11,6 +11,7 @@ open Orleans.Runtime
 /// All functions use Task (not Async) to align with Orleans runtime conventions.
 /// </summary>
 [<RequireQualifiedAccess>]
+[<Obsolete("Reminder is superseded for functional-runtime grains by the 'onReminder' operation in grainFor { }. On a class grain (third authoring style), call Grain.RegisterOrUpdateReminder directly instead of this module. See docs/functional-grains.md for the migration.", false)>]
 module Reminder =
 
     /// <summary>

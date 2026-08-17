@@ -173,7 +173,7 @@ let roomDefinition =
               messages = [] })
 
         stateFrom roomState
-        collectionAge (TimeSpan.FromMinutes 30)
+        collectionAge (TimeSpan.FromMinutes 30.0)
 
         handle (_.join) (fun context state userId ->
             task {
@@ -390,19 +390,15 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api> =
         cancellationToken: CancellationToken ->
         Task<'Reply>
 
-[<RequireQualifiedAccess>]
-module FunctionalGrain =
-    val ref :
+[<AbstractClass; Sealed>]
+type FunctionalGrain =
+    static member ref :
         contract: GrainContract<'Actor, 'Key, 'Api> ->
-        factory: IGrainFactory ->
-        key: 'Key ->
-        'Api
+        (IGrainFactory -> 'Key -> 'Api)
 
-    val rawRef :
+    static member rawRef :
         contract: GrainContract<'Actor, 'Key, 'Api> ->
-        factory: IGrainFactory ->
-        key: 'Key ->
-        FunctionalGrainRef<'Actor, 'Key, 'Api>
+        (IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor, 'Key, 'Api>)
 
 [<Sealed>]
 type GrainContractDraft<'Actor, 'Key, 'Api>
@@ -648,6 +644,18 @@ metadata. `onReminder` stores explicit due time and period.
 `CancellationToken.None`; `callCancellable` supplies remote cooperative
 cancellation for advanced calls.
 
+`FunctionalGrain` is a static class whose members take `contract` as their only
+declared parameter and return the remaining curried function. This form is
+load-bearing, not stylistic: F# inserts subtype flexibility for non-sealed
+types at declared parameter positions of the member being used, so declaring
+`factory: IGrainFactory` as a second curried parameter makes every point-free
+partial application (`let ref = FunctionalGrain.ref contract`) generic in a
+flexible `'_a :> IGrainFactory` and fail the value restriction (FS0030). With
+the factory in the result type the partial application stays concrete, the
+example's point-free bindings infer their complete types with no annotation and
+no use site, and ordinary subsumption still accepts any `IGrainFactory`
+implementation (such as `IClusterClient`) at application sites.
+
 ## API records, selectors, and contracts
 
 ### API-record shape
@@ -691,8 +699,9 @@ Create one cached `ApiShape` for each closed API type:
 3. For each field, use `FSharpType.IsFunction` and
    `FSharpType.GetFunctionElements` to extract argument and range types.
 4. Verify that the range is exactly `Task<'Reply>` and record the reply type.
-5. Create one unique function object for each exact field type with
-   `FSharpValue.MakeFunction`; its body throws if invoked.
+5. Create one unique function object for each record field, with that field's
+   exact function type, using `FSharpValue.MakeFunction`; its body throws if
+   invoked. Fields with identical function types receive distinct objects.
 6. Construct one probe record from those sentinels with a cached
    `FSharpValue.PreComputeRecordConstructor` delegate.
 7. Invoke the selector once with the probe record.
@@ -719,7 +728,7 @@ its custom operations.
 
 | Setting | Rule |
 |---|---|
-| `grainType` | Required once; non-blank and NUL-free. |
+| `grainType` | Optional; defaults to the actor brand's CLR simple name. Non-blank and NUL-free when explicit. |
 | `version` | Defaults to `1`; positive `int`. |
 | operation ID | Record-field name by default; ordinal and case-sensitive. |
 | key | Exactly one native or mapped key operation. |
@@ -733,8 +742,11 @@ operationId "join" (_.enter)
 ```
 
 The first parameter becomes the wire ID and the selector identifies the current
-field. Final IDs are unique, non-blank, NUL-free ordinal strings. A policy or ID
-override occurs at most once per field.
+field. Final IDs are unique, non-blank, NUL-free ordinal strings. Each kind of
+policy operation and the ID override occurs at most once per field; distinct
+policy kinds may combine on one field within the valid combinations defined
+under "Operation policies" (the example's `oneWay` + `alwaysInterleave` pair on
+`_.typing` is such a combination).
 
 Contract version is application protocol metadata in every request. Requests
 must match the hosted version exactly. Version is independent of `GrainId`,
@@ -814,9 +826,25 @@ GrainId(GrainType(contract.grainType), keyCodec.encode(domainKey))
 ```
 
 Changing `grainType` or key encoding changes routing and storage identity.
-Changing F# module, record, or actor-brand CLR names leaves identity unchanged
-when the explicit grain type and encoded key remain unchanged. Contract version
-and operation ID are not storage-key components.
+When the grain type is explicit, changing F# module, record, or actor-brand
+CLR names leaves identity unchanged, provided the explicit grain type and
+encoded key remain unchanged. Contract version and operation ID are not
+storage-key components.
+
+When `grainType` is omitted, it defaults to the actor brand's CLR simple name,
+so renaming the brand type changes the *derived* `grainType` string and
+therefore changes routing and storage identity exactly as editing an explicit
+`grainType` would -- the CLR-rename independence above holds only for an
+explicit grain type. This is why a definition that attaches `stateFrom`,
+`usePersistentState`, or declares `onReminder` requires its contract to carry
+an explicit `grainType`: a brand rename would otherwise silently move routing
+and storage identity, orphaning persisted state and losing durable reminders
+registered under the old name. Ephemeral definitions (none of the three) have
+nothing durable to orphan and may rely on the derived default. The derived
+name is also unqualified by namespace: two actor brands with the same CLR
+simple name in different namespaces derive the same grain type and collide
+under the same grain-type-uniqueness rule that already rejects two explicit
+contracts sharing a `grainType` (see "Silo registry and manifest").
 
 ## Construction and invocation stages
 
@@ -892,7 +920,11 @@ Definition sealing requires:
   and one stored CLR type per name;
 - a strictly positive `collectionAge` when configured;
 - unique non-blank reminder names;
-- unique non-blank timer names; and
+- unique non-blank timer names;
+- an explicit contract `grainType` whenever the definition attaches `stateFrom`,
+  `usePersistentState`, or declares `onReminder` -- a derived grain type moves
+  when the actor brand is renamed, which would silently orphan persisted state
+  or lose durable reminders; and
 - valid policy and timer combinations.
 
 A repeated singleton operation is a definition error rather than a replacement
@@ -1140,11 +1172,15 @@ Golden vectors, rendered as lowercase hexadecimal:
 ### Payload limits and serializer registration
 
 `FunctionalGrainTransportOptions.MaxPayloadBytes` defaults to 16 MiB and must be
-positive. Enforce it at four boundaries: caller request send, silo request
-receive, silo reply send, and caller reply receive. Each endpoint uses its local
-configuration; Orleans' general message-size limit can be stricter. Diagnostics
-include grain type, operation ID, direction, actual size, and local limit, and
-exclude payload contents.
+positive. Enforce it at six boundaries: caller request send, silo request
+receive, silo reply send, caller reply receive, caller notify send, and
+observer receive — the last two are the notification-direction counterparts,
+checked in `notifier`/`notify`'s send path and in observer dispatch before
+typed deserialization. Each endpoint uses its local configuration; Orleans'
+general message-size limit can be stricter. Diagnostics include the owner type
+(grain type for the first four boundaries, observer type for the notification
+two), operation ID, direction, actual size, and local limit, and exclude
+payload contents.
 
 Client and silo registration add `FSharpBinaryCodec` as `IGeneralizedCodec`
 together with its type filter through
@@ -1702,16 +1738,24 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 
 ### Contract, identity, and manifest tests
 
-- Default/overridden operation IDs, duplicate IDs/policies, required grain type,
-  positive version, and policy combinations behave as specified.
+- Default/overridden operation IDs, duplicate IDs/policies, an omitted grain
+  type deriving the actor brand's CLR simple name (with a generic or nested
+  brand rejected), positive version, and policy combinations behave as
+  specified.
 - Native string, Guid, int64, and compound operations produce the same `GrainId`
   representations as the corresponding stock Orleans key helpers.
 - Mapped key operations pass domain/native round-trip, canonicalization,
   injectivity, and malformed-input tests; compound native keys are exactly
   `Guid * string` or `int64 * string`.
 - Missing or repeated native/mapped key operations fail contract construction.
-- Explicit grain/interface IDs survive CLR/module renames; a changed grain type
-  or key codec changes `GrainId`.
+- Explicit grain/interface IDs survive CLR/module renames, while a derived
+  grain type moves with an actor-brand rename; a changed grain type or key
+  codec changes `GrainId`.
+- A definition that attaches `stateFrom`, `usePersistentState`, or declares
+  `onReminder` fails sealing and fails silo registration when its contract's
+  grain type is derived rather than explicit; two actor brands that derive the
+  same grain type from a colliding CLR simple name fail registration under the
+  existing grain-type-uniqueness rule.
 - Equal keys under different grain types select distinct activations.
 - Different definitions with the same actor brand fail registration; different
   contracts or definitions with the same explicit grain type also fail.
@@ -1821,6 +1865,176 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 - Whole-state timers reject `Interleave = true`, and concurrent contexts never
   leak cancellation or `RequestContext` values.
 - Tracing includes stable grain type, operation ID, version, and outcome.
+
+## Functional observers (extension, landed post-Phase-6)
+
+This section is an EXTENSION, added after the phase plan above was completed.
+The phase plan is left as it was executed; nothing in it changes.
+
+### Why observers needed the same move as grains
+
+Orleans' proxy generators are Roslyn source generators and never run over F#.
+An `IGrainObserver` declared in F# therefore has no generated proxy, and
+`IGrainFactory.CreateObjectReference` fails on it — which is why push
+notification was the one capability an F# application could not reach without
+adding a C# project of its own. The constraint is Orleans', identical for the
+`grain { }` CE and for class grains, but it is a constraint the functional
+runtime can absorb: exactly as ONE fixed request carries every grain
+operation, ONE C#-declared observer interface in `Orleans.FSharp.Abstractions`
+carries every application observer, of every brand. Above that interface an
+observer is an ordinary F# record.
+
+### Surface
+
+```fsharp
+type RoomObserver = private RoomObserver of unit      // observer brand
+
+type RoomObserverApi =                                 // handler record
+    { onMessage: ChatMessage -> Task<unit> }           // push ops: 'Msg -> Task<unit>
+
+let observerContract =
+    observerContract<RoomObserver, RoomObserverApi> () {
+        observerType "chat.room.observer"              // defaults to the brand's simple name
+        version 1                                      // defaults to 1
+    }
+
+// client: wrap handlers, get a serializable typed handle
+let handle =
+    FunctionalObserver.create observerContract client { onMessage = fun m -> task { … } }
+
+// the handle is an ordinary operation argument
+do! room.subscribe handle
+
+// grain side: typed push through the handle
+do! FunctionalObserver.notify handle (_.onMessage) message
+
+// or resolve once and reuse the preclosed push function, the hot-path form
+let push = FunctionalObserver.notifier handle (_.onMessage)
+do! push message
+
+// or fan out with a liveness window
+let observers = FunctionalObserverManager<RoomObserver, RoomObserverApi>(TimeSpan.FromMinutes 5.0)
+observers.Subscribe handle
+do! observers.Notify (_.onMessage) message
+
+// release
+FunctionalObserver.unsubscribe client handle
+```
+
+Observer sends follow the same hot-path rule as a bound grain call: `notifier`
+resolves its selector once and returns a preclosed `'Msg -> Task<unit>`
+closure, so a notifier-based push invokes no selector and closes no generic
+however many times it runs, while `notify` is the convenience form that
+resolves on every call and `FunctionalObserverManager.Notify` resolves once
+per call across its whole subscriber set rather than once per subscriber.
+
+A handler record IS an API record whose replies are all `unit`: shape
+reflection, selector resolution by sentinel identity, and every diagnostic are
+the grain rules unchanged. The one observer-specific rule is that a push
+operation returning anything but `Task<unit>` fails contract construction —
+an observer never returns data.
+
+A push operation's wire ID is always its handler-record field name. There is
+no `operationId` override, and deliberately: the notifying side derives the ID
+from the same record type the observing side does, so there is no pair of
+declarations that can drift apart.
+
+`observerContract` has no key operation. An observer is addressed by the
+object reference inside its handle, not by a domain key.
+
+### Wire
+
+The notification envelope mirrors `FunctionalRequestEnvelope` field for field,
+with the observer type standing in for the grain type and no admission flags —
+an observer has no scheduling policy to carry:
+
+| Field | Type | Meaning |
+|---|---|---|
+| 0 | string | observer type |
+| 1 | int32 | contract version |
+| 2 | string | operation ID |
+| 3 | byte[32] | notify-direction protocol token |
+| 4 | byte[] | serialized message payload |
+
+The protocol token is computed exactly as a grain token is — the SHA-256
+digest of `observerType NUL version NUL operationId NUL direction` — with a
+THIRD direction literal, `notify`, beside `request` and `reply`.
+
+A notify token cannot collide with a grain-operation token even when an
+observer type and a grain type share a name, a version, and an operation ID.
+The direction is part of the hashed preimage, so the three preimages differ in
+their final NUL-separated field and hash to different digests; a collision
+would require a SHA-256 preimage collision rather than a naming coincidence.
+What the token detects is what it detects for grains: a notification routed to
+a descriptor other than the one it was built for.
+
+The typed handle's own wire form is exactly three fields — observer type,
+contract version, and the Orleans object reference, written by Orleans' own
+reference codec. Its two type parameters are phantom: they keep an observer of
+one brand from being handed to a grain expecting another, and neither appears
+on the wire.
+
+Both the envelope and the handle are published by an assembly-level
+`TypeManifestProvider`, not by the client registration alone. The observer
+interface is non-generic, so Orleans' startup validator closes and scans it in
+every process that merely loads `Orleans.FSharp.Abstractions` — including one
+that hosts no functional grain — and would otherwise refuse to start.
+
+### Delivery semantics
+
+Delivery is best-effort, which is Orleans' own observer semantics.
+`DispatchAsync` is `[OneWay]`: `notify` completes when the notification has
+entered the local send path, not when the observed object has handled it.
+
+That is load-bearing rather than an optimisation. Under an acknowledged
+dispatch, a single subscriber whose object reference has been released blocks
+the notifying grain's handler until Orleans times the message out — thirty
+seconds, for a subscriber the application has already forgotten. Under one-way
+dispatch a dead reference costs the notifying handler nothing.
+
+An observer whose handler throws is reported to the logger of the process
+HOSTING the observer and never to the notifying grain. A protocol fault —
+wrong observer type, version, operation, or token — does propagate on the
+observing side, because it means the two ends disagree about the contract
+rather than that one message failed.
+
+### Lifetime
+
+Orleans' object-reference table holds an observed object WEAKLY, so nothing in
+Orleans keeps a client-hosted observer alive. The handle therefore anchors it:
+keep the handle, keep receiving. `FunctionalObserver.unsubscribe` releases the
+object reference (`DeleteObjectReference`) and is idempotent — releasing a
+reference that is already gone is the normal outcome of a second release, of a
+torn-down client, and of an object collected before the application got round
+to unsubscribing, and none of those is an error in a cleanup path.
+
+`FunctionalObserverManager<'Brand,'Api>` expires a subscription that has not
+been refreshed within its window, on the next notification or the next
+explicit sweep. It is a MUTABLE object held in handler state, and it carries
+the same caveat this specification states for deep mutation elsewhere: state
+is published by returning it from a handler, so a mutation performed in place
+is visible immediately and is not part of any state write. A manager must
+never be attached to a persistent state type.
+
+### Where a handle may appear
+
+A handle may be an operation's argument, or an element of a tuple argument:
+Orleans owns both shapes and routes each element to its own codec. It may NOT
+be a field of an F# record, option, list, or union argument — the F# binary
+codec owns those payloads whole and has no codec for an Orleans object
+reference, and refuses them.
+
+The same refusal is what keeps a live object reference out of durable storage:
+a functional grain's state crosses the F# binary codec, so a state type
+carrying a handle cannot be written at all, rather than being written as
+something that looks restorable and is not.
+
+### Registration
+
+`AddFunctionalGrainClient` (and therefore `AddFunctionalGrain`) registers the
+observer transport alongside the grain transport, idempotently. There is no
+separate observer entry point: a process that can call a functional grain can
+also be pushed to by one.
 
 ## Completion criteria
 

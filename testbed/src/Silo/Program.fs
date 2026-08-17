@@ -146,6 +146,11 @@ builder.Services.AddLogging(fun (loggingBuilder: ILoggingBuilder) ->
 builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
 builder.Services.AddFSharpGrain<ChatState, ChatCommand>(chatGrain) |> ignore
 
+// Functional-runtime equivalent of counterGrain above -- see CounterGrainFunctional.fs.
+builder.UseOrleans(fun (siloBuilder: ISiloBuilder) ->
+    siloBuilder.AddFunctionalGrain(Testbed.CounterFunctional.counterDefinition) |> ignore)
+|> ignore
+
 printfn "Starting %s on port %d (gateway %d)..." envSiloName envSiloPort envGatewayPort
 printfn "Redis: %s | Advertised IP: %s" envRedisConn envAdvertisedIp
 let host = builder.Build()

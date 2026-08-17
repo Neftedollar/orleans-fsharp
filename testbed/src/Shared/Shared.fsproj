@@ -9,8 +9,14 @@
 
   <ItemGroup>
     <Compile Include="Types.fs" />
+    <Compile Include="CounterContract.fs" />
   </ItemGroup>
 
-  <!-- No Orleans dependency needed — types are plain F# records and DUs -->
+  <!-- Types.fs needs no Orleans dependency (plain F# records and DUs); CounterContract.fs does:
+       a functional-runtime grainContract is the shared client/server boundary, so it has to be
+       compiled into an assembly both the Silo and the Client can see. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Orleans.FSharp\Orleans.FSharp.fsproj" />
+  </ItemGroup>
 
 </Project>
