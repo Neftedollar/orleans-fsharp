@@ -22,6 +22,7 @@ open System.Threading.Tasks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Orleans
+open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.Runtime
 open Orleans.TestingHost
@@ -143,6 +144,8 @@ type AccountApi =
       slowDeposit: decimal * string -> Task<unit>
       /// Reads the balance with no transaction at all: the negative control.
       unsafeBalance: unit -> Task<decimal>
+      /// Attempts an update from a read-only transactional operation, reporting what happened.
+      peekAndWrite: unit -> Task<string>
       /// The address of the silo this activation lives on.
       whereAmI: unit -> Task<string> }
 
@@ -159,7 +162,9 @@ let accountContract =
         transactional Orleans.TransactionOption.CreateOrJoin (_.balance)
         transactional Orleans.TransactionOption.CreateOrJoin (_.peek)
         transactional Orleans.TransactionOption.CreateOrJoin (_.slowDeposit)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.peekAndWrite)
         readOnly (_.peek)
+        readOnly (_.peekAndWrite)
         readOnly (_.whereAmI)
     }
 
@@ -234,6 +239,23 @@ let accountDefinition =
             task {
                 let! value = (context.transactionalState accountLedger).read ()
                 return state, value.balance
+            })
+
+        // A read-only transactional operation: Orleans starts the transaction read-only, so an
+        // update is refused. The runtime refuses it first, with a message naming 'readOnly'.
+        handle (_.peekAndWrite) (fun context state () ->
+            task {
+                let outcome =
+                    try
+                        (context.transactionalState accountLedger)
+                            .update (fun ledger -> { ledger with balance = ledger.balance + 1m })
+                        |> ignore
+
+                        "written"
+                    with error ->
+                        error.Message
+
+                return state, outcome
             })
 
         handle (_.whereAmI) (fun context state () ->
@@ -422,6 +444,14 @@ type PhaseDSiloConfigurator() =
     interface ISiloConfigurator with
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.UseTransactions() |> ignore
+
+            // A short lock-acquire timeout so the contention test resolves in seconds rather than
+            // in Orleans' 10-second default, while staying far below the transaction timeout
+            // TransactionRequestBase.Invoke applies (also 10 seconds).
+            siloBuilder.Configure<TransactionalStateOptions>(fun (options: TransactionalStateOptions) ->
+                options.LockAcquireTimeout <- TimeSpan.FromSeconds 2.0)
+            |> ignore
+
             siloBuilder.AddMemoryGrainStorage PhaseDStorage.Transactional |> ignore
             siloBuilder.AddMemoryGrainStorage PhaseDStorage.Persistent |> ignore
             siloBuilder.AddFunctionalGrain accountDefinition |> ignore
