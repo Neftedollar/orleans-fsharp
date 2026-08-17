@@ -567,6 +567,15 @@ type ChatRoomApi =
 do! FunctionalObserver.notify handle (_.onMessage) message
 ```
 
+`notify` resolves its selector on every call -- fine off the hot path, but the same rule that
+governs a bound grain call applies to observer sends too: resolve once, not per push. Where push
+volume matters, resolve once with `notifier` and reuse the closure it returns:
+
+```fsharp
+let push = FunctionalObserver.notifier handle (_.onMessage)   // resolved once, here
+do! push message                                              // invokes no selector, ever again
+```
+
 Or fan out to many subscribers with a liveness window, the functional equivalent of
 `FSharpObserverManager`:
 
@@ -592,7 +601,9 @@ grainFor chatContract {
 ```
 
 A subscription that is not re-subscribed within the window is dropped on the next notification or
-the next `RemoveExpired()`.
+the next `RemoveExpired()`. `Notify` carries the same hot-path discipline into the fan-out: it
+resolves its selector once per call, before looping over subscribers, not once per subscriber --
+so a room of a thousand listeners costs one selector resolution per broadcast, not a thousand.
 
 ### Delivery is best-effort, and that is deliberate
 

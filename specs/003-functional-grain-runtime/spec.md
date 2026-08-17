@@ -1904,6 +1904,10 @@ do! room.subscribe handle
 // grain side: typed push through the handle
 do! FunctionalObserver.notify handle (_.onMessage) message
 
+// or resolve once and reuse the preclosed push function, the hot-path form
+let push = FunctionalObserver.notifier handle (_.onMessage)
+do! push message
+
 // or fan out with a liveness window
 let observers = FunctionalObserverManager<RoomObserver, RoomObserverApi>(TimeSpan.FromMinutes 5.0)
 observers.Subscribe handle
@@ -1912,6 +1916,13 @@ do! observers.Notify (_.onMessage) message
 // release
 FunctionalObserver.unsubscribe client handle
 ```
+
+Observer sends follow the same hot-path rule as a bound grain call: `notifier`
+resolves its selector once and returns a preclosed `'Msg -> Task<unit>`
+closure, so a notifier-based push invokes no selector and closes no generic
+however many times it runs, while `notify` is the convenience form that
+resolves on every call and `FunctionalObserverManager.Notify` resolves once
+per call across its whole subscriber set rather than once per subscriber.
 
 A handler record IS an API record whose replies are all `unit`: shape
 reflection, selector resolution by sentinel identity, and every diagnostic are

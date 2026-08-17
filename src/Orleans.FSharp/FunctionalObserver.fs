@@ -333,6 +333,47 @@ module FunctionalObserver =
         createFrom contract client.ServiceProvider handlers
 
     /// <summary>
+    /// Build one push send from an already-resolved operation and a handle: this function itself
+    /// performs no reflection, selector evaluation, or generic closing — it only computes the
+    /// notify token (a hash, not a reflective operation) and sends. Used by <c>notifier</c> once
+    /// resolution has happened.
+    /// </summary>
+    let internal pushVia<'Brand, 'Api, 'Msg>
+        (field: ApiOperationShape)
+        (handle: FunctionalObserverHandle<'Brand, 'Api>)
+        : 'Msg -> Task<unit> =
+        let operationId = field.FieldName
+        let token = ProtocolToken.notify handle.ObserverType handle.ContractVersion operationId
+
+        fun (message: 'Msg) ->
+            task {
+                let payload = handle.Codec.Serialize<'Msg> message
+
+                let envelope =
+                    FunctionalNotificationEnvelope(handle.ObserverType, handle.ContractVersion, operationId, token, payload)
+
+                do! handle.Target.DispatchAsync envelope
+            }
+
+    /// <summary>
+    /// Resolve one push operation once and return a preclosed send function: the hot-path form
+    /// of notification, mirroring the grain-side preclosed-closure idiom for a bound call. The
+    /// operation ID and the notify-direction protocol token are computed here, at resolution
+    /// time, and captured in the returned closure — so a notifier-based push invokes no selector
+    /// and closes no generic, however many times it is called.
+    /// </summary>
+    let notifier
+        (handle: FunctionalObserverHandle<'Brand, 'Api>)
+        (selector: OperationSelector<'Api, 'Msg, unit>)
+        : 'Msg -> Task<unit> =
+        if isNull (box handle) then
+            fail TransportStage "resolving a functional observer push closure requires a handle."
+
+        let shape = ApiShape.of'<'Api> ()
+        let field = ApiShape.resolve shape "notifier" selector
+        pushVia field handle
+
+    /// <summary>
     /// Push one message to the observed object.
     /// </summary>
     /// <remarks>
@@ -341,6 +382,12 @@ module FunctionalObserver =
     /// one-way. Delivery is therefore best-effort, which is Orleans' own observer semantics — an
     /// observer that throws is logged on ITS side and never reported here, and an observer whose
     /// object reference has been released costs the notifying handler nothing.
+    /// <para>
+    /// <c>notify</c> is the convenience form: it resolves the selector on every call, exactly
+    /// like a raw selector-based grain call. <c>notifier</c> is the hot-path form — it resolves
+    /// once and returns a preclosed push function — and is the one to reach for wherever push
+    /// volume matters, such as a per-message call inside a fan-out loop.
+    /// </para>
     /// </remarks>
     let notify
         (handle: FunctionalObserverHandle<'Brand, 'Api>)
@@ -350,19 +397,7 @@ module FunctionalObserver =
         if isNull (box handle) then
             fail TransportStage "notifying a functional observer requires a handle."
 
-        let shape = ApiShape.of'<'Api> ()
-        let field = ApiShape.resolve shape "notify" selector
-
-        let envelope =
-            FunctionalNotificationEnvelope(
-                handle.ObserverType,
-                handle.ContractVersion,
-                field.FieldName,
-                ProtocolToken.notify handle.ObserverType handle.ContractVersion field.FieldName,
-                handle.Codec.Serialize<'Msg> message
-            )
-
-        task { do! handle.Target.DispatchAsync envelope }
+        notifier handle selector message
 
     /// <summary>
     /// Release the object reference behind a handle; delivery through it stops.
@@ -465,15 +500,24 @@ type FunctionalObserverManager<'Brand, 'Api>(expiry: TimeSpan) =
     /// Push one message to every live subscription. Expired subscriptions are dropped first;
     /// an observer that fails to accept the send is dropped and never reported to the caller.
     /// </summary>
+    /// <remarks>
+    /// The selector is resolved once per call — before the fan-out loop, not once per
+    /// subscriber inside it — the same hot-path rule <c>notifier</c> applies to a single handle
+    /// applied here to the whole subscriber set: a fan-out of N subscribers pays one selector
+    /// evaluation per <c>Notify</c> call, not N.
+    /// </remarks>
     member this.Notify (selector: OperationSelector<'Api, 'Msg, unit>) (message: 'Msg) : Task<unit> =
         this.RemoveExpired()
+
+        let shape = ApiShape.of'<'Api> ()
+        let field = ApiShape.resolve shape "notify" selector
 
         task {
             for pair in entries do
                 let handle, _ = pair.Value
 
                 try
-                    do! FunctionalObserver.notify handle selector message
+                    do! FunctionalObserver.pushVia field handle message
                 with _ ->
                     // A send that the local path refuses means the object reference is gone.
                     entries.TryRemove pair.Key |> ignore

@@ -74,7 +74,8 @@ override, so the notifying and observing sides cannot drift apart.
 |---|---|---|
 | `create` | `ObserverContract -> IClusterClient -> 'Api -> FunctionalObserverHandle<'Brand,'Api>` | Host a handler record and return a serializable typed handle |
 | `createFrom` | `ObserverContract -> IServiceProvider -> 'Api -> FunctionalObserverHandle<'Brand,'Api>` | The same, from any services carrying the functional transport (e.g. inside a silo) |
-| `notify` | `handle -> selector -> 'Msg -> Task<unit>` | Push one message; completes at the local send, not at delivery |
+| `notify` | `handle -> selector -> 'Msg -> Task<unit>` | Push one message; resolves its selector on every call — the convenience form |
+| `notifier` | `handle -> selector -> ('Msg -> Task<unit>)` | Resolve once, return a preclosed push function — the hot-path form |
 | `unsubscribe` | `IGrainFactory -> handle -> unit` | Release the object reference; idempotent |
 
 #### `FunctionalObserverManager<'Brand,'Api>`
@@ -84,7 +85,7 @@ override, so the notifying and observing sides cannot drift apart.
 | `.ctor` | `TimeSpan` | Liveness window a subscription must be refreshed within |
 | `Subscribe` | `handle -> unit` | Add or refresh a subscription |
 | `Unsubscribe` | `handle -> bool` | Remove one subscription |
-| `Notify` | `selector -> 'Msg -> Task<unit>` | Fan out to every live subscription |
+| `Notify` | `selector -> 'Msg -> Task<unit>` | Fan out to every live subscription; resolves its selector once per call, not once per subscriber |
 | `RemoveExpired` / `Clear` / `Count` | | Sweep, forget everything, live count |
 
 A manager is a mutable object held in **ephemeral** handler state. It holds live object
