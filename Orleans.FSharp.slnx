@@ -13,6 +13,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Orleans.FSharp.Integration/Orleans.FSharp.Integration.fsproj" />
     <Project Path="tests/Orleans.FSharp.Tests/Orleans.FSharp.Tests.fsproj" />
+    <Project Path="tests/Orleans.FSharp.Tests.Facades/Orleans.FSharp.Tests.Facades.csproj" />
   </Folder>
   <Folder Name="/templates/">
     <Project Path="templates/Orleans.FSharp.Templates.csproj" />

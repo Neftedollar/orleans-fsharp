@@ -35,6 +35,10 @@ module internal FunctionalDiagnostics =
     [<Literal>]
     let BindingStage = "Orleans.FSharp functional binding"
 
+    /// <summary>Prefix identifying the stage in every C#-facade binding diagnostic.</summary>
+    [<Literal>]
+    let InteropStage = "Orleans.FSharp functional interop"
+
     /// <summary>Prefix identifying the stage in every fixed-transport diagnostic.</summary>
     [<Literal>]
     let TransportStage = "Orleans.FSharp functional transport"

@@ -42,6 +42,43 @@ type internal FunctionalOperation =
     }
 
 /// <summary>
+/// The non-generic view of a sealed contract.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="T:Orleans.FSharp.GrainContract`3"/> is the only type that derives from this one, and
+/// its constructor is internal, so a value of this type is always a sealed contract. The base
+/// exists so a caller that cannot name the three type parameters can still take a contract as a
+/// typed parameter: C# has no partial type-argument inference, so
+/// <c>FunctionalGrainInterop.For&lt;IChatRoom&gt;(contract, factory, key)</c> can only compile when
+/// every parameter type is inferable or non-generic. Everything the facade needs before it knows
+/// the type parameters -- the key type it must check a boxed key against, the operation
+/// descriptors it maps interface members onto -- is readable here.
+/// </para>
+/// </remarks>
+[<AbstractClass>]
+type FunctionalContract
+    internal (grainTypeName: string, keyType: Type, shape: ApiShape, operations: FunctionalOperation[]) =
+
+    /// <summary>
+    /// The contract's Orleans grain type name -- either the explicit <c>grainType</c> value, or,
+    /// when omitted, the actor brand's CLR simple name.
+    /// </summary>
+    member internal _.GrainTypeName = grainTypeName
+
+    /// <summary>The contract's exact domain key type.</summary>
+    member internal _.KeyType = keyType
+
+    /// <summary>The cached reflected API shape.</summary>
+    member internal _.Shape = shape
+
+    /// <summary>The API record CLR type.</summary>
+    member internal _.ApiType = shape.ApiType
+
+    /// <summary>Immutable operation descriptors in API-record declaration order.</summary>
+    member internal _.Operations = operations
+
+/// <summary>
 /// A sealed contract: the reflected API shape, immutable metadata, the key codec, and one
 /// immutable descriptor per API-record field in declaration order.
 /// </summary>
@@ -56,6 +93,7 @@ type GrainContract<'Actor, 'Key, 'Api>
         keyCodec: KeyCodec<'Key>,
         operations: FunctionalOperation[]
     ) =
+    inherit FunctionalContract(grainTypeName, typeof<'Key>, shape, operations)
 
     let grainType = GrainType.Create grainTypeName
 
@@ -77,12 +115,6 @@ type GrainContract<'Actor, 'Key, 'Api>
         |> Array.map (fun operation -> operation.OperationId, operation.ArgumentType, operation.ReplyType)
 
     /// <summary>
-    /// The contract's Orleans grain type name -- either the explicit <c>grainType</c> value, or,
-    /// when omitted, the actor brand's CLR simple name.
-    /// </summary>
-    member internal _.GrainTypeName = grainTypeName
-
-    /// <summary>
     /// <c>true</c> when the contract declared an explicit <c>grainType</c>; <c>false</c> when it
     /// was derived from the actor brand's CLR simple name. A definition may attach durable state
     /// (<c>stateFrom</c>, <c>usePersistentState</c>) or declare <c>onReminder</c> only when this
@@ -94,17 +126,8 @@ type GrainContract<'Actor, 'Key, 'Api>
     /// <summary>The application contract version carried in every request.</summary>
     member internal _.Version = version
 
-    /// <summary>The cached reflected API shape.</summary>
-    member internal _.Shape = shape
-
-    /// <summary>The API record CLR type.</summary>
-    member internal _.ApiType = shape.ApiType
-
     /// <summary>The configured key codec.</summary>
     member internal _.KeyCodec = keyCodec
-
-    /// <summary>Immutable operation descriptors in API-record declaration order.</summary>
-    member internal _.Operations = operations
 
     /// <summary>The Orleans grain type value derived from the explicit grain type name.</summary>
     member internal _.GrainType = grainType

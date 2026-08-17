@@ -48,6 +48,9 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
     /// <summary>The preclosed closure pair of one operation, by descriptor index.</summary>
     member internal _.BoundCall(index: int) = bound.[index]
 
+    /// <summary>Every preclosed closure pair, in descriptor order.</summary>
+    member internal _.BoundCalls = bound
+
     /// <summary>The exact Orleans identity this reference addresses.</summary>
     member internal _.GrainId = grainId
 

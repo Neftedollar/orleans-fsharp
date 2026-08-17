@@ -50,6 +50,7 @@
     <Compile Include="FunctionalDefinition.fs" />
     <Compile Include="FunctionalHosted.fs" />
     <Compile Include="FunctionalBinding.fs" />
+    <Compile Include="FunctionalInterop.fs" />
     <Compile Include="FunctionalObserver.fs" />
     <Compile Include="FunctionalBuilders.fs" />
     <Compile Include="FunctionalHosting.fs" />
