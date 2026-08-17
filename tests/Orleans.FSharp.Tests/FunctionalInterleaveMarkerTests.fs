@@ -233,20 +233,18 @@ type private ZeroArgActor = private ZeroArgActor of unit
 let ``a zero-argument invokable does not interleave and does not throw`` () =
     // A predicate MUST be registered first: without one the callback answers false before it
     // would ever read an argument, so an unregistered brand cannot exercise this at all.
-    FunctionalInterleave.register
-        typeof<FunctionalInterleavingGrainMarker<ZeroArgActor>>
-        "marker.zeroarg"
-        (fun _ -> true)
+    FunctionalInterleave.register typeof<FunctionalInterleavingGrainMarker<ZeroArgActor>> "marker.zeroarg" (fun _ ->
+        true)
+    |> ignore
 
     use stub = new StubInvokable([||])
     test <@ FunctionalInterleavingGrainMarker<ZeroArgActor>.MayInterleave stub = false @>
 
 [<Fact>]
 let ``an invokable whose first argument is not a functional envelope does not interleave`` () =
-    FunctionalInterleave.register
-        typeof<FunctionalInterleavingGrainMarker<ZeroArgActor>>
-        "marker.zeroarg"
-        (fun _ -> true)
+    FunctionalInterleave.register typeof<FunctionalInterleavingGrainMarker<ZeroArgActor>> "marker.zeroarg" (fun _ ->
+        true)
+    |> ignore
 
     use stub = new StubInvokable([| box "not an envelope"; box 42 |])
     test <@ FunctionalInterleavingGrainMarker<ZeroArgActor>.MayInterleave stub = false @>
@@ -275,6 +273,7 @@ let ``a registered predicate is consulted, and only for its own grain type`` () 
     FunctionalInterleave.register markerType "marker.registered" (fun metadata ->
         seen.Add metadata.OperationId
         metadata.OperationId = "yes")
+    |> ignore
 
     let invokableFor (grainType: string) (operationId: string) =
         let envelope =
@@ -299,6 +298,7 @@ let ``a throwing predicate is wrapped in an attributable transport diagnostic`` 
 
     FunctionalInterleave.register markerType "marker.throwing" (fun _ ->
         raise (ApplicationException "the predicate refuses to decide"))
+    |> ignore
 
     let envelope =
         FunctionalRequestEnvelope("marker.throwing", 1, "boom", Array.zeroCreate 32, 0uy, [||])
@@ -312,3 +312,93 @@ let ``a throwing predicate is wrapped in an attributable transport diagnostic`` 
     test <@ error.Message.Contains "'mayInterleave' predicate of grain type 'marker.throwing'" @>
     test <@ error.Message.Contains "operation 'boom'" @>
     test <@ error.InnerException.Message = "the predicate refuses to decide" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// The process-wide binding: same grain type wins, a second grain type is refused
+// ──────────────────────────────────────────────────────────────────────────────
+
+type private RebindActor = private RebindActor of unit
+
+/// The contract layer requires a public actor brand and a public API record, so these two are
+/// public where the purely reflective probes above can stay private.
+type ConflictActor = private ConflictActor of unit
+
+[<NoEquality; NoComparison>]
+type InterleaveProbeApi = { ping: unit -> Task<string> }
+
+let private interleaveEnvelope (grainType: string) (operationId: string) =
+    FunctionalRequestEnvelope(grainType, 1, operationId, Array.zeroCreate 32, 0uy, [||])
+
+/// <remarks>
+/// The legitimate multi-silo case. Each silo in a process builds its own service collection and
+/// its own <c>FunctionalGrainRegistry</c>, so a definition hosted on both re-registers under the
+/// same closed marker type — and an in-process silo restart re-seals the definition, producing a
+/// FRESH closure for the same grain type. Latest-wins is the correct answer there, and it must be
+/// silent.
+/// </remarks>
+[<Fact>]
+let ``re-registering the same grain type is silent and the newer predicate wins`` () =
+    let markerType = typeof<FunctionalInterleavingGrainMarker<RebindActor>>
+
+    let first =
+        FunctionalInterleave.register markerType "marker.rebind" (fun _ -> false)
+
+    let second =
+        FunctionalInterleave.register markerType "marker.rebind" (fun metadata -> metadata.OperationId = "second")
+
+    test <@ first = None @>
+    test <@ second = None @>
+
+    use admitted =
+        new StubInvokable(
+            [| box (interleaveEnvelope "marker.rebind" "second")
+               box Unchecked.defaultof<CancellationToken> |]
+        )
+
+    // The FIRST predicate answered false for everything, so a true here can only come from the
+    // second one.
+    test <@ FunctionalInterleavingGrainMarker<RebindActor>.MayInterleave admitted @>
+
+let private conflictContract (grainTypeName: string) =
+    grainContract<ConflictActor, string, InterleaveProbeApi> () {
+        grainType grainTypeName
+        version 1
+        stringKey
+        mayInterleave (fun _ -> true)
+    }
+
+let private conflictDefinition (grainTypeName: string) =
+    grainFor (conflictContract grainTypeName) {
+        defaultState (fun () -> 0)
+        handle (_.ping) (fun _ state () -> task { return state, "pong" })
+    }
+
+/// <remarks>
+/// The residual concern 1 closed. The predicate binding is keyed by the closed marker type, which
+/// is derived from the actor brand alone, so it is process-wide; each silo's own registry rejects
+/// two grain type names on one brand, but cannot see across silos in the same process. A silent
+/// overwrite would leave a LIVE grain type consulting another definition's predicate — the class
+/// of wrong earliest-stage validation exists to catch — so it is a configuration-stage failure.
+/// </remarks>
+[<Fact>]
+let ``a second grain type on one actor brand is refused, naming both`` () =
+    // The first registration stands in for silo A; the second for silo B in the same process,
+    // which has its own registry and would otherwise not see the collision at all.
+    FunctionalRegistryEntry(FunctionalHosted.create (conflictDefinition "marker.conflict.first"))
+    |> ignore
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalRegistryEntry(FunctionalHosted.create (conflictDefinition "marker.conflict.second"))
+            |> ignore)
+
+    test <@ error.Message.Contains FunctionalSiloDiagnostics.SiloStage @>
+    test <@ error.Message.Contains "'marker.conflict.second'" @>
+    test <@ error.Message.Contains "'marker.conflict.first'" @>
+    test <@ error.Message.Contains (typeof<ConflictActor>.FullName) @>
+
+    // The refused registration wrote nothing: the first grain type's predicate is intact.
+    let registration =
+        FunctionalInterleave.tryFind typeof<FunctionalInterleavingGrainMarker<ConflictActor>>
+
+    test <@ registration |> Option.map (fun value -> value.GrainTypeName) = Some "marker.conflict.first" @>

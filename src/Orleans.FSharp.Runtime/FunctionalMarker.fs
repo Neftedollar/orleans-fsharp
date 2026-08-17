@@ -31,8 +31,15 @@ open Orleans.FSharp.FunctionalDiagnostics
 /// </para>
 /// <para>
 /// Entries are written while the silo's service collection is being configured — before any
-/// activation exists — and are never removed. Two silos in one process registering the same
-/// definition write the same value; a grain type registered on both writes it twice, idempotently.
+/// activation exists — and are never removed. The table is keyed by the CLOSED marker type, which
+/// is derived from the actor brand alone, so it is process-wide rather than per-silo. Two silos in
+/// one process registering the same definition therefore meet on the same key: re-registering the
+/// SAME grain type name is an idempotent overwrite (an in-process silo restart re-seals the
+/// definition and produces a fresh closure for the same grain type — latest wins is correct), while
+/// a SECOND grain type name on one actor brand is rejected outright. Each silo has its own
+/// <c>FunctionalGrainRegistry</c>, which rejects that collision within a silo but cannot see across
+/// them; a silent overwrite here would leave one live grain type consulting another definition's
+/// predicate.
 /// </para>
 /// </remarks>
 [<RequireQualifiedAccess>]
@@ -49,11 +56,34 @@ module internal FunctionalInterleave =
 
     let private table = ConcurrentDictionary<Type, Registration>()
 
-    /// <summary>Bind one grain type's declared predicate to its closed marker type.</summary>
+    /// <summary>
+    /// Serializes the read-then-write below. Registration is a cold configuration-time path, so a
+    /// lock costs nothing and makes "detect the conflict and claim the slot" a single atomic step;
+    /// <see cref="M:Orleans.FSharp.FunctionalInterleave.tryFind"/> stays lock-free.
+    /// </summary>
+    let private gate = obj ()
+
+    /// <summary>
+    /// Bind one grain type's declared predicate to its closed marker type.
+    /// </summary>
+    /// <returns>
+    /// <c>None</c> when the binding was installed (a first registration, or an idempotent
+    /// overwrite by the same grain type name); <c>Some existingGrainTypeName</c> when the marker
+    /// type is already bound to a DIFFERENT grain type, in which case nothing is written and the
+    /// caller raises the configuration diagnostic — this module cannot, because the
+    /// silo-registration stage vocabulary is declared further down the compile order.
+    /// </returns>
     let register (markerType: Type) (grainTypeName: string) (predicate: IFunctionalRequestMetadata -> bool) =
-        table.[markerType] <-
-            { GrainTypeName = grainTypeName
-              Predicate = predicate }
+        lock gate (fun () ->
+            match table.TryGetValue markerType with
+            | true, existing when not (String.Equals(existing.GrainTypeName, grainTypeName, StringComparison.Ordinal)) ->
+                Some existing.GrainTypeName
+            | _ ->
+                table.[markerType] <-
+                    { GrainTypeName = grainTypeName
+                      Predicate = predicate }
+
+                None)
 
     /// <summary>The registration of one closed marker type, if it has one.</summary>
     let tryFind (markerType: Type) =

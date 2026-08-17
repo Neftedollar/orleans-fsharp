@@ -690,11 +690,16 @@ Three behaviours are worth knowing before writing one:
   grain type and the operation:
   `the 'mayInterleave' predicate of grain type 'api.gateway' failed while deciding whether
   operation 'cancel' may interleave.`
-- **It is a process-wide registration keyed by the contract's actor brand.** Two silos in one
-  process hosting the same definition register the same predicate; the callback Orleans reflects
-  off the grain class is static by necessity (Orleans discards the grain instance for a static
-  `[MayInterleave]` callback), so it identifies its definition by the closed marker type rather
-  than by a field.
+- **It is a process-wide registration keyed by the contract's actor brand.** The callback Orleans
+  reflects off the grain class is static by necessity (Orleans discards the grain instance for a
+  static `[MayInterleave]` callback), so it identifies its definition by its closed marker type
+  rather than by a field — and that type comes from the actor brand alone. Two silos in one process
+  hosting the **same** definition therefore register the same predicate, harmlessly; the later
+  registration wins, which is what an in-process silo restart needs. Two **different** grain types
+  sharing one actor brand and both declaring `mayInterleave` is rejected at configuration time,
+  naming both grain types and the brand, because they would otherwise share one predicate and the
+  second registration would silently decide admission for the first. Give each grain type its own
+  actor brand — which is already required within a single silo.
 
 Sealing rejects the combinations that could not mean anything:
 

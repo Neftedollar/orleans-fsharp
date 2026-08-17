@@ -37,8 +37,22 @@ type internal FunctionalRegistryEntry(definition: FunctionalHostedDefinition) =
         // The callback Orleans reflects off the marker is static, so it cannot carry the
         // definition; it finds it by its own closed marker type. Binding happens here, while the
         // silo is still being configured, so it is in place long before any activation exists.
+        //
+        // That table is keyed by the closed marker type, which comes from the actor brand alone,
+        // so it is process-wide rather than per-silo. Within one silo the registry below already
+        // rejects two grain type names on one actor brand; across two silos in ONE process --
+        // a TestCluster, or any host running more than one silo -- nothing did, and a silent
+        // overwrite would leave the first grain type consulting the second's predicate while both
+        // are live. Rejected here instead, at configuration time, which is the earliest stage that
+        // can see both registrations at all.
         match definition.MayInterleave with
-        | Some predicate -> FunctionalInterleave.register markerType definition.GrainTypeName predicate
+        | Some predicate ->
+            match FunctionalInterleave.register markerType definition.GrainTypeName predicate with
+            | None -> ()
+            | Some existingGrainTypeName ->
+                fail
+                    FunctionalSiloDiagnostics.SiloStage
+                    $"grain type '{definition.GrainTypeName}' cannot declare 'mayInterleave': actor brand '{definition.ActorType.FullName}' is already bound to grain type '{existingGrainTypeName}', which declares it too. Orleans reflects the per-message predicate off a grain class derived from the actor brand alone ('{markerType.FullName}'), and that binding is process-wide, so the two grain types would share one predicate and the second registration would silently decide admission for the first. Give each grain type its own actor brand."
         | None -> ()
 
     /// <summary>The non-generic hosted view of the registered definition.</summary>

@@ -438,10 +438,17 @@ operation and refuses another on the same activation, seeing our envelope in bot
   request when `predicate(incoming) || predicate(blocking)`, so an operation the predicate accepts
   also lets anything interleave with it while it is executing. Documented; not something the
   runtime can or should change.
-- **The predicate table is process-wide.** Two silos in one process hosting the same definition
-  register the same predicate, which is why this is safe in practice; a process hosting two
-  *different* definitions for one grain type is not a supported configuration and the registry
-  already rejects it per silo.
+- **The predicate binding is process-wide, keyed by the closed marker type** — which is derived
+  from the actor brand alone, so it is not per-silo. Re-registering the SAME grain type name is an
+  idempotent overwrite (an in-process silo restart re-seals the definition and produces a fresh
+  closure; latest wins is correct there). A SECOND grain type name on one actor brand is rejected
+  at configuration time, naming both grain types and the brand: each silo's own
+  `FunctionalGrainRegistry` already rejects that collision within a silo but cannot see across
+  silos in one process, and a silent overwrite would leave a live grain type consulting another
+  definition's predicate. **The residual therefore narrows to:** two silos in one process hosting
+  the same grain type name share one predicate closure — the last one sealed. That is only
+  observable if the two silos were configured with *different* predicate bodies for the same grain
+  type, which is not a supported configuration.
 
 **Size:** M — as estimated.
 
