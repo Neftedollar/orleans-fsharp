@@ -41,40 +41,143 @@ Every design here must satisfy two standing rules established in spec 003:
 
 ---
 
-## 1. Implicit stream subscriptions (and implicit broadcast consumers)
+## 1. Implicit stream subscriptions (and implicit broadcast consumers) — RESOLVED
 
-**Gap (proven, spec-003 feature tour §11):** two-part wall. (a) The functional
-manifest publishes no stream-binding grain properties, and (b) even with the
-bindings forced in, the functional activation does not participate in
-`IStreamConsumerExtension` delivery — Orleans activates the grain, then drops
-the item ("… I don't have any subscriber for that stream. Dropping on the
-floor.").
+**Status: implemented.** Delivered on `feat/004-parity-phase-b`; the design sketch below has
+been replaced by the resolved design it turned into, and every claim here is backed by a test or
+by named Orleans source.
 
-**Design sketch:**
+**Gap (proven, spec-003 feature tour §11), for the record:** two-part wall. (a) The functional
+manifest published no stream-binding grain properties, and (b) even with the bindings forced in,
+the functional activation did not participate in `IStreamConsumerExtension` delivery — Orleans
+activated the grain, then dropped the item ("… I don't have any subscriber for that stream.
+Dropping on the floor.").
 
-- New definition operations, declarative like `onTimer`/`onReminder`:
+### The mechanism (normative)
+
+Both halves are Orleans' own seams; neither needs code generation.
+
+- **Binding.** `ImplicitStreamSubscriptionAttribute` / `ImplicitChannelSubscriptionAttribute`
+  implement `IGrainBindingsProviderAttribute`, and Orleans' `AttributeGrainBindingsProvider`
+  (an `IGrainPropertiesProvider`) writes each returned dictionary into the grain manifest under
+  `binding.attr-<n>.<key>`, `n` 1-based. `GrainBindingsResolver` regroups those keys by the token
+  between `binding.` and the next `.`, and `ImplicitStreamSubscriberTable` /
+  `ImplicitChannelSubscriberTable` read `type`, `pattern` / `channel-pattern`, and
+  `streamid-mapper` / `channelid-mapper` out of each group. The registry's own properties
+  provider therefore **constructs the real Orleans attribute and writes its own `GetBindings`
+  output** under those keys — not a transcription of it.
+- **Target selection.** `DefaultStreamIdMapper.GetGrainKeyId` returns `streamId.GetKeyIdSpan()`
+  verbatim unless the binding carries `legacy-grain-key-type`, which it only does for a grain
+  class implementing `IGrainWithGuidKey` / `IGrainWithIntegerKey` / `IGrainWithStringKey` /
+  their compound forms. `FunctionalGrainMarker<'Actor>` implements none of them, so the target is
+  `GrainId.Create(grainType, <stream key bytes>)` — i.e. the stream key IS the functional grain
+  key, in the contract's own key encoding.
+- **Delivery.** `StreamConsumerGrainContextAction.Configure` installs a `StreamConsumerExtension`
+  on any activation whose **grain instance** implements `IStreamSubscriptionObserver`, and the
+  keyed `IGrainExtension` factory registered by `AddSiloStreaming` does the same cast on demand.
+  When an item arrives for a subscription the extension has no observer for — always the case for
+  an implicit subscription on a fresh activation — `StreamConsumerExtension.DeliverMutable` /
+  `DeliverBatch` call `OnSubscribed(handleFactory)`, then **re-check the observer table and
+  deliver the pending item**. Attaching a typed observer from inside `OnSubscribed`
+  (`handleFactory.Create<'Item>().ResumeAsync observer`) is exactly what turns "activated, then
+  dropped on the floor" into a delivery. Broadcast channels use the identical shape:
+  `BroadcastChannelConsumerExtension` casts the grain instance to `IOnBroadcastChannelSubscribed`
+  and calls `OnSubscribed(subscription)`, where `subscription.Attach<'Item>` registers the hook.
+
+### Resolved design
+
+- Two definition operations, declarative like `onTimer` / `onReminder`:
 
   ```fsharp
-  onStream "provider" "namespace" (fun context state item -> task { ... return state' })
-  onBroadcast channelProvider channelId (fun context state item -> task { ... })
+  onStream    "provider" "namespace" (fun context state (item: 'Item) -> task { ... return state' })
+  onBroadcast "provider" "namespace" (fun context state (item: 'Item) -> task { ... return state' })
   ```
 
-- Sealing freezes stream bindings into definition metadata; the registry's
-  properties provider publishes the same binding keys Orleans' codegen
-  publishes for `[ImplicitStreamSubscription]`.
-- The functional activator installs the stream-consumer extension component
-  during activation (same `IConfigureGrainTypeComponents` seam the activator
-  already owns) and routes deliveries into the declared hook with whole-state
-  replacement semantics (the timer-hook rules apply: `Interleave = false`,
-  publication on successful return only).
-- Broadcast consumption rides the same machinery with the channel-subscriber
-  extension.
+  The item type is inferred from the hook and erased into two preclosed delegates at declaration
+  time, so no silo-side code closes a generic per delivery. **Deviation from the sketch:**
+  `onBroadcast` takes a channel *namespace*, not a channel id — Orleans' implicit channel binding
+  is a namespace predicate, and the channel *key* is what selects the activation, exactly as the
+  stream key does.
 
-**Open questions:** batch delivery (`IAsyncBatchObserver`) in scope or later;
-rewindable-stream cursors exposed to the hook or deliberately not (Orleans
-exposes `StreamSequenceToken` — the hook signature must decide).
+- Sealing freezes the declarations into definition metadata and validates: non-blank provider and
+  namespace; at most one hook per `(transport, provider, namespace)` triple (the same namespace on
+  two providers is two different streams and is allowed); and **`statelessWorker` is rejected with
+  either operation** — `SiloStreamProviderRuntime.BindExtension` throws "The extension … cannot be
+  bound to a Stateless Worker", and implicit delivery addresses one activation identity derived
+  from the stream key, which multiplexed local activations cannot honor.
 
-**Size:** M/L. **Depends on:** nothing new.
+- Silo startup validation requires every named provider to resolve as a keyed `IStreamProvider` /
+  `IBroadcastChannelProvider`, exactly like the storage-provider check. Without it an unregistered
+  provider is silent: the binding is still published, Orleans still activates the grain, and the
+  item is simply dropped.
+
+- The activator installs the two Orleans-facing interfaces on a **separate activation-target
+  class**, used only when the definition declares at least one implicit subscription. This is
+  load-bearing: `StreamConsumerGrainContextAction` eagerly binds the extension to every activation
+  implementing `IStreamSubscriptionObserver`, and `BindExtension` throws for a stateless worker, so
+  an unconditional implementation would fail the activation of every stateless-worker functional
+  grain on a silo with streaming configured.
+
+- The manifest publication de-duplicates by `(transport, namespace)`: Orleans' binding names no
+  provider, so two declarations of one namespace on two providers would otherwise publish two
+  byte-identical binding groups.
+
+### Delivery semantics (normative)
+
+The timer-hook rules apply unchanged:
+
+- a delivery is an ordinary **non-reentrant** grain call — `IStreamConsumerExtension`'s delivery
+  methods carry no `[AlwaysInterleave]`, so this is Orleans' scheduling, not a setting of ours;
+- **whole-state replacement**, published **only on a successful return**;
+- **no implicit storage write** by the runtime;
+- the context cancellation token is `CancellationToken.None`, because neither
+  `IAsyncObserver.OnNextAsync` nor `IBroadcastChannelSubscription.Attach` supplies one.
+
+**Open question resolved — `StreamSequenceToken` exposure.** Exposed, read-only, on the invocation
+context as `context.streamSequenceToken : StreamSequenceToken option`, rather than as a fourth hook
+parameter. Justification: the sketch's hook shape (`context -> state -> item`) is binding, and a
+fourth parameter would be `null` for every non-rewindable provider and for every `onBroadcast`
+delivery, i.e. noise in the common case; the context is where every other per-callback fact
+(`cancellationToken`, `utcNow`) already lives, and `option` makes "this provider has no cursor"
+a total, non-null answer. **The runtime never rewinds with it**: the implicit subscription is
+resumed with no token, so a fresh activation starts at the subscription's current position. The
+token is exposed so an application can checkpoint or de-duplicate — which matters because delivery
+is at-least-once. Consuming a stored token to rewind on activation is a follow-up, not this item.
+
+**Open question resolved — the delivery context token.** `CancellationToken.None`, for the same
+reason the reminder hook uses it: the Orleans delivery path supplies no token, and a token that
+can never be cancelled but *can* be disposed underneath a registered continuation would be worse
+than none.
+
+**Failure semantics (verified by test, not assumed).** A throwing hook propagates back through
+`StreamConsumerExtension` to `PersistentStreamPullingAgent`, which retries the same item through
+`AsyncExecutorWithRetries.ExecuteWithRetries` with `INFINITE_RETRIES` bounded by
+`StreamPullingAgentOptions.MaxEventDeliveryTime` (30 s default) and the delivery backoff provider.
+When the budget is spent, `ErrorProtocol` delivers the error to the consumer and records a
+delivery failure, but **never faults an implicit subscription** — it excludes them explicitly
+(`&& !SubscriptionMarker.IsImplicitSubscription(...)`) — so the cursor advances and later items
+still arrive. Delivery is therefore **at-least-once**, and the integration test observes ≥ 2 hook
+entries for one item plus the next item arriving afterwards. The state of a failed attempt is
+never published.
+
+**One asymmetry.** Orleans' binding names a namespace but not a provider, so an item published to
+a declared namespace on an *undeclared* provider still routes to this grain type. The runtime
+matches on `(provider, namespace)`, logs a warning, and leaves the item undelivered (Orleans then
+drops it) — throwing would poison a pulling agent over an item a legitimately configured different
+provider delivered.
+
+### Out of scope, recorded as follow-ups
+
+- **Batch delivery (`IAsyncBatchObserver`)** — a hook receives one item at a time. Adding it means
+  a second hook shape (`'Item list` plus per-item tokens) and its own back-pressure story.
+- **Rewind on activation** — accepting a stored `StreamSequenceToken` back and passing it to
+  `ResumeAsync`, so an activation replays from a checkpoint instead of the current position.
+- **Regex / custom namespace predicates** (`RegexImplicitStreamSubscriptionAttribute`,
+  `IStreamNamespacePredicate`) — only exact-match namespaces are declarable today.
+- **Custom `IStreamIdMapper` / `IChannelIdMapper`** — the binding always publishes the default
+  mapper (a null `streamid-mapper`, which is what an undecorated attribute publishes too).
+
+**Size:** M/L (as estimated). **Depended on:** nothing new.
 
 ## 2. Distributed ACID transactions
 
@@ -488,7 +591,8 @@ nothing about streaming is implemented here.
 
 - **Phase A (S items):** 4 (placement), 8 (lifecycle + scripting), 9 (C# facade).
 - **Phase B:** 1 (implicit subscriptions) — the manifest/extension seams are
-  fresh from spec 003.
+  fresh from spec 003. **Landed:** item 1 is implemented and its section above is
+  the resolved design.
 - **Phase C:** 5 (reentrancy), 7 (version tolerance) — both are admission-layer
   work and share tests.
 - **Phase D:** 2 (transactions).

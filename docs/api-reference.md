@@ -60,6 +60,8 @@
 See [Grain Definition guide](grain-definition.md) for the full keyword list. Per-grain Orleans
 attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
 `[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
+On the [functional grain runtime](functional-grains.md) they are ordinary definition operations
+instead — including `onStream` / `onBroadcast` for implicit subscriptions.
 
 ### Modules
 

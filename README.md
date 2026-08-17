@@ -97,6 +97,13 @@ let config = siloConfig {
 > grain pattern shares a single `FSharpGrainImpl` class and one handler method, so per-grain
 > class/method attributes cannot be expressed there. The one reentrancy lever that fits the
 > universal pattern is `interleaveMessage typeof<'Msg>`.
+>
+> **This caveat is about the deprecated `grain { }` model only.** On the
+> [functional grain runtime](docs/functional-grains.md) every one of those concepts is a
+> first-class `grainContract` / `grainFor` operation — `readOnly`, `oneWay`, `alwaysInterleave`,
+> `grainType`, `collectionAge`, `statelessWorker`, `placement`, and (spec 004 item 1)
+> `onStream` / `onBroadcast` for implicit stream and broadcast-channel subscriptions. No C# and
+> no code generation.
 
 ### `siloConfig { }` -- Silo Configuration
 
