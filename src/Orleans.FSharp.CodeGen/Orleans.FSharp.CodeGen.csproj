@@ -47,19 +47,31 @@
   <Target Name="RunFSharpGrainGenerator"
           BeforeTargets="CoreCompile"
           DependsOnTargets="ResolveProjectReferences">
+    <!-- Ask each referenced project for its ACTUAL TargetPath instead of guessing a
+         bin/<Configuration>/ path. Guessed paths break whenever the referenced project's
+         effective Configuration differs from this project's: MSBuild unsets Configuration
+         for a ProjectReference that is not a member of the solution being built, so the
+         same reference lands in bin/Debug under one solution and bin/Release under another
+         (Orleans.FSharp.slnx and testbed/Testbed.slnx now list Sample and Generator as
+         members precisely so these calls and the actual build agree). The GetTargetPath
+         call inherits this project's global properties, matching the in-solution case;
+         the Exists preflight below turns the out-of-solution mismatch into an actionable
+         error instead of a missing-file mystery. -->
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\Orleans.FSharp.Generator.fsproj"
+             Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" PropertyName="_GeneratorAssembly" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj"
+             Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" PropertyName="_SampleAssembly" />
+    </MSBuild>
     <PropertyGroup>
-      <!-- Generator is a build-time tool only (not shipped, IsPackable=false in
-           Generator.fsproj) and is not a member of any solution that builds this project.
-           During a solution build MSBuild leaves Configuration unset for a ProjectReference
-           that is not itself a solution member, so the generator lands in bin/Debug/ whether
-           the parent build is Debug or Release — nothing to do with ReferenceOutputAssembly.
-           Hardcoding Debug here keeps the path correct for both. The Sample below uses
-           $(Configuration) because it IS a member of Orleans.FSharp.slnx; testbed/Testbed.slnx
-           does not list it, which is why a Release build of that solution fails. -->
-      <_GeneratorAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\bin\Debug\net10.0\Orleans.FSharp.Generator.dll'))</_GeneratorAssembly>
-      <_SampleAssembly>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Orleans.FSharp.Sample\bin\$(Configuration)\net10.0\Orleans.FSharp.Sample.dll'))</_SampleAssembly>
       <_GeneratedDir>$(MSBuildThisFileDirectory)Generated\</_GeneratedDir>
     </PropertyGroup>
+    <Error Text="Generator assembly not found at '$(_GeneratorAssembly)'. If this project is being built as part of a solution, that solution must also list Orleans.FSharp.Generator and Orleans.FSharp.Sample as members — MSBuild unsets Configuration for out-of-solution project references, so their build output lands in a different bin/ than this resolution expects."
+           Condition=" !Exists('$(_GeneratorAssembly)') " />
+    <Error Text="Sample assembly not found at '$(_SampleAssembly)'. If this project is being built as part of a solution, that solution must also list Orleans.FSharp.Generator and Orleans.FSharp.Sample as members — MSBuild unsets Configuration for out-of-solution project references, so their build output lands in a different bin/ than this resolution expects."
+           Condition=" !Exists('$(_SampleAssembly)') " />
     <MakeDir Directories="$(_GeneratedDir)" />
     <!-- Invoke the pre-built generator DLL via `dotnet exec`, NOT `dotnet run`.
          `dotnet run` spawns a separate MSBuild process that re-builds the Generator's
