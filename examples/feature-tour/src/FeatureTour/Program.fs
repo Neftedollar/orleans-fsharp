@@ -30,6 +30,7 @@ open FeatureTour.ObserverTour
 open FeatureTour.Broadcast
 open FeatureTour.Implicit
 open FeatureTour.Interleaving
+open FeatureTour.Transactions
 open FeatureTour.Interop
 open FeatureTour.Placement
 open FeatureTour.Heterogeneous
@@ -720,6 +721,75 @@ let private runImplicit (factory: IGrainFactory) =
             verdict "UNEXPECTED — implicit delivery did not hold; see the observation lines above"
     }
 
+let private runTransactions (factory: IGrainFactory) =
+    task {
+        section 14 "Distributed ACID transactions — transactionalStateFrom and per-operation policy"
+
+        let run = Guid.NewGuid().ToString "N"
+        let source = $"acct-a-{run}"
+        let target = $"acct-b-{run}"
+        let teller = TellerApi.ref factory run
+
+        let sourceAccount = AccountApi.ref factory source
+        let targetAccount = AccountApi.ref factory target
+
+        // ── Commit: one transaction, two participants, both states move ──────
+        do! sourceAccount.deposit 100m
+        do! teller.transfer (source, target, 40m)
+        let! committed = teller.totals (source, target)
+
+        say $"one transaction created by '{TellerApi.GrainType}' moved 40 from A to B"
+        detail $"both balances read inside ONE transaction afterwards: {committed}"
+
+        // ── Abort: the second participant refuses, and the first is rolled back
+        let entriesBefore = Entries.count $"withdraw:{source}"
+
+        let! aborted =
+            task {
+                try
+                    do! teller.transfer (source, target, 500m)
+                    return "the transfer SUCCEEDED (unexpected)"
+                with error ->
+                    return describe error
+            }
+
+        let! afterAbort = teller.totals (source, target)
+        let entriesAfter = Entries.count $"withdraw:{source}"
+
+        say $"a transfer of 500 (A holds 60) failed with: {aborted}"
+        detail $"balances after the abort: {afterAbort} — unchanged, so the earlier deposit was rolled back too"
+
+        // ── Re-execution: measured, not assumed ──────────────────────────────
+        detail $"the withdraw handler was entered {entriesAfter - entriesBefore} time(s) for that aborted transaction"
+        detail "Orleans does NOT re-run a handler when a transaction aborts: it surfaces"
+        detail "OrleansTransactionAbortedException and leaves the retry to the caller. A handler is"
+        detail "therefore run at most once per attempt, and an attempt either commits or leaves"
+        detail "nothing behind."
+
+        // ── The two refusals the runtime adds ────────────────────────────────
+        let! readOnlyOutcome = sourceAccount.peekAndWrite ()
+        let! unguardedOutcome = sourceAccount.unguarded ()
+
+        say "the facade is bound to the operation's declared policy:"
+        detail $"'peekAndWrite' is readOnly + transactional: {readOnlyOutcome}"
+        detail $"'unguarded' declares no transaction at all: {unguardedOutcome}"
+
+        detail "Inside a transaction-scoped operation the ONLY durable effect is the transactional"
+        detail "facet: the handler's replacement primary state is discarded and its persistent-state"
+        detail "facades reject every write, because nothing could roll either of them back."
+
+        let committedHolds = committed = (60m, 40m)
+        let abortHolds = afterAbort = (60m, 40m) && aborted.Contains "Aborted"
+        let onceHolds = entriesAfter - entriesBefore = 1
+        let refusalsHold = readOnlyOutcome.Contains "refused" && unguardedOutcome.Contains "refused"
+
+        if committedHolds && abortHolds && onceHolds && refusalsHold then
+            verdict
+                "SUPPORTED — a transaction spanning two functional grains commits atomically, aborts atomically, runs each handler once, and refuses a write from a read-only or non-transactional operation"
+        else
+            verdict "UNEXPECTED — transactions did not hold; see the observation lines above"
+    }
+
 let private runInterleaving (factory: IGrainFactory) =
     task {
         section 13 "Reentrancy variants — 'reentrant' and 'mayInterleave' as contract operations"
@@ -833,6 +903,7 @@ let private runTour (host: IHost) =
         do! runPlacement factory
         do! runImplicit factory
         do! runInterleaving factory
+        do! runTransactions factory
 
         printfn ""
         printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
@@ -858,6 +929,13 @@ let main _argv =
     SiloConfig.applyToHost siloConfiguration builder
 
     builder.UseOrleans(fun silo ->
+        // Transactions are not part of siloConfig { }: UseTransactions is Orleans' own silo-builder
+        // extension, and the transactional store is an ordinary named memory storage that
+        // NamedTransactionalStateStorageFactory wraps when no ITransactionalStateStorageFactory is
+        // registered under the name.
+        silo.UseTransactions() |> ignore
+        silo.AddMemoryGrainStorage AccountApi.Storage |> ignore
+
         silo.AddFunctionalGrain LedgerDefinition.definition |> ignore
         silo.AddFunctionalGrain SchedulerDefinition.definition |> ignore
         silo.AddFunctionalGrain GatewayDefinition.definition |> ignore
@@ -882,6 +960,9 @@ let main _argv =
         silo.AddFunctionalGrain GateDefinition.reentrant |> ignore
         silo.AddFunctionalGrain GateDefinition.serial |> ignore
         silo.AddFunctionalGrain SelectiveDefinition.definition |> ignore
+        // Feature 14 / status-matrix row 13: distributed ACID transactions (spec 004 item 2).
+        silo.AddFunctionalGrain AccountDefinition.definition |> ignore
+        silo.AddFunctionalGrain TellerDefinition.definition |> ignore
         // Feature 6, second half / status-matrix row 6: version tolerance (spec 004 item 7).
         // Deliberately ONLY version 3 of tour.rolling.
         silo.AddFunctionalGrain RollingDefinition.definition |> ignore

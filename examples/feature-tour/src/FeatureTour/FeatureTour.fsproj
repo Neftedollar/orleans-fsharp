@@ -20,6 +20,7 @@
     <Compile Include="Broadcast.fs" />
     <Compile Include="Implicit.fs" />
     <Compile Include="Interleaving.fs" />
+    <Compile Include="Transactions.fs" />
     <Compile Include="Placement.fs" />
     <Compile Include="Heterogeneous.fs" />
     <Compile Include="Program.fs" />
