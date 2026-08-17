@@ -7,7 +7,10 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open Orleans
+open Orleans.BroadcastChannel
 open Orleans.Runtime
+open Orleans.Streams
+open Orleans.Streams.Core
 open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>Everything the dispatch body of one activation needs.</summary>
@@ -70,6 +73,7 @@ module internal FunctionalContextFactory =
           TimeProvider = env.TimeProvider
           UtcNow = env.TimeProvider.GetUtcNow()
           CancellationToken = cancellationToken
+          StreamSequenceToken = null
           DeactivateOnIdle = env.DeactivateOnIdle
           DelayDeactivation = env.DelayDeactivation
           ResolvePersistentState =
@@ -77,6 +81,21 @@ module internal FunctionalContextFactory =
                 match env.State.TryResolve descriptor with
                 | Some facet -> facet.Blueprint.Facade facet.Instance scope
                 | None -> null }
+
+    /// <summary>
+    /// The invocation context core of one implicit stream or broadcast delivery: the ordinary
+    /// core plus the Orleans cursor of the item being delivered, which
+    /// <c>context.streamSequenceToken</c> surfaces. The cursor is <c>null</c> for a
+    /// non-rewindable stream provider and always <c>null</c> for a broadcast channel.
+    /// </summary>
+    let streamCore
+        (env: FunctionalTargetEnvironment)
+        (cancellationToken: CancellationToken)
+        (scope: FunctionalStateScope)
+        (sequenceToken: StreamSequenceToken)
+        =
+        { core env cancellationToken scope with
+            StreamSequenceToken = sequenceToken }
 
 /// <summary>
 /// Target-side dispatch of one fixed request, in the specification's exact validation order.
@@ -418,3 +437,123 @@ module internal FunctionalLifecycle =
                     scope.Expire()
         }
         :> Task
+
+/// <summary>
+/// Implicit stream and broadcast-channel delivery into a functional activation.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The seam is Orleans' own, and it is reached without any code generation. Orleans installs its
+/// <c>StreamConsumerExtension</c> on an activation whose <b>grain instance</b> implements
+/// <c>IStreamSubscriptionObserver</c> (<c>StreamConsumerGrainContextAction.Configure</c>, and the
+/// keyed <c>IGrainExtension</c> factory in <c>StreamingServiceCollectionExtensions</c>, both do
+/// exactly <c>GrainContext.GrainInstance as IStreamSubscriptionObserver</c>). When an item
+/// arrives for a subscription the extension has no observer for — which is always the case for an
+/// implicit subscription on a fresh activation — it calls <c>OnSubscribed</c> with a handle
+/// factory, then re-checks its observer table and delivers the pending item. Attaching an
+/// observer from inside <c>OnSubscribed</c> is therefore what turns "activated, then dropped on
+/// the floor" into a delivery. Broadcast channels use the identical shape through
+/// <c>IOnBroadcastChannelSubscribed</c> and <c>BroadcastChannelConsumerExtension</c>.
+/// </para>
+/// <para>
+/// A delivery runs under the timer-hook rules: whole-state replacement published only on a
+/// successful return, no storage call of the runtime's own, and <c>CancellationToken.None</c>
+/// (neither <c>IAsyncObserver.OnNextAsync</c> nor <c>IBroadcastChannelSubscription.Attach</c>
+/// supplies a token). Non-reentrancy is Orleans' doing rather than a setting of ours:
+/// <c>IStreamConsumerExtension</c>'s delivery methods carry no <c>[AlwaysInterleave]</c>, so a
+/// delivery takes an ordinary turn on the activation.
+/// </para>
+/// </remarks>
+[<RequireQualifiedAccess>]
+module internal FunctionalStreams =
+
+    /// <summary>The state-scope operation name of one declared subscription.</summary>
+    let private scopeName (binding: FunctionalStreamDeclaration) =
+        $"{binding.OperationName}:{binding.ProviderName}/{binding.Namespace}"
+
+    /// <summary>
+    /// Run one delivered item through its declared hook. The replacement state is published
+    /// exactly like a handler return, so a throwing hook leaves the activation's state untouched
+    /// and the exception travels back to Orleans unaltered.
+    /// </summary>
+    let private deliver
+        (env: FunctionalTargetEnvironment)
+        (binding: FunctionalStreamDeclaration)
+        (item: obj)
+        (sequenceToken: StreamSequenceToken)
+        : Task =
+        task {
+            let scope =
+                FunctionalStateScope(env.Definition.GrainTypeName, scopeName binding, true)
+
+            try
+                let core =
+                    FunctionalContextFactory.streamCore env CancellationToken.None scope sequenceToken
+
+                let! next = binding.Adapter.Invoke(env.Key, core, env.State.Current, item)
+                env.State.Publish next
+            finally
+                scope.Expire()
+        }
+        :> Task
+
+    /// <summary>The delivery callback handed to a declaration's preclosed typed attach.</summary>
+    let private deliveryOf (env: FunctionalTargetEnvironment) (binding: FunctionalStreamDeclaration) =
+        FunctionalStreamDelivery(fun item sequenceToken -> deliver env binding item sequenceToken)
+
+    /// <summary>
+    /// One unmatched delivery. Orleans' implicit-subscription binding names a namespace but not a
+    /// provider, so a namespace this definition declares for one provider is also routed here
+    /// from any other provider running on the silo. Returning without attaching leaves Orleans to
+    /// drop the item ("I don't have any subscriber for that stream"), which is the least
+    /// destructive answer: throwing would poison a pulling agent over an item that a different,
+    /// legitimately configured provider delivered.
+    /// </summary>
+    let private unmatched
+        (env: FunctionalTargetEnvironment)
+        (transport: string)
+        (providerName: string)
+        (itemNamespace: string)
+        =
+        env.Logger.LogWarning(
+            "Grain {GrainId} of functional grain type {GrainType} received a {Transport} delivery on provider {ProviderName} and namespace {Namespace}, which it declares no hook for. The item is left undelivered.",
+            env.GrainContext.GrainId,
+            env.Definition.GrainTypeName,
+            transport,
+            providerName,
+            itemNamespace
+        )
+
+        Task.CompletedTask
+
+    /// <summary>
+    /// <c>IStreamSubscriptionObserver.OnSubscribed</c>: attach the declared hook's typed observer
+    /// to the subscription Orleans is delivering to.
+    /// </summary>
+    let onStreamSubscribed (env: FunctionalTargetEnvironment) (factory: IStreamSubscriptionHandleFactory) : Task =
+        let itemNamespace = factory.StreamId.GetNamespace()
+
+        match env.Definition.TryFindStreamBinding(true, factory.ProviderName, itemNamespace) with
+        | Some binding ->
+            match binding.Attachment with
+            | StreamAttachment attach -> attach.Invoke(factory, deliveryOf env binding)
+            | ChannelAttachment _ ->
+                // Unreachable: TryFindStreamBinding already filtered on the stream transport.
+                unmatched env "stream" factory.ProviderName itemNamespace
+        | None -> unmatched env "stream" factory.ProviderName itemNamespace
+
+    /// <summary>
+    /// <c>IOnBroadcastChannelSubscribed.OnSubscribed</c>: attach the declared hook at the exact
+    /// item type for the channel Orleans is publishing to.
+    /// </summary>
+    let onChannelSubscribed (env: FunctionalTargetEnvironment) (subscription: IBroadcastChannelSubscription) : Task =
+        let itemNamespace = subscription.ChannelId.GetNamespace()
+
+        match env.Definition.TryFindStreamBinding(false, subscription.ProviderName, itemNamespace) with
+        | Some binding ->
+            match binding.Attachment with
+            | ChannelAttachment attach -> attach.Invoke(subscription, deliveryOf env binding)
+            | StreamAttachment _ ->
+                // Unreachable: TryFindStreamBinding already filtered on the channel transport.
+                unmatched env "broadcast" subscription.ProviderName itemNamespace
+        | None -> unmatched env "broadcast" subscription.ProviderName itemNamespace

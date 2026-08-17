@@ -6,6 +6,7 @@ open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime
+open Orleans.Streams
 open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>
@@ -32,6 +33,13 @@ type internal FunctionalContextCore =
         UtcNow: DateTimeOffset
         /// The token selected by callback kind.
         CancellationToken: CancellationToken
+        /// <summary>
+        /// The Orleans stream cursor of the item being delivered, or <c>null</c> for every
+        /// callback which is not an <c>onStream</c> delivery (and for <c>onBroadcast</c>, whose
+        /// transport carries no cursor at all). Surfaced through
+        /// <c>context.streamSequenceToken</c>.
+        /// </summary>
+        StreamSequenceToken: StreamSequenceToken
         /// Wrapper for the protected Orleans deactivate-on-idle method.
         DeactivateOnIdle: unit -> unit
         /// Wrapper for the protected Orleans delay-deactivation method.
@@ -75,6 +83,31 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
 
     /// <summary>The cancellation token selected by this callback kind.</summary>
     member _.cancellationToken = core.CancellationToken
+
+    /// <summary>
+    /// The Orleans cursor of the item currently being delivered to an <c>onStream</c> hook, and
+    /// <c>None</c> in every other callback.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is <c>Some</c> only inside an <c>onStream</c> hook, and only for a stream provider whose
+    /// streams are rewindable — a non-rewindable provider (Orleans' in-memory streams, for
+    /// example) hands the consumer a <c>null</c> cursor, which surfaces here as <c>None</c>.
+    /// An <c>onBroadcast</c> hook always observes <c>None</c>: broadcast channels have no cursor
+    /// concept at all (<c>IBroadcastChannelSubscription.Attach</c> delivers the item alone).
+    /// </para>
+    /// <para>
+    /// <b>The runtime never rewinds with it.</b> A functional activation resumes its implicit
+    /// subscription with no token, so delivery starts at the subscription's current position. The
+    /// token is exposed so an application can checkpoint or de-duplicate against it — Orleans
+    /// redelivers an item whose hook threw (see the <c>onStream</c> operation's remarks) — not so
+    /// the runtime can replay from it.
+    /// </para>
+    /// </remarks>
+    member _.streamSequenceToken: StreamSequenceToken option =
+        match core.StreamSequenceToken with
+        | null -> None
+        | token -> Some token
 
     /// <summary>Request deactivation once the current turn completes.</summary>
     member _.deactivateOnIdle() = core.DeactivateOnIdle()
@@ -129,6 +162,16 @@ type ReminderHook<'Actor, 'Key, 'State> =
 
 /// <summary>A timer hook; whole-state replacement under non-interleaving scheduling.</summary>
 type TimerHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> Task<'State>
+
+/// <summary>
+/// An implicit stream-delivery or broadcast-delivery hook. It receives the invocation context,
+/// the current primary state, and one delivered item, and returns the replacement state.
+/// Whole-state replacement under the timer-hook rules: the replacement is published only when the
+/// hook returns successfully, and the runtime issues no storage call of its own.
+/// </summary>
+/// <typeparam name="TItem">The exact item type carried on the stream or channel.</typeparam>
+type StreamHook<'Actor, 'Key, 'State, 'Item> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Item -> Task<'State>
 
 /// <summary>
 /// The closed set of documented Orleans grain-lifecycle stages an <c>onLifecycle</c> hook may

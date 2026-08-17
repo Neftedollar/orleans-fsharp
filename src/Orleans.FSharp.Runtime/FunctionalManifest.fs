@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 open System.Globalization
 open Microsoft.Extensions.Options
+open Orleans
 open Orleans.Configuration
 open Orleans.Metadata
 open Orleans.Runtime
@@ -65,7 +66,53 @@ type internal FunctionalGrainInterfacePropertiesProvider(registry: FunctionalGra
 /// transport interface's name.
 /// </remarks>
 [<Sealed>]
-type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistry) =
+type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, registry: FunctionalGrainRegistry) =
+
+    /// <summary>
+    /// The binding-group prefix Orleans' own <c>AttributeGrainBindingsProvider</c> writes:
+    /// <c>WellKnownGrainTypeProperties.BindingPrefix</c> ("binding"), a dot, then the literal
+    /// group token "attr-" and a 1-based index. The token itself is a private constant of that
+    /// provider with no public counterpart, so it is spelled out here — and pinned by the
+    /// exactness test against a live attribute-decorated reference class. Only the grouping
+    /// matters to <c>GrainBindingsResolver</c> (it splits on the first dot after the prefix), but
+    /// "the same keys Orleans publishes" means the same token too.
+    /// </summary>
+    static member val BindingGroupPrefix = WellKnownGrainTypeProperties.BindingPrefix + ".attr-"
+
+    /// <summary>
+    /// The Orleans attribute which produces the manifest binding of one declared implicit
+    /// subscription. Constructing the real attribute and calling its own <c>GetBindings</c> is
+    /// what makes the published properties Orleans' output rather than a transcription of it:
+    /// the namespace-predicate pattern format, the stream/channel id-mapper key, and the two
+    /// legacy-key-type branches all come from Orleans code, evaluated against this definition's
+    /// own marker CLR type.
+    /// </summary>
+    static member BindingAttribute(binding: FunctionalStreamDeclaration) : IGrainBindingsProviderAttribute =
+        if binding.IsStream then
+            ImplicitStreamSubscriptionAttribute binding.Namespace
+        else
+            ImplicitChannelSubscriptionAttribute binding.Namespace
+
+    /// <summary>
+    /// The manifest bindings of one definition, in declaration order, de-duplicated by
+    /// (transport, namespace). Orleans' binding names a namespace and not a provider, so two
+    /// declarations of the same namespace on two different providers — legal, and distinguished
+    /// at delivery time — would otherwise publish two byte-identical binding groups.
+    /// </summary>
+    static member BindingsOf
+        (services: IServiceProvider, definition: FunctionalHostedDefinition, grainClass: Type, grainType: GrainType)
+        =
+        let seen = HashSet<struct (bool * string)>(HashIdentity.Structural)
+        let produced = ResizeArray<Dictionary<string, string>>()
+
+        for binding in definition.StreamBindings do
+            if seen.Add(struct (binding.IsStream, binding.Namespace)) then
+                let attribute = FunctionalGrainPropertiesProvider.BindingAttribute binding
+
+                for entry in attribute.GetBindings(services, grainClass, grainType) do
+                    produced.Add entry
+
+        produced
 
     /// <summary>The open generic functional target-interface definition.</summary>
     static member val OpenInterfaceDefinition: Type = typedefof<IFunctionalGrainTarget<_>>
@@ -88,7 +135,7 @@ type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistr
            |> Array.exists (fun candidate -> String.Equals(candidate, value, StringComparison.Ordinal))
 
     interface IGrainPropertiesProvider with
-        member _.Populate(grainClass: Type, _grainType: GrainType, properties: Dictionary<string, string>) =
+        member _.Populate(grainClass: Type, grainType: GrainType, properties: Dictionary<string, string>) =
             match registry.TryByMarker grainClass with
             | None -> ()
             | Some entry ->
@@ -155,6 +202,30 @@ type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistr
                     properties.["remove-idle-workers"] <- true.ToString()
                     properties.[WellKnownGrainTypeProperties.Unordered] <- "true"
                 | None -> ()
+
+                // Spec 004 item 1: the implicit-subscription bindings of every declared
+                // 'onStream' and 'onBroadcast'. Orleans collects these only from
+                // IGrainBindingsProviderAttribute attributes on the grain class, and the grain
+                // class here is the library's own marker -- so this provider takes the same
+                // attributes' own GetBindings output and writes it under the same
+                // "binding.attr-<n>.<key>" keys AttributeGrainBindingsProvider would have used.
+                // The marker carries no such attribute itself, so nothing collides: this is the
+                // only writer of a binding property for a functional grain type.
+                let bindings =
+                    FunctionalGrainPropertiesProvider.BindingsOf(services, entry.Definition, grainClass, grainType)
+
+                let mutable index = 1
+
+                for binding in bindings do
+                    for pair in binding do
+                        properties.[
+                            FunctionalGrainPropertiesProvider.BindingGroupPrefix
+                            + index.ToString CultureInfo.InvariantCulture
+                            + "."
+                            + pair.Key
+                        ] <- pair.Value
+
+                    index <- index + 1
 
 /// <summary>
 /// Atomically freezes the registry, removes the open functional marker and target-interface

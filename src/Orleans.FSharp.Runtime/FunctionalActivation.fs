@@ -6,10 +6,103 @@ open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Orleans
+open Orleans.BroadcastChannel
 open Orleans.Metadata
 open Orleans.Runtime
+open Orleans.Streams.Core
 open Orleans.FSharp.FunctionalDiagnostics
 open Orleans.FSharp.FunctionalSiloDiagnostics
+
+/// <summary>
+/// The functional activation target of one actor brand: the Orleans grain instance every
+/// functional call, hook, timer, and reminder runs on.
+/// </summary>
+/// <remarks>
+/// It is a class rather than an object expression because the streaming variant below has to add
+/// two interfaces to exactly this member set, and an object expression cannot be extended.
+/// </remarks>
+/// <typeparam name="TActor">The actor brand of the hosted definition.</typeparam>
+type internal FunctionalGrainTarget<'Actor>
+    (env: FunctionalTargetEnvironment, grainContext: IGrainContext, grainRuntime: IGrainRuntime) =
+    inherit FunctionalGrainTargetBase(grainContext, grainRuntime)
+
+    override _.OnDisposing() = ()
+
+    override _.OnActivating(cancellationToken) =
+        FunctionalLifecycle.activate env cancellationToken
+
+    override _.OnDeactivating(reason, cancellationToken) =
+        FunctionalLifecycle.deactivate env reason cancellationToken
+
+    interface IFunctionalDispatchTarget with
+        member _.DispatchAsync(envelope, cancellationToken) =
+            FunctionalDispatch.dispatch env envelope cancellationToken
+
+    interface IFunctionalGrainTarget<'Actor> with
+        member _.DispatchAsync(envelope, cancellationToken) =
+            FunctionalDispatch.dispatch env envelope cancellationToken
+
+    interface IRemindable with
+        member _.ReceiveReminder(reminderName: string, status: TickStatus) : Task =
+            match env.Definition.TryFindReminder reminderName with
+            | Some hostedReminder ->
+                task {
+                    let scope =
+                        FunctionalStateScope(env.Definition.GrainTypeName, $"onReminder:{reminderName}", true)
+
+                    try
+                        // "Reminder hook: CancellationToken.None, because
+                        // IRemindable.ReceiveReminder supplies no token."
+                        let core =
+                            FunctionalContextFactory.core env CancellationToken.None scope
+
+                        let! next = hostedReminder.Adapter.Invoke(env.Key, core, env.State.Current, status)
+
+                        env.State.Publish next
+                    finally
+                        scope.Expire()
+                }
+                :> Task
+            | None ->
+                env.Logger.LogError(
+                    "Grain {GrainId} of functional grain type {GrainType} received unknown reminder {ReminderName}",
+                    grainContext.GrainId,
+                    env.Definition.GrainTypeName,
+                    reminderName
+                )
+
+                Task.FromException(
+                    InvalidOperationException(
+                        $"{StartupStage}: grain '{grainContext.GrainId}' of grain type '{env.Definition.GrainTypeName}' received reminder '{reminderName}', which the hosted definition does not declare."
+                    )
+                )
+
+/// <summary>
+/// The activation target of a definition which declares <c>onStream</c> or <c>onBroadcast</c>
+/// hooks. It adds exactly the two interfaces Orleans probes the grain instance for when it
+/// installs a stream or broadcast consumer extension.
+/// </summary>
+/// <remarks>
+/// The two interfaces are on a separate type, used only when the definition declares at least one
+/// implicit subscription, deliberately. <c>StreamConsumerGrainContextAction</c> eagerly binds a
+/// <c>StreamConsumerExtension</c> to every activation whose instance implements
+/// <c>IStreamSubscriptionObserver</c>, and <c>SiloStreamProviderRuntime.BindExtension</c> throws
+/// for a stateless worker — so implementing the interface unconditionally would fail the
+/// activation of every stateless-worker functional grain on a silo with streaming configured.
+/// </remarks>
+/// <typeparam name="TActor">The actor brand of the hosted definition.</typeparam>
+[<Sealed>]
+type internal FunctionalStreamingGrainTarget<'Actor>
+    (env: FunctionalTargetEnvironment, grainContext: IGrainContext, grainRuntime: IGrainRuntime) =
+    inherit FunctionalGrainTarget<'Actor>(env, grainContext, grainRuntime)
+
+    interface IStreamSubscriptionObserver with
+        member _.OnSubscribed(handleFactory: IStreamSubscriptionHandleFactory) =
+            FunctionalStreams.onStreamSubscribed env handleFactory
+
+    interface IOnBroadcastChannelSubscribed with
+        member _.OnSubscribed(subscription: IBroadcastChannelSubscription) =
+            FunctionalStreams.onChannelSubscribed env subscription
 
 /// <summary>
 /// The functional grain activator of one actor brand. It resolves <c>IGrainRuntime</c> from the
@@ -81,63 +174,14 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                   RegisterReminder = fun name dueTime period -> registerReminder name dueTime period
                   CreateTimer = fun callback options -> createTimer callback options }
 
-            let target =
-                { new FunctionalGrainTargetBase(grainContext, grainRuntime) with
-                    member _.OnDisposing() = ()
-
-                    member _.OnActivating(cancellationToken) =
-                        FunctionalLifecycle.activate env cancellationToken
-
-                    member _.OnDeactivating(reason, cancellationToken) =
-                        FunctionalLifecycle.deactivate env reason cancellationToken
-
-                  interface IFunctionalDispatchTarget with
-                      member _.DispatchAsync(envelope, cancellationToken) =
-                          FunctionalDispatch.dispatch env envelope cancellationToken
-
-                  interface IFunctionalGrainTarget<'Actor> with
-                      member _.DispatchAsync(envelope, cancellationToken) =
-                          FunctionalDispatch.dispatch env envelope cancellationToken
-
-                  interface IRemindable with
-                      member _.ReceiveReminder(reminderName: string, status: TickStatus) : Task =
-                          match definition.TryFindReminder reminderName with
-                          | Some hostedReminder ->
-                              task {
-                                  let scope =
-                                      FunctionalStateScope(
-                                          definition.GrainTypeName,
-                                          $"onReminder:{reminderName}",
-                                          true
-                                      )
-
-                                  try
-                                      // "Reminder hook: CancellationToken.None, because
-                                      // IRemindable.ReceiveReminder supplies no token."
-                                      let core =
-                                          FunctionalContextFactory.core env CancellationToken.None scope
-
-                                      let! next =
-                                          hostedReminder.Adapter.Invoke(env.Key, core, env.State.Current, status)
-
-                                      env.State.Publish next
-                                  finally
-                                      scope.Expire()
-                              }
-                              :> Task
-                          | None ->
-                              logger.LogError(
-                                  "Grain {GrainId} of functional grain type {GrainType} received unknown reminder {ReminderName}",
-                                  grainContext.GrainId,
-                                  definition.GrainTypeName,
-                                  reminderName
-                              )
-
-                              Task.FromException(
-                                  InvalidOperationException(
-                                      $"{StartupStage}: grain '{grainContext.GrainId}' of grain type '{definition.GrainTypeName}' received reminder '{reminderName}', which the hosted definition does not declare."
-                                  )
-                              ) }
+            // A definition with no implicit subscription gets the plain target, so Orleans never
+            // probes it as a stream or broadcast consumer -- see FunctionalStreamingGrainTarget's
+            // remarks for why that separation is load-bearing rather than cosmetic.
+            let target: FunctionalGrainTarget<'Actor> =
+                if definition.StreamBindings.Length = 0 then
+                    new FunctionalGrainTarget<'Actor>(env, grainContext, grainRuntime)
+                else
+                    new FunctionalStreamingGrainTarget<'Actor>(env, grainContext, grainRuntime)
 
             deactivate <- fun () -> target.DeactivateNow()
             delay <- fun timeSpan -> target.DelayDeactivationFor timeSpan

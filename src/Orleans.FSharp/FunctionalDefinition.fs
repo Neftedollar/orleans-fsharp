@@ -2,7 +2,11 @@ namespace Orleans.FSharp
 
 open System
 open System.Collections.Generic
+open System.Threading.Tasks
+open Orleans.BroadcastChannel
 open Orleans.Runtime
+open Orleans.Streams
+open Orleans.Streams.Core
 open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>
@@ -71,6 +75,75 @@ type internal TimerDeclaration<'Actor, 'Key, 'State> =
         Hook: TimerHook<'Actor, 'Key, 'State>
     }
 
+/// <summary>
+/// Hands one delivered item back to the runtime: the boxed item and the Orleans cursor of that
+/// item (<c>null</c> when the transport carries none, which is always the case for broadcast
+/// channels and for non-rewindable stream providers).
+/// </summary>
+type internal FunctionalStreamDelivery = delegate of obj * StreamSequenceToken -> Task
+
+/// <summary>
+/// The preclosed typed attach of one declared implicit stream subscription. It creates the
+/// exactly-typed subscription handle from the factory Orleans supplies and resumes it with an
+/// observer that forwards every item to the runtime's delivery callback.
+/// </summary>
+type internal FunctionalStreamAttach =
+    delegate of IStreamSubscriptionHandleFactory * FunctionalStreamDelivery -> Task
+
+/// <summary>
+/// The preclosed typed attach of one declared implicit broadcast-channel subscription. It calls
+/// <c>IBroadcastChannelSubscription.Attach</c> at the exact item type.
+/// </summary>
+type internal FunctionalChannelAttach =
+    delegate of IBroadcastChannelSubscription * FunctionalStreamDelivery -> Task
+
+/// <summary>Which Orleans implicit-subscription transport a declared binding rides.</summary>
+type internal FunctionalStreamAttachment =
+    /// <summary>An <c>onStream</c> declaration: Orleans streams, bound by stream namespace.</summary>
+    | StreamAttachment of FunctionalStreamAttach
+    /// <summary>An <c>onBroadcast</c> declaration: broadcast channels, bound by channel namespace.</summary>
+    | ChannelAttachment of FunctionalChannelAttach
+
+/// <summary>
+/// The preclosed typed adapter of one declared stream or broadcast hook: the boxed domain key,
+/// the invocation context core, the boxed current primary state, and the boxed item, returning
+/// the boxed replacement state.
+/// </summary>
+type internal FunctionalStreamHookAdapter = delegate of obj * FunctionalContextCore * obj * obj -> Task<obj>
+
+/// <summary>
+/// One declared implicit subscription, frozen into definition metadata. Deliberately
+/// non-generic: the item type is erased into the two preclosed adapters at declaration time,
+/// where the custom operation's own <c>'Item</c> parameter is still in scope, so no silo-side
+/// code ever closes a generic again. The same value is carried by the hosted view.
+/// </summary>
+[<ReferenceEquality>]
+type internal FunctionalStreamDeclaration =
+    {
+        /// The transport and its preclosed typed attach.
+        Attachment: FunctionalStreamAttachment
+        /// The named Orleans stream or broadcast-channel provider this declaration subscribes on.
+        ProviderName: string
+        /// The stream or channel namespace this declaration subscribes to.
+        Namespace: string
+        /// The exact item type carried on the stream or channel.
+        ItemType: Type
+        /// The preclosed typed hook adapter.
+        Adapter: FunctionalStreamHookAdapter
+    }
+
+    /// <summary>The custom operation which produced this declaration; used in diagnostics.</summary>
+    member this.OperationName =
+        match this.Attachment with
+        | StreamAttachment _ -> "onStream"
+        | ChannelAttachment _ -> "onBroadcast"
+
+    /// <summary>True when this declaration rides Orleans streams rather than broadcast channels.</summary>
+    member this.IsStream =
+        match this.Attachment with
+        | StreamAttachment _ -> true
+        | ChannelAttachment _ -> false
+
 /// <summary>Accumulated, not yet sealed, definition configuration.</summary>
 [<ReferenceEquality>]
 type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
@@ -84,6 +157,7 @@ type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
       OnDeactivate: DeactivateHook<'Actor, 'Key, 'State> option
       Reminders: ReminderDeclaration<'Actor, 'Key, 'State> list
       Timers: TimerDeclaration<'Actor, 'Key, 'State> list
+      StreamBindings: FunctionalStreamDeclaration list
       Placement: PlacementConfiguration option
       LifecycleHooks: Map<LifecycleStage, LifecycleHook<'Actor, 'Key>>
       Handlers: Map<int, obj> }
@@ -125,6 +199,9 @@ type FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
 
     /// <summary>Declared timers in declaration order.</summary>
     member internal _.Timers = state.Timers
+
+    /// <summary>Declared implicit stream and broadcast subscriptions in declaration order.</summary>
+    member internal _.StreamBindings = state.StreamBindings
 
     /// <summary>The configured placement, when <c>statelessWorker</c> or <c>placement</c> was
     /// declared.</summary>
@@ -182,6 +259,7 @@ module internal DefinitionDraft =
               OnDeactivate = None
               Reminders = []
               Timers = []
+              StreamBindings = []
               Placement = None
               LifecycleHooks = Map.empty
               Handlers = Map.empty }
@@ -336,6 +414,19 @@ module internal DefinitionDraft =
                 fail
                     DefinitionStage
                     $"grain type '{grainTypeName}' combines 'statelessWorker' with 'collectionAge'. Orleans ignores the idle collection age for stateless-worker activations."
+
+            // Orleans itself refuses to bind a grain extension to a stateless worker:
+            // SiloStreamProviderRuntime.BindExtension throws "The extension
+            // Orleans.Streams.StreamConsumerExtension cannot be bound to a Stateless Worker."
+            // Implicit delivery is routed to ONE activation identity derived from the stream key,
+            // which multiplexed local activations have no way to honor, so the combination can
+            // never work and is rejected here rather than failing an activation later.
+            match state.StreamBindings |> List.tryHead with
+            | Some binding ->
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with '{binding.OperationName}'. Orleans refuses to bind a stream or broadcast consumer extension to a stateless worker (SiloStreamProviderRuntime.BindExtension), and implicit delivery addresses one activation identity derived from the stream key, which multiplexed local activations cannot honor."
+            | None -> ()
         | Some(Strategy _)
         | None -> ()
 
@@ -375,6 +466,32 @@ module internal DefinitionDraft =
                 fail
                     DefinitionStage
                     $"timer '{timer.Name}' of grain type '{grainTypeName}' sets Interleave = true, which a whole-state timer hook rejects."
+
+        // Declared implicit subscriptions: non-blank provider and namespace, and one hook per
+        // (transport, provider, namespace) triple. The triple -- not the namespace alone -- is
+        // the key: the same namespace on two different providers is two different streams, and
+        // the delivery path matches on both, so both may be declared. A repeated triple would be
+        // an unreachable second hook.
+        let seenBindings =
+            HashSet<struct (bool * string * string)>(
+                HashIdentity.Structural
+            )
+
+        for binding in state.StreamBindings do
+            if isBlank binding.ProviderName then
+                fail
+                    DefinitionStage
+                    $"an '{binding.OperationName}' declaration of grain type '{grainTypeName}' has a blank provider name."
+
+            if isBlank binding.Namespace then
+                fail
+                    DefinitionStage
+                    $"an '{binding.OperationName}' declaration of grain type '{grainTypeName}' (provider '{binding.ProviderName}') has a blank namespace."
+
+            if not (seenBindings.Add(struct (binding.IsStream, binding.ProviderName, binding.Namespace))) then
+                fail
+                    DefinitionStage
+                    $"'{binding.OperationName}' is declared more than once for provider '{binding.ProviderName}' and namespace '{binding.Namespace}' on grain type '{grainTypeName}'. Each (provider, namespace) pair accepts at most one hook."
 
         FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>(state)
 
@@ -598,6 +715,168 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.withState
             { draft with
                 Timers = draft.Timers @ [ declaration ] }
+
+    /// <summary>
+    /// Subscribe this grain type implicitly to one Orleans stream namespace on one named stream
+    /// provider. An item published to <c>StreamId.Create(streamNamespace, key)</c> activates the
+    /// grain whose identity encodes <c>key</c> — creating it if it does not exist — and is
+    /// delivered to <paramref name="hook"/>.
+    /// </summary>
+    /// <param name="providerName">The named Orleans stream provider (<c>AddMemoryStreams "name"</c>
+    /// and friends). It must be registered on every silo which hosts this definition; silo startup
+    /// validation rejects a name no provider answers to.</param>
+    /// <param name="streamNamespace">The stream namespace to subscribe to, matched exactly.</param>
+    /// <param name="hook">The delivery hook. Its item type is inferred from the lambda, so an
+    /// annotation is usually needed: <c>(fun context state (item: Ping) -&gt; ...)</c>.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Scheduling and state.</b> A delivery is an ordinary non-reentrant grain call
+    /// (<c>IStreamConsumerExtension.DeliverImmutable</c> carries no <c>[AlwaysInterleave]</c>), so
+    /// the timer-hook rules apply unchanged: the hook sees the current whole state, its returned
+    /// state is published in memory when — and only when — it returns successfully, and the
+    /// runtime issues no storage call of its own. The context token is
+    /// <c>CancellationToken.None</c>, because <c>IAsyncObserver.OnNextAsync</c> supplies none.
+    /// </para>
+    /// <para>
+    /// <b>A throwing hook is retried by Orleans, then the item is dropped.</b> The exception
+    /// travels back to the pulling agent, which redelivers the same item with backoff for up to
+    /// <c>StreamPullingAgentOptions.MaxEventDeliveryTime</c> (30 seconds by default) and then
+    /// moves on. An implicit subscription is never faulted by a delivery failure — Orleans'
+    /// <c>PersistentStreamPullingAgent.ErrorProtocol</c> excludes implicit subscriptions from
+    /// subscription faulting explicitly — so the next item still arrives. Delivery is therefore
+    /// at-least-once: a hook which is not idempotent should de-duplicate, for which
+    /// <c>context.streamSequenceToken</c> is available on a rewindable provider.
+    /// </para>
+    /// <para>
+    /// <b>Multiple declarations.</b> Several <c>onStream</c> operations are allowed, one per
+    /// (provider, namespace) pair; a repeated pair is rejected at sealing. Note that Orleans'
+    /// implicit-subscription binding names a namespace and NOT a provider, so an item published
+    /// to a declared namespace on an UNDECLARED provider still routes to this grain type; such a
+    /// delivery matches no hook, is logged as a warning, and is left for Orleans to drop.
+    /// </para>
+    /// <para>
+    /// <b>Rejected with <c>statelessWorker</c>.</b> Orleans refuses to bind a consumer extension
+    /// to a stateless worker, and implicit delivery addresses one activation identity.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("onStream")>]
+    member _.OnStream<'State, 'Item>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            providerName: string,
+            streamNamespace: string,
+            hook: StreamHook<'Actor, 'Key, 'State, 'Item>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail
+                DefinitionStage
+                $"'onStream' for provider '{providerName}' and namespace '{streamNamespace}' on grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        // Both delegates are closed over 'Item here, where it is still a type parameter of this
+        // custom operation. No silo-side code ever closes it again.
+        let attach =
+            FunctionalStreamAttach(fun factory delivery ->
+                let handle = factory.Create<'Item>()
+
+                let observer =
+                    { new IAsyncObserver<'Item> with
+                        member _.OnNextAsync(item: 'Item, token: StreamSequenceToken) =
+                            delivery.Invoke(box item, token)
+
+                        member _.OnCompletedAsync() = Task.CompletedTask
+                        member _.OnErrorAsync(_error: exn) = Task.CompletedTask }
+
+                handle.ResumeAsync observer :> Task)
+
+        let adapter =
+            FunctionalStreamHookAdapter(fun key core currentState item ->
+                task {
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    let! next = hook context (unbox<'State> currentState) (unbox<'Item> item)
+                    return box next
+                })
+
+        let declaration =
+            { Attachment = StreamAttachment attach
+              ProviderName = providerName
+              Namespace = streamNamespace
+              ItemType = typeof<'Item>
+              Adapter = adapter }
+
+        DefinitionDraft.withState
+            { draft with
+                StreamBindings = draft.StreamBindings @ [ declaration ] }
+
+    /// <summary>
+    /// Subscribe this grain type implicitly to one broadcast-channel namespace on one named
+    /// broadcast-channel provider. A publish to <c>ChannelId.Create(channelNamespace, key)</c>
+    /// activates the grain whose identity encodes <c>key</c> and is delivered to
+    /// <paramref name="hook"/>.
+    /// </summary>
+    /// <param name="providerName">The named broadcast-channel provider
+    /// (<c>AddBroadcastChannel "name"</c>). Silo startup validation rejects a name no provider
+    /// answers to.</param>
+    /// <param name="channelNamespace">The channel namespace to subscribe to, matched exactly.
+    /// This is the namespace half of a <c>ChannelId</c>, not a whole channel id: the key half is
+    /// what selects the activation.</param>
+    /// <param name="hook">The delivery hook, with the same shape and rules as
+    /// <c>onStream</c>'s.</param>
+    /// <remarks>
+    /// <para>
+    /// The delivery rules match <c>onStream</c>'s exactly — non-reentrant delivery, whole-state
+    /// replacement, publication on successful return only — with two differences. Broadcast
+    /// channels carry no cursor, so <c>context.streamSequenceToken</c> is always <c>None</c>;
+    /// and there is no pulling agent, so a throwing hook fails the publisher's call rather than
+    /// being retried (a broadcast publish is a direct fan-out grain call, not a queued one).
+    /// </para>
+    /// <para>
+    /// Several <c>onBroadcast</c> operations are allowed, one per (provider, namespace) pair.
+    /// Rejected in combination with <c>statelessWorker</c>, for the reasons <c>onStream</c>'s
+    /// remarks give.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("onBroadcast")>]
+    member _.OnBroadcast<'State, 'Item>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            providerName: string,
+            channelNamespace: string,
+            hook: StreamHook<'Actor, 'Key, 'State, 'Item>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail
+                DefinitionStage
+                $"'onBroadcast' for provider '{providerName}' and namespace '{channelNamespace}' on grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        let attach =
+            FunctionalChannelAttach(fun subscription delivery ->
+                subscription.Attach<'Item>(
+                    Func<'Item, Task>(fun item -> delivery.Invoke(box item, null)),
+                    Func<exn, Task>(fun _error -> Task.CompletedTask)
+                ))
+
+        let adapter =
+            FunctionalStreamHookAdapter(fun key core currentState item ->
+                task {
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    let! next = hook context (unbox<'State> currentState) (unbox<'Item> item)
+                    return box next
+                })
+
+        let declaration =
+            { Attachment = ChannelAttachment attach
+              ProviderName = providerName
+              Namespace = channelNamespace
+              ItemType = typeof<'Item>
+              Adapter = adapter }
+
+        DefinitionDraft.withState
+            { draft with
+                StreamBindings = draft.StreamBindings @ [ declaration ] }
 
     /// <summary>
     /// Multiplex this grain type across up to <paramref name="maxLocalWorkers"/> local

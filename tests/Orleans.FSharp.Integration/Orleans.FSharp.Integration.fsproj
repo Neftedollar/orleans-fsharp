@@ -58,6 +58,8 @@
     <Compile Include="ChatRoomSampleIntegrationTests.fs" />
     <Compile Include="FunctionalObserverIntegrationTests.fs" />
     <Compile Include="FunctionalPushIntegrationTests.fs" />
+    <Compile Include="FunctionalStreamFixture.fs" />
+    <Compile Include="FunctionalStreamIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

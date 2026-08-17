@@ -8,11 +8,13 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.DependencyInjection.Extensions
 open Microsoft.Extensions.Options
 open Orleans
+open Orleans.BroadcastChannel
 open Orleans.Configuration
 open Orleans.Hosting
 open Orleans.Metadata
 open Orleans.Runtime
 open Orleans.Storage
+open Orleans.Streams
 open Orleans.FSharp.FunctionalDiagnostics
 open Orleans.FSharp.FunctionalSiloDiagnostics
 
@@ -107,6 +109,32 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                     fail
                         StartupStage
                         $"the persistent state '{descriptor.StateName}' (stored type '{descriptor.StoredType.FullName}') of grain type '{definition.GrainTypeName}' names storage provider '{descriptor.ProviderName}', which is not registered on this silo. Add that named IGrainStorage (for example AddMemoryGrainStorage \"{descriptor.ProviderName}\") to every silo which hosts this definition."
+
+        // Every named stream or broadcast-channel provider of every declared implicit
+        // subscription must be registered on this silo, for the same reason the storage-provider
+        // check above exists: Orleans resolves both as keyed services, so an unregistered name
+        // would otherwise surface only when an item is published — as a dropped delivery on the
+        // stream side, which is silent from the application's point of view.
+        for entry in snapshot do
+            let definition = entry.Definition
+
+            for binding in definition.StreamBindings do
+                let registered =
+                    if binding.IsStream then
+                        not (isNull (box (services.GetKeyedService<IStreamProvider> binding.ProviderName)))
+                    else
+                        not (isNull (box (services.GetKeyedService<IBroadcastChannelProvider> binding.ProviderName)))
+
+                if not registered then
+                    let hint =
+                        if binding.IsStream then
+                            $"Add that named stream provider (for example AddMemoryStreams \"{binding.ProviderName}\")"
+                        else
+                            $"Add that named broadcast-channel provider (for example AddBroadcastChannel \"{binding.ProviderName}\")"
+
+                    fail
+                        StartupStage
+                        $"'{binding.OperationName}' of grain type '{definition.GrainTypeName}' names provider '{binding.ProviderName}' for namespace '{binding.Namespace}', which is not registered on this silo. {hint} to every silo which hosts this definition."
 
         // Manifest agreement: the published local grain manifest carries every registered
         // definition with its closed interface ID.

@@ -211,6 +211,7 @@ type internal FunctionalHostedDefinition
         collectionAge: TimeSpan option,
         reminders: FunctionalHostedReminder[],
         timers: FunctionalHostedTimer[],
+        streamBindings: FunctionalStreamDeclaration[],
         placement: PlacementConfiguration option,
         lifecycleHooks: (LifecycleStage * FunctionalLifecycleAdapter)[]
     ) =
@@ -294,6 +295,26 @@ type internal FunctionalHostedDefinition
 
     /// <summary>Declared timers in declaration order.</summary>
     member _.Timers = timers
+
+    /// <summary>
+    /// Declared implicit stream and broadcast subscriptions in declaration order. Already
+    /// preclosed over their item types at definition time, so the silo side never closes a
+    /// generic for one.
+    /// </summary>
+    member _.StreamBindings = streamBindings
+
+    /// <summary>
+    /// The declared subscription for one delivery, matched on transport, provider name, and
+    /// namespace, all by ordinal equality. Orleans' implicit-subscription binding names a
+    /// namespace but not a provider, so a namespace declared for one provider can still be
+    /// routed here from another; such a delivery matches nothing and returns <c>None</c>.
+    /// </summary>
+    member _.TryFindStreamBinding(isStream: bool, providerName: string, streamNamespace: string) =
+        streamBindings
+        |> Array.tryFind (fun binding ->
+            binding.IsStream = isStream
+            && String.Equals(binding.ProviderName, providerName, StringComparison.Ordinal)
+            && String.Equals(binding.Namespace, streamNamespace, StringComparison.Ordinal))
 
     /// <summary>The configured placement, when <c>statelessWorker</c> or <c>placement</c> was
     /// declared.</summary>
@@ -437,6 +458,7 @@ module internal FunctionalHosted =
             definition.CollectionAge,
             reminders,
             timers,
+            List.toArray definition.StreamBindings,
             definition.Placement,
             lifecycleHooks
         )
