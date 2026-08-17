@@ -831,10 +831,10 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// channels carry no cursor, so <c>context.streamSequenceToken</c> is always <c>None</c>;
     /// and there is no pulling agent, so a throwing hook fails the publisher's call rather than
     /// being retried (a broadcast publish is a direct fan-out grain call, not a queued one). In
-    /// the default awaited mode the publisher's <c>Publish</c> faults with an
-    /// <c>AggregateException</c> carrying the hook's exception; under
-    /// <c>BroadcastChannelOptions.FireAndForgetDelivery</c> it is logged by
-    /// <c>BroadcastChannelWriter</c> instead.
+    /// Orleans' default mode — <c>BroadcastChannelOptions.FireAndForgetDelivery</c> defaults to
+    /// <c>true</c> — the failure is logged by <c>BroadcastChannelWriter</c> and the publisher's
+    /// <c>Publish</c> still completes; with <c>FireAndForgetDelivery = false</c> the publisher's
+    /// <c>Publish</c> faults with an <c>AggregateException</c> carrying the hook's exception.
     /// </para>
     /// <para>
     /// <b>An item of the wrong type faults the publish too, rather than vanishing.</b> Orleans
@@ -878,9 +878,9 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                     // successfully would be silent data loss -- the extension would go on to
                     // EmitItemDelivered and the publisher's own Publish would report success
                     // while the item vanished with no signal anywhere. Faulting instead
-                    // propagates through BroadcastChannelWriter.PublishToSubscriber, which
-                    // rethrows in the default awaited mode (the publisher gets the mismatch) and
-                    // logs it in fire-and-forget mode -- the same visibility a throwing hook has.
+                    // propagates through BroadcastChannelWriter.PublishToSubscriber, which logs
+                    // it in the default fire-and-forget mode and rethrows to the publisher in
+                    // awaited mode -- the same visibility a throwing hook has.
                     Func<exn, Task>(fun error -> Task.FromException error)
                 ))
 
