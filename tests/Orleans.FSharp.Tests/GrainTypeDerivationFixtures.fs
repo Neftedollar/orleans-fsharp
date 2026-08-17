@@ -26,6 +26,15 @@ type DerivableActor = private DerivableActor of unit
 /// </summary>
 type GenericActor<'T> = private GenericActor of 'T
 
+/// <summary>
+/// A namespace-scoped (non-nested), non-generic actor brand whose CLR simple name is 513
+/// characters -- one past the fixed transport's MaxWireTextLength (512). Used to prove the
+/// DERIVED grain type (the omitted-'grainType' path) is checked against the fixed transport's own
+/// wire-text bound, not only an explicit 'grainType' string literal -- the two are validated by
+/// separate code paths in ContractDraft.run, and an explicit-only test cannot exercise this one.
+/// </summary>
+type ``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`` = private LongNameActorCase of unit
+
 namespace Orleans.FSharp.Tests.GrainTypeDerivation.CollisionOne
 
 /// <summary>Same CLR simple name as <c>CollisionTwo.CounterActor</c> below, but a different

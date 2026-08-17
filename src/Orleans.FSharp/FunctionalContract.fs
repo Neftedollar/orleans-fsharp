@@ -229,6 +229,19 @@ module internal ContractDraft =
             | Some value -> value, true
             | None -> deriveGrainTypeName typeof<'Actor>, false
 
+        // Defence in depth for an explicit value (already checked when the 'grainType' custom
+        // operation ran, but a draft can also be built directly through the internal state, as
+        // the 'oneWay on a non-unit reply' test below does); the sole check for the derived path,
+        // which never runs through that custom operation at all. A CLR simple name is not exempt
+        // from the fixed transport's own bounds just because nobody typed it as a string literal.
+        ensureWireText
+            ContractStage
+            (if isGrainTypeExplicit then
+                 "'grainType'"
+             else
+                 $"the 'grainType' derived from actor brand '{typeof<'Actor>.FullName}'")
+            grainTypeName
+
         let version = state.Version |> Option.defaultValue 1
 
         let keyCodec =
@@ -246,6 +259,18 @@ module internal ContractDraft =
                     state.OperationIds
                     |> Map.tryFind field.Index
                     |> Option.defaultValue field.FieldName
+
+                // Defence in depth for an explicit override (see the 'grainType' comment above);
+                // the sole check for the default, field-name-derived case, which never runs
+                // through the 'operationId' custom operation at all. An F# double-backtick field
+                // name can carry the same "unusual characters" a hand-written override can.
+                ensureWireText
+                    ContractStage
+                    (if state.OperationIds.ContainsKey field.Index then
+                         "'operationId'"
+                     else
+                         $"the operation ID defaulted from API field '{field.FieldName}' of '{grainTypeName}'")
+                    operationId
 
                 let isReadOnly = state.ReadOnly.Contains field.Index
                 let isOneWay = state.OneWay.Contains field.Index
@@ -312,8 +337,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         if isBlank value then
             fail ContractStage "'grainType' requires a non-blank value."
 
-        if containsNul value then
-            fail ContractStage $"'grainType' value '{value}' must not contain a NUL character."
+        ensureWireText ContractStage "'grainType'" value
 
         match state.State.GrainTypeName with
         | Some existing -> fail ContractStage $"'grainType' is already set to '{existing}'; it is required exactly once."
@@ -448,8 +472,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         if isBlank stableWireId then
             fail ContractStage "'operationId' requires a non-blank wire ID."
 
-        if containsNul stableWireId then
-            fail ContractStage $"'operationId' value '{stableWireId}' must not contain a NUL character."
+        ensureWireText ContractStage "'operationId'" stableWireId
 
         let operation = ApiShape.resolve state.State.Shape "operationId" selector
 

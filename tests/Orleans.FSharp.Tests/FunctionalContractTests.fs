@@ -19,6 +19,20 @@ type ChatApi =
       history: int -> Task<string list>
       typing: bool -> Task<unit> }
 
+/// <summary>
+/// A fixture whose sole field name is 513 characters -- one past the fixed transport's
+/// MaxWireTextLength (512) -- used only to exercise the derived-operation-ID length check a
+/// hand-written 'operationId' override can never reach, since there is nowhere to write a length
+/// violation as a string literal for an override: the field NAME itself has to be long.
+/// </summary>
+[<NoEquality; NoComparison>]
+type LongFieldApi = { ``aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`` : string -> Task<unit> }
+
+/// <summary>The exact field name declared above, for the test that names it in a diagnostic.</summary>
+module LongFieldApi =
+    [<Literal>]
+    let longFieldName = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 let private baseContract () =
     grainContract<ChatActor, string, ChatApi> () {
         grainType "chat.room"
@@ -105,6 +119,24 @@ let ``a missing grain type on a generic actor brand fails contract construction`
     test <@ error.Message.Contains "generic" @>
     test <@ error.Message.Contains "explicit 'grainType'" @>
 
+/// <remarks>
+/// Exercises the DERIVED half of grain-type validation specifically: the explicit-'grainType'
+/// tests below go through GrainContractBuilder.GrainType, a different code path in
+/// ContractDraft.run from the one that validates an omitted 'grainType''s derived name. The fixed
+/// transport's own 512-character bound applies to a CLR simple name exactly as it does to a
+/// hand-written string literal, so an actor brand this long fails contract construction the same
+/// way an over-length explicit 'grainType' does (see below).
+/// </remarks>
+[<Fact>]
+let ``an over-length derived grain type fails contract construction`` () =
+    let error =
+        throws (fun () ->
+            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``, string, ChatApi> () { stringKey }
+            |> ignore)
+
+    test <@ error.Message.Contains "the 'grainType' derived from actor brand" @>
+    test <@ error.Message.Contains "at most 512 characters" @>
+
 [<Fact>]
 let ``a blank grain type fails contract construction`` () =
     let error =
@@ -127,7 +159,67 @@ let ``a NUL-containing grain type fails contract construction`` () =
             }
             |> ignore)
 
-    test <@ error.Message.Contains "NUL" @>
+    test <@ error.Message.Contains "control character" @>
+
+[<Fact>]
+let ``a newline-carrying grain type fails contract construction`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat\nroom"
+                stringKey
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "control character" @>
+
+[<Fact>]
+let ``an over-length grain type fails contract construction with the transport's own bound`` () =
+    let tooLong = String.replicate 513 "a"
+
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType tooLong
+                stringKey
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "at most 512 characters" @>
+    test <@ error.Message.Contains "513 were supplied" @>
+
+[<Fact>]
+let ``a grain type at exactly the transport's bound is accepted`` () =
+    let atLimit = String.replicate 512 "a"
+
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType atLimit
+            stringKey
+        }
+
+    test <@ contract.GrainTypeName = atLimit @>
+
+/// <remarks>
+/// Verified with <c>dotnet fsi</c> before writing this test: an F# double-backtick identifier
+/// cannot carry a raw control character (FS3563 rejects both a literal newline and a literal
+/// carriage return inside <c>``...``</c>), but it CAN carry 600 ordinary characters. The
+/// control-character half of "an F# double-backtick field name can carry unusual characters" is
+/// therefore not constructible through source syntax; the length half is, and this is that case.
+/// </remarks>
+[<Fact>]
+let ``an over-length derived operation ID from a double-backtick field name fails contract construction, naming the field`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, LongFieldApi> () {
+                grainType "chat.room"
+                stringKey
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "the operation ID defaulted from API field" @>
+    test <@ error.Message.Contains LongFieldApi.longFieldName @>
+    test <@ error.Message.Contains "at most 512 characters" @>
 
 [<Fact>]
 let ``a repeated grain type fails contract construction`` () =
@@ -264,7 +356,49 @@ let ``a NUL-containing operation ID fails contract construction`` () =
             }
             |> ignore)
 
-    test <@ error.Message.Contains "NUL" @>
+    test <@ error.Message.Contains "control character" @>
+
+[<Fact>]
+let ``a newline-carrying operation ID fails contract construction`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                operationId "jo\nin" (_.join)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "control character" @>
+
+[<Fact>]
+let ``an over-length operation ID fails contract construction with the transport's own bound`` () =
+    let tooLong = String.replicate 513 "a"
+
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                operationId tooLong (_.join)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "at most 512 characters" @>
+    test <@ error.Message.Contains "513 were supplied" @>
+
+[<Fact>]
+let ``an operation ID at exactly the transport's bound is accepted`` () =
+    let atLimit = String.replicate 512 "a"
+
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            operationId atLimit (_.join)
+        }
+
+    test <@ (contract.TryFindOperation atLimit).IsSome @>
 
 [<Fact>]
 let ``a repeated operation ID override on one field fails contract construction`` () =

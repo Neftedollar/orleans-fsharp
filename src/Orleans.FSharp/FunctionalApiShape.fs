@@ -54,6 +54,37 @@ module internal FunctionalDiagnostics =
     let containsNul (value: string) =
         not (isNull value) && value.IndexOf('\000') >= 0
 
+    /// <summary>
+    /// Validate one non-blank string against the fixed transport's own wire-text bounds: no
+    /// longer than <see cref="F:Orleans.FSharp.FunctionalTransportDiagnostics.MaxWireTextLength"/>
+    /// -- referenced here, not duplicated, so the two boundaries can never drift apart -- and free
+    /// of every C0 control character (NUL included) that
+    /// <see cref="M:Orleans.FSharp.FunctionalTransportDiagnostics.EnsureWireText"/> rejects on the
+    /// wire. Every grain type, operation ID, and observer type eventually crosses that boundary,
+    /// whether it is an explicit value or one derived from a CLR name -- an F# double-backtick
+    /// identifier can carry the same "unusual characters" a hand-written string literal can.
+    /// Calling this at contract construction reports the same fault the transport would, at the
+    /// earliest stage with enough information to say which value it was.
+    /// </summary>
+    /// <param name="stage">The caller's own diagnostic stage.</param>
+    /// <param name="what">
+    /// A complete noun phrase identifying the value, already carrying its own quoting -- for
+    /// example <c>"'grainType'"</c> or <c>$"the operation ID defaulted from API field '{name}'"</c>.
+    /// </param>
+    /// <param name="value">
+    /// The value to check. Blank is not this function's concern: every call site already has its
+    /// own "non-blank" diagnostic phrased for what the field actually is, raised before this runs.
+    /// </param>
+    let ensureWireText (stage: string) (what: string) (value: string) =
+        if value.Length > FunctionalTransportDiagnostics.MaxWireTextLength then
+            fail
+                stage
+                $"{what} must be at most {FunctionalTransportDiagnostics.MaxWireTextLength} characters, but {value.Length} were supplied."
+
+        for index in 0 .. value.Length - 1 do
+            if value.[index] < ' ' then
+                fail stage $"{what} must not contain control characters, but one appears at index {index}."
+
 /// <summary>One reflected API-record field: an operation of shape <c>'Argument -&gt; Task&lt;'Reply&gt;</c>.</summary>
 [<ReferenceEquality>]
 type internal ApiOperationShape =
