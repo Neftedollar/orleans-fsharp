@@ -553,6 +553,11 @@ host-side rule, so a silo that has gossiped the grain type sees exactly what it 
 - **The policy is per hosted definition, not per operation.** `sinceVersion` narrows an admitted
   version *for one operation*; there is no way to admit version 2 for one operation and version 3
   for another in the widening direction.
+- **Wire compatibility includes the admission flags.** The admission-flag byte
+  (`readOnly`/`oneWay`/`alwaysInterleave`) travels in the envelope and is compared against the
+  hosted descriptor, so an operation whose flags changed between two versions inside the accepted
+  range still fails — with the spec-003 admission-flags diagnostic rather than a version one.
+  Pinned by an integration test.
 - **A wider policy does not make an older client's *reply* handling tolerant.** The client still
   validates the reply token and deserializes the reply as *its own* declared type; if the reply
   shape changed, the wider policy has not helped and `sinceVersion` on a new operation is the

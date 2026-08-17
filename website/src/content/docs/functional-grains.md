@@ -275,6 +275,12 @@ older one. Declaring `BackwardCompatible n` is the application stating that ever
 invoke. An operation whose *shape* changed needs a **new operation** — a new `operationId` — not a
 wider policy; `sinceVersion` then keeps the old callers off it.
 
+One consequence is easy to miss: the **admission-flag byte** (`readOnly` / `oneWay` /
+`alwaysInterleave`) travels in the envelope and is compared against the hosted descriptor, so an
+operation whose flags changed between two versions inside the accepted range still fails — with
+the spec-003 admission-flags diagnostic, not a version one. Wire compatibility means the flags
+too, not only the argument and reply types.
+
 What the policy changes is **admission, and nothing else**. The wire format, the stable operation
 IDs, the admission flags, the grain identity, and the storage identity are all untouched: a v2
 call and a v3 call to the same key reach the same activation, the same state, and the same

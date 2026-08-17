@@ -354,6 +354,19 @@ let tolerantV3 =
         readOnly (_.peek)
     }
 
+/// <summary>
+/// A version-3 caller whose contract declares the SAME operations at the SAME IDs but drops
+/// <c>readOnly</c> from <c>peek</c>. Admission flags travel in the envelope and are compared
+/// against the hosted descriptor, so this is a wire-shape change inside the accepted range —
+/// exactly what "accepting a version asserts wire compatibility" is about.
+/// </summary>
+let tolerantV3Reflagged =
+    grainContract<TolerantActor, string, VersionedApi> () {
+        grainType PhaseCGrainTypes.Tolerant
+        version 3
+        stringKey
+    }
+
 /// <summary>One version below the admitted floor.</summary>
 let tolerantV2 =
     grainContract<TolerantActor, string, VersionedApi> () {
@@ -404,6 +417,7 @@ let selectiveRef = FunctionalGrain.ref selectiveContract
 let throwingRef = FunctionalGrain.ref throwingContract
 let tolerantV4Ref = FunctionalGrain.ref tolerantV4
 let tolerantV3Ref = FunctionalGrain.ref tolerantV3
+let tolerantV3ReflaggedRef = FunctionalGrain.ref tolerantV3Reflagged
 let tolerantV2Ref = FunctionalGrain.ref tolerantV2
 let strictV4Ref = FunctionalGrain.ref strictV4
 let strictV3Ref = FunctionalGrain.ref strictV3

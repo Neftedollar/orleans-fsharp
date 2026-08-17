@@ -329,6 +329,30 @@ type PhaseCVersionTests(fixture: FunctionalPhaseCFixture) =
         }
 
     /// <remarks>
+    /// Not asked for by the brief, and worth pinning because it is the sharp edge of "accepting a
+    /// version asserts wire compatibility": the admission-flag byte travels in the envelope and is
+    /// compared against the hosted descriptor, so an operation whose readOnly/oneWay/alwaysInterleave
+    /// declaration changed between two versions inside the accepted range still fails — with the
+    /// spec-003 admission-flags diagnostic, not a version one. A wider policy does not make that
+    /// compatible, and nothing about the contract-version number alone reveals it.
+    /// </remarks>
+    [<Fact>]
+    member _.``an admitted older call with different admission flags is still rejected``() =
+        task {
+            let api = tolerantV3ReflaggedRef fixture.Client (freshKey "reflagged")
+            let! error = Assert.ThrowsAnyAsync<exn>(fun () -> api.peek () :> Task)
+            let text = error.ToString()
+
+            // Admitted by version, refused on the wire shape.
+            Assert.DoesNotContain("but received version", text)
+            Assert.Contains("carries admission flags 0x00, but the hosted descriptor declares 0x01", text)
+
+            // The operations whose flags did NOT change are unaffected.
+            let! echoed = (tolerantV3ReflaggedRef fixture.Client (freshKey "reflagged")).echo "fine"
+            Assert.Equal<string>("echo:fine", echoed)
+        }
+
+    /// <remarks>
     /// The version policy is a host-side admission rule and is NOT published as a grain property:
     /// nothing about the manifest, the routing identity, or the interface ID changes, so a silo
     /// that has gossiped this grain type sees exactly what it saw before.
