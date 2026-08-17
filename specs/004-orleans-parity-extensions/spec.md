@@ -138,23 +138,65 @@ Remaining open question: upcasting hooks.
 
 ## 4. First-class placement operations
 
-**Gap:** composition works today (feature tour §10 applies
-`StatelessWorkerAttribute` through an application `IGrainPropertiesProvider`;
-measured: 8 concurrent calls → 4 activations), but there is no contract/
-definition surface.
+**Status (Phase A, Task A1 — delivered):** implemented on
+`feat/004-parity-phase-a`. `statelessWorker (maxLocalWorkers: int)` and
+`placement (strategy: PlacementStrategy)` are `grainFor` definition
+operations (`src/Orleans.FSharp/FunctionalDefinition.fs`); the registry's
+`FunctionalGrainPropertiesProvider` publishes their manifest properties
+(`src/Orleans.FSharp.Runtime/FunctionalManifest.fs`), replacing the
+feature-tour §10 composition (`examples/feature-tour/src/FeatureTour/Placement.fs`
+now declares `statelessWorker 4` directly; its `FunctionalPlacementProvider`
+composition helper is kept as a one-line note that hand-composing placement
+remains possible, not as the primary path — status matrix row 12 moved from
+composed to supported).
 
-**Design sketch:**
+**`PlacementStrategy`, resolved:**
 
-- Definition operations: `statelessWorker maxLocalWorkers`,
-  `placement PlacementStrategy.PreferLocal` (closed set mirroring Orleans'
-  strategies), publishing the placement properties from the registry's
-  provider — the exact mechanism the tour proved.
-- Sealing: `statelessWorker` rejects `stateFrom`, `usePersistentState`, and
-  `onReminder` (durable identity is meaningless for multiplexed local
-  activations) and rejects `collectionAge` overrides Orleans ignores for
-  stateless workers.
+```fsharp
+type PlacementStrategy =
+    | Random               // Orleans' own default
+    | PreferLocal
+    | ActivationCountBased
+    | ResourceOptimized
+```
 
-**Size:** S/M. **Depends on:** nothing.
+Verified by reflection against Orleans 10.1.0 and 10.2.2 (both, identical):
+all four strategy classes, all four placement attributes, and the
+`StatelessWorkerPlacement` strategy and its attribute are present on both
+versions with byte-identical `IGrainPropertiesProviderAttribute.Populate`
+output. **No strategy here is version-gated.** Orleans also ships
+`HashBasedPlacement` and `SiloRoleBasedPlacement` (present on both versions
+too) plus the internal `ClientObserversPlacement` /
+`SystemTargetPlacementStrategy`; none of the four are mirrored — hash-based
+and silo-role placement address separate, more specialized concerns this
+design sketch's candidate list did not name, and the other two are not
+meant for application grains.
+
+**Exact published properties (verified live, identical on both versions):**
+
+| Operation | `placement-strategy` | Other properties |
+|---|---|---|
+| `placement Random` | `RandomPlacement` | — |
+| `placement PreferLocal` | `PreferLocalPlacement` | — |
+| `placement ActivationCountBased` | `ActivationCountBasedPlacement` | — |
+| `placement ResourceOptimized` | `ResourceOptimizedPlacement` | — |
+| `statelessWorker n` | `StatelessWorkerPlacement` | `max-local-instances = n`, `remove-idle-workers = True` (`bool.ToString()` casing), `unordered = true` (lowercase literal, independent of any `removeIdleWorkers` argument — this runtime does not expose one) |
+
+A property-key exactness test
+(`tests/Orleans.FSharp.Tests/FunctionalRuntimeTests.fs`) constructs a live
+`StatelessWorkerAttribute`/`*PlacementAttribute` and diffs its real
+`Populate()` output against the registry provider's, catching the
+`True`-vs-`true` casing trap a hand-transcribed reference would have missed.
+
+**Sealing (as designed, confirmed by mutation-checked tests):** `statelessWorker`
+and `placement` are mutually exclusive in either declaration order;
+`statelessWorker` requires a strictly positive `maxLocalWorkers` and rejects
+`stateFrom`, `usePersistentState`, `onReminder`, and `collectionAge` — in
+either order relative to `statelessWorker` itself, checked at sealing
+(`DefinitionDraft.run`) rather than at the custom-operation call site, since
+the rejected operation may be declared before or after `statelessWorker`.
+
+**Size:** S/M as estimated. **Depends on:** nothing, confirmed.
 
 ## 5. Reentrancy variants
 
@@ -229,14 +271,97 @@ version asserts wire compatibility; no magic).
 
 ## 8. Small parity items
 
-- **Lifecycle-stage hooks:** classic `grain{}` had `onLifecycleStage n`;
-  functional exposes only `onActivate`/`onDeactivate`. Add
-  `onLifecycle stage hook` for the closed set of documented Orleans stages
-  (First/SetupState/Activate/Last) — not arbitrary ints. **S**
-- **`Scripting.startOnPorts` cannot host functional registrations** (proven
-  in spec-003 Task 11 by reading and by run): add a
-  `functionalGrain definition` hook to the scripting silo builder so
-  `quickstart-functional.fsx` stops hosting its own silo. **S**
+### 8a. Lifecycle-stage hooks (Phase A, Task A1 — delivered)
+
+Classic `grain{}` had `onLifecycleStage n` (arbitrary int, hook shape
+`CancellationToken -> Task<unit>`); functional exposed only
+`onActivate`/`onDeactivate`. Delivered: `onLifecycle stage hook` on
+`grainFor`, for the closed set of documented Orleans stages
+(`src/Orleans.FSharp/FunctionalContext.fs`):
+
+```fsharp
+type LifecycleStage = First | SetupState | Activate | Last
+type LifecycleHook<'Actor, 'Key> = FunctionalGrainContext<'Actor, 'Key> -> Task<unit>
+```
+
+**Resolved design — activation ordering (verified by an integration probe
+subscribed directly at the raw Orleans stage, `tests/Orleans.FSharp.Integration/FunctionalPlacementIntegrationTests.fs`,
+not assumed from the stage names):**
+
+```
+CreateInstance (activator): facets created (not yet loaded)
+  │
+  ├─ GrainLifecycleStage.First       (int.MinValue) — onLifecycle First
+  ├─ GrainLifecycleStage.SetupState  (1000)         — persistent-state facets load; onLifecycle SetupState
+  ├─ GrainLifecycleStage.Activate    (2000)         — onLifecycle rejects this stage; nothing runs here for functional grains
+  ├─ GrainLifecycleStage.Last        (int.MaxValue) — onLifecycle Last
+  │    (the four stages above are ONE sequence, run to completion in ascending
+  │     numeric order by Orleans' ObservableLifecycle.OnStart, before anything below)
+  └─ OnActivateAsync (a separate step, not itself gated by any single stage number):
+       1. env.State.Initialize — ephemeral or facet-backed primary state now exists
+       2. onActivate hook (in-memory-only publication)
+       3. reminders reconciled (RegisterOrUpdateReminder, in declaration order)
+       4. timers created
+```
+
+The obvious-looking guess going in — "First/SetupState clearly precede
+state init; Last is the final stage, so it must run after `onActivate`" —
+is **wrong**, and the probe is what caught it: `Last` completes *before*
+`OnActivateAsync` starts, not after. All three accepted stages
+(`First`/`SetupState`/`Last`) are equally pre-state; there is no "post-state"
+stage among the four.
+
+**`Activate` vs `onActivate`:** `onLifecycle Activate` is **rejected** at
+sealing with a diagnostic pointing at `onActivate`. Not because the two
+coincide in time (they don't — see above), but to avoid a footgun: letting
+an application aim at the stage literally named "Activate" while state is
+not yet initialized there would be confusing, and "the operation for
+activation-time behavior" should have exactly one name.
+
+**State interplay — resolved:** every accepted stage runs before
+`OnActivateAsync`, so `'State` cannot be meaningful at any of them, not only
+the ones an initial read might guess are "early." `onLifecycle` hooks
+therefore carry **no** `'State` parameter at all, uniformly — not a
+per-stage-typed shape. This also sidesteps an F# mechanics constraint: a
+single `[<CustomOperation>]` cannot vary a hook's type by which DU case
+(stage) was passed at the call site without either a second, differently
+named operation (which would itself violate the "no two ways to say one
+thing" rule already applied to `Activate`) or a runtime `'State option` that
+is always `None` for stages that can never populate it. A hook that
+genuinely needs to read a stored value can still do so explicitly through
+`context.persistentState`.
+
+**Sealing:** each stage accepts at most one hook (checked inline at the
+`onLifecycle` custom-operation call site, matching `onActivate`/`stateFrom`'s
+"reject a repeated singleton" idiom). Confirmed by mutation-checked tests
+(`tests/Orleans.FSharp.Tests/FunctionalDefinitionTests.fs`).
+
+**Size:** S, as estimated.
+
+### 8b. Scripting functional hosting (Phase A, Task A1 — delivered)
+
+**`Scripting.startOnPorts` could not host functional registrations** (proven
+in spec-003 Task 11 by reading and by run). Delivered:
+`Orleans.FSharp.Runtime.FunctionalScripting.startOnPorts` — a separate
+module rather than an overload of `Scripting.startOnPorts` itself, because
+`AddFunctionalGrain` and `FunctionalGrainDefinition` live one layer above
+`Orleans.FSharp` (in `Orleans.FSharp.Runtime`), which cannot depend back on
+it. It reuses `Scripting`'s own host-building core
+(`Scripting.startOnPortsWith`, `internal`, reachable through this project's
+existing `InternalsVisibleTo` grant) rather than duplicating the
+localhost-clustering / memory-storage / memory-streams recipe, plus the
+standalone-host manifest pre-load (`SiloConfig.manifestAssemblies`, spec-003
+E1/Task-13), and returns the same `Scripting.SiloHandle` so
+`Scripting.getGrain`/`Scripting.shutdown` work unchanged against it.
+Definitions are boxed for a heterogeneous list with
+`FunctionalGrainRegistration.of'`, erasing the four `FunctionalGrainDefinition`
+type parameters into one registration closure applied via `AddFunctionalGrain`
+inside the shared builder callback. `samples/quickstart-functional.fsx` no
+longer hosts its own silo — it calls `FunctionalScripting.startOnPorts` and
+was run end to end against the local build (transcript in the Task A1
+report).
+
+**Size:** S, as estimated.
 
 ## 9. C#-callable facade
 

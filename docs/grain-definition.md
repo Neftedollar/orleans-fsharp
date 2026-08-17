@@ -450,28 +450,44 @@ grain {
 
 ### `onLifecycleStage`
 
-Hooks into Orleans grain lifecycle stages for fine-grained control. Standard stages:
+Hooks into Orleans grain lifecycle stages for fine-grained control. Standard stages
+(`Orleans.Runtime.GrainLifecycleStage`; verified by reflection against Orleans 10.1.0 and 10.2.2,
+identical on both — corrected here, the values below previously did not match the real Orleans
+constants):
 
 | Stage | Value | Description |
 |---|---|---|
-| `GrainLifecycleStage.First` | 2000 | First stage after creation |
-| `GrainLifecycleStage.SetupState` | 4000 | State setup |
-| `GrainLifecycleStage.Activate` | 6000 | Activation |
-| `GrainLifecycleStage.Last` | int.MaxValue | Final stage |
+| `GrainLifecycleStage.First` | `int.MinValue` | First valid stage in a grain's lifecycle |
+| `GrainLifecycleStage.SetupState` | 1000 | Persistent-state facets load here |
+| `GrainLifecycleStage.Activate` | 2000 | A numeric marker other components can subscribe at |
+| `GrainLifecycleStage.Last` | `int.MaxValue` | Last of the four numbered stages |
+
+**All four numbered stages run to completion, in ascending order, before `OnActivateAsync` runs —
+including `Last`.** `OnActivateAsync` is a separate step Orleans runs only after that whole
+sequence completes; it is not itself gated by the numbered `Activate` stage. So a hook declared at
+any of these four stages — `Activate` and `Last` included — always runs *before* whatever your
+`OnActivateAsync` override (or, in the functional grain runtime, the `onActivate` definition
+operation) does. Verified by an integration probe subscribed directly at the raw stage number,
+not assumed from the stage names — see `tests/Orleans.FSharp.Integration/FunctionalPlacementIntegrationTests.fs`
+and, for the functional runtime's own `onLifecycle` operation with the closed
+`First`/`SetupState`/`Activate`/`Last` set, [Lifecycle-stage hooks](functional-grains.md#lifecycle-stage-hooks-onlifecycle)
+in the functional grain runtime guide.
 
 ```fsharp
+open Orleans.Runtime
+
 grain {
     defaultState 0
     handle myHandler
 
-    onLifecycleStage 2000 (fun ct ->
+    onLifecycleStage GrainLifecycleStage.First (fun ct ->
         task {
-            printfn "Early lifecycle hook firing"
+            printfn "Earliest lifecycle hook firing -- before persistent state loads"
         })
 
-    onLifecycleStage 6000 (fun ct ->
+    onLifecycleStage GrainLifecycleStage.SetupState (fun ct ->
         task {
-            printfn "Activation-stage hook firing"
+            printfn "Persistent-state facets load around here too"
         })
 }
 ```

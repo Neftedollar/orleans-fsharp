@@ -571,7 +571,7 @@ let private runHeterogeneous () =
 
 let private runPlacement (factory: IGrainFactory) =
     task {
-        section 10 "Stateless workers and flexible placement — composed, not built in"
+        section 10 "Stateless workers and flexible placement — first-class operation"
 
         let worker = WorkerApi.ref factory "batch-1"
         let! reports, elapsed = WorkerRun.concurrentBatch worker 8 400
@@ -582,14 +582,17 @@ let private runPlacement (factory: IGrainFactory) =
         let rendered = String.Join(", ", activations)
         say $"distinct activations that served them: {activations.Length} -> [{rendered}]"
 
-        detail $"the contract has no 'placement' operation, so this is composed: an application"
-        detail $"IGrainPropertiesProvider applies StatelessWorkerAttribute {WorkerApi.MaxLocalWorkers} to grain type"
-        detail $"'{WorkerApi.GrainType}' by NAME, because a functional grain's class is the library's own"
-        detail "FunctionalGrainMarker<'Actor> and cannot carry the attribute itself."
-        detail "properties written: placement-strategy, max-local-instances, remove-idle-workers, unordered."
+        detail $"WorkerDefinition declares 'statelessWorker {WorkerApi.MaxLocalWorkers}' directly (Placement.fs) —"
+        detail "the registry's own properties provider publishes the manifest properties, no"
+        detail "application-level IGrainPropertiesProvider registration needed any more."
+        detail "properties written: placement-strategy, max-local-instances, remove-idle-workers, unordered"
+        detail "(verified identical to a live StatelessWorkerAttribute by a property-key exactness test)."
+        detail "Composition via an app-level IGrainPropertiesProvider (FunctionalPlacementProvider,"
+        detail "still in this file) remains possible for placement needs the closed operation set"
+        detail "does not cover."
 
         if activations.Length > 1 then
-            verdict $"COMPOSED — stateless-worker placement works today; a first-class contract operation is still backlog"
+            verdict $"SUPPORTED — stateless-worker placement through the first-class 'statelessWorker' operation"
         else
             verdict "WALL — the placement properties did not take effect; see the README"
     }
@@ -651,19 +654,10 @@ let main _argv =
         silo.AddFunctionalGrain ConsumerDefinition.definition |> ignore
         silo.AddFunctionalGrain NotifierDefinition.definition |> ignore
         silo.AddFunctionalGrain AnnouncerDefinition.definition |> ignore
+        // Feature 11 / status-matrix row 12: statelessWorker is now a first-class definition
+        // operation (spec 004 item 4), declared on WorkerDefinition itself in Placement.fs — no
+        // separate IGrainPropertiesProvider registration needed here any more.
         silo.AddFunctionalGrain WorkerDefinition.definition |> ignore
-
-        // Feature 11: stateless-worker placement for a functional grain, applied by name through
-        // a stock IGrainPropertiesProvider because the library's closed marker class cannot
-        // carry [<StatelessWorker>] itself.
-        silo.Services.AddSingleton<Orleans.Metadata.IGrainPropertiesProvider>(fun services ->
-            FunctionalPlacementProvider(
-                services,
-                WorkerApi.GrainType,
-                StatelessWorkerAttribute WorkerApi.MaxLocalWorkers
-            )
-            :> Orleans.Metadata.IGrainPropertiesProvider)
-        |> ignore
 
         // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
         // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the

@@ -426,6 +426,78 @@ it. Process or silo failure cannot guarantee the hook runs at all, and neither h
 exceptions get a library-level retry -- a failure surfaces to the Orleans stop lifecycle, which logs
 it and continues the remaining stop stages.
 
+### Lifecycle-stage hooks: onLifecycle
+
+`onLifecycle stage hook` hooks one of the four documented Orleans grain-lifecycle stages --
+`First`, `SetupState`, `Activate`, or `Last` -- not an arbitrary int. Each stage accepts at most
+one hook, and the hook is state-free:
+
+```fsharp
+type LifecycleStage = First | SetupState | Activate | Last
+type LifecycleHook<'Actor, 'Key> = FunctionalGrainContext<'Actor, 'Key> -> Task<unit>
+```
+
+```fsharp
+grainFor contract {
+    defaultState (fun () -> initial)
+
+    onLifecycle First (fun _context ->
+        task {
+            // earliest possible hook -- before persistent-state facets load
+            return ()
+        })
+
+    onLifecycle SetupState (fun _context ->
+        task {
+            // Orleans loads persistent-state facets around here too
+            return ()
+        })
+
+    onLifecycle Last (fun _context ->
+        task {
+            // last of the four numbered stages -- still runs BEFORE onActivate, not after
+            return ()
+        })
+
+    // onActivate stays the one hook whose 'State parameter is meaningful.
+    onActivate (fun _context state -> task { return state })
+
+    handle (_.op) handler
+}
+```
+
+**Where the four stages fall, verified by an integration probe that subscribes directly at the
+raw Orleans stage number** (not assumed from the stage names -- the obvious-looking guess,
+"`Last` is the final stage so it must run after `onActivate`", is wrong):
+
+```
+CreateInstance: facets created (not yet loaded)
+  │
+  ├─ First        (GrainLifecycleStage.First,      int.MinValue)
+  ├─ SetupState   (GrainLifecycleStage.SetupState, 1000)  -- persistent-state facets load here
+  ├─ Activate     (GrainLifecycleStage.Activate,   2000)  -- onLifecycle rejects this stage
+  ├─ Last         (GrainLifecycleStage.Last,       int.MaxValue)
+  │    (all four run, in ascending numeric order, to completion, BEFORE anything below --
+  │     this is one Orleans-internal sequence, not four independent points)
+  └─ OnActivateAsync (a separate step Orleans runs only after the whole sequence above
+       completes -- not gated by the numbered Activate stage):
+         1. state initializes (env.State.Initialize)
+         2. onActivate hook runs, if declared
+         3. reminders reconcile
+         4. timers are created
+```
+
+Because every one of the four numbered stages runs before `OnActivateAsync`, `'State` cannot be
+meaningful at any of them -- not even `Last`, the final one. That is why `onLifecycle`'s hook
+carries no state at all, uniformly, rather than giving `Last` a second, state-carrying shape: there
+is no "post-state" stage among the four to give one to. A hook that genuinely needs to read a
+stored value can still do so explicitly through `context.persistentState`.
+
+`onLifecycle Activate` is **rejected** at sealing with a diagnostic pointing at `onActivate` --
+not because the two coincide in time (per the ordering above, they do not), but because "the
+operation for activation-time behavior" should have exactly one name, and aiming at the stage
+literally named "Activate" while state is not yet initialized there would be a footgun.
+
 ### Resolving services from a handler
 
 Every callback -- handler, hook, timer, or reminder -- receives the same
@@ -722,6 +794,40 @@ activation itself may be collected. Omitting it leaves the host's stock Orleans 
 effect, and any state change the application did not explicitly write is lost when that activation
 ends.
 
+## Placement: statelessWorker and placement
+
+`statelessWorker maxLocalWorkers` multiplexes a grain type across up to `maxLocalWorkers` local
+activations per silo (Orleans' `StatelessWorkerPlacement`) -- useful for stateless, CPU-bound work
+where one activation per grain id would otherwise serialize concurrent calls:
+
+```fsharp
+grainFor contract {
+    defaultState (fun () -> Guid.NewGuid().ToString())  // one id per activation
+    statelessWorker 4
+    handle (_.work) handler
+}
+```
+
+`placement strategy` selects one stock Orleans placement strategy instead:
+
+```fsharp
+type PlacementStrategy = Random | PreferLocal | ActivationCountBased | ResourceOptimized
+
+placement PreferLocal
+```
+
+`Random` is Orleans' own default and needs no explicit configuration; it is included so an
+application can still name it. Both operations publish the exact manifest properties the
+corresponding Orleans attribute would (`placement-strategy`, plus `max-local-instances` /
+`remove-idle-workers` / `unordered` for `statelessWorker`) through the registry's own properties
+provider -- the same mechanism `examples/feature-tour`'s status-matrix row 12 demonstrates end to
+end, including the measured 8-concurrent-calls-to-4-activations signature.
+
+`statelessWorker` and `placement` are mutually exclusive (in either declaration order), and
+`statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
+`collectionAge` -- durable identity and idle collection age are both meaningless for activations
+Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
+
 ## Reminder rename and removal: the explicit unregister migration
 
 Reminder reconciliation (`RegisterOrUpdateReminder`, run per declared reminder on every successful
@@ -886,6 +992,36 @@ needs no per-project C# bridge assembly at all. The legacy per-grain-interface d
 referenced back from it; the sample prints an explicit note and skips them, and they are exercised
 by `tests/Orleans.FSharp.Integration`, which does load that bridge assembly.
 
+### A quick script, not a host builder: `FunctionalScripting.startOnPorts`
+
+`Scripting.startOnPorts` (the fixed-recipe `.fsx` silo helper) has no configuration hook of its
+own, so it could not host a functional grain definition -- `AddFunctionalGrain` needs a silo
+builder to call, and `Scripting.startOnPorts` builds and starts its host internally. Spec 004
+item 8b closes this: `Orleans.FSharp.Runtime.FunctionalScripting.startOnPorts` takes the same
+`siloPort`/`gatewayPort` pair plus the functional grain definitions to host, boxed with
+`FunctionalGrainRegistration.of'` (erasing their four type parameters into one list), applies
+each through `AddFunctionalGrain` inside the same builder callback `Scripting.startOnPorts`
+itself uses, and performs the manifest pre-load above automatically:
+
+```fsharp
+#r "nuget: Orleans.FSharp"
+#r "nuget: Orleans.FSharp.Runtime"
+
+open Orleans.FSharp
+
+let! handle =
+    FunctionalScripting.startOnPorts 11511 30001 [ FunctionalGrainRegistration.of' myDefinition ]
+
+let api = MyApi.ref handle.GrainFactory someKey
+```
+
+It returns the same `Scripting.SiloHandle`, so `Scripting.getGrain` and `Scripting.shutdown` work
+unchanged against it. It is a separate module from `Scripting` rather than an overload of
+`startOnPorts` itself: `AddFunctionalGrain` and `FunctionalGrainDefinition` live one assembly
+layer above `Orleans.FSharp` (in `Orleans.FSharp.Runtime`), which cannot depend back on it, so
+`Scripting.startOnPorts` cannot take a functional-definition parameter no matter how it is
+shaped. See `samples/quickstart-functional.fsx` for the full runnable script.
+
 ## Wire validation diagnostics (stricter since the fix-wave hardening pass)
 
 The F# binary codec now validates every wire-supplied length, element count, union case tag, and
@@ -972,14 +1108,19 @@ Before/after mapping:
 | one-way `FSharpGrain.post` | `oneWay (_.op)` in the contract |
 | `handleWithContext` / `GrainContext.getService` etc. | the `context` parameter passed to every `handle` callback (`context.services`, `context.grainFactory`, ...) |
 | `FSharpObserverManager<'Obs>` held in `grain { }` state, `Subscribe`/`Unsubscribe`/`Notify` message cases | the same `FSharpObserverManager<'Obs>` held in `grainFor` state, with `subscribe: 'Obs -> Task<_>` / `unsubscribe` / a notifying operation on the contract -- unchanged, observers are not part of this deprecation (see below) |
+| `onLifecycleStage n hook` (`grain { }`, arbitrary int, `CancellationToken -> Task<unit>`) | `onLifecycle stage hook` (`grainFor { }`, closed `First`/`SetupState`/`Last` set -- `Activate` is rejected, use `onActivate`; hook is `FunctionalGrainContext<'Actor,'Key> -> Task<unit>`) |
 
-**Capability gap -- no migration path today:** `grain { }`'s `onLifecycleStage` operation let a
-grain hook an *arbitrary* `GrainLifecycleStage` (`First`/`SetupState`/`Activate`/`Last`/any other
-int) with a `CancellationToken -> Task<unit>` callback. `grainFor { }` has `onActivate` /
-`onDeactivate` (fixed points in the lifecycle) but no equivalent for hooking an arbitrary
-numbered stage. A grain that genuinely needs a specific lifecycle stage (not just "on
-activate"/"on deactivate") has no functional-runtime equivalent yet and must stay on the
-`grain { }` CE, or hook the stage on a class grain directly via `ILifecycleParticipant<IGrainLifecycle>`.
+`grain { }`'s `onLifecycleStage` operation let a grain hook an *arbitrary* `GrainLifecycleStage`
+(`First`/`SetupState`/`Activate`/`Last`/any other int) with a `CancellationToken -> Task<unit>`
+callback. `grainFor { }` now has `onLifecycle` (spec 004 item 8a) for the closed set of
+documented Orleans stages -- see [Lifecycle-stage hooks](#lifecycle-stage-hooks-onlifecycle)
+below for the resolved design, including why the hook carries no state at any stage and the
+verified activation ordering. A grain that genuinely needs an *undocumented* numbered stage
+(outside `First`/`SetupState`/`Activate`/`Last`) still has no functional-runtime equivalent and
+must stay on the `grain { }` CE, or hook the stage on a class grain directly via
+`ILifecycleParticipant<IGrainLifecycle>` -- that residual gap is deliberately narrow: Orleans
+itself documents only these four stages as stable, and `onLifecycle` already covers three of
+them (`Activate` is redundant with `onActivate`).
 `InterleaveMessage` has no separate capability gap: it dies with the builder, since the
 functional runtime's `alwaysInterleave (_.op)` contract operation covers the same need per
 operation rather than per message type.
