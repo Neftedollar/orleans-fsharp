@@ -273,3 +273,44 @@ let ``a definition binds tupled handlers to curried fields`` () =
 
     test <@ definition.GrainTypeName = "curried.wire" @>
     test <@ definition.Handlers.Count = 3 @>
+
+/// <summary>
+/// <c>unit</c> as the FIRST of several curried arguments: an ordinary tuple slot, not the
+/// zero-input marker. Only a sole <c>unit</c> argument means "no domain input".
+/// </summary>
+type UnitFirstActor = private UnitFirstActor of unit
+
+[<NoEquality; NoComparison>]
+type UnitFirstApi = { go: unit -> bool -> Task<int> }
+
+let private unitFirstContract =
+    grainContract<UnitFirstActor, string, UnitFirstApi> () {
+        grainType "curried.unitfirst"
+        stringKey
+    }
+
+/// <remarks>
+/// The asymmetry is deliberate and is pinned here so it cannot drift silently: a SOLE
+/// <c>unit</c> argument stays a zero-input operation and is never canonicalized to a one-tuple,
+/// while a <c>unit</c> that opens a curried chain is an ordinary tuple slot. Only <c>unit</c>
+/// AFTER the first position is rejected, because there it would read like an absent argument.
+/// The value assertion matters more than the shape one: it proves <c>unit * bool</c> actually
+/// serializes and round-trips, rather than merely reflecting.
+/// </remarks>
+[<Fact>]
+let ``unit opening a curried chain is an ordinary tuple slot`` () =
+    let shape = ApiShape.of'<UnitFirstApi> ()
+
+    test <@ shape.Operations.[0].ArgumentTypes = [| typeof<unit>; typeof<bool> |] @>
+    test <@ shape.Operations.[0].ArgumentType = typeof<unit * bool> @>
+
+    let services = buildServices true None
+    let target = InMemoryTarget(services, "curried.unitfirst", 1)
+    target.Handle<unit * bool, int>("go", fun ((), flag) -> if flag then 1 else 0)
+    let transport = InMemoryTransport(services, target.Dispatch)
+    let reference = FunctionalGrain.rawRef unitFirstContract transport "k"
+
+    task {
+        let! reply = reference.api.go () true
+        test <@ reply = 1 @>
+    }
