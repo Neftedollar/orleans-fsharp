@@ -31,13 +31,20 @@ module Scripting =
         }
 
     /// <summary>
-    /// Starts a silo on specific ports. Useful when running multiple silos
-    /// in the same process (e.g., integration tests alongside the main cluster).
+    /// The shared host-building core behind <c>startOnPorts</c>: localhost clustering, in-memory
+    /// storage/streams/reminders, then <paramref name="configureExtra"/> for anything a caller
+    /// needs beyond the fixed recipe -- e.g. <c>Orleans.FSharp.Runtime</c>'s
+    /// <c>FunctionalScripting.startOnPorts</c>, which hosts functional grain definitions through
+    /// this same seam rather than duplicating it. <c>internal</c> rather than private: this
+    /// project grants <c>InternalsVisibleTo</c> to <c>Orleans.FSharp.Runtime</c> precisely so a
+    /// higher layer can extend the scripting silo builder without <c>Orleans.FSharp</c> itself
+    /// depending back on it.
     /// </summary>
-    /// <param name="siloPort">The silo-to-silo communication port.</param>
-    /// <param name="gatewayPort">The client-to-silo gateway port.</param>
-    /// <returns>A Task containing a SiloHandle for interacting with the silo.</returns>
-    let startOnPorts (siloPort: int) (gatewayPort: int) : Task<SiloHandle> =
+    let internal startOnPortsWith
+        (siloPort: int)
+        (gatewayPort: int)
+        (configureExtra: ISiloBuilder -> unit)
+        : Task<SiloHandle> =
         task {
             let uniqueId = System.Guid.NewGuid().ToString("N").[..7]
 
@@ -58,7 +65,9 @@ module Scripting =
                             .AddMemoryGrainStorage("PubSubStore")
                             .AddMemoryStreams("StreamProvider")
                             .UseInMemoryReminderService()
-                        |> ignore)
+                        |> ignore
+
+                        configureExtra siloBuilder)
                     .Build()
 
             do! host.StartAsync()
@@ -71,6 +80,16 @@ module Scripting =
                   Client = client
                   GrainFactory = grainFactory }
         }
+
+    /// <summary>
+    /// Starts a silo on specific ports. Useful when running multiple silos
+    /// in the same process (e.g., integration tests alongside the main cluster).
+    /// </summary>
+    /// <param name="siloPort">The silo-to-silo communication port.</param>
+    /// <param name="gatewayPort">The client-to-silo gateway port.</param>
+    /// <returns>A Task containing a SiloHandle for interacting with the silo.</returns>
+    let startOnPorts (siloPort: int) (gatewayPort: int) : Task<SiloHandle> =
+        startOnPortsWith siloPort gatewayPort ignore
 
     /// <summary>
     /// Get a grain reference from the silo by integer key.

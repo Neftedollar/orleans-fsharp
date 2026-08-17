@@ -22,6 +22,7 @@
     <Compile Include="FunctionalDispatch.fs" />
     <Compile Include="FunctionalActivation.fs" />
     <Compile Include="FunctionalSiloHosting.fs" />
+    <Compile Include="FunctionalScripting.fs" />
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>
