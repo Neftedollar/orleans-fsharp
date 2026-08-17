@@ -74,7 +74,17 @@ module internal FunctionalInterleave =
     /// intact on a path Orleans runs before dispatch is even reached.
     /// </remarks>
     let evaluate (markerType: Type) (request: IInvokable) : bool =
-        if isNull (box request) then
+        // The argument count is checked BEFORE argument 0 is read, and it is not defensive
+        // decoration: Orleans' code generator emits no GetArgument override at all for a method
+        // with no parameters (InvokableGenerator.GenerateGetArgumentMethod returns null for
+        // Parameters.Length = 0), so such an invokable inherits RequestBase.GetArgument, which
+        // THROWS ArgumentOutOfRangeException("The request has zero arguments"). A functional
+        // activation receives plenty of those -- a grain extension's parameterless method, for
+        // instance IStreamConsumerExtension.GetAllSubscriptionHandles() on a definition that also
+        // declares onStream -- and this callback is invoked for every message queued to a busy
+        // activation, whatever its shape. Reading argument 0 unconditionally would turn each one
+        // into a thrown predicate and therefore into a transient rejection of the incoming call.
+        if isNull (box request) || request.GetArgumentCount() = 0 then
             false
         else
             match tryFind markerType with

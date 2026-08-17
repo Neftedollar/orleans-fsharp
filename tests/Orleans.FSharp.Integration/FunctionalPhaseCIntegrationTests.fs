@@ -454,3 +454,45 @@ type PhaseCFacadeTests(fixture: FunctionalPhaseCFixture) =
             let! error = Assert.ThrowsAnyAsync<exn>(fun () -> facade.Echo "hi" :> Task)
             Assert.Contains("accepts versions 3 through 4, but received version 2", error.ToString())
         }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Composition with Phase A placement
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <remarks>
+/// Not in the brief, and asked because the answer was not obvious: a stateless worker's messages
+/// go through <c>StatelessWorkerGrainContext</c>, not straight to an <c>ActivationData</c>, so it
+/// was worth establishing whether the reentrancy component survives that hop or is silently
+/// dropped. Orleans' own <c>SetComponent</c> on that context accepts <c>GrainCanInterleave</c> and
+/// nothing else, forwarding it to the shared context — this test is the behavioural half of that
+/// reading.
+/// </remarks>
+[<Collection("FunctionalPhaseC")>]
+type PhaseCCompositionTests(fixture: FunctionalPhaseCFixture) =
+
+    [<Fact>]
+    member _.``reentrancy composes with statelessWorker on the single worker``() =
+        task {
+            let key = freshKey "reentrant-worker"
+            let api = reentrantWorkerRef fixture.Client key
+
+            let parked = api.park 5000
+            let! entered = PhaseCGates.waitForEntry key
+            Assert.True(entered, "the first call never parked")
+
+            // maxLocalWorkers = 1, so there is no second worker to absorb this call: reaching the
+            // parked activation is the only way it can complete.
+            let! released = api.release ()
+            Assert.Equal<string>("ok", released)
+
+            let! outcome = parked
+            Assert.Equal<string>("released", outcome)
+        }
+
+    [<Fact>]
+    member _.``a stateless-worker definition still publishes the reentrant property alongside its placement``() =
+        let properties = fixture.PropertiesOf PhaseCGrainTypes.ReentrantWorker
+
+        Assert.Equal<string>("true", properties.["reentrant"])
+        Assert.Equal<string>("StatelessWorkerPlacement", properties.["placement-strategy"])
+        Assert.Equal<string>("1", properties.["max-local-instances"])

@@ -50,6 +50,10 @@ module PhaseCGrainTypes =
     [<Literal>]
     let Strict = "phasec.strict"
 
+    /// A single-worker stateless-worker definition that is ALSO reentrant.
+    [<Literal>]
+    let ReentrantWorker = "phasec.reentrantworker"
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Out-of-band gate observation
 // ──────────────────────────────────────────────────────────────────────────────
@@ -179,6 +183,53 @@ let plainContract =
 
 let reentrantDefinition = gateDefinition reentrantContract
 let plainDefinition = gateDefinition plainContract
+
+type ReentrantWorkerActor = private ReentrantWorkerActor of unit
+
+/// <summary>
+/// Reentrancy composed with Phase A's <c>statelessWorker</c>. Orleans routes a message for a
+/// stateless worker through <c>StatelessWorkerGrainContext</c>, which special-cases
+/// <c>GrainCanInterleave</c> in <c>SetComponent</c> and forwards it to the shared context — so the
+/// component the reentrant property installs is visible to each worker's own
+/// <c>ActivationData.MayInvokeRequest</c>. With <c>maxLocalWorkers = 1</c> there is exactly one
+/// worker, so a second call has nowhere else to go: it either interleaves on that worker or waits.
+/// </summary>
+let reentrantWorkerContract =
+    grainContract<ReentrantWorkerActor, string, GateApi> () {
+        grainType PhaseCGrainTypes.ReentrantWorker
+        version 1
+        stringKey
+        reentrant
+        readOnly (_.notes)
+    }
+
+let reentrantWorkerDefinition =
+    grainFor reentrantWorkerContract {
+        defaultState (fun () -> ([]: string list))
+        statelessWorker 1
+
+        handle (_.park) (fun context state (timeout: int) ->
+            task {
+                let! outcome = parkOn context.key timeout
+                return state, outcome
+            })
+
+        handle (_.release) (fun context state () ->
+            task {
+                (PhaseCGates.cell context.key).Gate.TrySetResult true |> ignore
+                return state, "ok"
+            })
+
+        handle (_.slowAppend) (fun context state (note: string) ->
+            task {
+                let snapshot = state
+                let! _ = parkOn context.key 4000
+                return snapshot @ [ note ], ()
+            })
+
+        handle (_.fastAppend) (fun _ state (note: string) -> task { return state @ [ note ], () })
+        handle (_.notes) (fun _ state () -> task { return state, state })
+    }
 
 [<NoEquality; NoComparison>]
 type SelectiveApi =
@@ -347,6 +398,7 @@ let strictDefinition = versionedHandlers strictV4
 // ──────────────────────────────────────────────────────────────────────────────
 
 let reentrantRef = FunctionalGrain.ref reentrantContract
+let reentrantWorkerRef = FunctionalGrain.ref reentrantWorkerContract
 let plainRef = FunctionalGrain.ref plainContract
 let selectiveRef = FunctionalGrain.ref selectiveContract
 let throwingRef = FunctionalGrain.ref throwingContract
@@ -365,6 +417,7 @@ type PhaseCSiloConfigurator() =
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.AddFunctionalGrain reentrantDefinition |> ignore
             siloBuilder.AddFunctionalGrain plainDefinition |> ignore
+            siloBuilder.AddFunctionalGrain reentrantWorkerDefinition |> ignore
             siloBuilder.AddFunctionalGrain selectiveDefinition |> ignore
             siloBuilder.AddFunctionalGrain throwingDefinition |> ignore
             siloBuilder.AddFunctionalGrain tolerantDefinition |> ignore

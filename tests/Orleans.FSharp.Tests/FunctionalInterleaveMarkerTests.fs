@@ -24,6 +24,8 @@ module Orleans.FSharp.Tests.FunctionalInterleaveMarkerTests
 open System
 open System.Collections.Generic
 open System.Reflection
+open System.Threading
+open System.Threading.Tasks
 open Orleans.Concurrency
 open Orleans.Metadata
 open Orleans.Runtime
@@ -181,3 +183,132 @@ let ``the plain marker publishes neither interleaving property`` () =
 
     test <@ not (plain.ContainsKey WellKnownGrainTypeProperties.Reentrant) @>
     test <@ not (plain.ContainsKey WellKnownGrainTypeProperties.MayInterleavePredicate) @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// What the callback does with an invokable that is not a functional request
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <remarks>
+/// Orleans calls this callback for EVERY message queued to a busy activation, not only for
+/// functional requests: a grain extension's method, a stream-consumer extension's method, a
+/// reminder tick. Each of those is an <c>IInvokable</c> of some other shape, and the callback has
+/// to answer "do not interleave" for all of them rather than fail.
+/// </remarks>
+[<Sealed>]
+type private StubInvokable(arguments: obj[]) =
+    interface IInvokable with
+        member _.GetTarget() = null
+        member _.SetTarget(_holder: ITargetHolder) = ()
+        member _.Invoke() = ValueTask<Response>(Response.Completed)
+        member _.GetArgumentCount() = arguments.Length
+
+        member _.GetArgument(index: int) =
+            // Exactly what Orleans' own RequestBase does when the generator emitted no override,
+            // which it never does for a method with no parameters.
+            if index >= arguments.Length then
+                raise (ArgumentOutOfRangeException(message = "The request has zero arguments", innerException = null))
+
+            arguments.[index]
+        member _.SetArgument(index: int, value: obj) = arguments.[index] <- value
+        member _.GetMethodName() = "Stub"
+        member _.GetInterfaceName() = "IStub"
+        member _.GetActivityName() = "IStub/Stub"
+        member _.GetMethod() = null
+        member _.GetInterfaceType() = typeof<obj>
+
+    interface IDisposable with
+        member _.Dispose() = ()
+
+/// <remarks>
+/// The one that used to throw. Orleans' code generator emits no <c>GetArgument</c> override for a
+/// parameterless method, so a zero-argument invokable inherits <c>RequestBase.GetArgument</c>,
+/// which throws <c>ArgumentOutOfRangeException</c>. Reading argument 0 unconditionally would turn
+/// every such message into a thrown predicate — and Orleans rejects the INCOMING call when the
+/// predicate throws, so a parameterless extension method arriving at a busy activation would have
+/// failed an unrelated caller's request.
+/// </remarks>
+type private ZeroArgActor = private ZeroArgActor of unit
+
+[<Fact>]
+let ``a zero-argument invokable does not interleave and does not throw`` () =
+    // A predicate MUST be registered first: without one the callback answers false before it
+    // would ever read an argument, so an unregistered brand cannot exercise this at all.
+    FunctionalInterleave.register
+        typeof<FunctionalInterleavingGrainMarker<ZeroArgActor>>
+        "marker.zeroarg"
+        (fun _ -> true)
+
+    use stub = new StubInvokable([||])
+    test <@ FunctionalInterleavingGrainMarker<ZeroArgActor>.MayInterleave stub = false @>
+
+[<Fact>]
+let ``an invokable whose first argument is not a functional envelope does not interleave`` () =
+    FunctionalInterleave.register
+        typeof<FunctionalInterleavingGrainMarker<ZeroArgActor>>
+        "marker.zeroarg"
+        (fun _ -> true)
+
+    use stub = new StubInvokable([| box "not an envelope"; box 42 |])
+    test <@ FunctionalInterleavingGrainMarker<ZeroArgActor>.MayInterleave stub = false @>
+
+[<Fact>]
+let ``a null invokable does not interleave`` () =
+    test <@ FunctionalInterleavingGrainMarker<MarkerProbeActor>.MayInterleave null = false @>
+
+[<Fact>]
+let ``an unregistered marker type does not interleave`` () =
+    // No definition declaring mayInterleave has been registered for this brand, so there is no
+    // predicate to consult and the answer is the spec-003 default.
+    let envelope =
+        FunctionalRequestEnvelope("marker.unregistered", 1, "op", Array.zeroCreate 32, 0uy, [||])
+
+    use stub = new StubInvokable([| box envelope; box Unchecked.defaultof<CancellationToken> |])
+    test <@ FunctionalInterleavingGrainMarker<MarkerProbeActor>.MayInterleave stub = false @>
+
+type private RegisteredActor = private RegisteredActor of unit
+
+[<Fact>]
+let ``a registered predicate is consulted, and only for its own grain type`` () =
+    let markerType = typeof<FunctionalInterleavingGrainMarker<RegisteredActor>>
+    let seen = ResizeArray<string>()
+
+    FunctionalInterleave.register markerType "marker.registered" (fun metadata ->
+        seen.Add metadata.OperationId
+        metadata.OperationId = "yes")
+
+    let invokableFor (grainType: string) (operationId: string) =
+        let envelope =
+            FunctionalRequestEnvelope(grainType, 1, operationId, Array.zeroCreate 32, 0uy, [||])
+
+        new StubInvokable([| box envelope; box Unchecked.defaultof<CancellationToken> |])
+
+    use admitted = invokableFor "marker.registered" "yes"
+    use refused = invokableFor "marker.registered" "no"
+    use foreign = invokableFor "marker.other" "yes"
+
+    test <@ FunctionalInterleavingGrainMarker<RegisteredActor>.MayInterleave admitted @>
+    test <@ FunctionalInterleavingGrainMarker<RegisteredActor>.MayInterleave refused = false @>
+
+    // A request addressed to a different grain type never reaches the predicate at all.
+    test <@ FunctionalInterleavingGrainMarker<RegisteredActor>.MayInterleave foreign = false @>
+    test <@ List.ofSeq seen = [ "yes"; "no" ] @>
+
+[<Fact>]
+let ``a throwing predicate is wrapped in an attributable transport diagnostic`` () =
+    let markerType = typeof<FunctionalInterleavingGrainMarker<MarkerProbeActor>>
+
+    FunctionalInterleave.register markerType "marker.throwing" (fun _ ->
+        raise (ApplicationException "the predicate refuses to decide"))
+
+    let envelope =
+        FunctionalRequestEnvelope("marker.throwing", 1, "boom", Array.zeroCreate 32, 0uy, [||])
+
+    use stub = new StubInvokable([| box envelope; box Unchecked.defaultof<CancellationToken> |])
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalInterleavingGrainMarker<MarkerProbeActor>.MayInterleave stub |> ignore)
+
+    test <@ error.Message.Contains "'mayInterleave' predicate of grain type 'marker.throwing'" @>
+    test <@ error.Message.Contains "operation 'boom'" @>
+    test <@ error.InnerException.Message = "the predicate refuses to decide" @>
