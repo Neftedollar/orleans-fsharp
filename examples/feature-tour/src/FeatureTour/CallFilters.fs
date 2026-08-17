@@ -8,6 +8,7 @@ namespace FeatureTour.CallFilters
 open System
 open System.Collections.Concurrent
 open System.Threading.Tasks
+open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.FSharp
 
@@ -107,7 +108,10 @@ type GatewayApi =
       /// The designated operation the filter rejects before any handler runs.
       forbidden: string -> Task<string>
       /// Declared readOnly + alwaysInterleave purely so the filter can show the flags.
-      peek: unit -> Task<string> }
+      peek: unit -> Task<string>
+      /// Declared oneWay, so the filter's metadata table shows every admission flag set at
+      /// least once. A oneWay call acknowledges locally; it never reports target failure.
+      note: string -> Task<unit> }
 
 [<RequireQualifiedAccess>]
 module GatewayApi =
@@ -119,6 +123,7 @@ module GatewayApi =
 
             readOnly (_.peek)
             alwaysInterleave (_.peek)
+            oneWay (_.note)
         }
 
     let ref = FunctionalGrain.ref contract
@@ -144,4 +149,12 @@ module GatewayDefinition =
                     })
 
             handle (_.peek) (fun _context state () -> task { return state, $"handler calls so far: {state}" })
+
+            handle
+                (_.note)
+                (fun context state text ->
+                    task {
+                        context.logger.LogInformation("tour.gateway note: {Text}", text)
+                        return state + 1, ()
+                    })
         }

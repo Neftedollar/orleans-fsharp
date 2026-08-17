@@ -166,6 +166,16 @@ let private runCallFilters (factory: IGrainFactory) =
         let! peeked = gateway.peek ()
         say $"peek() -> {peeked}"
 
+        do! gateway.note "filed for later"
+        say "note(\"filed for later\") -> acknowledged locally (oneWay: no target reply, ever)"
+
+        // A oneWay call completes at the local send, so the filter may not have seen it yet.
+        let! _ =
+            waitUntil (TimeSpan.FromSeconds 5.0) (fun () ->
+                Task.FromResult(
+                    FilterLog.forGrainType "tour.gateway"
+                    |> List.exists (fun call -> call.operationId = "note")))
+
         let! rejection =
             task {
                 try

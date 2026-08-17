@@ -1,6 +1,7 @@
 /// <summary>
-/// Feature 12 — stateless workers and flexible placement for a functional grain, composed from
-/// stock Orleans parts because the contract has no <c>placement</c> operation of its own.
+/// Status-matrix row 12 (tour section 10) — stateless workers and flexible placement for a
+/// functional grain, composed from stock Orleans parts because the contract has no
+/// <c>placement</c> operation of its own.
 /// </summary>
 namespace FeatureTour.Placement
 

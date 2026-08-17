@@ -1,7 +1,7 @@
 /// <summary>
-/// Feature 10 — heterogeneous cluster: a two-silo cluster where one functional grain type is
-/// advertised by only one silo, driven from an external client so placement and routing are
-/// real rather than assumed.
+/// Status-matrix row 10 (tour section 11) — heterogeneous cluster: a two-silo cluster where one
+/// functional grain type is advertised by only one silo, driven from an external client so
+/// placement and routing are real rather than assumed.
 /// </summary>
 namespace FeatureTour.Heterogeneous
 
