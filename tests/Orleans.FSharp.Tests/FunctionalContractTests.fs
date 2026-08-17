@@ -908,3 +908,128 @@ let ``a version policy changes neither operation IDs nor grain identity`` () =
     test <@ idsOf strict = idsOf tolerant @>
     test <@ strict.GrainIdOf "general" = tolerant.GrainIdOf "general" @>
     test <@ flagsOf strict = flagsOf tolerant @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 2 — transactional operations
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``transactional stores the declared option and encodes it in the admission byte`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            transactional Orleans.TransactionOption.CreateOrJoin (_.join)
+            transactional Orleans.TransactionOption.Supported (_.say)
+        }
+
+    let join = (contract.TryFindField "join").Value
+    let say = (contract.TryFindField "say").Value
+    let history = (contract.TryFindField "history").Value
+
+    test <@ join.Transaction = Some Orleans.TransactionOption.CreateOrJoin @>
+    test <@ say.Transaction = Some Orleans.TransactionOption.Supported @>
+    test <@ history.Transaction = None @>
+
+    test <@ AdmissionFlags.tryTransactionOption join.AdmissionFlags = Some Orleans.TransactionOption.CreateOrJoin @>
+    test <@ AdmissionFlags.tryTransactionOption say.AdmissionFlags = Some Orleans.TransactionOption.Supported @>
+    test <@ not (AdmissionFlags.isTransactional history.AdmissionFlags) @>
+
+[<Fact>]
+let ``transaction-scoped is exactly Create, CreateOrJoin, and Join`` () =
+    // The same three options for which Orleans' own TransactionRequestBase.IsTransactionRequired
+    // is true. Supported forwards a caller's context but starts none, so it is not scoped.
+    let scopedFor (option: Orleans.TransactionOption) =
+        let contract =
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                transactional option (_.join)
+            }
+
+        let join = (contract.TryFindField "join").Value
+        join.IsTransactionScoped, join.CanCarryTransaction
+
+    test <@ scopedFor Orleans.TransactionOption.Create = (true, true) @>
+    test <@ scopedFor Orleans.TransactionOption.CreateOrJoin = (true, true) @>
+    test <@ scopedFor Orleans.TransactionOption.Join = (true, true) @>
+    test <@ scopedFor Orleans.TransactionOption.Supported = (false, true) @>
+    test <@ scopedFor Orleans.TransactionOption.Suppress = (false, false) @>
+    test <@ scopedFor Orleans.TransactionOption.NotAllowed = (false, false) @>
+
+[<Fact>]
+let ``transactional is rejected twice on one operation`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                transactional Orleans.TransactionOption.Create (_.join)
+                transactional Orleans.TransactionOption.Join (_.join)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'transactional' is applied more than once" @>
+
+[<Fact>]
+let ``transactional rejects an undefined option value`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                transactional (enum<Orleans.TransactionOption> 99) (_.join)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "undefined Orleans.TransactionOption value 99" @>
+
+[<Fact>]
+let ``transactional rejects oneWay`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                oneWay (_.typing)
+                transactional Orleans.TransactionOption.CreateOrJoin (_.typing)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "combines 'transactional' with 'oneWay'" @>
+
+[<Fact>]
+let ``transactional rejects alwaysInterleave`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                readOnly (_.history)
+                alwaysInterleave (_.history)
+                transactional Orleans.TransactionOption.CreateOrJoin (_.history)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "combines 'transactional' with 'alwaysInterleave'" @>
+
+[<Fact>]
+let ``transactional composes with readOnly`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            readOnly (_.history)
+            transactional Orleans.TransactionOption.CreateOrJoin (_.history)
+        }
+
+    let history = (contract.TryFindField "history").Value
+
+    test <@ history.IsReadOnly @>
+    test <@ history.IsTransactionScoped @>
+
+    let expected =
+        AdmissionFlags.ReadOnly
+        ||| AdmissionFlags.encodeTransaction Orleans.TransactionOption.CreateOrJoin
+
+    test <@ history.AdmissionFlags = expected @>

@@ -1031,3 +1031,231 @@ let ``binding without a grain factory fails with a binding diagnostic`` () =
             |> ignore)
 
     test <@ error.Message.Contains "requires a grain factory" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 2 — transactional state attachment
+// ──────────────────────────────────────────────────────────────────────────────
+
+type TxState = { total: int64 }
+
+let private txContract =
+    grainContract<RoomActor, string, RoomApi> () {
+        grainType "def.room.tx"
+        stringKey
+        transactional Orleans.TransactionOption.CreateOrJoin (_.join)
+    }
+
+let private plainContract =
+    grainContract<RoomActor, string, RoomApi> () {
+        grainType "def.room.plain"
+        stringKey
+    }
+
+let private supportedOnlyContract =
+    grainContract<RoomActor, string, RoomApi> () {
+        grainType "def.room.supported"
+        stringKey
+        transactional Orleans.TransactionOption.Supported (_.join)
+    }
+
+let private suppressOnlyContract =
+    grainContract<RoomActor, string, RoomApi> () {
+        grainType "def.room.suppress"
+        stringKey
+        transactional Orleans.TransactionOption.Suppress (_.join)
+    }
+
+let private ledger = TransactionalState.create<TxState> "ledger" "TxStore"
+let private audits = TransactionalState.create<TxState> "audits" "TxStore"
+
+[<Fact>]
+let ``TransactionalState.create validates its names and stored type`` () =
+    let blankName = throws (fun () -> TransactionalState.create<TxState> "  " "TxStore" |> ignore)
+    let nulName = throws (fun () -> TransactionalState.create<TxState> "sta\000te" "TxStore" |> ignore)
+    let blankStorage = throws (fun () -> TransactionalState.create<TxState> "state" "" |> ignore)
+    let nulStorage = throws (fun () -> TransactionalState.create<TxState> "state" "Tx\000Store" |> ignore)
+
+    test <@ blankName.Message.Contains "stateName must be a non-blank string" @>
+    test <@ nulName.Message.Contains "must not contain a NUL character" @>
+    test <@ blankStorage.Message.Contains "storageName for stateName 'state'" @>
+    test <@ nulStorage.Message.Contains "must not contain a NUL character" @>
+
+[<Fact>]
+let ``a transactional facet seals with its declared identity`` () =
+    let definition =
+        grainFor txContract {
+            defaultState (fun () -> { count = 0 })
+            transactionalStateFrom ledger (fun _ -> { total = 0L })
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.TransactionalFacets.Length = 1 @>
+
+    let descriptor = definition.TransactionalFacets.Head.Descriptor
+
+    test <@ descriptor.StateName = "ledger" @>
+    test <@ descriptor.StorageName = "TxStore" @>
+    test <@ descriptor.StoredType = typeof<TxState> @>
+
+[<Fact>]
+let ``transactionalStateFrom requires a descriptor and an initializer`` () =
+    let noDescriptor =
+        throws (fun () ->
+            grainFor txContract {
+                defaultState (fun () -> { count = 0 })
+                transactionalStateFrom (Unchecked.defaultof<TransactionalStateRef<TxState>>) (fun _ -> { total = 0L })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let noInitializer =
+        throws (fun () ->
+            grainFor txContract {
+                defaultState (fun () -> { count = 0 })
+                transactionalStateFrom ledger (Unchecked.defaultof<string -> TxState>)
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ noDescriptor.Message.Contains "requires a TransactionalStateRef value" @>
+    test <@ noInitializer.Message.Contains "requires an initializer" @>
+
+[<Fact>]
+let ``a repeated transactional state name is rejected`` () =
+    let shadow = TransactionalState.create<RoomState> "ledger" "OtherStore"
+
+    let error =
+        throws (fun () ->
+            grainFor txContract {
+                defaultState (fun () -> { count = 0 })
+                transactionalStateFrom ledger (fun _ -> { total = 0L })
+                transactionalStateFrom shadow (fun _ -> { count = 0 })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "transactional stateName 'ledger' is attached more than once" @>
+
+[<Fact>]
+let ``two transactional facets under distinct names are accepted`` () =
+    let definition =
+        grainFor txContract {
+            defaultState (fun () -> { count = 0 })
+            transactionalStateFrom ledger (fun _ -> { total = 0L })
+            transactionalStateFrom audits (fun _ -> { total = 0L })
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.TransactionalFacets.Length = 2 @>
+
+[<Fact>]
+let ``a transactional facet with no operation that could reach it is rejected`` () =
+    let noneAtAll =
+        throws (fun () ->
+            grainFor plainContract {
+                defaultState (fun () -> { count = 0 })
+                transactionalStateFrom ledger (fun _ -> { total = 0L })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    // Suppress can never carry a transaction context either, so it does not unlock the facet.
+    let suppressOnly =
+        throws (fun () ->
+            grainFor suppressOnlyContract {
+                defaultState (fun () -> { count = 0 })
+                transactionalStateFrom ledger (fun _ -> { total = 0L })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ noneAtAll.Message.Contains "declares no 'transactional' operation that can carry a transaction context" @>
+    test <@ suppressOnly.Message.Contains "declares no 'transactional' operation that can carry a transaction context" @>
+
+[<Fact>]
+let ``a Supported operation is enough to reach a transactional facet`` () =
+    let definition =
+        grainFor supportedOnlyContract {
+            defaultState (fun () -> { count = 0 })
+            transactionalStateFrom ledger (fun _ -> { total = 0L })
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.TransactionalFacets.Length = 1 @>
+
+[<Fact>]
+let ``a transactional operation without any transactional facet is accepted`` () =
+    // The orchestrator shape: a state-free participant that only drives other grains. Orleans
+    // supports it, and this repository's own classic FSharpAtmGrain is the same shape.
+    let definition =
+        grainFor txContract {
+            defaultState (fun () -> { count = 0 })
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.TransactionalFacets.IsEmpty @>
+
+[<Fact>]
+let ``transactionalStateFrom on a derived grain type fails definition sealing`` () =
+    // A transactional state name is part of the ParticipantId Orleans addresses during the commit
+    // protocol AND of the storage key, so a grain type that moves when the brand is renamed would
+    // orphan it exactly as it orphans persistent state.
+    let derived =
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, RoomApi> () {
+            stringKey
+            transactional Orleans.TransactionOption.CreateOrJoin (_.join)
+        }
+
+    let error =
+        throws (fun () ->
+            grainFor derived {
+                defaultState (fun () -> { count = 0 })
+                transactionalStateFrom ledger (fun _ -> { total = 0L })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'DerivableActor'" @>
+    test <@ error.Message.Contains "'transactionalStateFrom'" @>
+    test <@ error.Message.Contains "explicit 'grainType'" @>
+
+[<Fact>]
+let ``statelessWorker rejects transactionalStateFrom`` () =
+    let error =
+        throws (fun () ->
+            grainFor txContract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                transactionalStateFrom ledger (fun _ -> { total = 0L })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'statelessWorker' with 'transactionalStateFrom'" @>
+
+[<Fact>]
+let ``a transactional facet coexists with a persistent one`` () =
+    let definition =
+        grainFor txContract {
+            defaultState (fun () -> { count = 0 })
+            stateFrom primary
+            usePersistentState audit (fun _ -> { total = 0L })
+            transactionalStateFrom ledger (fun _ -> { total = 0L })
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.Primary.IsSome @>
+    test <@ definition.Additional.Length = 1 @>
+    test <@ definition.TransactionalFacets.Length = 1 @>
