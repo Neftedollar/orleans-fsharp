@@ -237,6 +237,69 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
         }
 
     /// <remarks>
+    /// The observer this runtime attaches lives on the ACTIVATION, inside Orleans'
+    /// per-activation <c>StreamConsumerExtension</c> — so a deactivation throws it away. Nothing
+    /// re-registers it on the way back: the next item simply finds an extension with no observer
+    /// again and Orleans calls <c>OnSubscribed</c> again. This test is what proves that round trip
+    /// rather than assuming it, and it also pins that the ephemeral state really restarts.
+    /// </remarks>
+    [<Fact>]
+    member _.``an implicit delivery re-activates a grain that has since been deactivated``() =
+        task {
+            let key = freshKey "reactivate"
+            let probe = $"{StreamNames.Items}|{key}"
+
+            do! fixture.Publish(StreamNames.Provider, StreamNames.Items, key, "before")
+
+            do!
+                fixture.WaitFor(
+                    "the first implicit delivery",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count probe = 1
+                )
+
+            let grain = sinkRef fixture.Client key
+            let! before = grain.items ()
+            test <@ before = [ "before" ] @>
+
+            do! grain.goIdle ()
+
+            do! fixture.Publish(StreamNames.Provider, StreamNames.Items, key, "after")
+
+            do!
+                fixture.WaitFor(
+                    "the delivery that had to re-activate the grain",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count probe = 2
+                )
+
+            // Ephemeral state: the fresh activation started from the initializer, so the earlier
+            // item is gone. That is what makes this a genuine re-activation and not a survivor.
+            let! after = grain.items ()
+            test <@ after = [ "after" ] @>
+        }
+
+    /// <remarks>
+    /// The cluster-wide regression guard. Orleans' <c>StreamConsumerGrainContextAction</c> binds a
+    /// <c>StreamConsumerExtension</c> to every activation whose instance implements
+    /// <c>IStreamSubscriptionObserver</c>, and <c>SiloStreamProviderRuntime.BindExtension</c>
+    /// throws "cannot be bound to a Stateless Worker" — so had the functional target implemented
+    /// that interface unconditionally, every stateless-worker functional grain on a streaming silo
+    /// would have stopped activating. This grain declares no implicit subscription and is hosted
+    /// on the same streaming silo as the ones that do.
+    /// </remarks>
+    [<Fact>]
+    member _.``a stateless-worker functional grain still activates on a streaming silo``() =
+        task {
+            let worker = workerRef fixture.Client "worker-1"
+            let! first = worker.work ()
+            let! second = worker.work ()
+
+            test <@ first <> "" @>
+            test <@ second <> "" @>
+        }
+
+    /// <remarks>
     /// The manifest half, read back off the live silo: the grain manifest of a definition with
     /// two stream declarations and one channel declaration carries three binding groups under
     /// the keys Orleans' own <c>AttributeGrainBindingsProvider</c> writes, and a definition with
@@ -336,6 +399,51 @@ type ClusterTests(fixture: FunctionalStreamClusterFixture) =
                 let! items = grain.items ()
                 test <@ items = [ $"item-{key}" ] @>
         }
+
+    /// <remarks>
+    /// The binding has to survive cluster-manifest GOSSIP, not just local publication. It carries
+    /// a <b>null</b> <c>streamid-mapper</c> value (exactly what an undecorated
+    /// <c>[ImplicitStreamSubscription]</c> publishes), and
+    /// <c>ImplicitStreamSubscriberTable.BuildCache</c> throws
+    /// <c>KeyNotFoundException("… is missing a "streamid-mapper" value")</c> if the KEY is
+    /// absent — so a gossip path that dropped null-valued properties would break implicit
+    /// delivery on every silo but the one that published the binding. This asserts the key is
+    /// present in every silo's view of every silo's grain manifest.
+    /// </remarks>
+    [<Fact>]
+    member _.``the stream binding survives cluster-manifest propagation to every silo``() =
+        let expectedKeys =
+            [ "binding.attr-1.type"
+              "binding.attr-1.pattern"
+              "binding.attr-1.streamid-mapper"
+              "binding.attr-2.type"
+              "binding.attr-2.pattern"
+              "binding.attr-2.streamid-mapper"
+              "binding.attr-3.type"
+              "binding.attr-3.channel-pattern"
+              "binding.attr-3.channelid-mapper" ]
+
+        let manifests = fixture.ClusterManifests
+        test <@ List.length manifests = 2 @>
+
+        for observingSilo, manifest in manifests do
+            test <@ manifest.Silos.Count = 2 @>
+
+            for pair in manifest.Silos do
+                let hostingSilo = string pair.Key
+
+                let properties =
+                    pair.Value.Grains.[GrainType.Create StreamGrainTypes.Sink].Properties
+
+                let missing =
+                    expectedKeys |> List.filter (fun key -> not (properties.ContainsKey key))
+
+                // Names both silos in the failure message: which view lost which key matters.
+                test <@ (observingSilo, hostingSilo, missing) = (observingSilo, hostingSilo, []) @>
+
+                // The mapper value really is null — the exact shape the reference attribute
+                // publishes — and it round-tripped through gossip as such.
+                test <@ isNull properties.["binding.attr-1.streamid-mapper"] @>
 
     /// <remarks>The broadcast arm on the two-silo cluster.</remarks>
     [<Fact>]

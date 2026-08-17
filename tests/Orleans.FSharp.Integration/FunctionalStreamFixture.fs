@@ -138,7 +138,22 @@ type SinkApi =
     { items: unit -> Task<string list>
       numbers: unit -> Task<int list>
       channelItems: unit -> Task<string list>
-      touch: unit -> Task<string> }
+      touch: unit -> Task<string>
+      /// Ends this activation after the current turn, so a later delivery has to re-activate.
+      goIdle: unit -> Task<unit> }
+
+/// <summary>
+/// A stateless-worker definition WITHOUT any implicit subscription, hosted on the same
+/// streaming-enabled silo. It is the regression guard for the one hazard this feature could
+/// have introduced cluster-wide: Orleans binds a StreamConsumerExtension to every activation
+/// whose instance implements IStreamSubscriptionObserver, and BindExtension throws for a
+/// stateless worker — so if the functional target implemented that interface unconditionally,
+/// every stateless-worker functional grain on a streaming silo would fail to activate.
+/// </summary>
+type WorkerActor = private WorkerActor of unit
+
+[<NoEquality; NoComparison>]
+type WorkerApi = { work: unit -> Task<string> }
 
 type PoisonState = { acceptedItems: string list }
 
@@ -209,6 +224,26 @@ let sinkDefinition =
         handle (_.numbers) (fun _ state () -> task { return state, state.streamNumbers })
         handle (_.channelItems) (fun _ state () -> task { return state, state.channelDeliveries })
         handle (_.touch) (fun context state () -> task { return state, siloOf context.services })
+
+        handle (_.goIdle) (fun context state () ->
+            task {
+                context.deactivateOnIdle ()
+                return state, ()
+            })
+    }
+
+let workerContract =
+    grainContract<WorkerActor, string, WorkerApi> () {
+        grainType "functional.streamworker"
+        version 1
+        stringKey
+    }
+
+let workerDefinition =
+    grainFor workerContract {
+        defaultState (fun () -> Guid.NewGuid().ToString "N")
+        statelessWorker 2
+        handle (_.work) (fun _ state () -> task { return state, state })
     }
 
 /// <summary>
@@ -238,6 +273,7 @@ let poisonDefinition =
 
 let sinkRef = FunctionalGrain.ref sinkContract
 let poisonRef = FunctionalGrain.ref poisonContract
+let workerRef = FunctionalGrain.ref workerContract
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cluster configuration
@@ -252,6 +288,7 @@ type FunctionalStreamSiloConfigurator() =
             siloBuilder.AddBroadcastChannel StreamNames.ChannelProvider |> ignore
             siloBuilder.AddFunctionalGrain sinkDefinition |> ignore
             siloBuilder.AddFunctionalGrain poisonDefinition |> ignore
+            siloBuilder.AddFunctionalGrain workerDefinition |> ignore
 
 type FunctionalStreamClientConfigurator() =
     interface IClientBuilderConfigurator with
@@ -323,6 +360,40 @@ type FunctionalStreamFixtureBase(siloCount: int16) =
                 failwith $"timed out after {timeout} waiting for {description}"
         }
 
+    /// <summary>
+    /// Block until every silo's cluster manifest carries every silo's grain manifest. Implicit
+    /// subscriber resolution reads the CLUSTER manifest, so a silo that has not yet gossiped its
+    /// neighbour's grain manifest cannot resolve a subscriber hosted only there.
+    /// </summary>
+    member _.WaitForManifestPropagation() =
+        let deadline = DateTime.UtcNow.AddSeconds 60.0
+
+        let propagated () =
+            cluster.Silos
+            |> Seq.forall (fun handle ->
+                let services = (handle :?> InProcessSiloHandle).SiloHost.Services
+                let current = services.GetRequiredService<IClusterManifestProvider>().Current
+
+                current.Silos.Count = cluster.Silos.Count
+                && current.Silos
+                   |> Seq.forall (fun pair -> pair.Value.Grains.ContainsKey(GrainType.Create StreamGrainTypes.Sink)))
+
+        while not (propagated ()) && DateTime.UtcNow < deadline do
+            Thread.Sleep 200
+
+        if not (propagated ()) then
+            failwith "cluster manifests did not propagate to every silo"
+
+    /// <summary>Every silo's own view of the whole cluster manifest.</summary>
+    member _.ClusterManifests =
+        cluster.Silos
+        |> Seq.map (fun handle ->
+            handle.Name,
+            (handle :?> InProcessSiloHandle)
+                .SiloHost.Services.GetRequiredService<IClusterManifestProvider>()
+                .Current)
+        |> Seq.toList
+
     interface IDisposable with
         member _.Dispose() =
             cluster.StopAllSilos()
@@ -338,8 +409,10 @@ type FunctionalStreamSingleSiloFixture() =
 /// activated grain wherever it likes, so delivery has to cross a silo boundary to work.
 /// </summary>
 [<Sealed>]
-type FunctionalStreamClusterFixture() =
+type FunctionalStreamClusterFixture() as this =
     inherit FunctionalStreamFixtureBase(2s)
+
+    do this.WaitForManifestPropagation()
 
 [<CollectionDefinition("FunctionalStreamSingleSilo")>]
 type FunctionalStreamSingleSiloCollection() =
