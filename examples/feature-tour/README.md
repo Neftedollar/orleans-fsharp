@@ -15,8 +15,12 @@ dotnet run --project src/FeatureTour
 ```
 
 Takes about a minute (one section waits for a real Orleans reminder to fire, another deploys a
-two-silo cluster). Exit code is 0 on success. Logging is pinned to `Error` so the transcript
-stays readable — genuine failures still print.
+two-silo cluster). Logging is pinned to `Error` so the transcript stays readable — genuine
+failures still print.
+
+Every section ends in a `->` verdict line, and **each verdict is computed from what that section
+observed**, never hardcoded. If any section stops holding, the app lists it and exits non-zero,
+so this file is a check and not just a demo.
 
 ## Status matrix
 
