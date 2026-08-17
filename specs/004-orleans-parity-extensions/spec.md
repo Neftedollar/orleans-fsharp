@@ -127,9 +127,12 @@ functional equivalent.
   returns events + reply; confirmation strategy (`confirmEvents` implicit per
   turn) spelled normatively.
 
-**Open questions:** reuse Orleans' `LogStorage`/`StateStorage` providers vs
-the repo's own `Orleans.FSharp.EventSourcing` module (Marten integration
-exists — decide the provider story first); upcasting hooks.
+**Provider story (decided, owner ruling 2026-08-17):** reuse Orleans' own
+log-consistency providers (`LogStorage`/`StateStorage`) as the base — the
+functional journaled model stays inside the Orleans ecosystem. Marten support
+ships as a separate optional adapter package (precedent: the classic path's
+`Orleans.FSharp.EventSourcing.Marten` already follows exactly this shape).
+Remaining open question: upcasting hooks.
 
 **Size:** L. **Depends on:** provider-story decision.
 
