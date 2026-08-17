@@ -29,6 +29,7 @@ open FeatureTour.Streams
 open FeatureTour.ObserverTour
 open FeatureTour.Broadcast
 open FeatureTour.Implicit
+open FeatureTour.Interleaving
 open FeatureTour.Interop
 open FeatureTour.Placement
 open FeatureTour.Heterogeneous
@@ -302,7 +303,7 @@ let private runCancellation (factory: IGrainFactory) =
 
 let private runVersioning (factory: IGrainFactory) =
     task {
-        section 6 "Contract versioning — exact match, no rolling-upgrade tolerance"
+        section 6 "Contract versioning — exact by default, opt-in tolerance with acceptsVersions"
 
         let matching = VersioningTour.VersionedApi.refV1 factory "doc-1"
         let! reply = matching.hosted ()
@@ -322,14 +323,57 @@ let private runVersioning (factory: IGrainFactory) =
         say $"caller on version 2, same grainType '{VersioningTour.VersionedApi.GrainType}' ->"
         detail mismatch
 
+        // ── The opt-in: spec 004 item 7 ──────────────────────────────────────
+        // A version-3 host that accepts 2 as well, with one operation introduced at 3.
+        let current = RollingApi.refV3 factory "order-1"
+        let previous = RollingApi.refV2 factory "order-1"
+        let ancient = RollingApi.refV1 factory "order-1"
+
+        let attempt (call: unit -> Task<string>) =
+            task {
+                try
+                    let! reply = call ()
+                    return $"ADMITTED — {reply}"
+                with error ->
+                    return describe error
+            }
+
+        let! currentSettle = attempt (fun () -> current.settle "A")
+        let! previousSettle = attempt (fun () -> previous.settle "A")
+        let! ancientSettle = attempt (fun () -> ancient.settle "A")
+        let! currentRefund = attempt (fun () -> current.refund "A")
+        let! previousRefund = attempt (fun () -> previous.refund "A")
+
+        say $"host '{RollingApi.GrainType}' hosts version 3 and declares acceptsVersions (BackwardCompatible 2)"
+        detail $"caller v3, 'settle'  -> {currentSettle}"
+        detail $"caller v2, 'settle'  -> {previousSettle}"
+        detail $"caller v1, 'settle'  -> {ancientSettle}"
+        detail $"caller v3, 'refund'  -> {currentRefund}"
+        detail $"caller v2, 'refund' (sinceVersion 3) -> {previousRefund}"
+
+        // Admission only: the older caller reached the SAME activation and the same state, so
+        // nothing about routing or storage identity moved with the wider policy.
+        let! sameActivation = attempt (fun () -> previous.settle "B")
+        let! readBack = attempt (fun () -> current.refund "ignored")
+
+        detail $"caller v2 wrote state, caller v3 read the same activation -> {readBack}"
+
         let versioningHolds =
             reply.Contains "version-1 handler"
             && mismatch.Contains "hosts contract version 1 but received version 2"
+            && currentSettle.StartsWith "ADMITTED"
+            && previousSettle.StartsWith "ADMITTED"
+            && ancientSettle.Contains "accepts versions 2 through 3, but received version 1"
+            && currentRefund.StartsWith "ADMITTED"
+            && previousRefund.Contains "was introduced at contract version 3, but the request declares version 2"
+            && sameActivation.StartsWith "ADMITTED"
+            && readBack.StartsWith "ADMITTED"
 
         if versioningHolds then
-            verdict "SUPPORTED — the mismatch is refused before any handler runs, naming both versions"
+            verdict
+                "SUPPORTED — exact by default; acceptsVersions admits an older caller, sinceVersion still refuses a newer operation"
         else
-            verdict "FAILED — the matching call or the version rejection did not behave as documented"
+            verdict "FAILED — the matching call, the version rejection, or the tolerance opt-in did not behave as documented"
     }
 
 let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider) =
@@ -676,6 +720,97 @@ let private runImplicit (factory: IGrainFactory) =
             verdict "UNEXPECTED — implicit delivery did not hold; see the observation lines above"
     }
 
+let private runInterleaving (factory: IGrainFactory) =
+    task {
+        section 13 "Reentrancy variants — 'reentrant' and 'mayInterleave' as contract operations"
+
+        // ── Whole-grain reentrancy, against an identical contract without it ──
+        let reentrantKey = $"gate-{Guid.NewGuid():N}"
+        let reentrant = GateApi.refReentrant factory reentrantKey
+        let parkedReentrant = reentrant.park 8000
+        let! reentrantParked = Gate.waitForEntry reentrantKey
+
+        // Reaching 'release' AT ALL is the observation: it is what unparks the first call, so it
+        // can only return while the first call is still inside the activation.
+        let! _ = reentrant.release ()
+        let! reentrantOutcome = parkedReentrant
+
+        let serialKey = $"gate-{Guid.NewGuid():N}"
+        let serial = GateApi.refSerial factory serialKey
+        let parkedSerial = serial.park 1500
+        let! serialParked = Gate.waitForEntry serialKey
+        let serialRelease = serial.release ()
+        let! serialOutcome = parkedSerial
+        let! _ = serialRelease
+
+        say $"'{GateApi.ReentrantGrainType}' (declares 'reentrant'): second call {reentrantOutcome}"
+        say $"'{GateApi.SerialGrainType}' (identical contract, no 'reentrant'): second call {serialOutcome}"
+
+        // ── The cost, shown rather than only documented ───────────────────────
+        let lostKey = $"lost-{Guid.NewGuid():N}"
+        let lost = GateApi.refReentrant factory lostKey
+        let slow = lost.slowAppend "slow"
+        let! lostParked = Gate.waitForEntry lostKey
+        do! lost.fastAppend "fast"
+        let! interim = lost.notes ()
+        let! _ = lost.release ()
+        do! slow
+        let! final = lost.notes ()
+
+        say $"two interleaved writers: after the fast one published, state was {interim}"
+        say $"after the slow one returned, state is {final} — its snapshot predated the fast write"
+
+        // ── A per-request predicate, with a negative control ──────────────────
+        let admitKey = $"sel-{Guid.NewGuid():N}"
+        let admit = SelectiveApi.ref factory admitKey
+        let parkedAdmit = admit.park 8000
+        let! admitParked = Gate.waitForEntry admitKey
+        let! _ = admit.release ()
+        let! admitOutcome = parkedAdmit
+
+        let refuseKey = $"sel-{Guid.NewGuid():N}"
+        let refuse = SelectiveApi.ref factory refuseKey
+        let parkedRefuse = refuse.park 1500
+        let! refuseParked = Gate.waitForEntry refuseKey
+        let audit = refuse.audit ()
+        let! refuseOutcome = parkedRefuse
+        let! _ = audit
+
+        say $"'{SelectiveApi.GrainType}' declares mayInterleave (operationId = \"release\")"
+        detail $"'release' (named by the predicate): {admitOutcome}"
+        detail $"'audit'   (not named):              {refuseOutcome}"
+        detail $"the predicate itself saw: {PredicateLog.all ()}"
+
+        detail "Both are contract operations, and both reach Orleans' own machinery: 'reentrant'"
+        detail "publishes the grain property [Reentrant] publishes, and 'mayInterleave' publishes the"
+        detail "property [MayInterleave] publishes plus the static callback it names, on a marker"
+        detail "class used only for definitions that declare it. The predicate is handed"
+        detail "IFunctionalRequestMetadata -- protocol fields only, never the argument payload."
+        detail "Orleans admits a request when the predicate accepts EITHER it or the request already"
+        detail "running, so write it as a statement about what is safe to overlap."
+
+        let interleavingHolds =
+            reentrantParked
+            && serialParked
+            && lostParked
+            && admitParked
+            && refuseParked
+            && reentrantOutcome.StartsWith "released"
+            && serialOutcome.StartsWith "timed out"
+            && interim = [ "fast" ]
+            && final = [ "slow" ]
+            && admitOutcome.StartsWith "released"
+            && refuseOutcome.StartsWith "timed out"
+            && PredicateLog.countOf "release -> True" >= 1
+            && PredicateLog.countOf "audit -> False" >= 1
+
+        if interleavingHolds then
+            verdict
+                "SUPPORTED — whole-grain reentrancy and a metadata-only per-request predicate, each with a control that does not interleave"
+        else
+            verdict "UNEXPECTED — an interleaving observation above did not hold"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -697,6 +832,7 @@ let private runTour (host: IHost) =
         do! runBroadcast factory
         do! runPlacement factory
         do! runImplicit factory
+        do! runInterleaving factory
 
         printfn ""
         printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
@@ -742,6 +878,13 @@ let main _argv =
         // inbox definition declares onStream/onBroadcast; nothing else is registered for it.
         silo.AddFunctionalGrain InboxDefinition.definition |> ignore
         silo.AddFunctionalGrain MailerDefinition.definition |> ignore
+        // Feature 13 / status-matrix row 15: reentrancy variants (spec 004 item 5).
+        silo.AddFunctionalGrain GateDefinition.reentrant |> ignore
+        silo.AddFunctionalGrain GateDefinition.serial |> ignore
+        silo.AddFunctionalGrain SelectiveDefinition.definition |> ignore
+        // Feature 6, second half / status-matrix row 6: version tolerance (spec 004 item 7).
+        // Deliberately ONLY version 3 of tour.rolling.
+        silo.AddFunctionalGrain RollingDefinition.definition |> ignore
 
         // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
         // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the

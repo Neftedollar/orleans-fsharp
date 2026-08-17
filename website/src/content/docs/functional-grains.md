@@ -11,7 +11,8 @@ description: "A second, complete authoring model: user-authored API records inst
 
 - Why the actor brand type exists, and why it is never constructed
 - Key-codec identity rules: what changes a grain's routing/storage identity, what does not
-- Operation rename via `operationId`, and the exact contract-version matching rule
+- Operation rename via `operationId`, contract-version matching, and opting into version tolerance
+- Reentrancy variants: whole-grain `reentrant` and the per-request `mayInterleave` predicate
 - The persistence model: explicit writes only, unique state names, and multi-provider non-atomicity
 - Lifecycle hooks, timers, reminders, and collection age
 - Delivery semantics: acknowledged vs. one-way, what a successful call does *not* imply, and cancellation without rollback
@@ -227,21 +228,83 @@ grainContract<RoomActor, RoomId, RoomApi> () {
 
 Final operation IDs must be unique, non-blank, NUL-free ordinal strings within a contract.
 
-**Contract version matching is exact, with no rolling-upgrade tolerance.** Every request carries
-the caller's contract version; the target compares it against its own hosted version with `=`,
-not `>=` or a compatibility range. A version mismatch fails the call before any handler runs, with
-no negotiation and no automatic fallback. This means:
+**Contract version matching is exact by default.** Every request carries the caller's contract
+version; the target compares it against its own hosted version with `=`, not `>=`. A version
+mismatch fails the call before any handler runs, with no negotiation and no automatic fallback:
 
-- a version bump is a **breaking wire change** for every caller still on the old version -- there
-  is no in-place, mixed-version rolling deployment for a single contract version bump;
-- if you need callers on two versions to coexist during a rollout, host **two contracts** (one
-  per version, e.g. two different `grainType` strings, or two definitions selected by
-  deployment), migrate traffic explicitly, then retire the old one -- the runtime gives you no
-  automatic compatibility bridge to lean on instead.
+```text
+Orleans.FSharp functional transport: grain type 'chat.room' hosts contract version 2
+but received version 1.
+```
 
 Contract version is independent of `GrainId`, storage identity, and the fixed Orleans interface
 version (which this transport family pins to `1` internally, regardless of your contract's
 `version`).
+
+### Version tolerance: `acceptsVersions` and `sinceVersion`
+
+A host can opt out of the exact rule and admit older callers as well, which is what makes a
+mixed-version rolling deployment of one contract possible:
+
+```fsharp
+grainContract<LedgerActor, string, LedgerApi> () {
+    grainType "billing.ledger"
+    version 3
+    stringKey
+
+    // Admit 2 and 3. The default is Exact, which admits 3 only.
+    acceptsVersions (BackwardCompatible 2)
+
+    // 'refund' did not exist at version 2, so a call admitted at 2 is refused for it by name.
+    sinceVersion 3 (_.refund)
+}
+```
+
+`VersionPolicy` is a **closed set**, not a predicate, and that is not stylistic: a protocol token
+is the digest of grain type, **version**, operation ID, and direction, so a caller at an older
+admitted version sends a different request token and checks the reply against a different reply
+token. A version-tolerant host has to answer in the caller's own version, which means precomputing
+every admitted version's token pair when the definition is sealed — possible for a bounded range,
+impossible for `fun v -> v >= 3`.
+
+**Accepting a version asserts wire compatibility. There is no magic.** The argument payload is
+deserialized as the hosted definition's exact declared CLR type whatever version admitted it, and
+the reply is serialized the same way. Nothing converts between shapes and nothing inspects an
+older one. Declaring `BackwardCompatible n` is the application stating that every version from
+`n` upwards still sends and reads the same argument and reply types for every operation it can
+invoke. An operation whose *shape* changed needs a **new operation** — a new `operationId` — not a
+wider policy; `sinceVersion` then keeps the old callers off it.
+
+What the policy changes is **admission, and nothing else**. The wire format, the stable operation
+IDs, the admission flags, the grain identity, and the storage identity are all untouched: a v2
+call and a v3 call to the same key reach the same activation, the same state, and the same
+handler. Nothing is published to the grain manifest for it either — it is a host-side rule, so a
+silo that has gossiped the grain type sees exactly what it saw before.
+
+Two rejection diagnostics come out of this, at the same stage and in the same taxonomy as the
+exact-mode one above:
+
+```text
+Orleans.FSharp functional transport: grain type 'billing.ledger' hosts contract version 3
+and accepts versions 2 through 3, but received version 1.
+
+Orleans.FSharp functional transport: operation 'refund' on grain type 'billing.ledger'
+was introduced at contract version 3, but the request declares version 2.
+```
+
+Sealing rejects a policy that cannot do anything:
+
+| Declaration | Rejected when |
+|---|---|
+| `acceptsVersions (BackwardCompatible n)` | `n <= 0`, or `n` is above the contract version (the contract would admit nothing at all) |
+| `sinceVersion n (_.op)` | `n <= 0`; `n` is above the contract version; or `n` is at or below the lowest admitted version, so it could never reject a call |
+
+That last rule is what catches the common mistake: `sinceVersion` **without** `acceptsVersions` is
+always dead, because the default policy admits the hosted version only.
+
+If you would rather not widen the policy at all, the spec-003 answer still works: host **two
+contracts** (one per version, e.g. two different `grainType` strings), migrate traffic explicitly,
+then retire the old one.
 
 ## Persistence model
 
@@ -560,6 +623,89 @@ subscription (`Stream.subscribe`), and the same `GetRequiredKeyedService` shape 
 - that a retry, reload, or rollback occurred on failure -- there are none, by design (see
   [Immutable-state guidance](#immutable-state-guidance-deep-mutation-is-unguarded-by-design)
   below).
+
+### Reentrancy: `reentrant` and `mayInterleave`
+
+By default an activation runs one request at a time: a second call waits for the first to return.
+Two contract operations widen that, and both reach Orleans' own machinery rather than a scheduler
+of ours.
+
+**`reentrant` — the whole grain.** Every request may enter an activation that is already executing
+one:
+
+```fsharp
+grainContract<GatewayActor, string, GatewayApi> () {
+    grainType "api.gateway"
+    stringKey
+    reentrant
+}
+```
+
+This publishes the same `reentrant` grain-type property Orleans' own `[Reentrant]` attribute
+publishes, so the activation is reentrant in exactly the sense a `[Reentrant]` grain class is.
+
+**It does not make whole-state replacement concurrency-safe, and this is the part to read
+twice.** A handler receives the state as it was when it started and publishes its replacement when
+it returns, so two interleaved handlers that both write are last-writer-wins — the second one's
+replacement silently overwrites the first's:
+
+```text
+slowAppend "slow"  reads []           parks                     returns [ "slow" ]
+fastAppend "fast"           reads [], returns [ "fast" ]
+                                                                state is [ "slow" ]
+```
+
+Reentrancy is for activations whose overlapping operations do not both write — a long call
+awaiting an external service while short reads continue. Declare the non-mutating ones `readOnly`
+so their replacement is discarded rather than published. (`examples/feature-tour` §13 prints this
+lost update as part of its transcript, so it is evidence and not a warning.)
+
+**`mayInterleave` — per request.** A predicate decides, from the request's own protocol metadata:
+
+```fsharp
+grainContract<GatewayActor, string, GatewayApi> () {
+    grainType "api.gateway"
+    stringKey
+    mayInterleave (fun metadata -> metadata.OperationId = "cancel" || metadata.IsReadOnly)
+}
+```
+
+The predicate receives `IFunctionalRequestMetadata` — grain type, contract version, operation ID,
+the three admission flags, and the payload **length**. **Metadata only:** the argument payload is
+never deserialized to decide admission, which is what keeps spec 003's protocol-before-payload
+invariant intact on a path Orleans runs *before* dispatch is reached at all. The predicate runs on
+the activation's scheduling path, so it must be cheap, pure, and non-blocking.
+
+Three behaviours are worth knowing before writing one:
+
+- **Orleans consults it for the running request too.** `ActivationData.MayInvokeRequest` admits an
+  incoming request when `predicate(incoming) || predicate(blocking)`. So an operation the predicate
+  accepts also lets *anything* interleave with it while it is the one executing. Write the
+  predicate as a statement about which operations are safe to overlap, not as a one-sided
+  allow-list.
+- **A throwing predicate rejects the call it was deciding.** Orleans logs the failure and rethrows,
+  and the message is rejected to its caller as transient — the call fails, the activation is
+  unharmed, and nothing retries in a loop. The runtime wraps the fault so the rejection names the
+  grain type and the operation:
+  `the 'mayInterleave' predicate of grain type 'api.gateway' failed while deciding whether
+  operation 'cancel' may interleave.`
+- **It is a process-wide registration keyed by the contract's actor brand.** Two silos in one
+  process hosting the same definition register the same predicate; the callback Orleans reflects
+  off the grain class is static by necessity (Orleans discards the grain instance for a static
+  `[MayInterleave]` callback), so it identifies its definition by the closed marker type rather
+  than by a field.
+
+Sealing rejects the combinations that could not mean anything:
+
+| Declaration | Rejected when |
+|---|---|
+| `reentrant` / `mayInterleave` | both are declared — a reentrant activation interleaves everything, so a predicate could only be ignored |
+| `alwaysInterleave (_.op)` | the contract declares `reentrant` or `mayInterleave` — Orleans admits an always-interleave request *before* it consults any predicate, so the flag is either redundant or unrefusable |
+
+`readOnly` and `oneWay` stay legal under `reentrant`, deliberately: neither is only a scheduling
+flag here. `readOnly` also makes the invocation state-neutral (its replacement is discarded and its
+persistent-state facade rejects the setter), and `oneWay` is a delivery mode with no reply. Both
+keep their full meaning on a reentrant grain.
 
 **Cancellation is cooperative and never rolls anything back.** `callCancellable` on an
 acknowledged call propagates a target-local `CancellationToken` that a long-running handler may

@@ -584,12 +584,15 @@ covered. Repeated registrations of the same type are de-duplicated.
 > This whole section is about the deprecated `grain { }` model. On the
 > [functional grain runtime](/orleans-fsharp/functional-grains/) each of these concepts is a
 > first-class `grainContract` / `grainFor` operation — `readOnly`, `oneWay`, `alwaysInterleave`,
-> `grainType`, `collectionAge`, `statelessWorker`, `placement`, and `onStream` / `onBroadcast`
-> for implicit stream and broadcast-channel subscriptions — with no C# and no code generation.
+> `reentrant`, `mayInterleave`, `acceptsVersions` / `sinceVersion`, `grainType`, `collectionAge`,
+> `statelessWorker`, `placement`, and `onStream` / `onBroadcast` for implicit stream and
+> broadcast-channel subscriptions — with no C# and no code generation.
 
-Reentrancy beyond `interleaveMessage`, stateless workers, placement strategies, one-way and
-read-only methods, implicit stream subscriptions, and custom grain-type names are **not**
-`grain { }` CE keywords. The universal grain pattern shares a single `FSharpGrainImpl` class and
+Reentrancy beyond `interleaveMessage` (whole-grain `[Reentrant]` and predicate
+`[MayInterleave]`), stateless workers, placement strategies, one-way and read-only methods,
+implicit stream subscriptions, and custom grain-type names are **not** `grain { }` CE
+keywords. All of them are first-class contract operations on the [functional grain
+runtime](/orleans-fsharp/functional-grains/). The universal grain pattern shares a single `FSharpGrainImpl` class and
 one handler method, so per-grain class-level or per-method attributes cannot be expressed there.
 
 To use them, define the grain through the per-grain `Orleans.FSharp.CodeGen` path: each grain

@@ -25,15 +25,19 @@ See [Functional Grain Runtime](/orleans-fsharp/functional-grains/) for the full 
 | Keyword | Signature | Description |
 |---|---|---|
 | `grainType` | `string -> ...` | The wire `GrainType` string — routing and storage identity |
-| `version` | `int -> ...` | Contract version — every call is matched exactly, no rolling tolerance |
+| `version` | `int -> ...` | Contract version — matched exactly unless `acceptsVersions` widens it |
 | `stringKey` / `guidKey` / `int64Key` | `unit -> ...` | Native key codec — the domain key type *is* the Orleans key type |
 | `stringKeyMapped` / `guidKeyMapped` / `int64KeyMapped` | `encode -> decode -> ...` | Mapped key codec over a domain key type |
 | `guidCompoundKey` / `int64CompoundKey` | `unit -> ...` | Native compound key (Guid/int64 + string extension) |
 | `guidCompoundKeyMapped` / `int64CompoundKeyMapped` | `encode -> decode -> ...` | Mapped compound key |
 | `readOnly` | `selector -> ...` | Handler's returned state is discarded; interleaves with other read-only calls |
 | `oneWay` | `selector -> ...` | Caller's `Task` completes once the message enters the local send path |
-| `alwaysInterleave` | `selector -> ...` | Interleaves regardless of `readOnly`/`oneWay` |
+| `alwaysInterleave` | `selector -> ...` | Interleaves regardless of `readOnly`/`oneWay`; rejected together with `reentrant`/`mayInterleave` |
 | `operationId` | `string -> selector -> ...` | Override an operation's wire ID, decoupling it from the F# field name |
+| `reentrant` | `unit -> ...` | Whole-grain reentrancy — every request may enter a busy activation |
+| `mayInterleave` | `(IFunctionalRequestMetadata -> bool) -> ...` | Per-request interleave predicate over protocol metadata only; mutually exclusive with `reentrant` |
+| `acceptsVersions` | `VersionPolicy -> ...` | `Exact` (default) or `BackwardCompatible n` — which request versions this definition admits |
+| `sinceVersion` | `int -> selector -> ...` | The version an operation was introduced at; an admitted older call is refused for it by name |
 
 Every API field takes exactly one argument; a multi-input operation groups its inputs in a tuple
 (`typing: (string * bool) -> Task<unit>`). A field spelled curried fails contract construction.

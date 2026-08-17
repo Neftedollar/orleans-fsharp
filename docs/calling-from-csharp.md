@@ -328,6 +328,27 @@ one. F# callers keep the direct route through the bound API record and pay none 
 
 ---
 
+## What a facade does NOT change
+
+A facade is not a second transport. `FunctionalGrainInterop.For` binds the contract exactly as an
+F# caller does and installs, per interface member, the **same preclosed API-record field
+closure** — so a facade call produces the same envelope: same grain type, same contract version,
+same stable operation ID, same protocol token, same admission flags. Two consequences are worth
+naming, because both features they touch are decided on the target side from that envelope:
+
+- **Interleaving.** Whether a call may enter a busy activation is decided by Orleans from the
+  message, using the `reentrant` property or the `mayInterleave` predicate the contract declared.
+  A facade call gets exactly the decision an F# call to the same operation gets — it can neither
+  bypass the predicate nor be evaluated against it twice.
+- **Version admission.** A facade cannot claim a version of its own: the contract version travels
+  with the contract the facade was bound from. Bind the v3 contract through a facade and you send
+  v3 requests and get the v3 admission decisions, `sinceVersion` refusals included.
+
+See [Functional Grain Runtime](functional-grains.md), "Reentrancy" and "Version tolerance", for
+what those decisions are.
+
+---
+
 ## Not yet covered
 
 **Functional observers.** A C# process can already be pushed to — the observer handle is an

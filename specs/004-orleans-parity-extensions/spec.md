@@ -337,26 +337,113 @@ the rejected operation may be declared before or after `statelessWorker`.
 
 **Size:** S/M as estimated. **Depends on:** nothing, confirmed.
 
-## 5. Reentrancy variants
+## 5. Reentrancy variants — RESOLVED
 
-**Gap:** per-operation `readOnly`/`alwaysInterleave` exist; Orleans also has
-whole-grain `[Reentrant]` and predicate `[MayInterleave]`.
+**Status: implemented.** Delivered on `feat/004-parity-phase-c`; the design sketch below has been
+replaced by the resolved design it turned into, and every claim here is backed by a test or by
+named Orleans source (identical on 10.1.0 and 10.2.2 — `IGrainContextActivator.cs` and
+`GrainAttributeConcurrency.cs` are byte-identical between the two tags).
 
-**Design sketch:**
+**Gap (for the record):** per-operation `readOnly`/`alwaysInterleave` existed; Orleans also has
+whole-grain `[Reentrant]` and predicate `[MayInterleave]`, and the functional runtime could reach
+neither.
 
-- Contract operations: `reentrant` (whole grain — publishes the reentrancy
-  property) and `mayInterleave (fun (meta: IFunctionalRequestMetadata) -> bool)`
-  — the predicate registered per grain type; dispatch adapts Orleans'
-  may-interleave callback to our envelope metadata (the public metadata
-  interface exists precisely for filters/predicates).
-- Sealing: `reentrant` makes per-operation interleave flags redundant —
-  reject the combination to keep contracts unambiguous.
+### The mechanism (normative)
 
-**Open questions:** whether the predicate sees only metadata or also the
-deserialized argument (metadata-only keeps the protocol-before-payload
-invariant from spec 003 — the recommended answer).
+Both are Orleans' own seams; neither needs code generation, and neither is reachable by installing
+a component of our own — `GrainCanInterleave` and `IMayInterleavePredicate` are both `internal` to
+`Orleans.Runtime`, so the only way in is through the two attributes' published grain properties.
 
-**Size:** M.
+- **Whole-grain.** `ReentrantAttribute` is an `IGrainPropertiesProviderAttribute` whose `Populate`
+  writes `WellKnownGrainTypeProperties.Reentrant` (`"reentrant"`) `= "true"`. Orleans'
+  `ReentrantSharedComponentsConfigurator` — an `IConfigureGrainTypeComponents` registered by
+  `DefaultSiloServices` — reads that property back and sets a `GrainCanInterleave` component
+  holding `ReentrantPredicate.Instance`, which `ActivationData.MayInvokeRequest` consults. The
+  registry's own properties provider therefore **constructs the real attribute and writes its own
+  `Populate` output**, exactly as Phase B does for stream bindings. Because `[Reentrant]`
+  contributes a property and nothing else, that is complete fidelity.
+- **Per request.** `MayInterleaveAttribute.Populate` writes
+  `WellKnownGrainTypeProperties.MayInterleavePredicate` (`"may-interleave-predicate"`) `=` the
+  callback **method name**, and `MayInterleaveConfiguratorProvider` then reflects a method of that
+  name off the **grain class** (`Public | Static | Instance | FlattenHierarchy`, signature
+  `bool (IInvokable)`). A property alone cannot supply a method, so the attribute has to genuinely
+  be on the grain class — and it is not inert: `AttributeGrainPropertiesProvider` publishes the key
+  for every class carrying it, and the configurator provider installs a predicate for every grain
+  type whose properties contain it. Putting it on the shared marker would therefore give **every**
+  functional grain type a predicate it never asked for, so a definition declaring `mayInterleave`
+  is published under a separate grain class, `FunctionalInterleavingGrainMarker<'Actor>` — the same
+  reason Phase B's `FunctionalStreamingGrainTarget` is a separate type.
+- **The callback must be static.** `MayInterleaveStaticPredicate` discards the grain instance;
+  `MayInterleaveInstancedPredicate<T>` binds `instance as T` where `T` is the grain class, which is
+  always `null` here because the functional activation instance is `FunctionalGrainTarget<'Actor>`
+  and the grain class is the marker. A static callback has no `this` to carry the definition, so it
+  identifies its definition by the one identity it does have: its own closed marker type, looked up
+  in a process-wide table written while the silo's service collection is configured.
+- **The predicate sees the envelope.** `GrainCanInterleave.MayInterleave` hands the callback
+  `message.BodyObject as IInvokable`, which for a functional call is the fixed `FunctionalRequest`,
+  whose **argument 0 is the `FunctionalRequestEnvelope`** — i.e. the public
+  `IFunctionalRequestMetadata`. Nothing deserializes the payload to decide admission.
+
+**Proof both seams work (Step 0, both Orleans versions):** two overlapping calls interleave on one
+functional activation with the property published and do not without it; a predicate admits one
+operation and refuses another on the same activation, seeing our envelope in both cases.
+
+### Resolved design
+
+- **`reentrant`** — a contract operation taking no argument. Publishes the property above.
+- **`mayInterleave (predicate: IFunctionalRequestMetadata -> bool)`** — a contract operation.
+  **Open question resolved: metadata only**, as recommended. The predicate is *declared* over
+  `IFunctionalRequestMetadata`, which exposes grain type, contract version, operation ID, the three
+  admission flags, and the payload **length** and no payload — so protocol-before-payload is a
+  type-level guarantee here, not a convention. It also has to be: Orleans runs this callback on the
+  activation's scheduling path, strictly before dispatch, where deserializing an argument would be
+  both a cost and a trust decision taken before any protocol validation has run.
+
+### Rulings
+
+1. **Which per-operation flags conflict with `reentrant`: `alwaysInterleave` only.**
+   `ActivationData.MayInvokeRequest` returns `true` for an `InvokeMethodOptions.AlwaysInterleave`
+   message **before** it looks at the `GrainCanInterleave` component at all, so on a reentrant
+   grain (where every request already interleaves) the flag adds nothing. Rejected at sealing.
+   `readOnly` and `oneWay` are **not** rejected, because neither is only a scheduling flag in this
+   runtime: `readOnly` also makes the invocation state-neutral (its replacement state is discarded
+   and its persistent-state facade rejects the setter — `FunctionalDispatch.dispatch`), and
+   `oneWay` is a delivery mode with no reply. Both keep their full meaning on a reentrant grain,
+   and rejecting them would remove expressiveness the sketch's "redundant" argument does not cover.
+2. **`mayInterleave` also rejects `alwaysInterleave`,** by the same mechanism read the other way:
+   the flag is admitted before the predicate is consulted, so the predicate could never refuse that
+   operation. One uniform rule — *a contract-level interleaving policy rejects the per-operation
+   `alwaysInterleave` flag* — covers both, and keeps "which decision governs this operation"
+   answerable from the contract alone.
+3. **`reentrant` and `mayInterleave` are mutually exclusive.** `GrainCanInterleave.MayInterleave`
+   returns on the first predicate that answers `true`, and `ReentrantPredicate` always does, so a
+   predicate on a reentrant grain could only ever be ignored.
+4. **A throwing predicate propagates.** Orleans logs it (`LogErrorInvokingMayInterleavePredicate`)
+   and rethrows; the message loop's `catch` then rejects that message to its caller as
+   `Message.RejectionTypes.Transient` and removes it from the queue. `InsideRuntimeClient` completes
+   the caller's callback with the rejection and does **not** resend, so there is no retry storm and
+   the activation is unharmed. That behaviour is kept rather than swallowed — degrading to "do not
+   interleave" would hide an application fault and silently change the activation's concurrency —
+   and the runtime only wraps the exception in a transport-stage diagnostic naming the grain type
+   and the operation, so the rejection is attributable.
+
+### What this does NOT give you
+
+- **Reentrancy does not make whole-state replacement concurrency-safe.** A handler receives the
+  state it started with and publishes its replacement when it returns, so two interleaved writers
+  are last-writer-wins and the earlier write is silently lost. This is a property of the authoring
+  model, not a defect of the seam, and it is asserted by an integration test and printed by the
+  feature tour rather than only documented.
+- **The predicate is consulted for the running request too.** `MayInvokeRequest` admits an incoming
+  request when `predicate(incoming) || predicate(blocking)`, so an operation the predicate accepts
+  also lets anything interleave with it while it is executing. Documented; not something the
+  runtime can or should change.
+- **The predicate table is process-wide.** Two silos in one process hosting the same definition
+  register the same predicate, which is why this is safe in practice; a process hosting two
+  *different* definitions for one grain type is not a supported configuration and the registry
+  already rejects it per silo.
+
+**Size:** M — as estimated.
 
 ## 6. Server-streaming replies (`IAsyncEnumerable<'T>`)
 
@@ -386,27 +473,92 @@ likely requires the streaming send to run detached like one-way notifies).
 **Size:** L — the largest single item; propose it as its own phase or even
 its own spec once 004's smaller items land.
 
-## 7. Version-tolerant contracts
+## 7. Version-tolerant contracts — RESOLVED
 
-**Gap (deliberate spec-003 design):** requests must match the hosted contract
-version exactly; a rolling deploy across a version bump rejects old-version
-calls (documented, with the two-contracts pattern as the workaround).
+**Status: implemented.** Delivered on `feat/004-parity-phase-c`.
 
-**Design sketch:**
+**Gap (deliberate spec-003 design, for the record):** requests had to match the hosted contract
+version exactly; a rolling deploy across a version bump rejected old-version calls (documented,
+with the two-contracts pattern as the workaround).
 
-- Opt-in contract operation: `acceptsVersions (fun v -> v >= 3)` or a closed
-  policy set (`exact` default | `backwardCompatible minVersion`).
-- Per-operation `sinceVersion n` metadata so a v4 host can reject a v3 call
-  only for operations that did not exist in v3.
-- The wire already carries the version; only dispatch admission changes.
-  Storage identity and operation IDs stay version-independent (spec 003
-  already guarantees this).
+### The mechanism (normative)
 
-**Open questions:** whether argument-shape evolution within an accepted range
-is the application's problem (recommended: yes — document that accepting a
-version asserts wire compatibility; no magic).
+Admission, and nothing else — but "nothing else" needed one non-obvious piece.
 
-**Size:** M (mechanism) — the normative text is the hard part.
+A **protocol token** is `SHA256(grainType NUL version NUL operationId NUL direction)`
+(`ProtocolToken.compute`). The version is inside the digest, so a caller at an older admitted
+version sends a *different* request token and validates the reply against a *different* reply
+token (`FunctionalCallSite.ValidateReply`). A version-tolerant host therefore cannot compare
+against one fixed pair: it has to expect, and answer in, **the caller's own version's tokens**.
+`FunctionalHostedOperation.VersionTokens` precomputes one pair per admitted version when the
+definition is sealed, indexed by `version - MinAcceptedVersion`; dispatch resolves the pair from
+the admitted request version and replies with it.
+
+Everything else is untouched: the envelope layout, the stable operation IDs, the admission-flag
+byte, the payload codec, the grain identity, and the storage identity are all version-independent
+(spec 003's guarantee, now pinned by tests that call one grain key at two versions and read each
+other's state back). Nothing is published to the grain manifest for the policy either — it is a
+host-side rule, so a silo that has gossiped the grain type sees exactly what it saw before.
+
+### Resolved design
+
+- **`acceptsVersions policy`**, a contract operation over a **closed DU**:
+
+  ```fsharp
+  type VersionPolicy =
+      | Exact                                  // default; spec-003 behaviour
+      | BackwardCompatible of minVersion: int  // admit minVersion .. contractVersion
+  ```
+
+  **The predicate form is not merely disfavoured here, it is unimplementable at the same cost.**
+  A predicate's accepted set is unbounded, so the token pairs above could not be precomputed and
+  the host would have to hash per call, on the request path, for a set it cannot enumerate — and
+  the range could not appear in a diagnostic. The standing "closed sets over predicates" rule and
+  the mechanism agree, so no SPEC-DEVIATION is raised.
+- **`sinceVersion n (_.op)`**, per operation. A call admitted at version `v` is refused for an
+  operation whose `sinceVersion > v`, with a diagnostic naming both numbers. This is **not**
+  redundant with the token check: the older caller's token is computed from its own version, which
+  is precisely the token a tolerant host now expects for that version, so without `sinceVersion`
+  the call would be admitted and its argument deserialized as the newer declared type. Checked
+  immediately after descriptor resolution and before the token comparison, as step 2b of the
+  spec-003 validation order — the more specific fault, reported first.
+
+### Rulings
+
+1. **Open question resolved: yes, argument-shape evolution is the application's problem.**
+   Accepting a version **asserts wire compatibility**. The argument payload is deserialized as the
+   hosted definition's exact declared CLR type whatever version admitted it, and the reply is
+   serialized the same way; nothing converts between shapes and nothing inspects an older one.
+   `BackwardCompatible n` is the application stating that every version from `n` upwards still
+   sends and reads the same argument and reply types for every operation it can invoke. An
+   operation whose shape changed needs a **new operation** (a new `operationId`), not a wider
+   policy — and `sinceVersion` then keeps the old callers off it. Normative text lives in
+   `docs/functional-grains.md`, "Version tolerance".
+2. **Rejection diagnostics stay in the spec-003 taxonomy and stage** — transport stage, before any
+   handler runs. Under `Exact` the sentence is byte-for-byte the spec-003 one, so the feature tour,
+   the tour README, and the existing tests are unchanged; `BackwardCompatible` adds a
+   range-naming sentence, and `sinceVersion` adds an operation-naming one.
+3. **Sealing rejects a policy that cannot do anything**: a floor at or below zero, a floor above
+   the contract version (the contract would admit nothing at all), a `sinceVersion` at or below
+   zero or above the contract version, and — uniformly — a `sinceVersion` at or below the lowest
+   admitted version, which could never reject a call. That last rule is what catches the realistic
+   mistake, `sinceVersion` declared **without** `acceptsVersions`, where the default policy admits
+   the hosted version only and the declaration is silently dead.
+
+### What this does NOT give you
+
+- **No negotiation and no down-conversion.** The host does not adapt payloads, does not pick a
+  handler per version, and does not tell the caller which versions it accepts before the call. A
+  refused version is a failed call.
+- **The policy is per hosted definition, not per operation.** `sinceVersion` narrows an admitted
+  version *for one operation*; there is no way to admit version 2 for one operation and version 3
+  for another in the widening direction.
+- **A wider policy does not make an older client's *reply* handling tolerant.** The client still
+  validates the reply token and deserializes the reply as *its own* declared type; if the reply
+  shape changed, the wider policy has not helped and `sinceVersion` on a new operation is the
+  answer.
+
+**Size:** M — as estimated; the normative text was indeed the hard part.
 
 ## 8. Small parity items
 
