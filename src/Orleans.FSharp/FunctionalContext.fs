@@ -91,10 +91,12 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     /// <remarks>
     /// <para>
     /// It is <c>Some</c> only inside an <c>onStream</c> hook, and only for a stream provider whose
-    /// streams are rewindable — a non-rewindable provider (Orleans' in-memory streams, for
-    /// example) hands the consumer a <c>null</c> cursor, which surfaces here as <c>None</c>.
-    /// An <c>onBroadcast</c> hook always observes <c>None</c>: broadcast channels have no cursor
-    /// concept at all (<c>IBroadcastChannelSubscription.Attach</c> delivers the item alone).
+    /// streams are rewindable. Orleans' in-memory streams <b>are</b> rewindable, so a delivery
+    /// through them surfaces a real sequence number here (<c>examples/feature-tour</c> §11 prints
+    /// one); a provider whose streams are not rewindable hands the consumer a <c>null</c> cursor,
+    /// which surfaces as <c>None</c>. An <c>onBroadcast</c> hook always observes <c>None</c>:
+    /// broadcast channels have no cursor concept at all
+    /// (<c>IBroadcastChannelSubscription.Attach</c> delivers the item alone).
     /// </para>
     /// <para>
     /// <b>The runtime never rewinds with it.</b> A functional activation resumes its implicit

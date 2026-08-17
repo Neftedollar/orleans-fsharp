@@ -731,8 +731,9 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// <remarks>
     /// <para>
     /// <b>Scheduling and state.</b> A delivery is an ordinary non-reentrant grain call
-    /// (<c>IStreamConsumerExtension.DeliverImmutable</c> carries no <c>[AlwaysInterleave]</c>), so
-    /// the timer-hook rules apply unchanged: the hook sees the current whole state, its returned
+    /// (<c>IStreamConsumerExtension</c>'s <c>DeliverImmutable</c> / <c>DeliverMutable</c> /
+    /// <c>DeliverBatch</c> carry no <c>[AlwaysInterleave]</c>), so the timer-hook rules apply
+    /// unchanged: the hook sees the current whole state, its returned
     /// state is published in memory when — and only when — it returns successfully, and the
     /// runtime issues no storage call of its own. The context token is
     /// <c>CancellationToken.None</c>, because <c>IAsyncObserver.OnNextAsync</c> supplies none.
@@ -829,7 +830,22 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// replacement, publication on successful return only — with two differences. Broadcast
     /// channels carry no cursor, so <c>context.streamSequenceToken</c> is always <c>None</c>;
     /// and there is no pulling agent, so a throwing hook fails the publisher's call rather than
-    /// being retried (a broadcast publish is a direct fan-out grain call, not a queued one).
+    /// being retried (a broadcast publish is a direct fan-out grain call, not a queued one). In
+    /// the default awaited mode the publisher's <c>Publish</c> faults with an
+    /// <c>AggregateException</c> carrying the hook's exception; under
+    /// <c>BroadcastChannelOptions.FireAndForgetDelivery</c> it is logged by
+    /// <c>BroadcastChannelWriter</c> instead.
+    /// </para>
+    /// <para>
+    /// <b>An item of the wrong type faults the publish too, rather than vanishing.</b> Orleans
+    /// checks the runtime type inside the consumer extension and, on a mismatch, routes the item
+    /// into the subscription's error callback as an <c>InvalidCastException</c> naming both types
+    /// — not into the hook. This runtime faults that callback, so the mismatch reaches the
+    /// publisher (or the log, in fire-and-forget mode) on exactly the path a throwing hook takes.
+    /// Completing it quietly, which is the obvious thing to write, would let the extension report
+    /// the item as delivered while no hook ever saw it. The hook is not entered, no state is
+    /// published, and the subscription stays healthy: the next correctly-typed publish is
+    /// delivered normally.
     /// </para>
     /// <para>
     /// Several <c>onBroadcast</c> operations are allowed, one per (provider, namespace) pair.
@@ -856,7 +872,16 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
             FunctionalChannelAttach(fun subscription delivery ->
                 subscription.Attach<'Item>(
                     Func<'Item, Task>(fun item -> delivery.Invoke(box item, null)),
-                    Func<exn, Task>(fun _error -> Task.CompletedTask)
+                    // An item whose runtime type is not 'Item never reaches the delivery callback
+                    // above: BroadcastChannelConsumerExtension.Callback<T>.OnPublished routes it
+                    // into THIS one, as an InvalidCastException naming both types. Completing it
+                    // successfully would be silent data loss -- the extension would go on to
+                    // EmitItemDelivered and the publisher's own Publish would report success
+                    // while the item vanished with no signal anywhere. Faulting instead
+                    // propagates through BroadcastChannelWriter.PublishToSubscriber, which
+                    // rethrows in the default awaited mode (the publisher gets the mismatch) and
+                    // logs it in fire-and-forget mode -- the same visibility a throwing hook has.
+                    Func<exn, Task>(fun error -> Task.FromException error)
                 ))
 
         let adapter =

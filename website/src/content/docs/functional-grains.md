@@ -839,13 +839,22 @@ memory **only on a successful return**; the runtime performs no storage write of
 none.
 
 `context.streamSequenceToken` carries the Orleans cursor of the item being delivered -- `Some` for
-an `onStream` delivery on a rewindable provider, `None` otherwise, and always `None` for
-`onBroadcast` (a channel has no cursor). **The runtime never rewinds with it**: a fresh activation
-resumes at the subscription's current position. It is exposed so an application can checkpoint or
-de-duplicate, which matters because delivery is at-least-once: a hook that throws makes Orleans
-**redeliver the same item** with backoff for up to `StreamPullingAgentOptions.MaxEventDeliveryTime`
-(30 seconds by default), after which the item is dropped and the stream continues. An implicit
-subscription is never faulted by a delivery failure.
+an `onStream` delivery on a rewindable provider (Orleans' memory streams are), `None` otherwise,
+and always `None` for `onBroadcast` (a channel has no cursor). **The runtime never rewinds with
+it**: a fresh activation resumes at the subscription's current position. It is exposed so an
+application can checkpoint or de-duplicate, which matters because delivery is at-least-once: an
+`onStream` hook that throws makes Orleans **redeliver the same item** with backoff for up to
+`StreamPullingAgentOptions.MaxEventDeliveryTime` (30 seconds by default), after which the item is
+dropped and the stream continues. An implicit subscription is never faulted by a delivery failure.
+
+`onBroadcast` is not retried at all -- a publish is a direct fan-out grain call. A throwing hook is
+logged at `Error` by `BroadcastChannelWriter` under Orleans' default
+`BroadcastChannelOptions.FireAndForgetDelivery = true`, and faults the publisher's `Publish` when
+that option is `false`. **An item of the wrong type takes the same path rather than vanishing**:
+Orleans routes a runtime-type mismatch into the subscription's error callback as an
+`InvalidCastException`, and this runtime faults that callback so the mismatch is logged or thrown
+instead of being reported as delivered. The hook is not entered and the subscription stays
+healthy.
 
 Rejections, all at the earliest stage that can see them:
 

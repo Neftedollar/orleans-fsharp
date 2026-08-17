@@ -17,6 +17,14 @@ open Xunit
 /// <summary>A key nothing else in the suite uses, so deliveries never cross tests.</summary>
 let private freshKey (prefix: string) = $"{prefix}-{Guid.NewGuid():N}"
 
+/// <summary>Every exception in a fault tree, however many aggregates it is wrapped in.</summary>
+let rec private flatten (error: exn) : exn list =
+    match error with
+    | null -> []
+    | :? AggregateException as aggregate ->
+        aggregate :: (aggregate.InnerExceptions |> Seq.collect flatten |> List.ofSeq)
+    | _ -> error :: flatten error.InnerException
+
 let private oneSecond = TimeSpan.FromSeconds 1.0
 let private deliveryTimeout = TimeSpan.FromSeconds 30.0
 
@@ -300,6 +308,114 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
         }
 
     /// <remarks>
+    /// <para>
+    /// The silent-loss path Orleans opens on the broadcast side, and its fix, in Orleans' OWN
+    /// default delivery mode. An item whose runtime type is not the hook's is never routed to the
+    /// hook: <c>BroadcastChannelConsumerExtension.Callback&lt;T&gt;.OnPublished</c> sends it to
+    /// the subscription's ERROR callback as an <c>InvalidCastException</c>. Completing that
+    /// callback quietly — the obvious thing to write — lets the extension go on to
+    /// <c>EmitItemDelivered</c>, so the item vanishes with NO signal anywhere: not a fault, not
+    /// even a log. The runtime faults that callback instead.
+    /// </para>
+    /// <para>
+    /// <c>BroadcastChannelOptions.FireAndForgetDelivery</c> defaults to <b>true</b>, so in this
+    /// mode <c>BroadcastChannelWriter.PublishToSubscriber</c> swallows the fault after logging it
+    /// at <c>Error</c> — that log is the whole signal, and this test is what proves it exists.
+    /// The awaited mode is the next test.
+    /// </para>
+    /// </remarks>
+    [<Fact>]
+    member _.``a wrong-typed broadcast item is logged rather than silently dropped (fire-and-forget)``() =
+        task {
+            let key = freshKey "channel-mistyped-faf"
+            let probe = $"{StreamNames.Channel}|{key}"
+
+            // The declared onBroadcast hook of this namespace takes a string; publish an int.
+            // Orleans' default mode does not surface it to the publisher, so this must NOT throw.
+            do! fixture.PublishChannel<int>(StreamNames.Channel, key, 7)
+
+            do!
+                fixture.WaitFor(
+                    "the silo to log the failed fire-and-forget delivery",
+                    deliveryTimeout,
+                    fun () ->
+                        FunctionalClusterFixture.LogCapture.entries
+                        |> Seq.exists (fun entry ->
+                            entry.Category.Contains "BroadcastChannelWriter"
+                            && entry.Error.Contains "Int32"
+                            && entry.Error.Contains "System.String")
+                )
+
+            // The hook was never entered, and nothing was published into the state.
+            test <@ StreamProbe.count probe = 0 @>
+
+            // The subscription survives: a correctly-typed publish on the same channel arrives.
+            do! fixture.PublishChannel(StreamNames.Channel, key, "well-typed")
+
+            do!
+                fixture.WaitFor(
+                    "the correctly-typed publish after the mismatch",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count probe = 1
+                )
+
+            let grain = sinkRef fixture.Client key
+            let! items = grain.channelItems ()
+            test <@ items = [ "well-typed" ] @>
+        }
+
+    /// <remarks>
+    /// The same mismatch on a provider configured with <c>FireAndForgetDelivery = false</c>, where
+    /// <c>BroadcastChannelWriter.PublishToSubscriber</c> rethrows and <c>Publish</c> collects the
+    /// subscriber faults into an <c>AggregateException</c>. This is the half that makes the fix
+    /// observable to application code rather than only to a log reader.
+    /// </remarks>
+    [<Fact>]
+    member _.``a wrong-typed broadcast item faults the publish when delivery is awaited``() =
+        task {
+            let key = freshKey "channel-mistyped-awaited"
+            let probe = $"{StreamNames.AwaitedChannel}|{key}"
+
+            let! error =
+                Assert.ThrowsAnyAsync<exn>(fun () ->
+                    fixture.PublishChannelOn<int>(
+                        StreamNames.AwaitedChannelProvider,
+                        StreamNames.AwaitedChannel,
+                        key,
+                        7
+                    )
+                    :> Task)
+
+            let messages = flatten error |> List.map (fun entry -> entry.Message)
+
+            // The mismatch reaches the publisher, and it names BOTH types.
+            test <@ messages |> List.exists (fun message -> message.Contains "Int32") @>
+            test <@ messages |> List.exists (fun message -> message.Contains "System.String") @>
+
+            test <@ StreamProbe.count probe = 0 @>
+
+            // The subscription survives the fault.
+            do!
+                fixture.PublishChannelOn(
+                    StreamNames.AwaitedChannelProvider,
+                    StreamNames.AwaitedChannel,
+                    key,
+                    "well-typed"
+                )
+
+            do!
+                fixture.WaitFor(
+                    "the correctly-typed publish after the fault",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count probe = 1
+                )
+
+            let grain = sinkRef fixture.Client key
+            let! items = grain.channelItems ()
+            test <@ items = [ "well-typed" ] @>
+        }
+
+    /// <remarks>
     /// The trap this feature could most easily have shipped with, and its fix, both measured.
     /// Orleans routes an implicit delivery to <c>GrainId.Create(grainType, streamId.Key)</c> —
     /// the stream key bytes verbatim — so the stream key must be the grain key in the
@@ -382,13 +498,15 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
             |> Seq.sort
             |> Seq.toList
 
-        test <@ groups = [ "binding.attr-1"; "binding.attr-2"; "binding.attr-3" ] @>
+        test <@ groups = [ "binding.attr-1"; "binding.attr-2"; "binding.attr-3"; "binding.attr-4" ] @>
         test <@ bindingValue "binding.attr-1.type" = "stream" @>
         test <@ bindingValue "binding.attr-1.pattern" = $"namespace:{StreamNames.Items}" @>
         test <@ bindingValue "binding.attr-2.type" = "stream" @>
         test <@ bindingValue "binding.attr-2.pattern" = $"namespace:{StreamNames.Numbers}" @>
         test <@ bindingValue "binding.attr-3.type" = "broadcast-channel" @>
         test <@ bindingValue "binding.attr-3.channel-pattern" = $"namespace:{StreamNames.Channel}" @>
+        test <@ bindingValue "binding.attr-4.type" = "broadcast-channel" @>
+        test <@ bindingValue "binding.attr-4.channel-pattern" = $"namespace:{StreamNames.AwaitedChannel}" @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Two silos
@@ -475,7 +593,10 @@ type ClusterTests(fixture: FunctionalStreamClusterFixture) =
               "binding.attr-2.streamid-mapper"
               "binding.attr-3.type"
               "binding.attr-3.channel-pattern"
-              "binding.attr-3.channelid-mapper" ]
+              "binding.attr-3.channelid-mapper"
+              "binding.attr-4.type"
+              "binding.attr-4.channel-pattern"
+              "binding.attr-4.channelid-mapper" ]
 
         let manifests = fixture.ClusterManifests
         test <@ List.length manifests = 2 @>

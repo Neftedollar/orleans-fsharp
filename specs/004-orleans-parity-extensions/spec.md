@@ -171,6 +171,26 @@ still arrive. Delivery is therefore **at-least-once**, and the integration test 
 entries for one item plus the next item arriving afterwards. The state of a failed attempt is
 never published.
 
+**Broadcast failure semantics.** There is no pulling agent, so nothing is retried: a broadcast
+publish is a direct fan-out grain call. `BroadcastChannelOptions.FireAndForgetDelivery` defaults to
+**`true`**, so a throwing hook is logged at `Error` by `BroadcastChannelWriter.PublishToSubscriber`
+and the publisher's `Publish` still completes; with `FireAndForgetDelivery = false` that method
+rethrows and `Publish` faults with an `AggregateException` carrying the hook's exception.
+
+**An item of the wrong runtime type is made to take that same path, and this needed a deliberate
+choice.** `BroadcastChannelConsumerExtension.Callback<T>.OnPublished` routes a mismatch into the
+subscription's *error* callback as an `InvalidCastException` naming both types — never into the
+`onPublished` one. Completing that callback successfully (the obvious implementation) lets the
+extension proceed to `EmitItemDelivered` and lets an awaited `Publish` report success, so the item
+disappears with **no fault and no log anywhere** — strictly worse than the stream side, where the
+same mismatch at least throws and is retried. The runtime therefore returns
+`Task.FromException error` from that callback, which propagates through `PublishToSubscriber` and
+so is logged in the default mode and thrown to the publisher in the awaited one. The hook is not
+entered, no state is published, and the subscription stays healthy. Both modes are pinned by
+integration tests, and the fix is mutation-checked: with the callback restored to
+`Task.CompletedTask` the fire-and-forget test times out waiting for a log that never arrives and
+the awaited test observes no exception at all.
+
 **One asymmetry.** Orleans' binding names a namespace but not a provider, so an item published to
 a declared namespace on an *undeclared* provider still routes to this grain type. The runtime
 matches on `(provider, namespace)`, logs a warning, and leaves the item undelivered (Orleans then
@@ -187,6 +207,11 @@ provider delivered.
   `IStreamNamespacePredicate`) — only exact-match namespaces are declarable today.
 - **Custom `IStreamIdMapper` / `IChannelIdMapper`** — the binding always publishes the default
   mapper (a null `streamid-mapper`, which is what an undecorated attribute publishes too).
+- **A wrong-typed item on the STREAM side stays documented-only.** Orleans casts inside
+  `StreamSubscriptionHandleImpl.DeliverItem` and throws `InvalidCastException`, which then rides
+  the ordinary retry-then-drop path; observing the "then drop" half costs a full
+  `MaxEventDeliveryTime` per run, which is not worth the CI time. The broadcast half — where the
+  failure was silent rather than merely slow — is tested in both delivery modes.
 
 **Size:** M/L (as estimated). **Depended on:** nothing new.
 

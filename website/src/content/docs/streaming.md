@@ -253,12 +253,29 @@ it cannot drift.
   `onBroadcast`, which has no cursor. The runtime never rewinds with it: a fresh activation
   resumes at the subscription's current position. Use it to checkpoint or de-duplicate.
 
-**A throwing hook.** The exception travels back to Orleans' pulling agent, which **redelivers the
-same item** with backoff for up to `StreamPullingAgentOptions.MaxEventDeliveryTime` (30 seconds by
-default) and then moves on. An implicit subscription is never faulted by a delivery failure —
-Orleans' `PersistentStreamPullingAgent.ErrorProtocol` excludes implicit subscriptions from
-subscription faulting explicitly — so the next item still arrives. Delivery is therefore
-**at-least-once**: a hook that is not idempotent should de-duplicate.
+**A throwing `onStream` hook.** The exception travels back to Orleans' pulling agent, which
+**redelivers the same item** with backoff for up to
+`StreamPullingAgentOptions.MaxEventDeliveryTime` (30 seconds by default) and then moves on. An
+implicit subscription is never faulted by a delivery failure — Orleans'
+`PersistentStreamPullingAgent.ErrorProtocol` excludes implicit subscriptions from subscription
+faulting explicitly — so the next item still arrives. Delivery is therefore **at-least-once**: a
+hook that is not idempotent should de-duplicate.
+
+**A throwing `onBroadcast` hook** is not retried — a broadcast publish is a direct fan-out grain
+call, not a queued one. Where the failure shows up depends on
+`BroadcastChannelOptions.FireAndForgetDelivery`, which Orleans defaults to **`true`**: in that
+default mode `BroadcastChannelWriter` logs it at `Error` and the publisher's `Publish` still
+completes; with `FireAndForgetDelivery = false` the publisher's `Publish` faults with an
+`AggregateException` carrying it.
+
+**A broadcast item of the wrong type behaves the same way**, and that is deliberate. Orleans checks
+the runtime type inside the consumer extension and routes a mismatch into the subscription's
+*error* callback as an `InvalidCastException` naming both types — never into the hook. This
+runtime faults that callback, so the mismatch surfaces on exactly the path a throwing hook takes
+(logged in the default mode, thrown to the publisher in the awaited one). Completing it quietly
+would let Orleans report the item as delivered while no hook ever saw it. The hook is not entered,
+no state is published, and the subscription stays healthy — the next correctly-typed publish is
+delivered normally.
 
 **One caveat worth knowing.** Orleans' implicit-subscription binding names a *namespace*, not a
 provider. If a silo runs two stream providers and an item is published to a declared namespace on

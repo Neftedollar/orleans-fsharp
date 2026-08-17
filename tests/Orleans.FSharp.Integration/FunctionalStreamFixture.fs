@@ -35,9 +35,17 @@ module StreamNames =
     [<Literal>]
     let OtherProvider = "OtherStreams"
 
-    /// <summary>The declared broadcast-channel provider.</summary>
+    /// <summary>The declared broadcast-channel provider, on Orleans' DEFAULT delivery mode
+    /// (<c>FireAndForgetDelivery = true</c>).</summary>
     [<Literal>]
     let ChannelProvider = "ImplicitChannels"
+
+    /// <summary>
+    /// A second broadcast-channel provider with <c>FireAndForgetDelivery = false</c>, so a
+    /// publish awaits its subscribers and a failed delivery reaches the publisher.
+    /// </summary>
+    [<Literal>]
+    let AwaitedChannelProvider = "ImplicitChannelsAwaited"
 
     /// <summary>The declared string-item stream namespace.</summary>
     [<Literal>]
@@ -51,9 +59,13 @@ module StreamNames =
     [<Literal>]
     let Unsubscribed = "implicit.unsubscribed"
 
-    /// <summary>The declared broadcast-channel namespace.</summary>
+    /// <summary>The declared broadcast-channel namespace on the fire-and-forget provider.</summary>
     [<Literal>]
     let Channel = "implicit.channel"
+
+    /// <summary>The declared broadcast-channel namespace on the awaited provider.</summary>
+    [<Literal>]
+    let AwaitedChannel = "implicit.channel.awaited"
 
     /// <summary>The namespace whose hook throws until its attempt budget is spent.</summary>
     [<Literal>]
@@ -240,6 +252,17 @@ let sinkDefinition =
                         channelDeliveries = state.channelDeliveries @ [ item ] }
             })
 
+        // The same hook shape on the awaited provider, so the two delivery modes can be
+        // compared on one grain type.
+        onBroadcast StreamNames.AwaitedChannelProvider StreamNames.AwaitedChannel (fun context state (item: string) ->
+            task {
+                StreamProbe.record $"{StreamNames.AwaitedChannel}|{context.key}"
+
+                return
+                    { state with
+                        channelDeliveries = state.channelDeliveries @ [ item ] }
+            })
+
         handle (_.items) (fun _ state () -> task { return state, state.streamItems })
         handle (_.numbers) (fun _ state () -> task { return state, state.streamNumbers })
         handle (_.channelItems) (fun _ state () -> task { return state, state.channelDeliveries })
@@ -332,6 +355,21 @@ type FunctionalStreamSiloConfigurator() =
             siloBuilder.AddMemoryStreams StreamNames.Provider |> ignore
             siloBuilder.AddMemoryStreams StreamNames.OtherProvider |> ignore
             siloBuilder.AddBroadcastChannel StreamNames.ChannelProvider |> ignore
+
+            // Orleans' own default is FireAndForgetDelivery = true, so the first provider above
+            // never reports a failed delivery to the publisher; this one does.
+            siloBuilder.AddBroadcastChannel(
+                StreamNames.AwaitedChannelProvider,
+                fun (options: Microsoft.Extensions.Options.OptionsBuilder<BroadcastChannelOptions>) ->
+                    options.Configure(fun channelOptions -> channelOptions.FireAndForgetDelivery <- false)
+                    |> ignore
+            )
+            |> ignore
+
+            // BroadcastChannelWriter logs a failed fire-and-forget delivery at Error; that log is
+            // the only signal in that mode, so the tests read it back.
+            siloBuilder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider, FunctionalClusterFixture.FunctionalLogCaptureProvider>()
+            |> ignore
             siloBuilder.AddFunctionalGrain sinkDefinition |> ignore
             siloBuilder.AddFunctionalGrain poisonDefinition |> ignore
             siloBuilder.AddFunctionalGrain workerDefinition |> ignore
@@ -370,10 +408,10 @@ type FunctionalStreamFixtureBase(siloCount: int16) =
     member _.StreamProvider(providerName: string) = cluster.Client.GetStreamProvider providerName
 
     /// <summary>The named broadcast-channel provider of the primary silo.</summary>
-    member _.ChannelProvider() =
+    member _.ChannelProvider(providerName: string) =
         cluster
             .GetSiloServiceProvider(cluster.Primary.SiloAddress)
-            .GetRequiredKeyedService<IBroadcastChannelProvider> StreamNames.ChannelProvider
+            .GetRequiredKeyedService<IBroadcastChannelProvider> providerName
 
     /// <summary>Publish one item to the named provider, namespace, and key.</summary>
     member this.Publish<'Item>(providerName: string, streamNamespace: string, key: string, item: 'Item) =
@@ -393,14 +431,22 @@ type FunctionalStreamFixtureBase(siloCount: int16) =
             do! stream.OnNextAsync item
         }
 
-    /// <summary>Publish one item to the declared broadcast channel.</summary>
-    member this.PublishChannel<'Item>(channelNamespace: string, key: string, item: 'Item) =
+    /// <summary>Publish one item to a declared broadcast channel on the named provider.</summary>
+    member this.PublishChannelOn<'Item>
+        (providerName: string, channelNamespace: string, key: string, item: 'Item)
+        =
         task {
             let writer =
-                this.ChannelProvider().GetChannelWriter<'Item>(ChannelId.Create(channelNamespace, key))
+                this
+                    .ChannelProvider(providerName)
+                    .GetChannelWriter<'Item>(ChannelId.Create(channelNamespace, key))
 
             do! writer.Publish item
         }
+
+    /// <summary>Publish one item to the declared fire-and-forget broadcast channel.</summary>
+    member this.PublishChannel<'Item>(channelNamespace: string, key: string, item: 'Item) =
+        this.PublishChannelOn<'Item>(StreamNames.ChannelProvider, channelNamespace, key, item)
 
     /// <summary>Wait until <paramref name="predicate"/> holds, or fail after the deadline.</summary>
     member _.WaitFor(description: string, timeout: TimeSpan, predicate: unit -> bool) =
