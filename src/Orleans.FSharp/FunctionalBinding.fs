@@ -229,3 +229,73 @@ type FunctionalGrain =
         (contract: GrainContract<'Actor, 'Key, 'Api>)
         : IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor, 'Key, 'Api> =
         fun factory key -> FunctionalBinding.bind contract factory key
+
+    /// <summary>
+    /// The <c>StreamId</c> whose implicit delivery reaches the grain this contract addresses by
+    /// <paramref name="key"/>. Use it for every publish aimed at an <c>onStream</c> declaration.
+    /// </summary>
+    /// <param name="contract">The sealed contract of the subscribing definition.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists rather than <c>StreamId.Create(ns, key)</c>.</b> Orleans routes an
+    /// implicit delivery to <c>GrainId.Create(grainType, streamId.Key)</c> — the stream key bytes
+    /// verbatim (<c>DefaultStreamIdMapper</c>, for any grain class that implements no legacy grain-key
+    /// interface, which the functional marker does not). So the stream key must be the grain key
+    /// <b>in this contract's own Orleans encoding</b>, and for two of the six key codecs
+    /// <c>StreamId.Create</c>'s own overloads do not produce it:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description><c>stringKey</c> and <c>guidKey</c> agree —
+    /// <c>StreamId.Create(ns, "k")</c> and <c>StreamId.Create(ns, guid)</c> produce exactly the
+    /// UTF-8 string and the 32-char "N"-format Guid the codecs encode.</description></item>
+    /// <item><description><c>integerKey</c> does <b>not</b>:
+    /// <c>StreamId.Create(ns, 42L)</c> writes decimal <c>"42"</c>, while Orleans'
+    /// <c>GrainIdKeyExtensions.CreateIntegerKey</c> — which the codec uses, because that is what
+    /// <c>IGrainWithIntegerKey</c> identities really are — writes hexadecimal <c>"2A"</c>. A
+    /// publish built the naive way silently addresses a different grain (and one whose key decodes
+    /// as 0x42 = 66).</description></item>
+    /// <item><description>the compound codecs have no <c>StreamId.Create</c> overload at
+    /// all.</description></item>
+    /// </list>
+    /// <para>
+    /// This member always agrees with the contract, because it asks the contract.
+    /// </para>
+    /// </remarks>
+    static member streamId(contract: GrainContract<'Actor, 'Key, 'Api>) : string -> 'Key -> StreamId =
+        fun streamNamespace key ->
+            if obj.ReferenceEquals(contract, null) then
+                fail BindingStage "building a StreamId requires a sealed contract."
+
+            if isBlank streamNamespace then
+                fail
+                    BindingStage
+                    $"the stream namespace for grain type '{contract.GrainTypeName}' must not be empty or white-space: Orleans only resolves implicit subscribers for a stream that has one."
+
+            StreamId.Create(
+                System.Text.Encoding.UTF8.GetBytes streamNamespace,
+                contract.GrainIdOf(key).Key.AsSpan()
+            )
+
+    /// <summary>
+    /// The <c>ChannelId</c> whose implicit publish reaches the grain this contract addresses by
+    /// <paramref name="key"/>. The broadcast-channel counterpart of
+    /// <see cref="M:Orleans.FSharp.FunctionalGrain.streamId``3(Orleans.FSharp.GrainContract{``0,``1,``2})"/>,
+    /// with the same reason for existing.
+    /// </summary>
+    /// <param name="contract">The sealed contract of the subscribing definition.</param>
+    static member channelId
+        (contract: GrainContract<'Actor, 'Key, 'Api>)
+        : string -> 'Key -> Orleans.BroadcastChannel.ChannelId =
+        fun channelNamespace key ->
+            if obj.ReferenceEquals(contract, null) then
+                fail BindingStage "building a ChannelId requires a sealed contract."
+
+            if isBlank channelNamespace then
+                fail
+                    BindingStage
+                    $"the channel namespace for grain type '{contract.GrainTypeName}' must not be empty or white-space: Orleans only resolves implicit subscribers for a channel that has one."
+
+            Orleans.BroadcastChannel.ChannelId.Create(
+                System.Text.Encoding.UTF8.GetBytes channelNamespace,
+                contract.GrainIdOf(key).Key.AsSpan()
+            )

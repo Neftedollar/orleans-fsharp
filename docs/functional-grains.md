@@ -814,6 +814,19 @@ Nothing else is needed: no attribute, no class grain, no code generation. The it
 from the hook, so it usually wants an annotation (`(item: Message)`). Several declarations are
 allowed, one per `(provider, namespace)` pair.
 
+**Publishing to one of these grains needs the contract's key encoding.** Orleans routes an
+implicit delivery to `GrainId.Create(grainType, streamId.Key)` -- the stream key bytes verbatim --
+so the stream key must be the grain key as this contract encodes it. `stringKey` and `guidKey`
+agree with `StreamId.Create(ns, key)`; `int64Key` does **not** (`StreamId.Create(ns, 42L)` writes
+decimal `"42"`, the codec writes hexadecimal `"2A"`, and the naive publish silently reaches the
+grain whose key reads as `0x42` = 66), and the compound codecs have no overload at all. Ask the
+contract instead:
+
+```fsharp
+let streamId  = FunctionalGrain.streamId  InboxApi.contract "chat.messages" inboxKey
+let channelId = FunctionalGrain.channelId InboxApi.contract "chat.control"  inboxKey
+```
+
 **Delivery follows the `onTimer` rules exactly.** A delivery is an ordinary non-reentrant grain
 call; the hook receives the whole current state and returns the replacement, which is published in
 memory **only on a successful return**; the runtime performs no storage write of its own; and

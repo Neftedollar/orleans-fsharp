@@ -300,6 +300,60 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
         }
 
     /// <remarks>
+    /// The trap this feature could most easily have shipped with, and its fix, both measured.
+    /// Orleans routes an implicit delivery to <c>GrainId.Create(grainType, streamId.Key)</c> —
+    /// the stream key bytes verbatim — so the stream key must be the grain key in the
+    /// CONTRACT's encoding. For an <c>int64Key</c> contract that is Orleans'
+    /// <c>GrainIdKeyExtensions.CreateIntegerKey</c> HEXADECIMAL form, while
+    /// <c>StreamId.Create(ns, 42L)</c> writes DECIMAL. The naive publish therefore lands on a
+    /// different grain — silently, and one whose key decodes as 0x42 = 66.
+    /// <c>FunctionalGrain.streamId</c> asks the contract instead, so it cannot drift.
+    /// </remarks>
+    [<Fact>]
+    member _.``FunctionalGrain.streamId addresses the contract's own key encoding``() =
+        task {
+            // 0x2A = 42 decimal; the two encodings differ for every value above 9.
+            let key = 42L
+            let decoyKey = 0x42L // what the naive decimal StreamId.Create(ns, 42L) really addresses
+
+            do!
+                fixture.PublishTo(
+                    StreamNames.Provider,
+                    FunctionalGrain.streamId counterContract StreamNames.Counters key,
+                    7
+                )
+
+            do!
+                fixture.WaitFor(
+                    "the correctly-keyed delivery",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count $"{StreamNames.Counters}|{key}" = 1
+                )
+
+            let grain = counterRef fixture.Client key
+            let! seen = grain.seen ()
+            test <@ seen = [ 7 ] @>
+
+            // The naive overload: same namespace, same numeric key, different bytes.
+            do! fixture.PublishTo(StreamNames.Provider, StreamId.Create(StreamNames.Counters, key), 9)
+
+            do!
+                fixture.WaitFor(
+                    "the naively-keyed delivery to land somewhere",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count $"{StreamNames.Counters}|{decoyKey}" = 1
+                )
+
+            // It did NOT reach grain 42 — it reached grain 66, the hex reading of "42".
+            let! stillSeven = grain.seen ()
+            test <@ stillSeven = [ 7 ] @>
+
+            let decoy = counterRef fixture.Client decoyKey
+            let! decoySeen = decoy.seen ()
+            test <@ decoySeen = [ 9 ] @>
+        }
+
+    /// <remarks>
     /// The manifest half, read back off the live silo: the grain manifest of a definition with
     /// two stream declarations and one channel declaration carries three binding groups under
     /// the keys Orleans' own <c>AttributeGrainBindingsProvider</c> writes, and a definition with

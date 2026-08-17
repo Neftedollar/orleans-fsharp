@@ -201,6 +201,29 @@ The runtime publishes the manifest binding Orleans' `[ImplicitStreamSubscription
 `[ImplicitChannelSubscription]` publishes, and the activation accepts the delivery through
 Orleans' own `IStreamSubscriptionObserver` / `IOnBroadcastChannelSubscribed` seams.
 
+### Publishing to an implicitly subscribed grain
+
+Orleans routes an implicit delivery to `GrainId.Create(grainType, streamId.Key)` — the stream key
+bytes **verbatim**. The stream key must therefore be the grain key *in the contract's own Orleans
+encoding*, and `StreamId.Create`'s own overloads do not always produce it. Use the contract:
+
+```fsharp
+let streamId = FunctionalGrain.streamId InboxApi.contract "chat.messages" inboxKey
+do! provider.GetStream<Message>(streamId).OnNextAsync message
+
+// broadcast channels have the same helper
+let channelId = FunctionalGrain.channelId InboxApi.contract "chat.control" inboxKey
+do! provider.GetChannelWriter<Control>(channelId).Publish control
+```
+
+`stringKey` and `guidKey` happen to agree with `StreamId.Create(ns, key)`, but **`int64Key` does
+not**: `StreamId.Create(ns, 42L)` writes decimal `"42"` while Orleans'
+`GrainIdKeyExtensions.CreateIntegerKey` — which the codec uses, because that is what an
+`IGrainWithIntegerKey` identity really is — writes hexadecimal `"2A"`. A publish built the naive
+way silently lands on a *different* grain (the one whose key reads as `0x42` = 66). The compound
+codecs have no `StreamId.Create` overload at all. `FunctionalGrain.streamId` asks the contract, so
+it cannot drift.
+
 **Rules, all of them checked rather than assumed:**
 
 | Rule | Where it is enforced |

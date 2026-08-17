@@ -59,6 +59,10 @@ module StreamNames =
     [<Literal>]
     let Poison = "implicit.poison"
 
+    /// <summary>The declared namespace of the int64-keyed definition.</summary>
+    [<Literal>]
+    let Counters = "implicit.counters"
+
 [<RequireQualifiedAccess>]
 module StreamGrainTypes =
     [<Literal>]
@@ -66,6 +70,9 @@ module StreamGrainTypes =
 
     [<Literal>]
     let Poison = "functional.streampoison"
+
+    [<Literal>]
+    let Counter = "functional.streamcounter"
 
     [<Literal>]
     let PrimarySiloName = "Primary"
@@ -155,6 +162,19 @@ type WorkerActor = private WorkerActor of unit
 [<NoEquality; NoComparison>]
 type WorkerApi = { work: unit -> Task<string> }
 
+/// <summary>
+/// An <c>int64Key</c> definition. Its Orleans grain key is Orleans' own HEXADECIMAL integer-key
+/// encoding, while <c>StreamId.Create(ns, 42L)</c> writes DECIMAL — so this definition is what
+/// makes the difference between <c>FunctionalGrain.streamId</c> and the naive overload
+/// observable instead of theoretical.
+/// </summary>
+type CounterActor = private CounterActor of unit
+
+[<NoEquality; NoComparison>]
+type CounterApi = { seen: unit -> Task<int list> }
+
+type CounterState = { seenItems: int list }
+
 type PoisonState = { acceptedItems: string list }
 
 [<NoEquality; NoComparison>]
@@ -232,6 +252,31 @@ let sinkDefinition =
             })
     }
 
+let counterContract =
+    grainContract<CounterActor, int64, CounterApi> () {
+        grainType StreamGrainTypes.Counter
+        version 1
+        int64Key
+
+        readOnly (_.seen)
+    }
+
+let counterDefinition =
+    grainFor counterContract {
+        defaultState (fun () -> { seenItems = [] })
+
+        onStream StreamNames.Provider StreamNames.Counters (fun context state (item: int) ->
+            task {
+                StreamProbe.record $"{StreamNames.Counters}|{context.key}"
+
+                return
+                    { state with
+                        seenItems = state.seenItems @ [ item ] }
+            })
+
+        handle (_.seen) (fun _ state () -> task { return state, state.seenItems })
+    }
+
 let workerContract =
     grainContract<WorkerActor, string, WorkerApi> () {
         grainType "functional.streamworker"
@@ -274,6 +319,7 @@ let poisonDefinition =
 let sinkRef = FunctionalGrain.ref sinkContract
 let poisonRef = FunctionalGrain.ref poisonContract
 let workerRef = FunctionalGrain.ref workerContract
+let counterRef = FunctionalGrain.ref counterContract
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cluster configuration
@@ -289,6 +335,7 @@ type FunctionalStreamSiloConfigurator() =
             siloBuilder.AddFunctionalGrain sinkDefinition |> ignore
             siloBuilder.AddFunctionalGrain poisonDefinition |> ignore
             siloBuilder.AddFunctionalGrain workerDefinition |> ignore
+            siloBuilder.AddFunctionalGrain counterDefinition |> ignore
 
 type FunctionalStreamClientConfigurator() =
     interface IClientBuilderConfigurator with
@@ -336,6 +383,13 @@ type FunctionalStreamFixtureBase(siloCount: int16) =
                     .StreamProvider(providerName)
                     .GetStream<'Item>(StreamId.Create(streamNamespace, key))
 
+            do! stream.OnNextAsync item
+        }
+
+    /// <summary>Publish one item to an exact <c>StreamId</c>, however it was built.</summary>
+    member this.PublishTo<'Item>(providerName: string, streamId: StreamId, item: 'Item) =
+        task {
+            let stream = this.StreamProvider(providerName).GetStream<'Item> streamId
             do! stream.OnNextAsync item
         }
 

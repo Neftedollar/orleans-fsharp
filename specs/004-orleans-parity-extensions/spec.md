@@ -122,6 +122,17 @@ Both halves are Orleans' own seams; neither needs code generation.
   provider, so two declarations of one namespace on two providers would otherwise publish two
   byte-identical binding groups.
 
+- **Added during implementation:** `FunctionalGrain.streamId contract ns key` and
+  `FunctionalGrain.channelId contract ns key`, because the producer side turned out to carry a
+  silent trap. Orleans routes an implicit delivery to `GrainId.Create(grainType, streamId.Key)` —
+  the stream key bytes verbatim — so the stream key must be the grain key in the *contract's own*
+  encoding. `stringKey` and `guidKey` agree with `StreamId.Create(ns, key)`; **`int64Key` does
+  not** (`StreamId.Create(ns, 42L)` writes decimal `"42"`, while `GrainIdKeyExtensions.CreateIntegerKey`,
+  which the codec uses, writes hexadecimal `"2A"`), and the compound codecs have no
+  `StreamId.Create` overload at all. Building the id from the contract makes drift impossible; an
+  integration test publishes both ways to an `int64Key` definition and shows the naive publish
+  landing on the grain whose key reads as `0x42` = 66.
+
 ### Delivery semantics (normative)
 
 The timer-hook rules apply unchanged:

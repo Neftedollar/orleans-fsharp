@@ -592,6 +592,58 @@ let ``the invocation context declares exactly the specified public members`` () 
 
     test <@ actual = expected @>
 
+/// <remarks>
+/// Spec 004 item 1: an implicit delivery is routed to <c>GrainId.Create(grainType,
+/// streamId.Key)</c> — the stream key bytes verbatim — so the stream key must be the grain key in
+/// the contract's OWN encoding. <c>FunctionalGrain.streamId</c> / <c>channelId</c> exist because
+/// <c>StreamId.Create</c>'s own overloads do not always produce it, and this test is the proof
+/// for both directions: byte equality with the grain key for the codec where they agree
+/// (<c>stringKey</c>), and a demonstrated DISAGREEMENT for <c>int64Key</c>, where
+/// <c>StreamId.Create(ns, 42L)</c> writes decimal "42" and the codec writes hexadecimal "2A".
+/// </remarks>
+[<Fact>]
+let ``FunctionalGrain.streamId and channelId carry the contract's own grain-key bytes`` () =
+    let streamNamespace = (FunctionalGrain.streamId contract "surface.ns" "general").GetNamespace()
+    let streamKey = (FunctionalGrain.streamId contract "surface.ns" "general").GetKeyAsString()
+    let channelNamespace = (FunctionalGrain.channelId contract "surface.ns" "general").GetNamespace()
+    let channelKey = (FunctionalGrain.channelId contract "surface.ns" "general").GetKeyAsString()
+    let grainKey = contract.GrainIdOf("general").Key.ToString()
+
+    test <@ streamNamespace = "surface.ns" @>
+    test <@ streamKey = grainKey @>
+    test <@ streamKey = "general" @>
+    test <@ channelNamespace = "surface.ns" @>
+    test <@ channelKey = grainKey @>
+
+    // The int64 codec is where the naive overload and the contract disagree.
+    let numeric =
+        grainContract<SurfaceActor, int64, SurfaceApi> () {
+            grainType "surface.numeric"
+            int64Key
+        }
+
+    let numericKey = (FunctionalGrain.streamId numeric "surface.ns" 42L).GetKeyAsString()
+    let naiveKey = StreamId.Create("surface.ns", 42L).GetKeyAsString()
+    let numericGrainKey = numeric.GrainIdOf(42L).Key.ToString()
+
+    test <@ numericKey = numericGrainKey @>
+    test <@ numericKey = "2A" @>
+    test <@ naiveKey = "42" @>
+    test <@ numericKey <> naiveKey @>
+
+[<Fact>]
+let ``FunctionalGrain.streamId and channelId reject a blank namespace`` () =
+    let blankStream =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalGrain.streamId contract "  " "general" |> ignore)
+
+    let blankChannel =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalGrain.channelId contract "" "general" |> ignore)
+
+    test <@ blankStream.Message.Contains "stream namespace" @>
+    test <@ blankChannel.Message.Contains "channel namespace" @>
+
 [<Fact>]
 let ``the bound reference declares exactly the specified public members`` () =
     let expected = [| "api"; "call"; "callCancellable"; "key" |]

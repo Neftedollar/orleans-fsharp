@@ -192,8 +192,13 @@ module MailerDefinition =
                     let provider =
                         context.services.GetRequiredKeyedService<IStreamProvider> TourStream.Provider
 
-                    let stream = Stream.getStream<string> provider streamNamespace key
-                    do! Stream.publish stream text
+                    // FunctionalGrain.streamId, not StreamId.Create: an implicit delivery is
+                    // routed to the grain whose key IS the stream key's bytes, so the stream key
+                    // has to be the inbox contract's own key encoding. It agrees with
+                    // StreamId.Create for a string key and disagrees for an int64 one.
+                    let streamId = FunctionalGrain.streamId InboxApi.contract streamNamespace key
+                    let stream = provider.GetStream<string> streamId
+                    do! stream.OnNextAsync text
                     return state + 1, state + 1
                 })
 
@@ -202,8 +207,10 @@ module MailerDefinition =
                     let provider =
                         context.services.GetRequiredKeyedService<IBroadcastChannelProvider> TourChannels.Provider
 
-                    let channel = BroadcastChannel.getChannel<string> provider channelNamespace key
-                    do! BroadcastChannel.publish channel text
+                    let channelId =
+                        FunctionalGrain.channelId InboxApi.contract channelNamespace key
+
+                    do! provider.GetChannelWriter<string>(channelId).Publish text
                     return state + 1, state + 1
                 })
         }
