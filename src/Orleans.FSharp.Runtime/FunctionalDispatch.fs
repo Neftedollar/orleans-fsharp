@@ -85,7 +85,12 @@ module internal FunctionalContextFactory =
             fun descriptor ->
                 match env.State.TryResolveTransactional descriptor with
                 | Some facet ->
-                    facet.Blueprint.Facade facet.Instance facet.Initial env.Definition.GrainTypeName scope
+                    facet.Blueprint.Facade
+                        facet.Instance
+                        facet.Initial
+                        env.Definition.GrainTypeName
+                        (env.Codec :> IFunctionalPayloadCodec)
+                        scope
                 | None -> null }
 
     /// <summary>

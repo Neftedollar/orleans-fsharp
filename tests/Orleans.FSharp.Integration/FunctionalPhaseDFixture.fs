@@ -147,7 +147,16 @@ type AccountApi =
       /// Attempts an update from a read-only transactional operation, reporting what happened.
       peekAndWrite: unit -> Task<string>
       /// The address of the silo this activation lives on.
-      whereAmI: unit -> Task<string> }
+      whereAmI: unit -> Task<string>
+      /// Declared 'Join': Orleans must refuse it outside a transaction.
+      joinOnly: unit -> Task<decimal>
+      /// Declared 'NotAllowed': Orleans must refuse it inside a transaction.
+      notAllowed: unit -> Task<string>
+      /// Reads the transactional value twice and reports whether the two are the same instance.
+      readTwice: unit -> Task<bool>
+      /// Declared readOnly + transactional: asks ANOTHER account to write inside the same
+      /// transaction, and reports what happened.
+      readOnlyDelegate: string -> Task<string> }
 
 let accountLedger =
     TransactionalState.create<Ledger> "ledger" PhaseDStorage.Transactional
@@ -163,7 +172,12 @@ let accountContract =
         transactional Orleans.TransactionOption.CreateOrJoin (_.peek)
         transactional Orleans.TransactionOption.CreateOrJoin (_.slowDeposit)
         transactional Orleans.TransactionOption.CreateOrJoin (_.peekAndWrite)
+        transactional Orleans.TransactionOption.Join (_.joinOnly)
+        transactional Orleans.TransactionOption.NotAllowed (_.notAllowed)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.readTwice)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.readOnlyDelegate)
         readOnly (_.peek)
+        readOnly (_.readOnlyDelegate)
         readOnly (_.peekAndWrite)
         readOnly (_.whereAmI)
     }
@@ -263,6 +277,43 @@ let accountDefinition =
                 let details = context.services.GetRequiredService<ILocalSiloDetails>()
                 return state, details.SiloAddress.ToString()
             })
+
+        handle (_.joinOnly) (fun context state () ->
+            task {
+                let! value = (context.transactionalState accountLedger).readWith (fun ledger -> ledger.balance)
+                return state, value
+            })
+
+        // 'NotAllowed' is not transaction-scoped, so the facade refuses the facet here; the
+        // operation exists to prove Orleans refuses the CALL when one is ambient.
+        handle (_.notAllowed) (fun _ state () -> task { return state, "reached" })
+
+        // The runtime's own guard only covers THIS grain's facets. Whether the transaction itself
+        // was started read-only is Orleans' business, and this is what asks it: a second
+        // participant joining the same transaction and trying to write.
+        handle (_.readOnlyDelegate) (fun context state (other: string) ->
+            task {
+                let target = FunctionalGrain.ref accountContract context.grainFactory other
+
+                let! outcome =
+                    task {
+                        try
+                            do! target.deposit 1m
+                            return "the write was ACCEPTED"
+                        with error ->
+                            return error.GetType().Name
+                    }
+
+                return state, outcome
+            })
+
+        handle (_.readTwice) (fun context state () ->
+            task {
+                let ledger = context.transactionalState accountLedger
+                let! first = ledger.read ()
+                let! second = ledger.read ()
+                return state, obj.ReferenceEquals(first, second)
+            })
     }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -278,7 +329,11 @@ type AtmApi =
       /// Deposits into two accounts in one transaction, then throws: the abort control.
       failAfterDeposits: string * string * decimal -> Task<unit>
       /// Reads both balances in one transaction.
-      totals: string * string -> Task<decimal * decimal> }
+      totals: string * string -> Task<decimal * decimal>
+      /// Calls a 'Join' operation from inside a transaction it created: must succeed.
+      callJoin: string -> Task<decimal>
+      /// Calls a 'NotAllowed' operation from inside a transaction: must be refused.
+      callNotAllowed: string -> Task<string> }
 
 let atmContract =
     grainContract<AtmActor, string, AtmApi> () {
@@ -288,6 +343,8 @@ let atmContract =
         transactional Orleans.TransactionOption.Create (_.transfer)
         transactional Orleans.TransactionOption.Create (_.failAfterDeposits)
         transactional Orleans.TransactionOption.Create (_.totals)
+        transactional Orleans.TransactionOption.Create (_.callJoin)
+        transactional Orleans.TransactionOption.Create (_.callNotAllowed)
     }
 
 /// <summary>
@@ -330,6 +387,29 @@ let atmDefinition =
                 let! rightBalance = second.balance ()
                 return state, (leftBalance, rightBalance)
             })
+
+        handle (_.callJoin) (fun context state (key: string) ->
+            task {
+                let account = FunctionalGrain.ref accountContract context.grainFactory key
+                let! value = account.joinOnly ()
+                return state, value
+            })
+
+        handle (_.callNotAllowed) (fun context state (key: string) ->
+            task {
+                let account = FunctionalGrain.ref accountContract context.grainFactory key
+
+                let! outcome =
+                    task {
+                        try
+                            let! reached = account.notAllowed ()
+                            return reached
+                        with error ->
+                            return error.Message
+                    }
+
+                return state, outcome
+            })
     }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -355,10 +435,17 @@ type MixedApi =
       /// Not transactional: reads the primary state.
       published: unit -> Task<int>
       /// Transaction-scoped: reads the transactional facet.
-      total: unit -> Task<int> }
+      total: unit -> Task<int>
+      /// Transaction-scoped: writes BOTH transactional facets in one transaction.
+      bumpBoth: int * string -> Task<unit>
+      /// Transaction-scoped: reads the second transactional facet.
+      trail: unit -> Task<string list> }
 
 let mixedCounter =
     TransactionalState.create<Counter> "counter" PhaseDStorage.Transactional
+
+let mixedTrail =
+    TransactionalState.create<Ledger> "trail" PhaseDStorage.Transactional
 
 let mixedNotes =
     PersistentState.create<string list> "notes" PhaseDStorage.Persistent
@@ -372,6 +459,8 @@ let mixedContract =
         transactional Orleans.TransactionOption.CreateOrJoin (_.bumpPersistent)
         transactional Orleans.TransactionOption.CreateOrJoin (_.bumpAndPublish)
         transactional Orleans.TransactionOption.CreateOrJoin (_.total)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.bumpBoth)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.trail)
     }
 
 let mixedDefinition =
@@ -379,6 +468,7 @@ let mixedDefinition =
         defaultState (fun () -> 0)
 
         transactionalStateFrom mixedCounter (fun _ -> { hits = 0 })
+        transactionalStateFrom mixedTrail (fun _ -> { balance = 0m; entries = [] })
         usePersistentState mixedNotes (fun _ -> ([]: string list))
 
         handle (_.bump) (fun context state (by: int) ->
@@ -425,6 +515,29 @@ let mixedDefinition =
             task {
                 let! counter = (context.transactionalState mixedCounter).read ()
                 return state, counter.hits
+            })
+
+        // Two transactional facets of DIFFERENT stored types, written in one transaction: each
+        // registers its own exact-type ITransactionDataCopier, and both are participants of the
+        // same transaction on the same activation.
+        handle (_.bumpBoth) (fun context state ((by: int), (note: string)) ->
+            task {
+                do! (context.transactionalState mixedCounter).update (fun counter -> { hits = counter.hits + by })
+
+                do!
+                    (context.transactionalState mixedTrail)
+                        .update (fun value ->
+                            { value with
+                                balance = value.balance + decimal by
+                                entries = value.entries @ [ note ] })
+
+                return state, ()
+            })
+
+        handle (_.trail) (fun context state () ->
+            task {
+                let! value = (context.transactionalState mixedTrail).readWith (fun ledger -> ledger.entries)
+                return state, value
             })
     }
 

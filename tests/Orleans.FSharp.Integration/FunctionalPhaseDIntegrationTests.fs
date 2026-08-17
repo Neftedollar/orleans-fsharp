@@ -451,3 +451,116 @@ type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
             test <@ sourceAfter = 50m @>
             test <@ targetAfter = 30m @>
         }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // The declared option reaches Orleans' own enforcement
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// <c>Join</c> is not merely carried, it is enforced: Orleans refuses the call outside a
+    /// transaction and admits it inside one. Both halves, because either alone would also pass if
+    /// the option were being ignored in one direction.
+    /// </summary>
+    [<Fact>]
+    member _.``a Join operation is refused outside a transaction and admitted inside one``() =
+        task {
+            let suffix = Guid.NewGuid().ToString "N"
+            let key = $"j-{suffix}"
+
+            do! (account key).deposit 17m
+
+            let! outside = Assert.ThrowsAnyAsync<exn>(fun () -> (account key).joinOnly () :> Task)
+            test <@ outside.Message.Contains "outside of a transaction" @>
+
+            let! inside = (atm suffix).callJoin key
+            test <@ inside = 17m @>
+        }
+
+    /// <summary>
+    /// <c>NotAllowed</c>, the mirror image: admitted outside a transaction, refused inside one.
+    /// </summary>
+    [<Fact>]
+    member _.``a NotAllowed operation is admitted outside a transaction and refused inside one``() =
+        task {
+            let suffix = Guid.NewGuid().ToString "N"
+            let key = $"n-{suffix}"
+
+            let! outside = (account key).notAllowed ()
+            test <@ outside = "reached" @>
+
+            let! inside = (atm suffix).callNotAllowed key
+            test <@ inside <> "reached" @>
+            test <@ inside.Contains "within a transaction" @>
+        }
+
+    /// <summary>
+    /// Two transactional facets of different stored types on one definition, written inside one
+    /// transaction. Each registers its own exact-type <c>ITransactionDataCopier</c>, and both are
+    /// participants of the same transaction on the same activation.
+    /// </summary>
+    [<Fact>]
+    member _.``two transactional facets on one grain commit together``() =
+        task {
+            let key = Guid.NewGuid().ToString "N"
+
+            do! (mixed key).bumpBoth (3, "first")
+            do! (mixed key).bumpBoth (4, "second")
+
+            let! total = (mixed key).total ()
+            let! trail = (mixed key).trail ()
+
+            test <@ total = 7 @>
+            test <@ trail = [ "first"; "second" ] @>
+        }
+
+    /// <summary>
+    /// <c>read()</c> hands back a copy, never the instance the transactional state is storing —
+    /// two reads inside one transaction are not the same object. Without that, an application
+    /// that mutated the value it read would rewrite committed state behind the transaction.
+    /// </summary>
+    [<Fact>]
+    member _.``read returns a copy rather than the stored instance``() =
+        task {
+            let key = Guid.NewGuid().ToString "N"
+
+            do! (account key).deposit 5m
+
+            let! sameInstance = (account key).readTwice ()
+            test <@ not sameInstance @>
+        }
+
+    /// <summary>
+    /// <c>readOnly</c> is not only our own guard: it reaches Orleans, which starts the transaction
+    /// read-only, so a SECOND participant joining it is refused a write too. Without this, the
+    /// facade's own refusal could be the only thing enforcing anything.
+    /// </summary>
+    /// <remarks>
+    /// The handler under test <b>catches</b> the participant's exception and returns a string, and
+    /// the call still fails: a participant that faulted has already recorded the fault on the
+    /// shared <c>TransactionInfo</c>, which the caller's outgoing filter joins on return, so
+    /// <c>MustAbort</c> dooms the transaction whatever the handler did with the exception. That is
+    /// worth knowing before writing a handler that "handles" a transactional failure.
+    /// </remarks>
+    [<Fact>]
+    member _.``a read-only transactional operation starts a read-only transaction``() =
+        task {
+            let suffix = Guid.NewGuid().ToString "N"
+            let caller = $"ro-{suffix}"
+            let other = $"ro-other-{suffix}"
+
+            let! error =
+                Assert.ThrowsAnyAsync<exn>(fun () -> (account caller).readOnlyDelegate other :> Task)
+
+            let chain =
+                let rec messages (e: exn) =
+                    match e with
+                    | null -> []
+                    | _ -> e.Message :: messages e.InnerException
+
+                messages error |> String.concat " | "
+
+            test <@ chain.Contains "attempted to write a grain" @>
+
+            let! otherBalance = (account other).balance ()
+            test <@ otherBalance = 0m @>
+        }

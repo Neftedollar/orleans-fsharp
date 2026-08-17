@@ -116,6 +116,7 @@ type FunctionalTransactionalState<'State>
     (
         inner: ITransactionalState<FunctionalTransactionalBox<'State>>,
         initial: unit -> 'State,
+        copy: 'State -> 'State,
         descriptor: TransactionalStateDescriptor,
         grainTypeName: string,
         scope: FunctionalStateScope
@@ -164,14 +165,31 @@ type FunctionalTransactionalState<'State>
 
     /// <summary>The current transactional value.</summary>
     /// <remarks>
-    /// The only facade member whose result is the stored value itself, so it is the only one
-    /// Orleans copies: <c>PerformRead</c> passes it through
-    /// <c>ITransactionDataCopier&lt;'State&gt;</c>, which the facet registers. A caller therefore
-    /// never holds the instance the transactional state is storing.
+    /// <para>
+    /// The only facade member whose result is the stored value itself, so it is the only one that
+    /// is copied before it is returned: a caller must never hold the instance the transactional
+    /// state is storing, or mutating it would rewrite committed state behind the transaction's
+    /// back. That is the same isolation Orleans' own <c>CopyResult</c> gives a
+    /// <c>PerformRead</c> result.
+    /// </para>
+    /// <para>
+    /// The copy is made <b>here</b> rather than by Orleans, and deliberately: <c>CopyResult</c>
+    /// resolves a required <c>ITransactionDataCopier&lt;TResult&gt;</c> from the activation's
+    /// services, so letting the stored type be <c>TResult</c> would mean registering a copier for
+    /// an application type — which would then also serve any classic <c>[TransactionalState]</c>
+    /// grain in the same silo whose state happens to be that type. Copying after the lock is
+    /// released is sound because the runtime only ever <b>replaces</b> <c>Value</c>: a concurrent
+    /// update writes a new reference into a box Orleans has already snapshotted, and never touches
+    /// the object this read captured.
+    /// </para>
     /// </remarks>
     member this.read() : Task<'State> =
         scope.EnsureTransactionalRead(description, "read()")
-        inner.PerformRead(Func<FunctionalTransactionalBox<'State>, 'State>(this.ValueOf))
+
+        task {
+            let! value = this.Capture(this.ValueOf, inner.PerformRead)
+            return copy value
+        }
 
     /// <summary>A projection of the current transactional value.</summary>
     /// <param name="project">
@@ -274,29 +292,6 @@ type internal FunctionalTransactionDataCopier<'StoredState>(codec: IFunctionalPa
 
                 copy
 
-/// <summary>
-/// The Orleans transaction data copier of the <b>result</b> of a plain transactional read.
-/// </summary>
-/// <remarks>
-/// <c>TransactionalState.PerformRead</c> and <c>PerformUpdate</c> pass whatever the callback
-/// returned through <c>CopyResult</c>, which resolves a <b>required</b>
-/// <c>ITransactionDataCopier&lt;TResult&gt;</c> from the activation's services. The functional
-/// facade therefore keeps <c>TResult</c> to exactly two shapes: <c>bool</c> for every call whose
-/// application result is produced by the application's own function (Orleans has a copier for it,
-/// and copying an application-built value would be meaningless anyway), and the stored type itself
-/// for <c>read()</c>, whose result IS the stored value and must be isolated from it. This copier
-/// serves the second shape.
-/// </remarks>
-[<Sealed>]
-type internal FunctionalTransactionValueCopier<'StoredState>(codec: IFunctionalPayloadCodec) =
-
-    interface ITransactionDataCopier<'StoredState> with
-        member _.DeepCopy(original: 'StoredState) =
-            if obj.ReferenceEquals(box original, null) then
-                original
-            else
-                codec.Deserialize<'StoredState>(codec.Serialize<'StoredState> original)
-
 /// <summary>The Orleans facet configuration of one attached transactional state.</summary>
 [<Sealed>]
 type internal FunctionalTransactionalStateConfiguration(stateName: string, storageName: string) =
@@ -318,8 +313,9 @@ type internal FunctionalTransactionalBlueprint =
         /// Create the real Orleans transactional facet for one activation, boxed.
         Create: ITransactionalStateFactory -> obj
         /// Wrap a boxed facet in an invocation-bound facade, boxed as the exact facade type.
-        /// Arguments: the boxed facet, the boxed initial value, the grain type name, the scope.
-        Facade: obj -> obj -> string -> FunctionalStateScope -> obj
+        /// Arguments: the boxed facet, the boxed initial value, the grain type name, the silo's
+        /// exact-type payload codec, and the scope.
+        Facade: obj -> obj -> string -> IFunctionalPayloadCodec -> FunctionalStateScope -> obj
         /// The declared initializer, from the boxed domain key to the boxed initial value.
         Initialize: obj -> obj
         /// Register the exact-type transaction data copier of this facet on a silo's service
@@ -347,13 +343,14 @@ module internal FunctionalTransactionalFacet =
         { Descriptor = descriptor
           Create = fun factory -> box (factory.Create<FunctionalTransactionalBox<'StoredState>> configuration)
           Facade =
-            fun instance initial grainTypeName scope ->
+            fun instance initial grainTypeName codec scope ->
                 let value = unbox<'StoredState> initial
 
                 box (
                     FunctionalTransactionalState<'StoredState>(
                         facet instance,
                         (fun () -> value),
+                        (fun current -> codec.Deserialize<'StoredState>(codec.Serialize<'StoredState> current)),
                         descriptor,
                         grainTypeName,
                         scope
@@ -366,9 +363,5 @@ module internal FunctionalTransactionalFacet =
                     ITransactionDataCopier<FunctionalTransactionalBox<'StoredState>>,
                     FunctionalTransactionDataCopier<'StoredState>
                  >()
-
-                |> ignore
-
-                services.TryAddSingleton<ITransactionDataCopier<'StoredState>, FunctionalTransactionValueCopier<'StoredState>>()
 
                 |> ignore }

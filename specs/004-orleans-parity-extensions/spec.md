@@ -417,6 +417,13 @@ over both `Orleans.Transactions.dll` assemblies, not from the baseline file.
   letting Orleans throw "did you forget a `[Transaction]` attribute?" about an attribute this API
   does not have.
 - **No cross-cluster transactions**, because Orleans' transaction manager is per-cluster.
+- **Catching a participant's exception does not un-abort the transaction.** The fault is recorded
+  on the shared `TransactionInfo` by the participant's own `Invoke()`, and the caller's outgoing
+  filter joins that info on return, so `MustAbort` dooms the transaction whatever the intermediate
+  handler did with the exception. Pinned by a test whose handler catches and still fails.
+- **The admission byte changed.** Bits 3-5 were reserved before this item; an older library rejects
+  a transactional call as a reserved-bit violation. Non-transactional traffic is byte-identical, so
+  the incompatibility is confined to operations that did not exist before.
 - **The snapshot copy is a serializer round trip.** Before the first write of each transaction the
   runtime copies the stored value through the exact-type payload codec: one serialize plus one
   deserialize per transaction per written state. Orleans' own default also walks the whole graph, so

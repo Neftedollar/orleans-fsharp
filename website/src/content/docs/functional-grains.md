@@ -1208,6 +1208,13 @@ The consequences, in order of how often they surprise people:
 transfer enters the `withdraw` handler exactly once, and the counter is shown to be live by an
 application-driven retry moving it to two.
 
+**Catching a participant's exception does not un-abort the transaction.** A participant that
+faulted has already recorded the fault on the shared `TransactionInfo`, and the caller's outgoing
+filter joins that info when the call returns — so `try ... with` around a transactional grain call
+changes what your handler returns and nothing else: the transaction is still doomed and the
+outermost caller still sees `OrleansTransactionAbortedException`. Handle the failure at the
+boundary that owns the retry, not inside a participant.
+
 ### Sealing and startup rules
 
 Contract sealing rejects:
@@ -1239,6 +1246,16 @@ transactional state when the silo has no `UseTransactions()`, and rejects a tran
 name that resolves to neither a keyed `ITransactionalStateStorageFactory` nor a keyed
 `IGrainStorage` — the exact resolution order `NamedTransactionalStateStorageFactory.Create`
 performs.
+
+### Wire compatibility
+
+The transaction option travels in bits 3-5 of the admission byte, which earlier versions of this
+library treat as reserved and reject. A transactional call therefore requires **both ends on a
+version that has this feature**; a non-transactional call is unaffected, because those bits are
+zero for it and the byte is unchanged. During a rolling upgrade, deploy before declaring
+`transactional` on an operation callers already use — an old silo answers such a call with the
+reserved-bit diagnostic, and an old client sending to a new silo is refused by the ordinary
+admission-flag comparison.
 
 ### Hosting
 

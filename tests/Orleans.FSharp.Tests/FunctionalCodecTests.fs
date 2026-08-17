@@ -766,3 +766,103 @@ let ``the fixed request survives the dynamic type path Orleans uses for an invok
         test <@ restored.Envelope.GrainType = "chat.room" @>
         test <@ restored.Options = InvokeMethodOptions.ReadOnly @>
     | other -> failwith $"the request round-tripped as '{other.GetType().FullName}'."
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 2 — the transactional invokable shell
+// ──────────────────────────────────────────────────────────────────────────────
+
+let private transactionalEnvelope (option: Orleans.TransactionOption) =
+    FunctionalRequestEnvelope(
+        "chat.room",
+        1,
+        "join",
+        token,
+        AdmissionFlags.compose false false false (Some option),
+        payload
+    )
+
+let private exceptionSerializer () =
+    services.Value.GetRequiredService<Serializer<Orleans.Transactions.OrleansTransactionAbortedException>>()
+
+let private newTransactionalRequest (option: Orleans.TransactionOption) (cancellation: CancellationToken) =
+    let request =
+        new FunctionalTransactionRequest(
+            exceptionSerializer (),
+            services.Value,
+            transactionalEnvelope option,
+            cancellation
+        )
+
+    request.SetCallerMetadata(closedInterface, dispatchMethod)
+    request.ApplyAdmissionOptions()
+    request
+
+/// <remarks>
+/// The transactional request's WIRE form is not exercised here, and cannot be: its base segment is
+/// written by Orleans' generated <c>IBaseCodec&lt;TransactionRequestBase&gt;</c>, whose
+/// <c>TransactionInfo</c> field reaches <c>ParticipantId</c> and therefore <c>GrainReference</c> —
+/// a type whose codec is internal to Orleans and registered only by a real silo or client
+/// container, not by this file's minimal serializer harness. The wire form is proven where it
+/// actually matters instead: the cross-silo transaction in
+/// <c>FunctionalPhaseDIntegrationTests</c> commits with participants on two different silos, which
+/// can only happen if the transactional request serialized and deserialized between them. What
+/// this file pins is everything that does NOT need a cluster.
+/// </remarks>
+[<Fact>]
+let ``the transactional request derives its option from the admission byte`` () =
+    // The receiving side never trusts the copy Orleans' base codec carries: it re-derives the
+    // option from the same admission byte dispatch compares against the hosted descriptor.
+    let derived (declared: Orleans.TransactionOption) =
+        use source = new CancellationTokenSource()
+        use request = newTransactionalRequest declared source.Token
+        test <@ request.TransactionOption = declared @>
+        test <@ AdmissionFlags.tryTransactionOption request.Envelope.AdmissionFlags = Some declared @>
+
+    derived Orleans.TransactionOption.Suppress
+    derived Orleans.TransactionOption.CreateOrJoin
+    derived Orleans.TransactionOption.Create
+    derived Orleans.TransactionOption.Join
+    derived Orleans.TransactionOption.Supported
+    derived Orleans.TransactionOption.NotAllowed
+
+[<Fact>]
+let ``the transactional local copier preserves the envelope, options, caller token, and metadata`` () =
+    // The same-silo path never serializes the request, so without a copier that carries the base
+    // fields a local participant would join no transaction at all.
+    use source = new CancellationTokenSource()
+    use original = newTransactionalRequest Orleans.TransactionOption.CreateOrJoin source.Token
+    let copy = (copier ()).Copy original
+
+    test <@ obj.ReferenceEquals(copy.Envelope, original.Envelope) @>
+    test <@ copy.TransactionOption = Orleans.TransactionOption.CreateOrJoin @>
+    let callerTokenPreserved = copy.CallerToken.Equals source.Token
+    test <@ callerTokenPreserved @>
+    test <@ obj.ReferenceEquals(copy.GetInterfaceType(), closedInterface) @>
+    test <@ copy.GetMethod() = dispatchMethod @>
+    test <@ not (obj.ReferenceEquals(copy, original)) @>
+
+[<Fact>]
+let ``the transactional request is an outgoing call filter, which is what makes it transactional`` () =
+    // GrainReferenceRuntime routes a request through OutgoingCallInvoker whenever it implements
+    // IOutgoingGrainCallFilter, even with no application filters registered, and
+    // OutgoingCallInvoker runs the request itself as the last stage. That is the entire
+    // caller-side half of the transaction protocol, so it is pinned here rather than assumed.
+    use source = new CancellationTokenSource()
+    use transactional = newTransactionalRequest Orleans.TransactionOption.Create source.Token
+    use ordinary = new FunctionalRequest(envelope (), source.Token)
+
+    test <@ (transactional :> obj) :? Orleans.IOutgoingGrainCallFilter @>
+    test <@ not ((ordinary :> obj) :? Orleans.IOutgoingGrainCallFilter) @>
+
+[<Fact>]
+let ``an envelope with no transaction option cannot build a transactional request`` () =
+    use source = new CancellationTokenSource()
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            let request =
+                new FunctionalTransactionRequest(exceptionSerializer (), services.Value, envelope (), source.Token)
+
+            request.ApplyAdmissionOptions())
+
+    test <@ error.Message.Contains "declare no transaction option" @>
