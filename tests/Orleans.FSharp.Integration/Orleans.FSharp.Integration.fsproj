@@ -60,6 +60,7 @@
     <Compile Include="FunctionalPushIntegrationTests.fs" />
     <Compile Include="FunctionalStreamFixture.fs" />
     <Compile Include="FunctionalStreamIntegrationTests.fs" />
+    <Compile Include="ProbeC1.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,10 +1,40 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Concurrent
 open System.Threading
 open System.Threading.Tasks
 open Orleans
+open Orleans.Concurrency
 open Orleans.Runtime
+open Orleans.Serialization.Invocation
+
+/// TEMPORARY spec-004 Phase C Step-0 probe scaffolding. Reverted once the probe is recorded.
+[<RequireQualifiedAccess>]
+module internal FunctionalInterleaveProbe =
+    let seen = ConcurrentQueue<string>()
+    let mutable predicate: (IFunctionalRequestMetadata -> bool) option = None
+
+    let evaluate (request: IInvokable) : bool =
+        if isNull (box request) then
+            seen.Enqueue "null-invokable"
+            false
+        else
+            match request.GetArgument 0 with
+            | :? IFunctionalRequestMetadata as metadata ->
+                let verdict =
+                    match predicate with
+                    | Some check -> check metadata
+                    | None -> false
+
+                seen.Enqueue $"{metadata.GrainType}/{metadata.OperationId}={verdict}"
+                verdict
+            | other ->
+                let name =
+                    if isNull other then "null" else other.GetType().Name
+
+                seen.Enqueue("non-envelope:" + name)
+                false
 
 /// <summary>
 /// The concrete manifest grain type of one actor brand.
@@ -25,8 +55,13 @@ open Orleans.Runtime
 /// </remarks>
 /// <typeparam name="TActor">The application's actor brand.</typeparam>
 [<Sealed>]
+[<MayInterleave("MayInterleave")>]
 type FunctionalGrainMarker<'Actor>() =
     inherit Grain()
+
+    /// TEMPORARY spec-004 Phase C Step-0 probe callback.
+    static member MayInterleave(request: IInvokable) : bool =
+        FunctionalInterleaveProbe.evaluate request
 
     interface IFunctionalGrainTarget<'Actor> with
         member _.DispatchAsync(_envelope: FunctionalRequestEnvelope, _cancellationToken: CancellationToken) =
