@@ -1,12 +1,23 @@
 /// <summary>
 /// Functional-runtime equivalent of <c>DashboardGrainDef.dashboard</c> in
 /// <c>DashboardGrain.fs</c> (the <c>grain { }</c> CE original -- now <c>[&lt;Obsolete&gt;]</c>).
-/// Full parity: reuses <c>DashboardGrainDef.generateMetrics</c> verbatim (a plain pure function,
-/// not part of the deprecated CE) so <c>latestUpdate</c> produces the exact same randomized
-/// <c>DashboardUpdate</c> the original did, and declares the same 2-second <c>onTimer</c> that
-/// advances the sequence number on its own, independent of any caller. This is the twin
-/// <c>DashboardHub.fs</c> is wired to for the SignalR push on connect.
+/// This is the twin <c>DashboardHub.fs</c> is wired to for the SignalR push on connect.
 /// </summary>
+/// <remarks>
+/// Operation-for-command mapping against the original — the DU dispatched through one
+/// <c>HandleMessage : DashboardCommand -> Task&lt;obj&gt;</c> becomes one typed operation per case,
+/// and nothing else changes:
+///
+///   <c>GetLatestUpdate</c>   -> <c>latestUpdate</c>: same "bump the sequence number, then
+///                               generate" semantics, calling the original's
+///                               <c>DashboardGrainDef.generateMetrics</c> VERBATIM (it is a plain
+///                               pure function, not part of the deprecated CE), returning a typed
+///                               <c>DashboardUpdate</c> instead of <c>obj</c>.
+///   <c>GetSequenceNumber</c> -> <c>sequenceNumber</c>: reads without advancing, now enforced by
+///                               the runtime via <c>readOnly</c> instead of by convention.
+///   timer <c>MetricTick</c>  -> the same declarative 2-second timer, same name, same
+///                               state-advance body.
+/// </remarks>
 namespace SignalRRealtime.Grains
 
 open System
@@ -19,9 +30,7 @@ type DashboardActor = private DashboardActor of unit
 
 [<NoEquality; NoComparison>]
 type DashboardApi =
-    { /// <summary>Advances the sequence number by one and returns the new value (no metrics).</summary>
-      tick: unit -> Task<int64>
-      /// <summary>Current sequence number, without advancing it (read-only).</summary>
+    { /// <summary>Current sequence number, without advancing it (read-only).</summary>
       sequenceNumber: unit -> Task<int64>
       /// <summary>Advances the sequence number and returns a freshly generated
       /// <c>DashboardUpdate</c> -- the same "bump on every read" semantics
@@ -45,8 +54,6 @@ module DashboardFunctionalDef =
     let dashboard =
         grainFor DashboardApi.contract {
             defaultState (fun () -> 0L)
-
-            handle (_.tick) (fun _context state () -> task { return state + 1L, state + 1L })
 
             handle (_.sequenceNumber) (fun _context state () -> task { return state, state })
 

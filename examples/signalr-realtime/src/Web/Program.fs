@@ -59,9 +59,9 @@ let startDashboard () =
     task {
         let factory = app.Services.GetRequiredService<IGrainFactory>()
         let dashboardFn = DashboardApi.ref factory "default"
-        let! seeded = dashboardFn.tick ()
+        let! seeded = dashboardFn.sequenceNumber ()
         printfn "--- SignalR Realtime: Dashboard grain activated with timer (Functional Grain Runtime) ---"
-        printfn "Sequence number after activation tick: %d" seeded
+        printfn "Sequence number at activation: %d" seeded
         printfn "Open http://localhost:5000 in your browser to see live metrics."
         printfn "Press Ctrl+C to stop."
     }
