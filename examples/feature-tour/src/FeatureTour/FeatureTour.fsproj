@@ -16,12 +16,18 @@
     <Compile Include="Cancellation.fs" />
     <Compile Include="VersioningTour.fs" />
     <Compile Include="Streams.fs" />
+    <Compile Include="ObserverTour.fs" />
+    <Compile Include="Broadcast.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
     <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
+    <!-- The C# half of the tour. Orleans' proxy and implicit-subscription generators are Roslyn
+         generators and never run over F#, so the observer interface and the broadcast-channel
+         consumer grain have to be declared there. -->
+    <ProjectReference Include="..\TourInterop\TourInterop.csproj" />
   </ItemGroup>
 
 </Project>

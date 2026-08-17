@@ -25,6 +25,9 @@ open FeatureTour.RequestContextTour
 open FeatureTour.Cancellation
 open FeatureTour.VersioningTour
 open FeatureTour.Streams
+open FeatureTour.ObserverTour
+open FeatureTour.Broadcast
+open FeatureTour.Interop
 
 // ── Silo ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +45,12 @@ let private preloadTourAssemblies () =
     typeof<Orleans.Hosting.SiloBuilderReminderMemoryExtensions>.Assembly |> ignore // reminders
     typeof<Orleans.Streams.IStreamProvider>.Assembly |> ignore // streams
     typeof<Orleans.Providers.MemoryStreamQueueGrain>.Assembly |> ignore // memory stream grains
+    typeof<Orleans.BroadcastChannel.IBroadcastChannelProvider>.Assembly |> ignore // broadcast channels
+    // The C# interop assembly carries the Orleans-generated observer proxy AND the implicit
+    // broadcast-channel consumer grain. It is reached only through an F# reference, so without
+    // this touch it is absent from Orleans' first manifest snapshot and the consumer grain is
+    // simply not part of the cluster.
+    typeof<ITourObserver>.Assembly |> ignore
 
 let private siloConfiguration =
     siloConfig {
@@ -50,6 +59,7 @@ let private siloConfiguration =
         addMemoryStorage "Audit"
         addMemoryReminderService
         addMemoryStreams TourStream.Provider
+        addBroadcastChannel TourChannels.Provider
 
         addIncomingFilter (TourIncomingFilter GatewayApi.RejectedOperation :> IIncomingGrainCallFilter)
     }
@@ -358,6 +368,105 @@ let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider)
             verdict "PARTIAL — see the per-arm lines above and the README for the exact failure"
     }
 
+let private runObservers (factory: IGrainFactory) =
+    task {
+        section 8 "Observers (EXPERIMENT) — Observer.createRef against a C#-declared interface"
+
+        let notifier = NotifierApi.ref factory "room-1"
+        let observer = RecordingObserver()
+
+        let! outcome =
+            task {
+                try
+                    // The whole experiment in one line: does CreateObjectReference find a
+                    // generated proxy for an interface declared in a C# project that this F#
+                    // project references?
+                    let observerRef = Observer.createRef<ITourObserver> factory observer
+                    let! count = notifier.subscribe observerRef
+                    say $"Observer.createRef succeeded; subscriber count = {count}"
+
+                    let! notified = notifier.notify "deployment finished"
+                    let! notifiedAgain = notifier.notify "all green"
+                    say $"notify() reached {notified} then {notifiedAgain} subscriber(s)"
+
+                    let! delivered =
+                        waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                            Task.FromResult(List.length observer.Received >= 2))
+
+                    say $"observer received -> {observer.Received}"
+
+                    let! remaining = notifier.unsubscribe observerRef
+                    say $"after unsubscribe, subscriber count = {remaining}"
+
+                    Observer.deleteRef<ITourObserver> factory observerRef
+
+                    return
+                        if delivered then
+                            "SUPPORTED"
+                        else
+                            "PARTIAL — reference created and subscribed, but notifications did not arrive"
+                with error ->
+                    say $"Observer.createRef / subscribe FAILED -> {describe error}"
+                    return "WALL"
+            }
+
+        detail "the observer interface is declared in the sibling C# project (TourInterop) because"
+        detail "Orleans' proxy source generators are Roslyn generators and never run over F#."
+
+        if outcome = "SUPPORTED" then
+            verdict "SUPPORTED — with the requirement that the observer interface lives in a C#-compiled assembly"
+        else
+            verdict $"{outcome} — see the lines above and the README"
+    }
+
+let private runBroadcast (factory: IGrainFactory) =
+    task {
+        section 9 "Broadcast channels (EXPERIMENT) — functional producer, two consumer arms"
+
+        let announcer = AnnouncerApi.ref factory "region-eu"
+        let! probe = announcer.providerProbe ()
+        say $"handler resolved the broadcast-channel provider from context.services -> {probe}"
+
+        let! _ = announcer.announce "maintenance window opens"
+        let! total = announcer.announce "maintenance window closes"
+        say $"published {total} announcements from a functional handler"
+
+        let consumer = factory.GetGrain<IBroadcastConsumerGrain> "region-eu"
+
+        let! delivered =
+            waitUntil (TimeSpan.FromSeconds 20.0) (fun () ->
+                task {
+                    let! received = consumer.Received()
+                    return received.Count >= 2
+                })
+
+        let! received = consumer.Received()
+        say $"arm (a) C#-declared consumer grain received -> {List.ofSeq received}"
+
+        // Arm (b): the same attribute and the same interface on an F# class grain, with NO C#
+        // assembly involved — hand-registered in GrainTypeOptions.Classes because an F# assembly
+        // carries no Orleans application-part attributes.
+        let! fsharpDelivered =
+            waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                Task.FromResult(List.length (BroadcastInbox.all ()) >= 2))
+
+        let fsharpReceived = BroadcastInbox.all ()
+        say $"arm (b) F#-ONLY class grain consumer received -> {fsharpReceived}"
+
+        detail "the PRODUCER is a plain functional handler — nothing extra needed."
+        detail "the CONSUMER is a class grain either way: an F# one works, but ONLY if it also"
+        detail "implements IGrainWithStringKey (so Orleans can build an activator for it) and is"
+        detail "hand-added to GrainTypeOptions.Classes. Without IGrainWithStringKey the publish is"
+        detail "routed and then fails with 'Unable to find an IGrainContextActivatorProvider'."
+
+        if delivered && fsharpDelivered then
+            verdict "COMPOSED — functional producer; consumer is a class grain, and an F#-only one works"
+        elif delivered then
+            verdict "COMPOSED — functional producer + C#-declared consumer; the F#-only arm did not deliver"
+        else
+            verdict "WALL — publish succeeded but no consumer delivery was observed; see the README"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -375,6 +484,8 @@ let private runTour (host: IHost) =
         do! runCancellation factory
         do! runVersioning factory
         do! runStreams factory host.Services
+        do! runObservers factory
+        do! runBroadcast factory
 
         printfn ""
         printfn "Tour complete. Shutting the silo down..."
@@ -400,7 +511,16 @@ let main _argv =
         // Deliberately ONLY version 1 of tour.versioned.
         silo.AddFunctionalGrain VersionedDefinition.definition |> ignore
         silo.AddFunctionalGrain ProducerDefinition.definition |> ignore
-        silo.AddFunctionalGrain ConsumerDefinition.definition |> ignore)
+        silo.AddFunctionalGrain ConsumerDefinition.definition |> ignore
+        silo.AddFunctionalGrain NotifierDefinition.definition |> ignore
+        silo.AddFunctionalGrain AnnouncerDefinition.definition |> ignore
+
+        // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
+        // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the
+        // silo. If Orleans accepts it, no C# bridge is needed for a broadcast consumer.
+        silo.Services.Configure<Orleans.Configuration.GrainTypeOptions>(fun (options: Orleans.Configuration.GrainTypeOptions) ->
+            options.Classes.Add typeof<FSharpBroadcastConsumer> |> ignore)
+        |> ignore)
     |> ignore
 
     let host = builder.Build()
