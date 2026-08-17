@@ -195,6 +195,8 @@ references, so it must never be part of a persistent state type — the F# codec
 See [Grain Definition guide](/orleans-fsharp/grain-definition/) for the full keyword list. Per-grain Orleans
 attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
 `[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
+On the [functional grain runtime](/orleans-fsharp/functional-grains/) they are ordinary definition
+operations instead — including `onStream` / `onBroadcast` for implicit subscriptions.
 
 ### Modules
 

@@ -794,6 +794,81 @@ activation itself may be collected. Omitting it leaves the host's stock Orleans 
 effect, and any state change the application did not explicitly write is lost when that activation
 ends.
 
+## Implicit subscriptions: onStream and onBroadcast
+
+`onStream provider ns hook` subscribes the grain **type** to one Orleans stream namespace.
+Publishing to `StreamId.Create(ns, key)` then activates the grain whose identity encodes `key` --
+creating it if it does not exist -- and delivers the item to the hook. `onBroadcast provider ns
+hook` is the same thing over a broadcast-channel provider.
+
+```fsharp
+grainFor InboxApi.contract {
+    defaultState (fun () -> { mail = [] })
+
+    onStream "StreamProvider" "chat.messages" (fun context state (item: Message) ->
+        task { return { state with mail = state.mail @ [ item ] } })
+
+    onBroadcast "BroadcastProvider" "chat.control" (fun context state (item: Control) ->
+        task { return state })
+
+    handle (_.read) (fun _ state () -> task { return state, state.mail })
+}
+```
+
+Nothing else is needed: no attribute, no class grain, no code generation. The item type is inferred
+from the hook, so it usually wants an annotation (`(item: Message)`). Several declarations are
+allowed, one per `(provider, namespace)` pair.
+
+**Publishing to one of these grains needs the contract's key encoding.** Orleans routes an
+implicit delivery to `GrainId.Create(grainType, streamId.Key)` -- the stream key bytes verbatim --
+so the stream key must be the grain key as this contract encodes it. `stringKey` and `guidKey`
+agree with `StreamId.Create(ns, key)`; `int64Key` does **not** (`StreamId.Create(ns, 42L)` writes
+decimal `"42"`, the codec writes hexadecimal `"2A"`, and the naive publish silently reaches the
+grain whose key reads as `0x42` = 66), and the compound codecs have no overload at all. Ask the
+contract instead:
+
+```fsharp
+let streamId  = FunctionalGrain.streamId  InboxApi.contract "chat.messages" inboxKey
+let channelId = FunctionalGrain.channelId InboxApi.contract "chat.control"  inboxKey
+```
+
+**Delivery follows the `onTimer` rules exactly.** A delivery is an ordinary non-reentrant grain
+call; the hook receives the whole current state and returns the replacement, which is published in
+memory **only on a successful return**; the runtime performs no storage write of its own; and
+`context.cancellationToken` is `CancellationToken.None`, because the Orleans delivery path supplies
+none.
+
+`context.streamSequenceToken` carries the Orleans cursor of the item being delivered -- `Some` for
+an `onStream` delivery on a rewindable provider, `None` otherwise, and always `None` for
+`onBroadcast` (a channel has no cursor). **The runtime never rewinds with it**: a fresh activation
+resumes at the subscription's current position. It is exposed so an application can checkpoint or
+de-duplicate, which matters because delivery is at-least-once: a hook that throws makes Orleans
+**redeliver the same item** with backoff for up to `StreamPullingAgentOptions.MaxEventDeliveryTime`
+(30 seconds by default), after which the item is dropped and the stream continues. An implicit
+subscription is never faulted by a delivery failure.
+
+Rejections, all at the earliest stage that can see them:
+
+| Rule | Stage |
+|---|---|
+| Blank provider or namespace | definition sealing |
+| A repeated `(provider, namespace)` pair on one transport | definition sealing |
+| `statelessWorker` combined with `onStream` / `onBroadcast` | definition sealing |
+| A provider name no registered provider answers to | silo startup |
+
+The `statelessWorker` rejection is Orleans': `SiloStreamProviderRuntime.BindExtension` throws
+"The extension ... cannot be bound to a Stateless Worker", and implicit delivery addresses one
+activation identity derived from the stream key, which multiplexed local activations cannot honor.
+
+One caveat: Orleans' implicit-subscription binding names a *namespace*, not a provider. If the silo
+runs a second stream provider and an item reaches a declared namespace through it, Orleans still
+routes it to this grain type; the runtime matches on `(provider, namespace)`, logs a warning, and
+leaves that item undelivered. Batch delivery (`IAsyncBatchObserver`) is not exposed -- a hook
+receives one item at a time.
+
+`examples/feature-tour` status-matrix row 11 demonstrates all of this end to end, including the
+`activations: 1` line proving the publish itself created the activation.
+
 ## Placement: statelessWorker and placement
 
 `statelessWorker maxLocalWorkers` multiplexes a grain type across up to `maxLocalWorkers` local
