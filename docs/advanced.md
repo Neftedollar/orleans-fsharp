@@ -5,12 +5,18 @@
 > **Note.** The `grain { }` CE, `AddFSharpGrain` and the `FSharpGrain.*` handle module used in the
 > reminder, timer and multi-silo examples below now carry `[<Obsolete>]` (warning, not error) --
 > they still work exactly as described. For the current grain authoring model see
-> [functional-grains.md](functional-grains.md). Transactions (`TransactionalGrainDefinition`) and
-> the other topics on this page are not affected.
+> [functional-grains.md](functional-grains.md). The other topics on this page are not affected.
+>
+> **Transactions.** The `TransactionalGrainDefinition` / `FSharpTransactionalGrain` path described
+> below is the classic CodeGen one and is unchanged. The functional runtime has its own, which
+> needs no CodeGen and no mutable state class: see
+> [functional-grains.md, "Distributed ACID transactions"](functional-grains.md#distributed-acid-transactions)
+> for `transactionalStateFrom`, per-operation `transactional`, and the normative re-execution
+> semantics.
 
 ## What you'll learn
 
-- How to use Orleans transactions from F#
+- How to use Orleans transactions from F# on the classic CodeGen path (the functional runtime's own transactions are in [functional-grains.md](functional-grains.md#distributed-acid-transactions))
 - How to configure the grain directory
 - How to integrate with OpenTelemetry
 - How to perform graceful shutdown

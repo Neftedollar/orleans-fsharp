@@ -343,9 +343,15 @@ naming, because both features they touch are decided on the target side from tha
 - **Version admission.** A facade cannot claim a version of its own: the contract version travels
   with the contract the facade was bound from. Bind the v3 contract through a facade and you send
   v3 requests and get the v3 admission decisions, `sinceVersion` refusals included.
+- **Transactions.** The operation's `transactional` policy travels in the same admission byte, and
+  the call site chooses the transactional invokable from it — so a facade member bound to a
+  transactional operation joins or creates the transaction exactly as the F# API-record field does.
+  A C# caller can drive a whole transfer, commit and abort, through facades alone
+  (`tests/Orleans.FSharp.Integration/FunctionalPhaseDIntegrationTests.fs`, "the C# facade drives a
+  transaction end to end").
 
-See [Functional Grain Runtime](functional-grains.md), "Reentrancy" and "Version tolerance", for
-what those decisions are.
+See [Functional Grain Runtime](functional-grains.md), "Reentrancy", "Version tolerance", and
+"Distributed ACID transactions", for what those decisions are.
 
 ---
 

@@ -14,6 +14,7 @@ description: "A second, complete authoring model: user-authored API records inst
 - Operation rename via `operationId`, contract-version matching, and opting into version tolerance
 - Reentrancy variants: whole-grain `reentrant` and the per-request `mayInterleave` predicate
 - The persistence model: explicit writes only, unique state names, and multi-provider non-atomicity
+- Distributed ACID transactions: `transactionalStateFrom`, per-operation `transactional`, and the normative re-execution semantics
 - Lifecycle hooks, timers, reminders, and collection age
 - Delivery semantics: acknowledged vs. one-way, what a successful call does *not* imply, and cancellation without rollback
 - Immutable-state guidance -- deep mutation is unguarded by design
@@ -1068,6 +1069,203 @@ end, including the measured 8-concurrent-calls-to-4-activations signature.
 `statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
 `collectionAge` -- durable identity and idle collection age are both meaningless for activations
 Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
+
+## Distributed ACID transactions
+
+A functional grain participates in a real Orleans distributed transaction. There is no separate
+transaction runtime: a call whose operation declares a policy is carried on Orleans' own
+transactional invokable base, so the ambient transaction is joined on the way out, created or
+joined on the way in, and reported back to the caller exactly as it is for a
+`[Transaction]`-attributed CodeGen grain method.
+
+Two declarations are involved.
+
+**On the contract** — the per-operation policy:
+
+```fsharp
+let account =
+    grainContract<AccountActor, string, AccountApi> () {
+        grainType "bank.account"
+        stringKey
+        transactional Orleans.TransactionOption.CreateOrJoin (_.deposit)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.withdraw)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.balance)
+    }
+```
+
+`transactional` takes **Orleans' own `Orleans.TransactionOption`** — the six members are identical
+on Orleans 10.1.0 and 10.2.2, and the admission byte encodes the value directly, so there is no
+mapping to drift. (The legacy `Orleans.FSharp.Transactions.TransactionOption` union belongs to the
+classic `grain { }` / CodeGen path; the two share a simple name, so open only the namespace you
+mean.)
+
+**On the definition** — the transactional state:
+
+```fsharp
+type Ledger = { balance: decimal; entries: string list }
+
+let ledger = TransactionalState.create<Ledger> "ledger" "TransactionStore"
+
+grainFor account {
+    defaultState (fun () -> ())
+    transactionalStateFrom ledger (fun _ -> { balance = 0m; entries = [] })
+
+    handle (_.deposit) (fun context state (amount: decimal) ->
+        task {
+            do!
+                (context.transactionalState ledger)
+                    .update (fun value -> { value with balance = value.balance + amount })
+
+            return state, ()
+        })
+
+    handle (_.balance) (fun context state () ->
+        task {
+            let! value = (context.transactionalState ledger).readWith (fun l -> l.balance)
+            return state, value
+        })
+}
+```
+
+`Ledger` is an ordinary immutable F# record. Orleans' own `ITransactionalState<'T>` requires
+`'T : class, new()` and applies an update by **mutating** the instance it stores, which no F#
+record can satisfy; the runtime therefore stores its own mutable box and application code only
+ever sees `'State -> 'State`. That is the whole reason the box exists, and it is also what makes
+in-place mutation of transactional state impossible from application code.
+
+### The facade
+
+`context.transactionalState descriptor` returns a facade bound to the invocation, exactly like
+`context.persistentState`:
+
+| Member | Shape | Notes |
+|---|---|---|
+| `read()` | `unit -> Task<'State>` | The only member whose result is the stored value, so it is the only one Orleans deep-copies before returning. |
+| `readWith project` | `('State -> 'R) -> Task<'R>` | `project` runs inside Orleans' read lock; its result is the application's own value and is returned uncopied. |
+| `update next` | `('State -> 'State) -> Task<unit>` | `next` runs inside Orleans' write lock. |
+| `updateWith next` | `('State -> 'State * 'R) -> Task<'R>` | Same, returning a result alongside the replacement. |
+
+All four take **synchronous** functions, which is deliberate rather than an omission. Orleans runs
+them inside the transactional state's reader-writer lock and throws `LockRecursionException` if
+the same state is re-entered from inside one; a function that cannot be awaited cannot call
+another grain, another transactional state, or any I/O from inside that lock.
+
+A transactional state has no "record exists" flag — Orleans materializes an unwritten state with
+`new TState()` — so `transactionalStateFrom` takes the initial value the first read observes. It
+is stored only when an update actually writes.
+
+### Which operations are transaction-scoped
+
+Three of the six options make Orleans create or join a transaction before the handler runs, and
+they are exactly the three for which Orleans' own `TransactionRequestBase.IsTransactionRequired`
+is true:
+
+| Option | Transaction-scoped | Meaning |
+|---|---|---|
+| `Create` | yes | Always starts a new transaction, even inside one. |
+| `CreateOrJoin` | yes | Joins the caller's transaction, or starts one. |
+| `Join` | yes | Requires the caller to be inside a transaction. |
+| `Supported` | no | Not transactional, but the caller's context is forwarded onward. |
+| `Suppress` | no | Not transactional; a caller's context is hidden from it. |
+| `NotAllowed` | no | Refuses to be called from inside a transaction. |
+
+**Inside a transaction-scoped operation the only durable effect available is a
+`transactionalStateFrom` facet.** The handler's replacement primary state is discarded exactly as a
+`readOnly` handler's is, and its persistent-state facades reject the `State` setter and every
+storage call, with a diagnostic naming the reason. Neither an in-memory publication nor a storage
+write has any participant that could undo it, so allowing either would let one aborted transaction
+leave the activation half-updated.
+
+`readOnly` composes: a transaction started by a `readOnly` transactional operation is started
+read-only, and the transactional facade refuses every update.
+
+### Re-execution semantics (normative)
+
+**Orleans does not re-execute a handler when a transaction aborts.** There is no retry loop in
+`TransactionRequestBase.Invoke`, and `ReaderWriterLock.EnterLock` invokes the read or update
+callback exactly once. When a participant throws, when a lock cannot be acquired in time, or when
+the commit protocol fails, the transaction is aborted and the caller receives an
+`OrleansTransactionException` (usually `OrleansTransactionAbortedException`).
+
+The consequences, in order of how often they surprise people:
+
+1. **A retry is the caller's decision, not the runtime's.** Nothing in this library retries an
+   aborted transaction. If a transaction should be attempted again, the application must call it
+   again — and every participant handler will then run again, from the beginning.
+2. **A handler runs at most once per attempt**, so "exactly once" holds per successful attempt and
+   not across retries. An attempt either commits everything or leaves nothing behind, but two
+   attempts are two runs of your code.
+3. **Effects outside transactional state are not covered.** Sending a message, writing a log,
+   calling a non-transactional grain, or mutating a captured variable happens whether or not the
+   transaction commits, and happens again on every retry. The state-neutrality rule above removes
+   the two the runtime *can* see (primary state and persistent facets); it cannot see the rest.
+4. **The read and update functions must be pure over the value they are handed.** They run inside
+   Orleans' lock and their result is what gets stored. The API makes the common failure impossible
+   — `'State -> 'State` has no access to the stored object — but a function that mutates something
+   it captured from outside is still your own hazard.
+
+`examples/feature-tour` §14 prints the measurement rather than asserting the claim: an aborted
+transfer enters the `withdraw` handler exactly once, and the counter is shown to be live by an
+application-driven retry moving it to two.
+
+### Sealing and startup rules
+
+Contract sealing rejects:
+
+- `transactional` applied twice to one operation, and an undefined `TransactionOption` value;
+- `transactional` with `oneWay` — a one-way call has no reply, so the participants it enlists
+  could never be reported back to the transaction;
+- `transactional` with `alwaysInterleave` — Orleans admits an always-interleave request before any
+  interleaving policy is consulted, so two turns of one activation could hold transactional locks
+  on the same states at once.
+
+Definition sealing rejects:
+
+- two transactional facets under one state name (the name is part of the `ParticipantId` Orleans
+  addresses during the commit protocol, and of the storage key);
+- a transactional facet no operation can reach — every callback other than an operation declared
+  `Create`, `CreateOrJoin`, `Join`, or `Supported` runs without a `TransactionContext`, which
+  Orleans requires for both `PerformRead` and `PerformUpdate`;
+- `transactionalStateFrom` on a contract whose `grainType` is derived from the actor brand, and
+  `transactionalStateFrom` with `statelessWorker`, for the same durable-identity reasons
+  `stateFrom` rejects them.
+
+A `transactional` operation on a definition with **no** transactional facet is accepted: a
+state-free participant is a supported Orleans shape, and it is what every orchestrator ("unit of
+work") grain looks like.
+
+Silo startup rejects a definition that declares any transaction option or attaches any
+transactional state when the silo has no `UseTransactions()`, and rejects a transactional storage
+name that resolves to neither a keyed `ITransactionalStateStorageFactory` nor a keyed
+`IGrainStorage` — the exact resolution order `NamedTransactionalStateStorageFactory.Create`
+performs.
+
+### Hosting
+
+```fsharp
+silo.UseTransactions()
+silo.AddMemoryGrainStorage "TransactionStore"
+silo.AddFunctionalGrain accountDefinition
+```
+
+A client that only *calls* a transactional operation needs nothing beyond
+`AddFunctionalGrainClient()`: a `Create` or `CreateOrJoin` call from outside a transaction starts
+the transaction on the silo that receives it. `UseTransactions()` on the client builder is needed
+only when the client itself drives `ITransactionClient.RunTransaction`.
+
+### What this does not give you
+
+- **No automatic retry**, as above.
+- **No transactional primary state.** `stateFrom` and `usePersistentState` are not participants; a
+  transaction-scoped operation cannot write them at all.
+- **No transactional streams, timers, reminders, or observer pushes.** None of them carries a
+  transaction context, so the facade refuses the facet inside them.
+- **No cross-cluster transactions.** Orleans' transaction manager is per-cluster.
+- **The snapshot copy is a serializer round trip.** Before the first write of each transaction the
+  runtime copies the stored value through the exact-type payload codec — the same byte boundary
+  the transport puts between an argument and its handler. That is one serialize plus one
+  deserialize per transaction per written state; in exchange, an application that mutates its own
+  state object in place cannot corrupt the version an abort has to restore.
 
 ## Reminder rename and removal: the explicit unregister migration
 

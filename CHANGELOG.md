@@ -22,6 +22,22 @@
 
 ### Added
 
+- **Distributed ACID transactions for the functional grain runtime** (spec 004 item 2).
+  `transactionalStateFrom (TransactionalState.create<'S> name storage)` attaches an
+  Orleans transactional facet, reached through `context.transactionalState`, and
+  `transactional Orleans.TransactionOption.X (_.op)` declares an operation's policy.
+  There is no separate transaction runtime: a transactional call is carried on Orleans'
+  own `TransactionRequest<'T>` invokable base, which is where the whole protocol lives,
+  so the ambient transaction is joined on the way out and created or joined on the way
+  in exactly as it is for a `[Transaction]`-attributed CodeGen method. The state type
+  may be an ordinary immutable F# record: the runtime stores Orleans' required
+  `class, new()` instance itself and application code only ever sees `'State -> 'State`.
+  Inside a transaction-scoped operation (`Create`, `CreateOrJoin`, `Join`) the
+  transactional facet is the only durable effect available — the handler's replacement
+  primary state is discarded and its persistent-state facades refuse every write, since
+  nothing could roll either back. Orleans does **not** re-execute a handler when a
+  transaction aborts; the normative re-execution semantics are in
+  `docs/functional-grains.md`.
 - **CI matrix across the supported Orleans range.** `build-and-test` now runs twice:
   at the declared floor, and at Orleans 10.2.2 via `-p:OrleansVersion=10.2.2`. Breakage
   from Orleans moving forward is caught without raising the floor for consumers. Bump
