@@ -55,3 +55,12 @@ Each item is grounded in a verified finding; pointers name the evidence.
     Dashboard's grain-type keying, not run in-session; first live Dashboard
     look should confirm the per-actor rows and the flat DispatchAsync method
     column.
+11. **Two load-sensitive wall-clock tests flake under machine load** (found
+    during spec-004 Phase C re-verification, 2026-08-18, proven pre-existing
+    by 6 interleaved A/B full-suite runs on base vs the C1 tree — 0 failures
+    on either side; failures cluster by run duration, not by tree):
+    `GrainResilienceTests.withTimeout …` (a 50 ms Polly budget) and
+    `FunctionalPhase5IntegrationTests … KeepAlive=false does not extend
+    collection lifetime` (an Orleans collection-age window). Both assert pure
+    wall-clock budgets; hardening candidates (wider budgets, virtual time, or
+    quarantine-with-retry), on their own ticket.
