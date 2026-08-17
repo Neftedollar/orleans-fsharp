@@ -14,19 +14,6 @@ let config =
         useJsonFallbackSerialization
     }
 
-// Force-load before the silo's first UseOrleans/AddSerializer pass, not inside it.
-// WebApplicationBuilder has no applyToHost-equivalent wrapper (applyToHost targets
-// HostApplicationBuilder specifically), so this app calls SiloConfig.applyToSiloBuilder from
-// inside builder.Host.UseOrleans(...) below -- and applyToSiloBuilder's own internal
-// preloadManifestAssemblies() call then runs a step too late for the same reason
-// SiloConfigBuilder.fs's applyToHost comment documents: "the manifest snapshot is taken while
-// UseOrleans constructs the silo builder". Without this, activating any grain that touches
-// addMemoryStorage's memory storage grain fails with:
-// System.ArgumentException: Could not find an implementation for interface Orleans.Storage.IMemoryStorageGrain
-// See docs/functional-grains.md, "Running a silo from a standalone F# process".
-typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore
-typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore
-
 let builder = WebApplication.CreateBuilder()
 
 builder.Host.UseOrleans(fun siloBuilder ->

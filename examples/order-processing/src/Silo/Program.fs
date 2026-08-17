@@ -13,18 +13,6 @@ let config =
         useJsonFallbackSerialization
     }
 
-// Force-load Orleans.Reminders before the silo's first UseOrleans/AddSerializer pass (which
-// SiloConfig.applyToHost triggers immediately below): addMemoryReminderService reaches
-// Orleans.IReminderTableGrain's implementation (InMemoryReminderTable) only through an F# hop, and
-// Orleans only manifests assemblies already loaded when it takes that snapshot -- the same
-// mechanism, and the same documented fix, as the two force-loads applyToHost already does for
-// addMemoryStorage / the F# surface itself. See docs/functional-grains.md, "Running a silo from a
-// standalone F# process". Without this, the silo fails to start with:
-// System.ArgumentException: Could not find an implementation for interface Orleans.IReminderTableGrain
-// IReminderTableGrain itself is internal to Orleans.Reminders.dll; IReminderTable (public, same
-// assembly) force-loads the same assembly.
-typeof<Orleans.IReminderTable>.Assembly |> ignore
-
 let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 builder.Services.AddFSharpGrain<OrderState, OrderCommand>(OrderGrainDef.order) |> ignore

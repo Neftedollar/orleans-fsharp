@@ -59,8 +59,9 @@ type internal FunctionalGrainRegistry() =
 
     /// <summary>
     /// Register one hosted definition. Repeated registration of the same definition value is
-    /// idempotent; a different definition sharing an actor brand or an explicit grain type is a
-    /// configuration error.
+    /// idempotent; a different definition sharing an actor brand or a grain type name — whether
+    /// that name was declared explicitly or derived from the actor brand — is a configuration
+    /// error.
     /// </summary>
     member _.Add(definition: FunctionalHostedDefinition) =
         lock gate (fun () ->
@@ -90,7 +91,7 @@ type internal FunctionalGrainRegistry() =
                 | Some existing ->
                     fail
                         FunctionalSiloDiagnostics.SiloStage
-                        $"{describe candidate} conflicts with the already registered {describe existing}. Each actor brand and each explicit grain type maps to exactly one registered contract and hosted definition."
+                        $"{describe candidate} conflicts with the already registered {describe existing}. Each actor brand and each grain type name maps to exactly one registered contract and hosted definition, whether the name was declared with 'grainType' or derived from the actor brand."
                 | None -> pending.Add candidate)
 
     /// <summary>Atomically freeze the registry and return the immutable snapshot.</summary>
