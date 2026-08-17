@@ -825,3 +825,28 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
             | Rejected reason -> Assert.Contains("blank", reason)
             | Accepted _ -> failwith "expected a rejection"
         }
+
+    /// <remarks>
+    /// Regression for the tuple defect. Orleans owns <c>System.Tuple</c>, so a tuple argument
+    /// never reaches the F# codec whole — Orleans' tuple codec hands each ELEMENT to it as its
+    /// own field, carrying only that element's <c>FullName</c>. Declaring the tuple therefore
+    /// has to declare the elements too, and the expected-type guard has to admit them; before
+    /// the fix this call failed on the first send with either "type … not found" or
+    /// "not assignable to the expected type". Both directions in one call.
+    /// </remarks>
+    [<Fact>]
+    member _.``a tuple of FSharp.Core generics round-trips through the real transport``() =
+        task {
+            let probe = fixture.Probe $"blend-{Guid.NewGuid():N}"
+
+            let! author, tags = probe.api.blend (Some "alice", [ "orleans"; "fsharp" ])
+
+            Assert.Equal<string option>(Some "ALICE", author)
+            Assert.Equal<string list>([ "fsharp"; "orleans" ], tags)
+
+            // The empty/None arm too: the elements still have to resolve when they carry nothing.
+            let! emptyAuthor, emptyTags = probe.api.blend (None, [])
+
+            Assert.Equal<string option>(None, emptyAuthor)
+            Assert.Equal<string list>([], emptyTags)
+        }

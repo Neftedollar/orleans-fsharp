@@ -943,6 +943,66 @@ module internal FSharpBinaryFormat =
                 t
 
     /// <summary>
+    /// A declared payload type together with every type Orleans' own codecs decompose it into:
+    /// its generic arguments and array element type, transitively.
+    /// </summary>
+    /// <remarks>
+    /// A generalized codec is only reached for what no built-in codec claims, and Orleans DOES
+    /// claim <c>System.Tuple</c> and arrays. Its codecs for those hand each ELEMENT to the F#
+    /// codec separately, so an F# tuple never arrives at this codec whole — only its elements do,
+    /// one field at a time. Both halves of top-level payload handling are scoped to the declared
+    /// type and both therefore have to see the elements as well: the declaration table, because
+    /// the name embedded in an element's bytes is the element's own <c>FullName</c> and
+    /// <c>Type.GetType</c> cannot resolve a generic whose outer type lives in FSharp.Core; and
+    /// the expected-type guard, because an element is legitimately not assignable to the tuple
+    /// that was asked for.
+    ///
+    /// Recursion follows generic arguments and array elements only. A record, union or option
+    /// field is never decomposed by Orleans — the F# codec owns those payloads whole and reaches
+    /// their fields through <c>getCodec</c>, which writes no type name at all — so walking into
+    /// them would declare types that never appear on the wire by name and would widen the
+    /// FullName-collision guard for no gain.
+    /// </remarks>
+    let private constituentsOf =
+        let cache = ConcurrentDictionary<Type, Type[]>()
+
+        fun (root: Type) ->
+            if isNull root then
+                Array.empty
+            else
+                cache.GetOrAdd(
+                    root,
+                    fun start ->
+                        let seen = ResizeArray<Type>()
+
+                        let rec walk (current: Type) =
+                            if not (isNull current) && not (seen.Contains current) then
+                                seen.Add current
+
+                                if current.IsArray then
+                                    walk (current.GetElementType())
+
+                                if current.IsGenericType then
+                                    for argument in current.GetGenericArguments() do
+                                        walk argument
+
+                        walk start
+                        seen.ToArray())
+
+    /// <summary>Record one closed type in the declaration table. Idempotent.</summary>
+    let private declareOne (declared: Type) =
+        if
+            not declared.ContainsGenericParameters
+            && not (isNull declared.FullName)
+        then
+            let existing =
+                declaredTypes.GetOrAdd(declared.FullName, declared)
+
+            if not (obj.ReferenceEquals(existing, declared)) then
+                invalidOp
+                    $"FSharpBinaryCodec: the type name '{declared.FullName}' is already declared as a top-level payload type by '{existing.AssemblyQualifiedName}' and cannot be redeclared by '{declared.AssemblyQualifiedName}'. Two distinct types sharing one FullName cannot both be resolved when Orleans elides the field type."
+
+    /// <summary>
     /// Declare one closed type as a top-level payload type so an elided field type can be
     /// resolved by name. Idempotent.
     /// </summary>
@@ -953,19 +1013,21 @@ module internal FSharpBinaryFormat =
     /// registration order and hand the wrong object to a handler. Declaration happens during
     /// binding preflight and silo startup, never on the hot path, so failing here converts a
     /// silent cross-assembly type confusion into a configuration diagnostic.
+    ///
+    /// The declared type's constituents are declared with it — see <c>constituentsOf</c> for why
+    /// a tuple's elements have to be resolvable by name in their own right.
     /// </remarks>
     let internal declareType (declared: Type) =
-        if
-            not (isNull declared)
-            && not declared.ContainsGenericParameters
-            && not (isNull declared.FullName)
-        then
-            let existing =
-                declaredTypes.GetOrAdd(declared.FullName, declared)
+        for constituent in constituentsOf declared do
+            declareOne constituent
 
-            if not (obj.ReferenceEquals(existing, declared)) then
-                invalidOp
-                    $"FSharpBinaryCodec: the type name '{declared.FullName}' is already declared as a top-level payload type by '{existing.AssemblyQualifiedName}' and cannot be redeclared by '{declared.AssemblyQualifiedName}'. Two distinct types sharing one FullName cannot both be resolved when Orleans elides the field type."
+    /// <summary>
+    /// Whether a wire-resolved type is inside the shape the caller declared: the expected type
+    /// itself (or a subtype of it), or one of the constituents Orleans decomposes it into.
+    /// </summary>
+    let private admitsResolved (expected: Type) (resolved: Type) =
+        constituentsOf expected
+        |> Array.exists (fun candidate -> candidate.IsAssignableFrom resolved)
 
     /// <summary>
     /// Serializes a value to a codec-level byte array that embeds the type's FullName.
@@ -1005,14 +1067,16 @@ module internal FSharpBinaryFormat =
 
                 // The caller's expected type, when it published one, is authoritative over the
                 // name the payload carries: wire-name resolution stays (a declared abstract or
-                // base type has to admit its subtypes) but it may not step outside the
-                // hierarchy the caller asked for.
+                // base type has to admit its subtypes) but it may not step outside the shape the
+                // caller asked for. That shape includes the constituents Orleans' own codecs
+                // decompose the expected type into — an element of a declared tuple is read
+                // through this codec on its own and is not assignable to the tuple.
                 match ExpectedPayloadType.Current with
                 | null -> ()
-                | expected when expected.IsAssignableFrom resolved -> ()
+                | expected when admitsResolved expected resolved -> ()
                 | expected ->
                     invalidOp
-                        $"FSharpBinaryCodec: the payload declares type '{typeName}', which is not assignable to the expected type '{expected.FullName}'."
+                        $"FSharpBinaryCodec: the payload declares type '{typeName}', which is not assignable to the expected type '{expected.FullName}' nor to any of its constituents."
 
                 resolved
             else

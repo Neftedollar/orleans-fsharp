@@ -98,6 +98,7 @@
     <Compile Include="FunctionalCodecTests.fs" />
     <Compile Include="FunctionalBindingTests.fs" />
     <Compile Include="FunctionalCurriedTests.fs" />
+    <Compile Include="FunctionalTupleCodecTests.fs" />
     <Compile Include="FunctionalPersistentStateTests.fs" />
     <Compile Include="FunctionalRuntimeTests.fs" />
     <Compile Include="FunctionalCollisionPayload.fs" />

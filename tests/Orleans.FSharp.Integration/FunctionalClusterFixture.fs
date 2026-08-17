@@ -86,6 +86,11 @@ type ProbeApi =
       big: int -> Task<string>
       sink: byte[] -> Task<int>
       note: Note -> Task<NoteResult>
+      /// A tuple whose elements are FSharp.Core generics, in BOTH positions. Orleans owns
+      /// System.Tuple, so this argument never reaches the F# codec whole — its elements arrive
+      /// one field at a time, each carrying only its own type name. It is the shape that used
+      /// to fail on the first call over the real transport.
+      blend: (string option * string list) -> Task<string option * string list>
       /// A CURRIED field. Both arguments are strings on purpose: a closure that assembled
       /// the canonical tuple in the wrong order would still type-check, so only the value
       /// the silo observes can prove the order survives the real wire.
@@ -399,6 +404,14 @@ let private definitionFor (contract: GrainContract<'Actor, ProbeId, ProbeApi>) =
                     return state, Rejected "the title is blank"
                 else
                     return state, Accepted(note.tags.Length, note)
+            })
+
+        handle (_.blend) (fun _ state ((author, tags): string option * string list) ->
+            task {
+                // The reply is a tuple of the same two generic shapes, so one call proves the
+                // argument direction and the reply direction over the real silo boundary.
+                let echoedAuthor = author |> Option.map (fun name -> name.ToUpperInvariant())
+                return state, (echoedAuthor, List.rev tags)
             })
 
         handle (_.sink) (fun context state (payload: byte[]) ->
