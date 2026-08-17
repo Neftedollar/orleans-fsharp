@@ -28,6 +28,7 @@ open FeatureTour.Streams
 open FeatureTour.ObserverTour
 open FeatureTour.Broadcast
 open FeatureTour.Interop
+open FeatureTour.Heterogeneous
 
 // ── Silo ─────────────────────────────────────────────────────────────────────
 
@@ -467,6 +468,40 @@ let private runBroadcast (factory: IGrainFactory) =
             verdict "WALL — publish succeeded but no consumer delivery was observed; see the README"
     }
 
+let private runHeterogeneous () =
+    task {
+        section 10 "Heterogeneous cluster — one grain type advertised by only one silo"
+
+        say "deploying a two-silo cluster (Microsoft.Orleans.TestingHost, in-process silos)..."
+        let! observation = HeterogeneousRun.run ()
+
+        say $"silos: {observation.siloNames}"
+        say $"'{Cluster.RegionalGrainType}' appears in the local grain manifest of: {observation.regionalHostSilos}"
+
+        let everywhereSilos =
+            observation.everywherePlacements |> List.map snd |> List.distinct |> List.sort
+
+        let regionalSilos =
+            observation.regionalPlacements |> List.map snd |> List.distinct |> List.sort
+
+        say $"'{Cluster.EverywhereGrainType}' activations landed on: {everywhereSilos}"
+        say $"'{Cluster.RegionalGrainType}' activations landed on: {regionalSilos}"
+
+        for key, silo in observation.regionalPlacements do
+            detail $"{Cluster.RegionalGrainType}/{key} ran on {silo}"
+
+        let routedAway =
+            regionalSilos = observation.regionalHostSilos
+            && not (List.contains Cluster.PrimarySiloName regionalSilos)
+
+        if routedAway && List.length everywhereSilos > 1 then
+            verdict "SUPPORTED — the everywhere grain spreads over both silos; every regional call routes to the only silo advertising it"
+        elif routedAway then
+            verdict "SUPPORTED (partial spread) — regional calls route correctly, but the everywhere grain happened to land on one silo"
+        else
+            verdict "UNEXPECTED — regional placements did not match the advertising silos; see the per-key lines above"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -488,8 +523,13 @@ let private runTour (host: IHost) =
         do! runBroadcast factory
 
         printfn ""
-        printfn "Tour complete. Shutting the silo down..."
+        printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
         do! host.StopAsync()
+
+        do! runHeterogeneous ()
+
+        printfn ""
+        printfn "Tour complete." 
     }
 
 [<EntryPoint>]

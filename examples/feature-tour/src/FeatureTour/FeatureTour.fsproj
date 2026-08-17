@@ -18,7 +18,15 @@
     <Compile Include="Streams.fs" />
     <Compile Include="ObserverTour.fs" />
     <Compile Include="Broadcast.fs" />
+    <Compile Include="Heterogeneous.fs" />
     <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The heterogeneous-cluster section builds a real two-silo cluster in process. The
+         repository's docker testbed is the other way to show this, but it needs Docker and
+         Redis, so it cannot run from `dotnet run` or in the examples CI job. -->
+    <PackageReference Include="Microsoft.Orleans.TestingHost" />
   </ItemGroup>
 
   <ItemGroup>
