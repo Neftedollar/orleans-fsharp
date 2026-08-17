@@ -518,3 +518,102 @@ let ``a reminder period below the configured MinimumReminderPeriod fails silo st
     Assert.Contains(reported, (fun message -> message.Contains "functional.toofastreminder"))
     Assert.Contains(reported, (fun message -> message.Contains "00:00:01"))
     Assert.Contains(reported, (fun message -> message.Contains "00:00:02"))
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 2 — transactional startup validation
+// ──────────────────────────────────────────────────────────────────────────────
+
+type TxHostActor = private TxHostActor of unit
+
+[<NoEquality; NoComparison>]
+type TxHostApi = { bump: int -> Task<unit> }
+
+type TxHostState = { total: int }
+
+[<Literal>]
+let private TxHostGrainType = "hosting.tx"
+
+[<Literal>]
+let private TxHostStorage = "HostingTransactionStore"
+
+let private txHostState =
+    TransactionalState.create<TxHostState> "ledger" TxHostStorage
+
+let private txHostContract =
+    grainContract<TxHostActor, string, TxHostApi> () {
+        grainType TxHostGrainType
+        stringKey
+        transactional Orleans.TransactionOption.CreateOrJoin (_.bump)
+    }
+
+let private txHostDefinition =
+    grainFor txHostContract {
+        defaultState (fun () -> ())
+        transactionalStateFrom txHostState (fun _ -> { total = 0 })
+
+        handle (_.bump) (fun context state (by: int) ->
+            task {
+                do! (context.transactionalState txHostState).update (fun value -> { total = value.total + by })
+                return state, ()
+            })
+    }
+
+/// <summary>Transactions enabled and the named transactional storage present: the silo starts.</summary>
+type TransactionsPresentSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.UseTransactions() |> ignore
+            siloBuilder.AddMemoryGrainStorage TxHostStorage |> ignore
+            siloBuilder.AddFunctionalGrain txHostDefinition |> ignore
+
+/// <summary>UseTransactions is absent: startup validation has to reject it.</summary>
+type MissingTransactionsSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage TxHostStorage |> ignore
+            siloBuilder.AddFunctionalGrain txHostDefinition |> ignore
+
+/// <summary>The named transactional storage is absent.</summary>
+type MissingTransactionalStorageSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.UseTransactions() |> ignore
+            siloBuilder.AddFunctionalGrain txHostDefinition |> ignore
+
+[<Fact>]
+let ``a silo without UseTransactions refuses to host a transactional definition`` () =
+    let reported = deployExpectingFailure<MissingTransactionsSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "no Orleans transaction agent"))
+    Assert.Contains(reported, (fun message -> message.Contains "UseTransactions()"))
+    Assert.Contains(reported, (fun message -> message.Contains TxHostGrainType))
+
+[<Fact>]
+let ``a silo without the named transactional storage refuses to host the definition`` () =
+    let reported = deployExpectingFailure<MissingTransactionalStorageSiloConfigurator> ()
+
+    Assert.Contains(
+        reported,
+        (fun message ->
+            message.Contains "resolves to neither a named ITransactionalStateStorageFactory nor a named IGrainStorage")
+    )
+
+    Assert.Contains(reported, (fun message -> message.Contains TxHostStorage))
+
+/// <remarks>
+/// The non-vacuity control for both refusals above: the same definition on a silo that HAS
+/// transactions and the named storage starts and serves a transactional call.
+/// </remarks>
+[<Fact>]
+let ``a silo with transactions and the named storage hosts the definition`` () =
+    let cluster = deploy<TransactionsPresentSiloConfigurator> ()
+
+    try
+        // Bound through the silo's own grain factory: this test cluster's client builder is not
+        // configured for functional grains, and the point here is the silo, not the client.
+        let factory = (siloServices cluster).GetRequiredService<IGrainFactory>()
+        let grain = FunctionalGrain.ref txHostContract factory (Guid.NewGuid().ToString "N")
+        grain.bump(4).GetAwaiter().GetResult()
+    finally
+        cluster.StopAllSilos()
+        cluster.Dispose()

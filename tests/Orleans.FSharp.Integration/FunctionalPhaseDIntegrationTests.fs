@@ -13,6 +13,21 @@ open Swensen.Unquote
 open Orleans.FSharp
 open Orleans.FSharp.Integration.FunctionalPhaseDFixture
 
+/// <summary>
+/// A C#-shaped facade over the transactional account contract, used to show that spec 004 item
+/// 9's facade composes with item 2: a facade member bound to a <c>transactional</c> operation
+/// still travels the transactional invokable, because the facade delegates to the same bound
+/// call site the F# API record does.
+/// </summary>
+type IAccountFacade =
+    abstract Deposit: amount: decimal -> Task
+    abstract Withdraw: amount: decimal -> Task
+    abstract Balance: unit -> Task<decimal>
+
+/// <summary>A facade over the orchestrator, so the whole transaction can be driven from C# shapes.</summary>
+type IAtmFacade =
+    abstract Transfer: from: string * into: string * amount: decimal -> Task
+
 [<Collection("FunctionalPhaseD")>]
 type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
 
@@ -391,4 +406,48 @@ type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
 
             test <@ leftBalance = 20m @>
             test <@ rightBalance = 30m @>
+        }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // The C#-callable facade composes with transactional operations
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A transfer driven entirely through C#-shaped facades commits atomically, and a failing one
+    /// rolls back — the facade adds no path of its own, it binds the same call sites.
+    /// </summary>
+    [<Fact>]
+    member _.``the C# facade drives a transaction end to end``() =
+        task {
+            let suffix = Guid.NewGuid().ToString "N"
+            let source = $"src-{suffix}"
+            let target = $"dst-{suffix}"
+
+            let sourceFacade =
+                FunctionalGrainInterop.For<IAccountFacade>(accountContract, fixture.Client, source)
+
+            let targetFacade =
+                FunctionalGrainInterop.For<IAccountFacade>(accountContract, fixture.Client, target)
+
+            let atmFacade =
+                FunctionalGrainInterop.For<IAtmFacade>(atmContract, fixture.Client, suffix)
+
+            do! sourceFacade.Deposit 80m
+            do! atmFacade.Transfer(source, target, 30m)
+
+            let! sourceBalance = sourceFacade.Balance()
+            let! targetBalance = targetFacade.Balance()
+
+            test <@ sourceBalance = 50m @>
+            test <@ targetBalance = 30m @>
+
+            // And the abort path, through the same facades.
+            let! _ =
+                Assert.ThrowsAnyAsync<exn>(fun () -> atmFacade.Transfer(source, target, 500m))
+
+            let! sourceAfter = sourceFacade.Balance()
+            let! targetAfter = targetFacade.Balance()
+
+            test <@ sourceAfter = 50m @>
+            test <@ targetAfter = 30m @>
         }
