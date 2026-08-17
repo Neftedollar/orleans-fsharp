@@ -105,11 +105,24 @@ let run () : Task =
         let factory = host.Services.GetRequiredService<IGrainFactory>()
 
         printfn "--- Chat Room (Functional Grain Runtime) ---"
-        printfn "Note: push notification (observers) hit a C#-codegen wall in this example --"
-        printfn "see ChatGrainFunctional.fs's header. history() below is the honest fallback:"
-        printfn "clients poll for new messages instead of receiving a push."
+        printfn "Push notification is LIVE below, through functional observers: no observer"
+        printfn "interface and no code generation in this project. The CLASSIC observer path is"
+        printfn "still walled here -- see ChatGrainFunctional.fs's header for that wall."
         printfn ""
         let room = RoomApi.ref factory "general"
+
+        // The subscriber: an ordinary F# handler record, wrapped into a typed handle. Every
+        // line it prints below arrived as a PUSH, not as the answer to a call.
+        let watcher =
+            FunctionalObserver.createFrom RoomObserverApi.contract host.Services
+                { onMessage = fun (sender, text) -> task { printfn "  [push] %s: %s" sender text }
+                  onPresence =
+                    fun (who, joined) ->
+                        task { printfn "  [push] %s %s the room" who (if joined then "joined" else "left") } }
+
+        let! subscribers = room.subscribe watcher
+        printfn "--- Subscribed 1 observer (room reports %d) ---" subscribers
+        printfn ""
 
         // Multiple members join.
         do! room.join "Alice"
@@ -145,9 +158,21 @@ let run () : Task =
         let! finalCount = room.memberCount ()
         printfn "Members remaining: %d" finalCount
 
-        // The polling fallback: read the message history back.
+        // Every push above was delivered while the calls were being made. Unsubscribe, then
+        // post once more: nothing is pushed, which is what proves the pushes were real.
+        do! Task.Delay 250
+        let! remaining = room.unsubscribe watcher
         printfn ""
-        printfn "--- History (poll-based fallback for push notification) ---"
+        printfn "--- Unsubscribed (room reports %d subscribers) ---" remaining
+        do! room.join "Bob"
+        let! silent = room.say ("Bob", "this message is posted but never pushed")
+        printfn "Bob (after unsubscribe): -> %A  (no [push] line follows)" silent
+        do! Task.Delay 250
+        FunctionalObserver.unsubscribe factory watcher
+
+        // history stays as an ordinary paged query, not as a substitute for push.
+        printfn ""
+        printfn "--- History (an ordinary readOnly paged query) ---"
         let! history = room.history 10
         for (sender, message, timestamp) in history do
             printfn "  [%s] %s: %s" (timestamp.ToString("HH:mm:ss")) sender message

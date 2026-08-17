@@ -452,6 +452,149 @@ handler from running to completion if it doesn't check the token. For a one-way
 once sent, a later cancellation has no remote effect at all -- the delivered one-way context
 always uses `CancellationToken.None`.
 
+## Push to clients: functional observers
+
+A grain call goes one way -- a client calls in and waits for a reply. Push goes the other way, and
+until now F# could not reach it without adding a C# project: Orleans' proxy generators are Roslyn
+source generators that never run over F#, so an `IGrainObserver` declared in F# has no generated
+proxy and `CreateObjectReference` fails on it. That is Orleans' constraint, identical for the
+`grain { }` CE and for class grains.
+
+**Functional observers absorb it.** Exactly as one fixed request carries every grain operation,
+one C#-declared interface inside `Orleans.FSharp.Abstractions` carries every application observer.
+Above it, an observer is an ordinary F# record and you write no interface and no generated code.
+
+### The observer
+
+An observer is a brand and a handler record, exactly like a grain contract -- except that every
+field is a *push* operation, `'Msg -> Task<unit>`:
+
+```fsharp
+type RoomObserver = private RoomObserver of unit
+
+type ChatMessage = { author: string; text: string }
+
+[<NoEquality; NoComparison>]
+type RoomObserverApi =
+    { onMessage: ChatMessage -> Task<unit>
+      onClosed: string -> Task<unit> }
+
+let roomObserverContract =
+    observerContract<RoomObserver, RoomObserverApi> () {
+        observerType "chat.room.observer"   // defaults to the brand's simple name
+        version 1                           // defaults to 1
+    }
+```
+
+A handler record *is* an API record whose replies are all `unit`, so the shape rules, the selector
+form (`_.onMessage`), and the diagnostics are the ones you already know. The single
+observer-specific rule: a push operation that returns anything but `Task<unit>` fails contract
+construction -- an observer never returns data. There is no key operation either; an observer is
+addressed by the reference inside its handle, not by a domain key.
+
+### Subscribing
+
+The client wraps its handlers and gets back a typed, serializable **handle**:
+
+```fsharp
+let handle =
+    FunctionalObserver.create roomObserverContract client
+        { onMessage = fun m -> task { printfn "%s: %s" m.author m.text }
+          onClosed  = fun reason -> task { printfn "closed: %s" reason } }
+
+do! room.subscribe handle          // an ordinary operation argument
+```
+
+`FunctionalObserverHandle<'Brand,'Api>`'s two type parameters are phantom -- they exist so an
+observer of one brand cannot be handed to a grain expecting another, and neither appears on the
+wire. Declare the grain operation with the handle as its argument type:
+
+```fsharp
+type ChatRoomApi =
+    { subscribe: FunctionalObserverHandle<RoomObserver, RoomObserverApi> -> Task<int>
+      say: ChatMessage -> Task<int> }
+```
+
+### Pushing
+
+```fsharp
+do! FunctionalObserver.notify handle (_.onMessage) message
+```
+
+Or fan out to many subscribers with a liveness window, the functional equivalent of
+`FSharpObserverManager`:
+
+```fsharp
+type RoomState = { observers: FunctionalObserverManager<RoomObserver, RoomObserverApi> }
+
+grainFor chatContract {
+    defaultState (fun () ->
+        { observers = FunctionalObserverManager<RoomObserver, RoomObserverApi>(TimeSpan.FromMinutes 5.0) })
+
+    handle (_.subscribe) (fun _ state handle ->
+        task {
+            state.observers.Subscribe handle
+            return state, state.observers.Count
+        })
+
+    handle (_.say) (fun _ state message ->
+        task {
+            do! state.observers.Notify (_.onMessage) message
+            return state, state.observers.Count
+        })
+}
+```
+
+A subscription that is not re-subscribed within the window is dropped on the next notification or
+the next `RemoveExpired()`.
+
+### Delivery is best-effort, and that is deliberate
+
+`notify` completes when the notification has **entered the local send path** -- not when the
+observer has handled it. The dispatch is `[OneWay]`, and that is load-bearing rather than an
+optimisation: under an acknowledged dispatch a single subscriber whose reference has been released
+blocks the notifying grain's handler until Orleans times the message out, thirty seconds, for a
+subscriber the application already forgot about.
+
+So: an observer whose handler throws is logged **on the observer's side** and never reported to
+the notifying grain, and a dead subscriber costs the notifying handler nothing. This is Orleans'
+own observer semantics, not a new rule.
+
+### Lifetime
+
+Orleans holds an observed object **weakly** -- nothing inside Orleans keeps your handler object
+alive. The handle anchors it, so the rule is simply *keep the handle, keep receiving*. Release it
+when done:
+
+```fsharp
+FunctionalObserver.unsubscribe client handle
+```
+
+`unsubscribe` is idempotent: releasing a reference that is already gone -- a second release, a
+torn-down client, an object collected before you got round to it -- is not an error, because the
+post-condition already holds. Put it in a `finally` without a guard.
+
+### Where a handle may appear
+
+| Shape | Works? | Why |
+|---|---|---|
+| `subscribe: Handle -> Task<_>` | yes | Orleans owns the argument and routes it to the handle's codec |
+| `subscribe: (Handle * string) -> Task<_>` | yes | Orleans owns tuples and routes each element separately |
+| `subscribe: { observer: Handle; … } -> Task<_>` | **no** | the F# binary codec owns records whole, and has no codec for an object reference |
+| `subscribe: Handle option -> Task<_>` | **no** | same reason |
+| a handle in **persistent state** | **no** | same reason -- and that is the point |
+
+The last row is a feature. A live object reference cannot survive an activation, let alone a
+storage round-trip, so a state type carrying a handle is refused outright rather than written as
+something that *looks* restorable. Keep subscriptions in ephemeral state (a manager), never in a
+persisted record.
+
+### Registration
+
+Nothing extra. `AddFunctionalGrainClient` on the client and `AddFunctionalGrain` on the silo
+already register the observer transport -- a process that can call a functional grain can also be
+pushed to by one.
+
 ## Immutable-state guidance: deep mutation is unguarded by design
 
 State-neutral handlers (`readOnly`, `alwaysInterleave`) and every handler's discarded-on-failure

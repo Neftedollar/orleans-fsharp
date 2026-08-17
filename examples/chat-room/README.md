@@ -7,12 +7,19 @@ original `grain {}` + `FSharpObserverManager` push-notification version (with au
 subscriber lifecycles) as deprecated reference -- see `Program.fs` for why it cannot run standalone
 and [docs/functional-grains.md](../../docs/functional-grains.md) for the full migration guide.
 
-**Push notification (observers) stays on the classic path, and here's why.** Observers are on the
-KEEP list (not deprecated) and are grain-model agnostic in principle, so `ChatGrainFunctional.fs`
-was first written *with* `subscribe`/`unsubscribe` holding `FSharpObserverManager<IChatObserver>`
-in state, then actually run to see what happens. `Observer.createRef<IChatObserver>` -- the
-client-side call that turns a local object into an Orleans-addressable reference, before either
-grain model is even involved -- throws immediately:
+**Push notification is live, through functional observers.** The room pushes every message and
+every join/leave to its subscribers, and the subscriber is an ordinary F# handler record --
+`RoomObserverApi` in `ChatGrainFunctional.fs` -- with no observer interface and no code generation
+anywhere in this project. The run transcript below shows the `[push]` lines arriving while the
+calls are being made, and shows them stopping after `unsubscribe`.
+
+**The CLASSIC observer path is still walled here, and the wall is worth keeping on record**,
+because it is exactly what functional observers route around. Observers are on the KEEP list (not
+deprecated) and are grain-model agnostic in principle, so `ChatGrainFunctional.fs` was first
+written *with* `subscribe`/`unsubscribe` holding `FSharpObserverManager<IChatObserver>` in state,
+then actually run to see what happens. `Observer.createRef<IChatObserver>` -- the client-side call
+that turns a local object into an Orleans-addressable reference, before either grain model is even
+involved -- throws immediately:
 
 ```
 System.InvalidOperationException: Unable to find an IGrainReferenceActivatorProvider for grain type sys.client
@@ -26,9 +33,13 @@ broadcast-channel *consumers* are grains implementing `IOnBroadcastChannelSubscr
 `[ImplicitChannelSubscription]`, "handled by the C# CodeGen" -- the identical wall, one hop later.
 Neither is a functional-runtime gap; both are this example's total absence of a C# CodeGen project.
 
-The live demo's fallback is honest, not silent: `history` is a `readOnly` poll a client calls to see
-new messages, replacing push. The old grain (observer-based push, fully intact) remains the
-reference implementation for pub/sub.
+**What closes it.** A functional observer needs no application interface at all: the single
+C#-declared interface lives inside `Orleans.FSharp.Abstractions`, where Orleans' proxy generator
+has already run over it, and every application observer of every brand rides on that one interface.
+So `RoomObserverApi` is just a record, `FunctionalObserver.create` returns a serializable typed
+handle, and the handle is an ordinary operation argument. `history` stays in the demo as what it
+always should have been -- an ordinary `readOnly` paged query, not a substitute for push. The old
+grain (classic observer push, fully intact) remains the reference for the deprecated model.
 
 ## How to run
 
@@ -40,9 +51,9 @@ dotnet run --project src/Silo
 
 ```
 --- Chat Room (Functional Grain Runtime) ---
-Note: push notification (observers) hit a C#-codegen wall in this example --
-see ChatGrainFunctional.fs's header. history() below is the honest fallback:
-clients poll for new messages instead of receiving a push.
+Push notification is LIVE below, through functional observers: no observer
+interface and no code generation in this project. The CLASSIC observer path is
+still walled here -- see ChatGrainFunctional.fs's header for that wall.
 
 --- Chat Room: 2 members joined ---
 
@@ -54,7 +65,7 @@ Alice (empty message) -> Error EmptyMessage
 Bob left. Bob: Anyone still here? -> Error NotAMember
 Members remaining: 1
 
---- History (poll-based fallback for push notification) ---
+--- History (an ordinary readOnly paged query) ---
   [21:51:12] Bob: Hi Alice, how's it going?
   [21:51:11] Alice: Hey everyone!
 
@@ -66,7 +77,8 @@ Done. Shutting down...
 ## Key concepts
 
 - **`grainContract` / `grainFor`** the functional grain runtime's contract + definition pair (this
-  example's live path): `join` / `leave` / `say` / `history` / `typing` / `memberCount`
+  example's live path): `join` / `leave` / `say` / `history` / `typing` / `memberCount` /
+  `subscribe` / `unsubscribe`
 - **`say: string * string -> Task<Result<int, ChatError>>`** membership + non-empty validation
   returning a typed error instead of throwing
 - **`readOnly (_.history)` / `readOnly (_.memberCount)`** query operations that never block on the
@@ -75,11 +87,17 @@ Done. Shutting down...
   waits for the target and always interleaves
 - **`typing: (string * bool) -> Task<unit>`** a multi-input operation: one argument always, with
   the inputs grouped in a tuple -- called as `room.typing ("Bob", true)`
-- **`stateFrom` + `PersistentState.create` + explicit `WriteStateAsync`** every membership/message
-  change is persisted to the `"Default"` memory storage provider
-- **`FSharpObserverManager<T>`** (deprecated-reference path, `ChatGrain.fs`) manages observer
-  subscriptions with auto-expiry -- still the reference implementation for push notification here;
-  see the note above for why the functional twin polls instead
+- **`observerContract` + `FunctionalObserver.create` + `FunctionalObserverManager`** live push to a
+  client-hosted handler record, with a liveness window and no code generation
+- **`defaultState` + `usePersistentState` + explicit `WriteStateAsync`** the handler's state is the
+  live per-activation shape (durable data *plus* the subscriber set), while every membership and
+  message change is persisted to the `"Default"` memory storage provider through a named holder.
+  The subscriber set is deliberately outside the persisted record: it holds live object references,
+  and the F# codec refuses a state type carrying one rather than writing something that only looks
+  restorable
+- **`FSharpObserverManager<T>`** (deprecated-reference path, `ChatGrain.fs`) the classic observer
+  manager, kept as the reference implementation for the deprecated model -- see the note above for
+  why it cannot run in this project and what replaces it
 - **`useJsonFallbackSerialization`** enables clean F# types without serialization attributes
 
 ## Documentation

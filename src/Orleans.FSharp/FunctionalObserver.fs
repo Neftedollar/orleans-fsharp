@@ -381,13 +381,13 @@ module FunctionalObserver =
     /// A cleanup call in a <c>finally</c> must not turn any of those into a failure — the
     /// post-condition ("nothing is delivered through this handle any more") already holds.
     /// </remarks>
-    let unsubscribe (client: IClusterClient) (handle: FunctionalObserverHandle<'Brand, 'Api>) : unit =
-        if isNull (box client) then
-            fail BindingStage "releasing a functional observer requires an Orleans cluster client."
+    let unsubscribe (factory: IGrainFactory) (handle: FunctionalObserverHandle<'Brand, 'Api>) : unit =
+        if isNull (box factory) then
+            fail BindingStage "releasing a functional observer requires an Orleans grain factory."
 
         if not (isNull (box handle)) then
             try
-                client.DeleteObjectReference<IFunctionalObserverTarget> handle.Target
+                factory.DeleteObjectReference<IFunctionalObserverTarget> handle.Target
             with :? ArgumentException ->
                 // "Reference is not associated with a local object" — already released or
                 // collected. The reference is dead either way, which is what was asked for.

@@ -1862,6 +1862,165 @@ Redis, then verifies that the same `GrainId` reloads committed state.
   leak cancellation or `RequestContext` values.
 - Tracing includes stable grain type, operation ID, version, and outcome.
 
+## Functional observers (extension, landed post-Phase-6)
+
+This section is an EXTENSION, added after the phase plan above was completed.
+The phase plan is left as it was executed; nothing in it changes.
+
+### Why observers needed the same move as grains
+
+Orleans' proxy generators are Roslyn source generators and never run over F#.
+An `IGrainObserver` declared in F# therefore has no generated proxy, and
+`IGrainFactory.CreateObjectReference` fails on it — which is why push
+notification was the one capability an F# application could not reach without
+adding a C# project of its own. The constraint is Orleans', identical for the
+`grain { }` CE and for class grains, but it is a constraint the functional
+runtime can absorb: exactly as ONE fixed request carries every grain
+operation, ONE C#-declared observer interface in `Orleans.FSharp.Abstractions`
+carries every application observer, of every brand. Above that interface an
+observer is an ordinary F# record.
+
+### Surface
+
+```fsharp
+type RoomObserver = private RoomObserver of unit      // observer brand
+
+type RoomObserverApi =                                 // handler record
+    { onMessage: ChatMessage -> Task<unit> }           // push ops: 'Msg -> Task<unit>
+
+let observerContract =
+    observerContract<RoomObserver, RoomObserverApi> () {
+        observerType "chat.room.observer"              // defaults to the brand's simple name
+        version 1                                      // defaults to 1
+    }
+
+// client: wrap handlers, get a serializable typed handle
+let handle =
+    FunctionalObserver.create observerContract client { onMessage = fun m -> task { … } }
+
+// the handle is an ordinary operation argument
+do! room.subscribe handle
+
+// grain side: typed push through the handle
+do! FunctionalObserver.notify handle (_.onMessage) message
+
+// or fan out with a liveness window
+let observers = FunctionalObserverManager<RoomObserver, RoomObserverApi>(TimeSpan.FromMinutes 5.0)
+observers.Subscribe handle
+do! observers.Notify (_.onMessage) message
+
+// release
+FunctionalObserver.unsubscribe client handle
+```
+
+A handler record IS an API record whose replies are all `unit`: shape
+reflection, selector resolution by sentinel identity, and every diagnostic are
+the grain rules unchanged. The one observer-specific rule is that a push
+operation returning anything but `Task<unit>` fails contract construction —
+an observer never returns data.
+
+A push operation's wire ID is always its handler-record field name. There is
+no `operationId` override, and deliberately: the notifying side derives the ID
+from the same record type the observing side does, so there is no pair of
+declarations that can drift apart.
+
+`observerContract` has no key operation. An observer is addressed by the
+object reference inside its handle, not by a domain key.
+
+### Wire
+
+The notification envelope mirrors `FunctionalRequestEnvelope` field for field,
+with the observer type standing in for the grain type and no admission flags —
+an observer has no scheduling policy to carry:
+
+| Field | Type | Meaning |
+|---|---|---|
+| 0 | string | observer type |
+| 1 | int32 | contract version |
+| 2 | string | operation ID |
+| 3 | byte[32] | notify-direction protocol token |
+| 4 | byte[] | serialized message payload |
+
+The protocol token is computed exactly as a grain token is — the SHA-256
+digest of `observerType NUL version NUL operationId NUL direction` — with a
+THIRD direction literal, `notify`, beside `request` and `reply`.
+
+A notify token cannot collide with a grain-operation token even when an
+observer type and a grain type share a name, a version, and an operation ID.
+The direction is part of the hashed preimage, so the three preimages differ in
+their final NUL-separated field and hash to different digests; a collision
+would require a SHA-256 preimage collision rather than a naming coincidence.
+What the token detects is what it detects for grains: a notification routed to
+a descriptor other than the one it was built for.
+
+The typed handle's own wire form is exactly three fields — observer type,
+contract version, and the Orleans object reference, written by Orleans' own
+reference codec. Its two type parameters are phantom: they keep an observer of
+one brand from being handed to a grain expecting another, and neither appears
+on the wire.
+
+Both the envelope and the handle are published by an assembly-level
+`TypeManifestProvider`, not by the client registration alone. The observer
+interface is non-generic, so Orleans' startup validator closes and scans it in
+every process that merely loads `Orleans.FSharp.Abstractions` — including one
+that hosts no functional grain — and would otherwise refuse to start.
+
+### Delivery semantics
+
+Delivery is best-effort, which is Orleans' own observer semantics.
+`DispatchAsync` is `[OneWay]`: `notify` completes when the notification has
+entered the local send path, not when the observed object has handled it.
+
+That is load-bearing rather than an optimisation. Under an acknowledged
+dispatch, a single subscriber whose object reference has been released blocks
+the notifying grain's handler until Orleans times the message out — thirty
+seconds, for a subscriber the application has already forgotten. Under one-way
+dispatch a dead reference costs the notifying handler nothing.
+
+An observer whose handler throws is reported to the logger of the process
+HOSTING the observer and never to the notifying grain. A protocol fault —
+wrong observer type, version, operation, or token — does propagate on the
+observing side, because it means the two ends disagree about the contract
+rather than that one message failed.
+
+### Lifetime
+
+Orleans' object-reference table holds an observed object WEAKLY, so nothing in
+Orleans keeps a client-hosted observer alive. The handle therefore anchors it:
+keep the handle, keep receiving. `FunctionalObserver.unsubscribe` releases the
+object reference (`DeleteObjectReference`) and is idempotent — releasing a
+reference that is already gone is the normal outcome of a second release, of a
+torn-down client, and of an object collected before the application got round
+to unsubscribing, and none of those is an error in a cleanup path.
+
+`FunctionalObserverManager<'Brand,'Api>` expires a subscription that has not
+been refreshed within its window, on the next notification or the next
+explicit sweep. It is a MUTABLE object held in handler state, and it carries
+the same caveat this specification states for deep mutation elsewhere: state
+is published by returning it from a handler, so a mutation performed in place
+is visible immediately and is not part of any state write. A manager must
+never be attached to a persistent state type.
+
+### Where a handle may appear
+
+A handle may be an operation's argument, or an element of a tuple argument:
+Orleans owns both shapes and routes each element to its own codec. It may NOT
+be a field of an F# record, option, list, or union argument — the F# binary
+codec owns those payloads whole and has no codec for an Orleans object
+reference, and refuses them.
+
+The same refusal is what keeps a live object reference out of durable storage:
+a functional grain's state crosses the F# binary codec, so a state type
+carrying a handle cannot be written at all, rather than being written as
+something that looks restorable and is not.
+
+### Registration
+
+`AddFunctionalGrainClient` (and therefore `AddFunctionalGrain`) registers the
+observer transport alongside the grain transport, idempotently. There is no
+separate observer entry point: a process that can call a functional grain can
+also be pushed to by one.
+
 ## Completion criteria
 
 The proposal is complete when every implementation-phase exit condition and

@@ -7,7 +7,10 @@
 /// <c>history</c> query, a <c>oneWay</c> + <c>alwaysInterleave</c> <c>typing</c> indicator, and
 /// explicit <c>stateFrom</c> persistence.
 ///
-/// Pub/sub, resolved by experiment (not assumption):
+/// Pub/sub: push notification IS live here, through FUNCTIONAL OBSERVERS (see
+/// <c>RoomObserverApi</c> below and the run transcript in the README). Everything under this
+/// paragraph is the story of the CLASSIC observer path, which is still walled -- it is kept
+/// because the wall is real and because it is exactly what functional observers route around.
 ///
 /// The old grain's headline feature is push notification via <c>FSharpObserverManager&lt;IChatObserver&gt;</c>
 /// -- observers are on the KEEP list, not deprecated, and are grain-model agnostic in principle
@@ -33,9 +36,13 @@
 /// implementing <c>IOnBroadcastChannelSubscribed</c> with <c>[ImplicitChannelSubscription]</c>,
 /// "handled by the C# CodeGen" -- the identical wall, one hop later.
 ///
-/// Fallback shipped here, honestly: <c>history</c> is a <c>readOnly</c> poll a client calls to see
-/// new messages, replacing push notification. The old grain (observer-based push, still fully
-/// intact) remains the reference for pub/sub -- see ChatGrain.fs and this example's README.
+/// What closes it: a FUNCTIONAL observer needs no application interface at all. The one
+/// C#-declared interface lives inside <c>Orleans.FSharp.Abstractions</c>, so Orleans' proxy
+/// generator has already run over it, and an application observer is an ordinary F# handler
+/// record -- <c>RoomObserverApi</c> below. This example subscribes one from its client and
+/// receives every message live; <c>history</c> remains as an ordinary paged query rather than as
+/// a substitute for push. The old grain (classic observer push, still fully intact) remains the
+/// reference for the deprecated model -- see ChatGrain.fs and this example's README.
 /// </summary>
 namespace ChatRoom.Grains
 
@@ -45,6 +52,23 @@ open Microsoft.Extensions.Logging
 open Orleans.FSharp
 
 type RoomActor = private RoomActor of unit
+
+/// <summary>The observer brand: what a subscriber to this room is.</summary>
+type RoomObserver = private RoomObserver of unit
+
+/// <summary>
+/// A subscriber's handler record. Every field is a push operation, <c>'Msg -> Task&lt;unit&gt;</c>;
+/// no interface, and no code generation in this project.
+/// </summary>
+[<NoEquality; NoComparison>]
+type RoomObserverApi =
+    { /// <summary>A message was posted: (sender, text).</summary>
+      onMessage: (string * string) -> Task<unit>
+      /// <summary>Someone joined or left: (member, joined).</summary>
+      onPresence: (string * bool) -> Task<unit> }
+
+/// <summary>The typed handle a subscriber hands to the room.</summary>
+type RoomObserverHandle = FunctionalObserverHandle<RoomObserver, RoomObserverApi>
 
 /// <summary>Rejection reasons for <c>say</c>, returned instead of thrown.</summary>
 type ChatError =
@@ -63,14 +87,32 @@ type RoomApi =
       /// total message count on success.</summary>
       say: string * string -> Task<Result<int, ChatError>>
       /// <summary>Returns up to <c>take</c> most recent (sender, message, timestamp) entries,
-      /// newest first. The polling replacement for push notification -- see this file's header.</summary>
+      /// newest first. An ordinary paged query -- push is handled by observers, not by polling.</summary>
       history: int -> Task<(string * string * DateTimeOffset) list>
       /// <summary>Fire-and-forget typing indicator; never blocks the sender and interleaves with
       /// every other call. Two inputs, so one tuple argument: an operation takes exactly one
       /// argument, and a multi-input operation groups its inputs in a tuple.</summary>
       typing: (string * bool) -> Task<unit>
       /// <summary>Current member count.</summary>
-      memberCount: unit -> Task<int> }
+      memberCount: unit -> Task<int>
+      /// <summary>Subscribes a client-hosted observer for live push. Returns the subscriber
+      /// count. The handle is an ordinary operation argument -- nothing else is needed.</summary>
+      subscribe: RoomObserverHandle -> Task<int>
+      /// <summary>Unsubscribes an observer. Returns the remaining subscriber count.</summary>
+      unsubscribe: RoomObserverHandle -> Task<int> }
+
+[<RequireQualifiedAccess>]
+module RoomObserverApi =
+    /// <summary>
+    /// The observer contract, shared by the client that subscribes and the grain that pushes.
+    /// Mirrors <c>grainContract</c>: an observer type and a version, and nothing else -- a push
+    /// operation's wire ID is always its field name.
+    /// </summary>
+    let contract =
+        observerContract<RoomObserver, RoomObserverApi> () {
+            observerType "chat-room.room.observer"
+            version 1
+        }
 
 [<RequireQualifiedAccess>]
 module RoomApi =
@@ -92,64 +134,105 @@ type RoomState =
     { Members: Set<string>
       Messages: (string * string * DateTimeOffset) list }
 
+/// <summary>
+/// Ephemeral per-activation state. The subscriber set is deliberately NOT part of
+/// <c>RoomState</c>: a manager holds live Orleans object references, which cannot survive an
+/// activation let alone a storage round-trip, and the F# codec refuses a state type carrying one
+/// rather than writing something that merely looks restorable.
+/// </summary>
+type RoomLive =
+    { Persisted: RoomState
+      Subscribers: FunctionalObserverManager<RoomObserver, RoomObserverApi> }
+
 module RoomFunctionalDef =
 
     let roomState = PersistentState.create<RoomState> "state" "Default"
 
+    /// <summary>Push one notification to every live subscriber, swallowing nothing silently
+    /// that matters: delivery is best-effort by design, so a dead subscriber is simply expired.
+    /// </summary>
+    let private fanOut (live: RoomLive) selector message =
+        live.Subscribers.Notify selector message
+
     let room =
         grainFor RoomApi.contract {
-            defaultState (fun () -> { Members = Set.empty; Messages = [] })
+            // The handler's state is the LIVE, per-activation shape: durable data plus the
+            // subscriber set. The subscriber set holds live Orleans object references, which
+            // cannot survive an activation let alone a storage round-trip, so the durable half
+            // is a named persistent holder rather than the handler state itself -- the F# codec
+            // would refuse a state type carrying a handle, which is exactly the right answer.
+            defaultState (fun () ->
+                { Persisted = { Members = Set.empty; Messages = [] }
+                  Subscribers = FunctionalObserverManager<RoomObserver, RoomObserverApi>(TimeSpan.FromMinutes 5.0) })
 
-            stateFrom roomState
+            usePersistentState roomState (fun _key -> { Members = Set.empty; Messages = [] })
             collectionAge (TimeSpan.FromMinutes 30.0)
+
+            // Load the durable half once per activation into the live state.
+            onActivate (fun context state ->
+                task {
+                    let storage = context.persistentState roomState
+                    return { state with Persisted = storage.State }
+                })
 
             handle
                 (_.join)
                 (fun context state sender ->
                     task {
-                        let next = { state with Members = Set.add sender state.Members }
+                        let persisted =
+                            { state.Persisted with Members = Set.add sender state.Persisted.Members }
+
                         let storage = context.persistentState roomState
-                        storage.State <- next
+                        storage.State <- persisted
                         do! storage.WriteStateAsync()
-                        return next, ()
+                        do! fanOut state (_.onPresence) (sender, true)
+                        return { state with Persisted = persisted }, ()
                     })
 
             handle
                 (_.leave)
                 (fun context state sender ->
                     task {
-                        let next = { state with Members = Set.remove sender state.Members }
+                        let persisted =
+                            { state.Persisted with Members = Set.remove sender state.Persisted.Members }
+
                         let storage = context.persistentState roomState
-                        storage.State <- next
+                        storage.State <- persisted
                         do! storage.WriteStateAsync()
-                        return next, ()
+                        do! fanOut state (_.onPresence) (sender, false)
+                        return { state with Persisted = persisted }, ()
                     })
 
             handle
                 (_.say)
                 (fun context state (sender, message) ->
                     task {
-                        if not (Set.contains sender state.Members) then
+                        if not (Set.contains sender state.Persisted.Members) then
                             return state, Error NotAMember
                         elif String.IsNullOrWhiteSpace message then
                             return state, Error EmptyMessage
                         else
                             let entry = (sender, message, context.utcNow)
 
-                            let next =
-                                { state with
-                                    Messages = entry :: state.Messages |> List.truncate 100 }
+                            let persisted =
+                                { state.Persisted with
+                                    Messages = entry :: state.Persisted.Messages |> List.truncate 100 }
 
                             let storage = context.persistentState roomState
-                            storage.State <- next
+                            storage.State <- persisted
                             do! storage.WriteStateAsync()
-                            return next, Ok next.Messages.Length
+
+                            // The push: every subscriber sees the message live, and this handler
+                            // does not wait for any of them.
+                            do! fanOut state (_.onMessage) (sender, message)
+
+                            return { state with Persisted = persisted }, Ok persisted.Messages.Length
                     })
 
             handle
                 (_.history)
                 (fun _context state take ->
-                    task { return state, state.Messages |> List.truncate (max 0 take) })
+                    task { return state, state.Persisted.Messages |> List.truncate (max 0 take) })
 
             handle
                 (_.typing)
@@ -159,5 +242,23 @@ module RoomFunctionalDef =
                         return state, ()
                     })
 
-            handle (_.memberCount) (fun _context state () -> task { return state, state.Members.Count })
+            handle
+                (_.memberCount)
+                (fun _context state () -> task { return state, state.Persisted.Members.Count })
+
+            handle
+                (_.subscribe)
+                (fun _context state (handle: RoomObserverHandle) ->
+                    task {
+                        state.Subscribers.Subscribe handle
+                        return state, state.Subscribers.Count
+                    })
+
+            handle
+                (_.unsubscribe)
+                (fun _context state (handle: RoomObserverHandle) ->
+                    task {
+                        state.Subscribers.Unsubscribe handle |> ignore
+                        return state, state.Subscribers.Count
+                    })
         }
