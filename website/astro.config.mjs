@@ -36,6 +36,7 @@ export default defineConfig({
 						{ label: 'Resilience', link: '/resilience' },
 						{ label: 'Advanced', link: '/advanced' },
 						{ label: 'Analyzers', link: '/analyzers' },
+						{ label: 'Calling from C#', link: '/calling-from-csharp' },
 					],
 				},
 				{ label: 'Redis Example', link: '/redis-example' },

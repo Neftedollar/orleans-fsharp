@@ -33,8 +33,9 @@ before/after mapping of every deprecated entry point.
 7. Streaming: https://neftedollar.com/orleans-fsharp/streaming/
 8. Event Sourcing: https://neftedollar.com/orleans-fsharp/event-sourcing/
 9. Testing: https://neftedollar.com/orleans-fsharp/testing/
-10. API Reference: https://neftedollar.com/orleans-fsharp/api-reference/
-11. FAQ: https://neftedollar.com/orleans-fsharp/faq/
+10. Calling from C# (the C#-callable facade over a functional grain): https://neftedollar.com/orleans-fsharp/calling-from-csharp/
+11. API Reference: https://neftedollar.com/orleans-fsharp/api-reference/
+12. FAQ: https://neftedollar.com/orleans-fsharp/faq/
 
 ## External Links
 - GitHub repository: https://github.com/Neftedollar/orleans-fsharp
