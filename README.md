@@ -251,6 +251,7 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 | [Security](docs/security.md) | TLS, mTLS, filters, secrets |
 | [Advanced](docs/advanced.md) | Transactions, OpenTelemetry, shutdown, migration |
 | [Resilience](docs/resilience.md) | Polly v8 retry, circuit-breaker, and timeout patterns |
+| [Calling from C#](docs/calling-from-csharp.md) | Bind a hand-written C# interface to a functional grain contract |
 | [Redis Example](docs/redis-example.md) | End-to-end shopping cart with Redis storage/clustering |
 | [API Reference](docs/api-reference.md) | All public modules, types, functions |
 
