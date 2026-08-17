@@ -55,7 +55,39 @@ type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
                 let! silo = (account key).whereAmI ()
                 placements.Add(key, silo)
 
-            return placements |> Seq.groupBy snd |> Seq.map (fun (silo, keys) -> silo, keys |> Seq.map fst |> Seq.toList) |> Seq.toList
+            return
+                placements
+                |> Seq.groupBy snd
+                |> Seq.map (fun (silo, keys) -> silo, keys |> Seq.map fst |> Seq.toList)
+                |> Seq.toList
+        }
+
+    /// <summary>
+    /// Keep placing batches until the cluster has actually used more than one silo, or give up
+    /// after the deadline.
+    /// </summary>
+    /// <remarks>
+    /// A single batch is not enough. The whole suite's clusters are deployed in parallel by xUnit,
+    /// and until this cluster's second silo has gossiped that it hosts this grain type the client
+    /// places every activation on the one silo it knows — observed as all 24 keys of a batch on one
+    /// silo. That is a genuine transient of a freshly deployed two-silo cluster under load, not a
+    /// property of the feature under test, so the test waits for it instead of failing on it.
+    /// </remarks>
+    let placeAcrossSilos (suffix: string) =
+        task {
+            let deadline = DateTime.UtcNow.AddSeconds 30.0
+            let mutable attempt = 0
+            let mutable grouped = []
+
+            while List.length grouped < 2 && DateTime.UtcNow < deadline do
+                let! batch = placeAccounts $"{suffix}-{attempt}" 24
+                grouped <- batch
+                attempt <- attempt + 1
+
+                if List.length grouped < 2 then
+                    do! Task.Delay 500
+
+            return grouped
         }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -404,9 +436,10 @@ type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
     member _.``a transaction commits across two silos``() =
         task {
             let suffix = Guid.NewGuid().ToString "N"
-            let! grouped = placeAccounts suffix 24
+            let! grouped = placeAcrossSilos suffix
 
-            test <@ List.length grouped >= 2 @>
+            let silosUsed = grouped |> List.map fst
+            test <@ List.length silosUsed >= 2 @>
 
             let left = grouped |> List.item 0 |> snd |> List.head
             let right = grouped |> List.item 1 |> snd |> List.head
