@@ -26,7 +26,7 @@ description: Comparison of Orleans.FSharp, raw C# Microsoft Orleans, Akkling (Ak
 
 ## Orleans.FSharp vs C# Microsoft Orleans (used from F#)
 
-You can use Microsoft Orleans directly from F# — but you end up writing C#-style code in F# syntax: class inheritance, mutable state, imperative patterns. Orleans.FSharp eliminates this friction entirely.
+You can use Microsoft Orleans directly from F# — but you end up writing C#-style code in F# syntax: class inheritance, mutable state, imperative patterns. Orleans.FSharp replaces that with immutable state, pattern matching, and computation expressions instead.
 
 ### What changes
 
