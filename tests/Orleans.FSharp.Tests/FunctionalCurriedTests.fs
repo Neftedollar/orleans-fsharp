@@ -5,6 +5,7 @@
 /// </summary>
 module Orleans.FSharp.Tests.FunctionalCurriedTests
 
+open System.Threading
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
@@ -313,4 +314,29 @@ let ``unit opening a curried chain is an ordinary tuple slot`` () =
     task {
         let! reply = reference.api.go () true
         test <@ reply = 1 @>
+    }
+
+/// <remarks>
+/// The cancellable closure of a curried operation is canonical: it takes the TUPLE, exactly like
+/// the tupled spelling's. Nothing public reaches it today — <c>callCancellable</c> is a curried
+/// member and F# forbids overloading a member with curried arguments (FS0816), so there is no
+/// curried spelling of it — which is precisely why it is exercised here rather than left to rot.
+/// </remarks>
+[<Fact>]
+let ``the cancellable closure of a curried operation takes the canonical tuple`` () =
+    let services = buildServices true None
+    let target = newTarget services
+    let transport = InMemoryTransport(services, target.Dispatch)
+    let reference = FunctionalGrain.rawRef curriedContract transport "general"
+    let operation = reference.Contract.Operations |> Array.find (fun op -> op.FieldName = "say")
+
+    test <@ operation.ArgumentType = typeof<string * string> @>
+
+    let cancellable =
+        unbox<string * string -> CancellationToken -> Task<int64>> (reference.BoundCall operation.Index).Cancellable
+
+    task {
+        let! reply = cancellable ("first", "second") CancellationToken.None
+        test <@ reply = int64 ("first".Length - "second".Length) @>
+        test <@ transport.LastCall.Envelope.OperationId = "chat" @>
     }

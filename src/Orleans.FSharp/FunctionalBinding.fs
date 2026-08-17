@@ -45,6 +45,9 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
     /// <summary>The contract this reference was bound from.</summary>
     member internal _.Contract = contract
 
+    /// <summary>The preclosed closure pair of one operation, by descriptor index.</summary>
+    member internal _.BoundCall(index: int) = bound.[index]
+
     /// <summary>The exact Orleans identity this reference addresses.</summary>
     member internal _.GrainId = grainId
 
