@@ -265,6 +265,50 @@ of the activation; it does **not** imply a storage write -- the same rule the
 [Delivery semantics](#delivery-semantics) section below states from the caller's side: a successful
 call means the handler ran, not that anything was persisted.
 
+### After `ClearStateAsync`, re-initialize the state yourself
+
+This one bites, and it is stock Orleans behaviour rather than anything the functional runtime adds.
+`ClearStateAsync()` deletes the stored record **and** re-seeds the holder's in-memory `State` with a
+*fresh uninitialized instance* of the stored type — the same
+`RuntimeHelpers.GetUninitializedObject` call described above. For an F# record that means every
+reference field comes back **`null`**, and `null` is not a value of an F# `list`, `map`, `set`,
+record or union:
+
+```fsharp
+let storage = context.persistentState roomState
+do! storage.ClearStateAsync()
+
+// storage.State is now a RoomState whose Messages and Members are BOTH null.
+// The next WriteStateAsync() on it fails inside the codec.
+```
+
+**Assign a freshly initialized state after every clear.** The initializer you gave
+`usePersistentState` is not re-run, and neither is `defaultState`:
+
+```fsharp
+let storage = context.persistentState roomState
+do! storage.ClearStateAsync()
+
+let reseeded = { Members = Set.empty; Messages = [] }   // whatever "empty" means for you
+storage.State <- reseeded
+return reseeded, ()
+```
+
+The runtime deliberately does **not** re-initialize for you: the specification forbids hidden state
+writes and replacements, and only the application knows what an empty room is. What it does do is
+fail *legibly*. Writing a record with a null in a field whose type has no null names the field, the
+record, and this cause:
+
+```text
+FSharpBinaryCodec: field 'Messages' of the record 'ChatRoom.Grains.RoomState' is null, but its
+declared type '…FSharpList`1[…]' has no null value. The usual cause is a persistent state that was
+cleared and not re-initialized: after ClearStateAsync the holder's State is a fresh uninitialized
+instance, so assign a freshly initialized state before the next write.
+```
+
+Nulls that F# uses *on purpose* are unaffected: `None` is compiled to `null`, a `string` field may
+be null, and an ordinary class field may be null. All three still round-trip.
+
 ### What a stored type may be
 
 Orleans creates the in-memory instance of a persistent state through its serializer activator,
@@ -385,6 +429,8 @@ Every callback -- handler, hook, timer, or reminder -- receives the same
 in ASP.NET Core:
 
 ```fsharp
+open Orleans.Timers   // IReminderRegistry lives here, NOT in Orleans.Runtime
+
 let registry = context.services.GetRequiredService<IReminderRegistry>()
 ```
 
@@ -678,9 +724,12 @@ durable schedule.
 
 The migration is an explicit, idempotent application step through the stock `IReminderRegistry`,
 resolved from `context.services` (the functional context intentionally exposes no reminder API of
-its own):
+its own). `IReminderRegistry` is declared in the **`Orleans.Timers`** namespace (assembly
+`Orleans.Reminders`) — not `Orleans.Runtime`, which is the natural guess and does not compile:
 
 ```fsharp
+open Orleans.Timers
+
 handle (_.retireStaleReminder) (fun context state () ->
     task {
         let registry = context.services.GetRequiredService<IReminderRegistry>()
@@ -937,13 +986,50 @@ preflight and round-trips as a live callback target. That is proven end to end, 
 `grainFor` grain on a real TestingHost cluster which subscribes an observer reference, notifies
 it, and unsubscribes it.
 
-The one real constraint is Orleans' own and predates all of this: the **observer interface must
-be declared in C#**, because Orleans' proxy source generators run over C# and not F#. That is
-why `ITestChatObserver` lives in `src/Orleans.FSharp.CodeGen`, and it applies identically to the
-`grain { }` CE and to class grains. An example that declares its observer interface in F#
-(`examples/chat-room`, `IChatObserver` in `ChatTypes.fs`) is subject to that constraint under
-both authoring models, which is why the chat-room functional twin covers only the
-message-posting slice of the domain.
+The one real constraint on that CLASSIC path is Orleans' own and predates all of this: the
+**observer interface must be declared in C#**, because Orleans' proxy source generators run over
+C# and not F#. That is why `ITestChatObserver` lives in `src/Orleans.FSharp.CodeGen`, and it
+applies identically to the `grain { }` CE and to class grains. An example that declares its
+observer interface in F# (`examples/chat-room`, `IChatObserver` in `ChatTypes.fs`) cannot use the
+classic path at all under either authoring model.
+
+**Functional observers remove that constraint** — see
+[Push to clients: functional observers](#push-to-clients-functional-observers) above. The one
+C#-declared interface lives inside `Orleans.FSharp.Abstractions`, every application observer of
+every brand rides on it, and an observer becomes an ordinary F# handler record. `examples/chat-room`
+pushes live through it. Use the classic path when you already have a C#-declared observer
+interface and want to keep it; use functional observers otherwise.
+
+### Call filters over a functional grain
+
+A stock `IIncomingGrainCallFilter` sees every functional call, but **not** as the request type the
+library uses internally. `FunctionalRequest` is `internal` to `Orleans.FSharp.Abstractions`, so an
+application filter cannot write `context.Request :? FunctionalRequest` — that does not compile
+outside the library. The supported test is on **argument 0**, which is the public read-only view:
+
+```fsharp
+open Orleans
+open Orleans.FSharp
+
+type FunctionalAuditFilter() =
+    interface IIncomingGrainCallFilter with
+        member _.Invoke(context: IIncomingGrainCallContext) =
+            task {
+                match context.Request.GetArgument 0 with
+                | :? IFunctionalRequestMetadata as metadata ->
+                    // grainType / contractVersion / operationId / readOnly / oneWay /
+                    // alwaysInterleave / payload size — everything the envelope carries.
+                    if metadata.IsOneWay && metadata.PayloadLength > 65536 then
+                        raise (InvalidOperationException $"'{metadata.OperationId}' is too large")
+                | _ -> ()   // not a functional call: a system grain, or a CE/class grain
+
+                do! context.Invoke()
+            }
+            :> Task
+```
+
+The `| _ -> ()` arm is load-bearing rather than defensive tidiness: the same filter runs for
+Orleans' own system grains, whose argument 0 is something else entirely.
 
 The same "orthogonal, unaffected" verdict covers streaming, broadcast channels, filters,
 Kubernetes hosting, logging, shutdown, transactions, event sourcing

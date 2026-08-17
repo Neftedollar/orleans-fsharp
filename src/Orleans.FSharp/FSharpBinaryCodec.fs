@@ -230,6 +230,61 @@ module internal FSharpBinaryFormat =
 
         count
 
+    /// <summary>
+    /// Whether this codec can write a null value of <paramref name="t"/> and read it back.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The string and class codecs carry a presence marker, so null is an ordinary value there.
+    /// A list, map, set, tuple, array or record is written as its contents, so a null has no
+    /// representation at all and reaches the element loop as a hard failure.
+    /// </para>
+    /// <para>
+    /// A union is the case that cannot be decided structurally: F# compiles a union case with no
+    /// fields to <c>null</c> when the union carries
+    /// <c>CompilationRepresentationFlags.UseNullAsTrueValue</c>, which is exactly how
+    /// <c>None</c> is represented. For those unions null IS the value of a real case and the tag
+    /// reader returns it correctly, so rejecting it would reject every <c>None</c> ever written.
+    /// </para>
+    /// </remarks>
+    let private allowsNull (t: Type) =
+        let usesNullAsTrueValue () =
+            match t.GetCustomAttributes(typeof<CompilationRepresentationAttribute>, false) with
+            | [||] -> false
+            | attributes ->
+                attributes
+                |> Array.exists (fun attribute ->
+                    let flags = (attribute :?> CompilationRepresentationAttribute).Flags
+                    flags &&& CompilationRepresentationFlags.UseNullAsTrueValue
+                    = CompilationRepresentationFlags.UseNullAsTrueValue)
+
+        if t = typeof<string> then
+            true
+        elif t.IsArray || not t.IsClass then
+            false
+        elif FSharpType.IsRecord(t, allRepresentations) || FSharpType.IsTuple t then
+            false
+        elif FSharpType.IsUnion(t, allRepresentations) then
+            usesNullAsTrueValue ()
+        else
+            // An ordinary class: the POCO codec writes a presence byte.
+            true
+
+    /// <summary>
+    /// Reject a null in a record field whose declared type has no null value, naming the field.
+    /// </summary>
+    /// <remarks>
+    /// The overwhelmingly common cause is a cleared persistent state. Orleans re-seeds a facet
+    /// after <c>ClearStateAsync</c> with an UNINITIALIZED instance of the stored type, which for
+    /// an F# record means every reference field comes back null — and null is not a value of an
+    /// F# list, map, set, option, record or union. Without this check the failure surfaces much
+    /// later and far from the cause, as an <c>ArgumentNullException</c> raised deep inside
+    /// whichever element loop first touched the field.
+    /// </remarks>
+    let private failNullField<'T> (recordName: string) (fieldName: string) (fieldType: Type) : 'T =
+        invalidOp
+            $"FSharpBinaryCodec: field '{fieldName}' of the record '{recordName}' is null, but its declared type '{fieldType.FullName}' has no null value. The usual cause is a persistent state that was cleared and not re-initialized: after ClearStateAsync the holder's State is a fresh uninitialized instance, so assign a freshly initialized state before the next write."
+
     /// <summary>Read a field count, rejecting one that does not match the type's real arity.</summary>
     let private readArity (br: BinaryReader) (arity: int) (what: string) : unit =
         let count = br.ReadInt32()
@@ -585,10 +640,28 @@ module internal FSharpBinaryFormat =
                 })
             let makeRecord = FSharpValue.PreComputeRecordConstructor(typeof<'T>, allRepresentations)
             let recordName = typeof<'T>.FullName
+
+            // Name and declared type of each field, in the same order as the shape's fields,
+            // so a null in a field whose type has no null can say which field it was.
+            let fieldInfo =
+                FSharpType.GetRecordFields(typeof<'T>, allRepresentations)
+                |> Array.map (fun property -> property.Name, property.PropertyType)
+
             { Write = fun bw value ->
                 let v = value :?> 'T
                 bw.Write(fieldPairs.Length)
-                for getter, fc in fieldPairs do fc.Write bw (getter v)
+
+                fieldPairs
+                |> Array.iteri (fun index (getter, fc) ->
+                    let fieldValue = getter v
+
+                    if isNull fieldValue && index < fieldInfo.Length then
+                        let fieldName, fieldType = fieldInfo.[index]
+
+                        if not (allowsNull fieldType) then
+                            failNullField recordName fieldName fieldType
+
+                    fc.Write bw fieldValue)
               Read = fun br ->
                 readArity br fieldPairs.Length $"the record '{recordName}'"
                 let values = fieldPairs |> Array.map (fun (_, fc) -> fc.Read br)

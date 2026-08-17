@@ -622,3 +622,76 @@ let ``a stream of rejected type names grows no cache`` () : unit =
         |> ignore
 
     test <@ FSharpBinaryFormat.wireResolvedTypeCount () = before @>
+
+// ── A cleared persistent state names the field it broke on ──────────────────
+
+/// <summary>A stored-state shape whose fields have no null value.</summary>
+type ClearedState =
+    { events: string list
+      tags: Map<string, int>
+      label: string
+      note: string option }
+
+/// <summary>A stored-state shape whose only composite field is a union.</summary>
+type ClearedColour =
+    | Red
+    | Green
+
+type ClearedUnionState = { colour: ClearedColour; label: string }
+
+/// <summary>Exactly what Orleans hands back after ClearStateAsync.</summary>
+let private uninitialized (t: Type) =
+    System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject t
+
+[<Fact>]
+let ``a cleared state names the null field and the likely cause`` () : unit =
+    // Regression for the crash that has to be readable rather than merely thrown: before this,
+    // a cleared facet died as ArgumentNullException("source") from inside a collection loop,
+    // with nothing naming the field, the record, or ClearStateAsync.
+    let error =
+        rejects (fun () ->
+            FSharpBinaryFormat.serialize (uninitialized typeof<ClearedState>) typeof<ClearedState>
+            |> ignore)
+
+    test <@ error.Message.Contains "field 'events'" @>
+    test <@ error.Message.Contains "ClearedState" @>
+    test <@ error.Message.Contains "has no null value" @>
+    test <@ error.Message.Contains "ClearStateAsync" @>
+
+[<Fact>]
+let ``a cleared state names a null union field too`` () : unit =
+    let error =
+        rejects (fun () ->
+            FSharpBinaryFormat.serialize (uninitialized typeof<ClearedUnionState>) typeof<ClearedUnionState>
+            |> ignore)
+
+    test <@ error.Message.Contains "field 'colour'" @>
+    test <@ error.Message.Contains "has no null value" @>
+
+[<Fact>]
+let ``a null that IS a legal value is still written`` () : unit =
+    // The check must not reject the nulls F# uses on purpose. `None` is compiled to null through
+    // UseNullAsTrueValue, a string may be null, and an ordinary class field may be null — all
+    // three are values the codec has always round-tripped, and rejecting any of them would break
+    // far more than the cleared-state case fixes.
+    let value =
+        { events = []
+          tags = Map.empty
+          label = null
+          note = None }
+
+    let restored = roundTrip<ClearedState> value
+
+    test <@ restored = value @>
+    test <@ restored.note = None @>
+    test <@ isNull restored.label @>
+
+[<Fact>]
+let ``a healthy record with the same shape still round-trips`` () : unit =
+    let value =
+        { events = [ "created"; "updated" ]
+          tags = Map [ "k", 1 ]
+          label = "live"
+          note = Some "n" }
+
+    test <@ roundTrip<ClearedState> value = value @>
