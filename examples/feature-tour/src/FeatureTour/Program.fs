@@ -11,6 +11,7 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Orleans
+open Orleans.Concurrency
 open Orleans.Hosting
 open Orleans.Streams
 open Orleans.FSharp
@@ -28,6 +29,7 @@ open FeatureTour.Streams
 open FeatureTour.ObserverTour
 open FeatureTour.Broadcast
 open FeatureTour.Interop
+open FeatureTour.Placement
 open FeatureTour.Heterogeneous
 
 // ── Silo ─────────────────────────────────────────────────────────────────────
@@ -472,7 +474,7 @@ let private runBroadcast (factory: IGrainFactory) =
 
 let private runHeterogeneous () =
     task {
-        section 10 "Heterogeneous cluster — one grain type advertised by only one silo"
+        section 11 "Heterogeneous cluster — one grain type advertised by only one silo"
 
         say "deploying a two-silo cluster (Microsoft.Orleans.TestingHost, in-process silos)..."
         let! observation = HeterogeneousRun.run ()
@@ -504,6 +506,31 @@ let private runHeterogeneous () =
             verdict "UNEXPECTED — regional placements did not match the advertising silos; see the per-key lines above"
     }
 
+let private runPlacement (factory: IGrainFactory) =
+    task {
+        section 10 "Stateless workers and flexible placement — composed, not built in"
+
+        let worker = WorkerApi.ref factory "batch-1"
+        let! reports, elapsed = WorkerRun.concurrentBatch worker 8 400
+
+        let activations = reports |> Array.map _.activation |> Array.distinct
+
+        say $"8 concurrent 400ms calls to ONE grain id finished in {elapsed}ms"
+        let rendered = String.Join(", ", activations)
+        say $"distinct activations that served them: {activations.Length} -> [{rendered}]"
+
+        detail $"the contract has no 'placement' operation, so this is composed: an application"
+        detail $"IGrainPropertiesProvider applies StatelessWorkerAttribute {WorkerApi.MaxLocalWorkers} to grain type"
+        detail $"'{WorkerApi.GrainType}' by NAME, because a functional grain's class is the library's own"
+        detail "FunctionalGrainMarker<'Actor> and cannot carry the attribute itself."
+        detail "properties written: placement-strategy, max-local-instances, remove-idle-workers, unordered."
+
+        if activations.Length > 1 then
+            verdict $"COMPOSED — stateless-worker placement works today; a first-class contract operation is still backlog"
+        else
+            verdict "WALL — the placement properties did not take effect; see the README"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -523,6 +550,7 @@ let private runTour (host: IHost) =
         do! runStreams factory host.Services
         do! runObservers factory
         do! runBroadcast factory
+        do! runPlacement factory
 
         printfn ""
         printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
@@ -556,6 +584,19 @@ let main _argv =
         silo.AddFunctionalGrain ConsumerDefinition.definition |> ignore
         silo.AddFunctionalGrain NotifierDefinition.definition |> ignore
         silo.AddFunctionalGrain AnnouncerDefinition.definition |> ignore
+        silo.AddFunctionalGrain WorkerDefinition.definition |> ignore
+
+        // Feature 11: stateless-worker placement for a functional grain, applied by name through
+        // a stock IGrainPropertiesProvider because the library's closed marker class cannot
+        // carry [<StatelessWorker>] itself.
+        silo.Services.AddSingleton<Orleans.Metadata.IGrainPropertiesProvider>(fun services ->
+            FunctionalPlacementProvider(
+                services,
+                WorkerApi.GrainType,
+                StatelessWorkerAttribute WorkerApi.MaxLocalWorkers
+            )
+            :> Orleans.Metadata.IGrainPropertiesProvider)
+        |> ignore
 
         // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
         // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the

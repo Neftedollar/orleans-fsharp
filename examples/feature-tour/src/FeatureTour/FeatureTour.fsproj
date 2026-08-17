@@ -18,6 +18,7 @@
     <Compile Include="Streams.fs" />
     <Compile Include="ObserverTour.fs" />
     <Compile Include="Broadcast.fs" />
+    <Compile Include="Placement.fs" />
     <Compile Include="Heterogeneous.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
