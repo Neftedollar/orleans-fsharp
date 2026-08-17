@@ -65,6 +65,64 @@ Server-side, a `grainFor` definition attaches handlers and persistent state to t
 example (contract, definition, registration, and a driven call sequence), which is the same
 source spec 003's "Public authoring model" section shows.
 
+## Two spellings, one operation
+
+An API field may be written curried, and when it is, it means exactly the same operation as the
+tupled spelling:
+
+```fsharp
+{ typing: UserId -> bool -> Task<unit> }        // curried spelling
+{ typing: (UserId * bool) -> Task<unit> }       // canonical spelling
+```
+
+Contract construction walks the field's function chain to the first `Task<_>`, collects the
+argument types in order, and **canonicalizes** two or more of them into the F# reference tuple.
+That tuple *is* the operation's wire argument type, so the two records above produce the same
+operation ID, the same protocol token, and byte-identical payloads for the same values. A field
+can move between the spellings in either direction without a wire change, which is why they are
+interchangeable across versions of one application.
+
+What differs is only how you write the call and the handler:
+
+```fsharp
+// caller: curried application, no tuple to build
+do! room.typing userId true
+
+// silo: the handler always takes the canonical tuple, and the `handle` spelling carries the arity
+handle2 (_.typing) (fun context state (user, isTyping) ->
+    task {
+        context.logger.LogDebug("{User} typing={IsTyping}", user, isTyping)
+        return state, ()
+    })
+```
+
+`handle2` … `handle7` bind a curried field of that arity; plain `handle` binds the tupled
+spelling. The arity is in the operation *name* rather than in an overload of `handle` for a
+concrete reason: F# type-checks a lambda argument of an **overloaded** method without the expected
+type, so an overloaded `handle` would stop the argument type flowing from the selector into the
+handler body — `fun context state post -> post.author` would stop inferring and every handler in
+your codebase would need an annotation. One operation per arity keeps that inference exact.
+
+Everything else is unchanged. `readOnly`, `oneWay`, `alwaysInterleave`, and `operationId` each
+have one spelling per arity and apply to a curried field exactly as to a tupled one. The bound
+field is a preclosed curried closure, so the hot path stays reflection-free and a partial
+application (`room.typing userId`) sends nothing — the request goes out at the last argument.
+
+**The limits.** At most **seven** curried arguments: seven is where `System.Tuple` stops nesting,
+so the canonical tuple stays flat and identical to the type you would have written by hand. An
+eighth fails contract construction with a diagnostic telling you to group the inputs in a record.
+`unit` means "no domain input" only as a field's **sole** argument (`unit -> Task<'Reply>`, which
+is never canonicalized to a one-tuple); in any later curried position it is rejected, because
+there it would silently become an ordinary tuple slot that reads like an absent argument. And
+because the walk consumes the whole chain to `Task<_>`, an API field can never *return* a
+function: a trailing function type is simply another argument — and, being unserializable, one
+that fails the serializer preflight at binding.
+
+`FunctionalGrainRef.call` and `callCancellable` take the canonical tupled spelling only. They are
+curried members, and F# forbids overloading a member that takes curried arguments (FS0816), so
+there is no curried form of them: call a curried field through the bound API record, and spell an
+operation tupled if you need the raw cancellable call on it.
+
 ## Why the actor brand
 
 ```fsharp
@@ -241,6 +299,44 @@ of the activation; it does **not** imply a storage write -- the same rule the
 [Delivery semantics](#delivery-semantics) section below states from the caller's side: a successful
 call means the handler ran, not that anything was persisted.
 
+### What a stored type may be
+
+Orleans creates the in-memory instance of a persistent state through its serializer activator,
+which calls `System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject`. That method
+cannot produce an instance of certain shapes at all, so definition sealing rejects them up front
+instead of letting the first activation fail:
+
+| Rejected stored type | Why |
+|---|---|
+| An F# union with **two or more cases where at least one carries data** | It compiles to an *abstract base class*, and `GetUninitializedObject` cannot instantiate an abstract class. Wrap it in a record. |
+| `string` | `GetUninitializedObject` rejects `System.String` outright ("Uninitialized Strings cannot be created"). Wrap it in a record or another class. |
+| An array type | `GetUninitializedObject` cannot create array instances. |
+| A delegate type | Same — no delegate instances. |
+| An interface | No instance of an interface exists to create; name the concrete stored type. |
+| An abstract class | The same reason as the multi-case union above. |
+| `Nullable<'T>` | Orleans resolves a value-type state's activator through `DefaultValueTypeActivator`, whose type parameter excludes `System.Nullable`. |
+
+Nothing else is rejected, and that is deliberate: the list is exactly the set proven to fail on a
+stock storage provider. Records, classes without a public constructor, structs, enums, F# lists,
+maps, options, and **single-case or all-nullary** unions are all valid stored types.
+
+The union rule is the one that surprises people, because such a union is perfectly serializable —
+it is the *activation* step, not serialization, that cannot handle it. The fix is one record:
+
+```fsharp
+type OrderStatus =                  // 2+ cases, one carries data -> abstract base class
+    | Pending
+    | Shipped of trackingId: string
+
+// rejected at definition sealing:
+//     PersistentState.create<OrderStatus> "order" "Default"
+
+type OrderRecord = { status: OrderStatus }
+
+// accepted:
+let orderState = PersistentState.create<OrderRecord> "order" "Default"
+```
+
 ### Unique state names, and why
 
 Every attached descriptor -- whether `stateFrom` or one of the repeated `usePersistentState`
@@ -331,6 +427,31 @@ let registry = context.services.GetRequiredService<IReminderRegistry>()
 `context.grainFactory` binds further grain references from inside a handler; `context.grainId` and
 `context.key` expose the activation's identity; `context.logger` is a logger already scoped to the
 activation.
+
+#### Composing with the KEEP-list APIs
+
+`context.services` is also how a functional handler reaches the surfaces that are orthogonal to
+the grain model — the ones the deprecation pass kept. **Streams** are the common case, and they
+need the service route rather than a member: Orleans exposes `GetStreamProvider` only as an
+extension on `Grain` / `IGrainBase` / `IClusterClient`, none of which a functional handler is, so
+there is deliberately no `context.streamProvider`. A named provider is a **keyed** service, so
+resolve it by its provider name:
+
+```fsharp
+handle (_.publish) (fun context state (text: string) ->
+    task {
+        let provider =
+            context.services.GetRequiredKeyedService<IStreamProvider> "StreamProvider"
+
+        let stream = Stream.getStream<string> provider "room" (string context.key)
+        do! Stream.publish stream text
+        return state, ()
+    })
+```
+
+The same route works from `onActivate`, which is where a grain-side consumer takes its
+subscription (`Stream.subscribe`), and the same `GetRequiredKeyedService` shape resolves a named
+`IBroadcastChannelProvider`. `examples/feature-tour` runs both end to end.
 
 ## Delivery semantics
 
@@ -545,21 +666,42 @@ System.ArgumentException: Could not find an implementation for interface
 
 even though nothing about your own code is wrong.
 
-**If you host with `siloConfig { }` + `SiloConfig.applyToHost`, this is already handled for you.**
-`applyToHost` touches the two assemblies the F# surface depends on immediately before it calls
-`UseOrleans`, so they are loaded when Orleans takes its snapshot:
+**If you build your configuration with `siloConfig { }`, this is already handled for you.**
+Building the configuration value pre-loads every Orleans assembly `Orleans.FSharp.Runtime`
+references, which is exactly the set an F# host reaches only through an F# hop:
+
+| Pre-loaded assembly | The grain you would otherwise fail to find |
+|---|---|
+| `Orleans.Persistence.Memory` | `Orleans.Storage.IMemoryStorageGrain` — `addMemoryStorage` |
+| `Orleans.Reminders` | `Orleans.IReminderTableGrain` — `addMemoryReminderService`, and therefore any `onReminder` |
+| `Orleans.Streaming` | the memory stream queue grains — `addMemoryStreams` |
+| `Orleans.FSharp.Abstractions` | `FSharpGrainImpl` and the functional transport proxies |
+
+`SiloConfig.applyToHost` and `applyToSiloBuilder` run the same pre-load, but the placement in
+`siloConfig { }` is what makes a `WebApplicationBuilder` host work: such a host has no
+`applyToHost`-equivalent wrapper and calls `applyToSiloBuilder` from *inside*
+`builder.Host.UseOrleans(...)`, by which point `UseOrleans` has already taken the manifest
+snapshot. `let config = siloConfig { ... }` runs before `UseOrleans` in every host shape.
+
+You still have to do it yourself for any assembly the runtime does not reference — a third-party
+storage, reminder, or streaming provider, or a C# interop assembly of your own carrying observer
+proxies or an implicit-subscriber grain — and for a host that hand-rolls `builder.UseOrleans(...)`
+with no `siloConfig { }` value at all. Touch any public type from the assembly, *before* that call:
 
 ```fsharp
-typeof<Orleans.Storage.MemoryGrainStorage>.Assembly |> ignore // MemoryStorageGrain (addMemoryStorage)
-typeof<Orleans.FSharp.IFSharpGrain>.Assembly |> ignore        // FSharpGrainImpl + functional proxies
+typeof<Orleans.IReminderTable>.Assembly |> ignore    // Orleans.Reminders; IReminderTableGrain
+                                                     // itself is internal, this public type is
+                                                     // in the same assembly
+typeof<Orleans.Streams.IStreamProvider>.Assembly |> ignore   // Orleans.Streaming
+typeof<IMyObserver>.Assembly |> ignore                       // your own C# interop assembly
 ```
 
-If you hand-roll `builder.UseOrleans(...)` instead of going through `applyToHost`, do the same
-thing yourself *before* that call — anything done inside the `UseOrleans` delegate is already too
-late, because the snapshot is taken before the delegate runs. The same force-load appears in
-`tests/Orleans.FSharp.Integration/ClusterFixture.fs` for that suite's own assemblies. Any *other*
-assembly whose grain classes you need (a third-party storage or streaming provider reached only
-through F#) needs the same treatment.
+Anything done inside the `UseOrleans` delegate is already too late, because the snapshot is taken
+before the delegate runs. The symptom is always the same shape — `Could not find an implementation
+for interface <the grain interface that lives in the missing assembly>` — and it surfaces at the
+first call that needs that grain rather than at startup. `examples/feature-tour` force-loads its
+own C# interop assembly this way, and the same pattern appears in
+`tests/Orleans.FSharp.Integration/ClusterFixture.fs` for that suite's assemblies.
 
 This is also why the functional runtime is easier to host than the per-grain-interface
 (`grain { }` + `Orleans.FSharp.CodeGen`) model: the functional transport's proxies are generated

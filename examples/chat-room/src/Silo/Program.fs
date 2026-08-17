@@ -132,8 +132,9 @@ let run () : Task =
         let! emptyRejected = room.say ("Alice", "   ")
         printfn "Alice (empty message) -> %A" emptyRejected
 
-        // Typing indicator: fire-and-forget, always interleaves.
-        do! room.typing ("Bob", true)
+        // Typing indicator: fire-and-forget, always interleaves. The field is spelled curried,
+        // so the call takes its two arguments one after the other and builds no tuple.
+        do! room.typing "Bob" true
 
         printfn ""
 
