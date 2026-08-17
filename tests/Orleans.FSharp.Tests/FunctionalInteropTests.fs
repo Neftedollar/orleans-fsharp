@@ -614,6 +614,75 @@ let ``creating a facade is where the per-member generic closing happens`` () =
     finally
         FunctionalInstrumentation.stop ()
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Shapes the C# fixtures cannot reach
+// ──────────────────────────────────────────────────────────────────────────────
+
+type ExtraActor = private ExtraActor of unit
+
+/// <summary>
+/// A struct-tuple argument and a <c>oneWay</c> operation: neither is expressible in the C#
+/// fixture set against the room contract, and both go through the same two rules.
+/// </summary>
+[<NoEquality; NoComparison>]
+type ExtraApi =
+    { ping: struct (string * int) -> Task<int>
+      notify: string -> Task<unit> }
+
+let private extraContract =
+    grainContract<ExtraActor, string, ExtraApi> () {
+        grainType "interop.extra"
+        stringKey
+        oneWay (_.notify)
+    }
+
+type IExtraFacade =
+    abstract Ping: name: string * count: int -> Task<int>
+    abstract Notify: message: string -> Task
+
+/// <summary>A facade interface that is generic, closed at the call site.</summary>
+type IGenericFacade<'Key> =
+    abstract Notify: message: 'Key -> Task
+
+let private extraFacadeFor<'TFacade when 'TFacade: not struct> () =
+    let services = buildServices true None
+    let target = InMemoryTarget(services, "interop.extra", 1)
+    target.Handle<struct (string * int), int>("ping", fun (struct (name, count)) -> name.Length + count)
+    target.Handle<string, unit>("notify", fun _ -> ())
+    let transport = InMemoryTransport(services, target.Dispatch)
+    transport, FunctionalGrainInterop.For<'TFacade>(extraContract, transport, "general")
+
+[<Fact>]
+let ``a struct-tuple argument is packed from its parameters like any other tuple`` () =
+    let transport, extra = extraFacadeFor<IExtraFacade> ()
+
+    task {
+        let! value = extra.Ping("alice", 4)
+        test <@ value = 9 @>
+        test <@ transport.LastCall.Envelope.OperationId = "ping" @>
+    }
+
+[<Fact>]
+let ``a oneWay operation keeps its admission flags through a facade`` () =
+    let transport, extra = extraFacadeFor<IExtraFacade> ()
+
+    task {
+        do! extra.Notify "fire and forget"
+        test <@ transport.LastCall.IsOneWay @>
+        test <@ transport.LastCall.Envelope.AdmissionFlags = AdmissionFlags.OneWay @>
+    }
+
+[<Fact>]
+let ``a constructed generic interface is a valid facade`` () =
+    // The member is not generic once the interface is closed, so the generic-member rejection
+    // must not fire on it.
+    let transport, extra = extraFacadeFor<IGenericFacade<string>> ()
+
+    task {
+        do! extra.Notify "hello"
+        test <@ transport.LastCall.Envelope.OperationId = "notify" @>
+    }
+
 [<Fact>]
 let ``a facade addresses the key it was created with`` () =
     let services = buildServices true None

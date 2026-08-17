@@ -4,6 +4,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Reflection
+open System.Runtime.CompilerServices
 open System.Threading.Tasks
 open FSharp.Reflection
 open Orleans
@@ -412,8 +413,16 @@ module internal FacadePlanning =
         { FacadeType = facadeType
           Members = members.ToArray() }
 
+    /// <summary>
+    /// Plans by contract instance, then by facade interface. The outer table is weak on the
+    /// contract on purpose: two contracts of the same CLR type can carry different operation IDs
+    /// (<c>operationId</c> is a per-contract override), so the instance is the only correct key --
+    /// and a strong one would keep every contract a process ever built alive. A contract is
+    /// normally a module-level value that outlives the process anyway; this costs nothing when it
+    /// is, and leaks nothing when it is not.
+    /// </summary>
     let private plans =
-        ConcurrentDictionary<struct (Type * FunctionalContract), FacadePlan>()
+        ConditionalWeakTable<FunctionalContract, ConcurrentDictionary<Type, FacadePlan>>()
 
     /// <summary>
     /// The validated plan for one interface/contract pair, built on first use and cached. A
@@ -421,11 +430,12 @@ module internal FacadePlanning =
     /// call site.
     /// </summary>
     let planFor (facadeType: Type) (contract: FunctionalContract) : FacadePlan =
-        let key = struct (facadeType, contract)
+        let byFacade =
+            plans.GetValue(contract, fun _ -> ConcurrentDictionary<Type, FacadePlan>())
 
-        match plans.TryGetValue key with
+        match byFacade.TryGetValue facadeType with
         | true, cached -> cached
-        | _ -> plans.GetOrAdd(key, build facadeType contract)
+        | _ -> byFacade.GetOrAdd(facadeType, build facadeType contract)
 
 /// <summary>
 /// The C#-callable view of a functional grain: an ordinary interface the consumer declares, whose
