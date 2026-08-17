@@ -201,9 +201,13 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
                 // [MayInterleave] additionally NAMES a method that Orleans reflects off the grain
                 // class, and a property cannot supply that -- which is why the grain class of a
                 // definition declaring 'mayInterleave' is FunctionalInterleavingGrainMarker,
-                // whose own attribute would already publish this key. It is written here as well
-                // so the publication does not depend on the ordering of the attribute provider
-                // relative to this one; both writes carry the same value.
+                // carrying the real attribute. That means Orleans' own AttributeGrainPropertiesProvider
+                // ALREADY publishes this key for such a definition, and a mutation test confirms
+                // it: removing the write below leaves every may-interleave test green. It is kept
+                // as a second, same-valued writer so the publication does not silently depend on
+                // Orleans continuing to walk grain-class attributes with inherit:true, which is
+                // the one behaviour of that provider we do not control. The equality of the two
+                // values is pinned by FunctionalInterleaveMarkerTests.
                 if entry.Definition.IsReentrant then
                     ReentrantAttribute().Populate(services, grainClass, grainType, properties)
 

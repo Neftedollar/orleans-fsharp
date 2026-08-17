@@ -102,6 +102,7 @@
     <Compile Include="FunctionalObserverContractTests.fs" />
     <Compile Include="FunctionalPersistentStateTests.fs" />
     <Compile Include="FunctionalRuntimeTests.fs" />
+    <Compile Include="FunctionalInterleaveMarkerTests.fs" />
     <Compile Include="FunctionalCollisionPayload.fs" />
     <Compile Include="FunctionalSerializerRegistrationTests.fs" />
     <Compile Include="FunctionalCompileFailureTests.fs" />
