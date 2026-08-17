@@ -121,13 +121,19 @@ Not `Orleans.Runtime`. The reminder-retirement snippet in
 [`docs/functional-grains.md`](../../docs/functional-grains.md) omits the `open Orleans.Timers`
 its own code needs.
 
-### Assemblies you configure must be pre-loaded
+### Assemblies reached only through F# must be pre-loaded
 
-`SiloConfig.applyToHost` pre-loads the two assemblies the F# surface itself needs. Everything
-*else* this process configures — reminders, streaming, broadcast channels, and the C# interop
-assembly — is reached only through an F# reference, so it is invisible to the manifest snapshot
-Orleans takes inside `UseOrleans` unless you touch it first. See `preloadTourAssemblies` in
-`Program.fs`.
+Orleans takes its application-part snapshot inside `UseOrleans`, before your configuration runs,
+and its generators never run over F# — so an assembly reached only through an F# reference is
+invisible to that snapshot and its grain classes simply do not exist as far as the silo is
+concerned.
+
+Building a `siloConfig { }` value now pre-loads every Orleans assembly `Orleans.FSharp.Runtime`
+references (the set is derived from its own references, not hand-written), so reminders,
+streaming and broadcast channels are covered for you. What is **not** covered is an assembly of
+your own: this example's `TourInterop` is reached only from F#, and without the explicit touch in
+`preloadTourAssemblies` its broadcast-channel consumer grain is missing from the cluster with no
+error anywhere. Any third-party provider you reach only through F# needs the same.
 
 ## An F#-only broadcast consumer
 
