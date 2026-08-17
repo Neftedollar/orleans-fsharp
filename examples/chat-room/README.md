@@ -73,9 +73,8 @@ Done. Shutting down...
   write path and interleave with other read-only calls
 - **`oneWay (_.typing)` + `alwaysInterleave (_.typing)`** a fire-and-forget indicator that never
   waits for the target and always interleaves
-- **`typing: string -> bool -> Task<unit>` + `handle2`** the curried spelling of an operation:
-  sugar for `(string * bool) -> Task<unit>`, wire-identical to it, called as
-  `room.typing "Bob" true` and handled with the canonical tuple
+- **`typing: (string * bool) -> Task<unit>`** a multi-input operation: one argument always, with
+  the inputs grouped in a tuple -- called as `room.typing ("Bob", true)`
 - **`stateFrom` + `PersistentState.create` + explicit `WriteStateAsync`** every membership/message
   change is persisted to the `"Default"` memory storage provider
 - **`FSharpObserverManager<T>`** (deprecated-reference path, `ChatGrain.fs`) manages observer

@@ -66,12 +66,9 @@ type RoomApi =
       /// newest first. The polling replacement for push notification -- see this file's header.</summary>
       history: int -> Task<(string * string * DateTimeOffset) list>
       /// <summary>Fire-and-forget typing indicator; never blocks the sender and interleaves with
-      /// every other call. Spelled CURRIED, which is sugar for the tupled
-      /// <c>(string * bool) -> Task&lt;unit&gt;</c>: the canonical wire argument is that tuple
-      /// either way, so the two spellings are byte-identical on the wire and the choice is
-      /// purely about how the call and the handler read. See docs/functional-grains.md,
-      /// "Two spellings, one operation".</summary>
-      typing: string -> bool -> Task<unit>
+      /// every other call. Two inputs, so one tuple argument: an operation takes exactly one
+      /// argument, and a multi-input operation groups its inputs in a tuple.</summary>
+      typing: (string * bool) -> Task<unit>
       /// <summary>Current member count.</summary>
       memberCount: unit -> Task<int> }
 
@@ -154,9 +151,7 @@ module RoomFunctionalDef =
                 (fun _context state take ->
                     task { return state, state.Messages |> List.truncate (max 0 take) })
 
-            // handle2, not handle: the arity of a curried field is part of the operation name.
-            // The handler still takes the canonical tuple -- handlers are never curried.
-            handle2
+            handle
                 (_.typing)
                 (fun context state (sender, isTyping) ->
                     task {

@@ -60,63 +60,34 @@ Server-side, a `grainFor` definition attaches handlers and persistent state to t
 example (contract, definition, registration, and a driven call sequence), which is the same
 source spec 003's "Public authoring model" section shows.
 
-## Two spellings, one operation
+## One operation, one argument
 
-An API field may be written curried, and when it is, it means exactly the same operation as the
-tupled spelling:
+An API field takes exactly one argument. A multi-input operation groups its inputs in a tuple:
 
 ```fsharp
-{ typing: UserId -> bool -> Task<unit> }        // curried spelling
-{ typing: (UserId * bool) -> Task<unit> }       // canonical spelling
+{ typing: (UserId * bool) -> Task<unit> }
 ```
 
-Contract construction walks the field's function chain to the first `Task<_>`, collects the
-argument types in order, and **canonicalizes** two or more of them into the F# reference tuple.
-That tuple *is* the operation's wire argument type, so the two records above produce the same
-operation ID, the same protocol token, and byte-identical payloads for the same values. A field
-can move between the spellings in either direction without a wire change, which is why they are
-interchangeable across versions of one application.
-
-What differs is only how you write the call and the handler:
+That tuple is the operation's wire argument type, and the handler destructures it:
 
 ```fsharp
-// caller: curried application, no tuple to build
-do! room.typing userId true
+// caller
+do! room.typing (userId, true)
 
-// silo: the handler always takes the canonical tuple, and the `handle` spelling carries the arity
-handle2 (_.typing) (fun context state (user, isTyping) ->
+// silo
+handle (_.typing) (fun context state (user, isTyping) ->
     task {
         context.logger.LogDebug("{User} typing={IsTyping}", user, isTyping)
         return state, ()
     })
 ```
 
-`handle2` … `handle7` bind a curried field of that arity; plain `handle` binds the tupled
-spelling. The arity is in the operation *name* rather than in an overload of `handle` for a
-concrete reason: F# type-checks a lambda argument of an **overloaded** method without the expected
-type, so an overloaded `handle` would stop the argument type flowing from the selector into the
-handler body — `fun context state post -> post.author` would stop inferring and every handler in
-your codebase would need an annotation. One operation per arity keeps that inference exact.
+A field spelled curried (`UserId -> bool -> Task<unit>`) is **not** an operation and fails
+contract construction: every API field must have the shape `'Argument -> Task<'Reply>`. Neither
+is a field that returns a function, or one whose range is `Async<'Reply>`, `ValueTask<'Reply>`,
+or a non-generic `Task`. `unit` means "no domain input" (`unit -> Task<'Reply>`).
 
-Everything else is unchanged. `readOnly`, `oneWay`, `alwaysInterleave`, and `operationId` each
-have one spelling per arity and apply to a curried field exactly as to a tupled one. The bound
-field is a preclosed curried closure, so the hot path stays reflection-free and a partial
-application (`room.typing userId`) sends nothing — the request goes out at the last argument.
-
-**The limits.** At most **seven** curried arguments: seven is where `System.Tuple` stops nesting,
-so the canonical tuple stays flat and identical to the type you would have written by hand. An
-eighth fails contract construction with a diagnostic telling you to group the inputs in a record.
-`unit` means "no domain input" only as a field's **sole** argument (`unit -> Task<'Reply>`, which
-is never canonicalized to a one-tuple); in any later curried position it is rejected, because
-there it would silently become an ordinary tuple slot that reads like an absent argument. And
-because the walk consumes the whole chain to `Task<_>`, an API field can never *return* a
-function: a trailing function type is simply another argument — and, being unserializable, one
-that fails the serializer preflight at binding.
-
-`FunctionalGrainRef.call` and `callCancellable` take the canonical tupled spelling only. They are
-curried members, and F# forbids overloading a member that takes curried arguments (FS0816), so
-there is no curried form of them: call a curried field through the bound API record, and spell an
-operation tupled if you need the raw cancellable call on it.
+`FunctionalGrainRef.call` and `callCancellable` take the same one-argument shape.
 
 ## Why the actor brand
 

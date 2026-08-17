@@ -54,44 +54,9 @@ type ValueTaskApi = { go: int -> ValueTask<int> }
 [<NoEquality; NoComparison>]
 type PlainTaskApi = { go: int -> Task }
 
-/// <summary>A curried multi-input field is valid sugar for the tupled spelling.</summary>
+/// <summary>A curried multi-input field is invalid.</summary>
 [<NoEquality; NoComparison>]
 type CurriedApi = { go: int -> string -> Task<int> }
-
-/// <summary>The tupled spelling of exactly the same operation as <c>CurriedApi.go</c>.</summary>
-[<NoEquality; NoComparison>]
-type TupledApi = { go: (int * string) -> Task<int> }
-
-/// <summary>Curried fields at the extremes of the supported arity range.</summary>
-[<NoEquality; NoComparison>]
-type ArityApi =
-    { five: int -> string -> bool -> int64 -> double -> Task<unit>
-      six: int -> string -> bool -> int64 -> double -> char -> Task<unit>
-      seven: int -> string -> bool -> int64 -> double -> char -> byte -> Task<unit> }
-
-/// <summary>One argument past the cap.</summary>
-[<NoEquality; NoComparison>]
-type OverCapApi =
-    { eight: int -> int -> int -> int -> int -> int -> int -> int -> Task<unit> }
-
-/// <summary><c>unit</c> after the first curried position is ambiguous and invalid.</summary>
-[<NoEquality; NoComparison>]
-type TrailingUnitApi = { go: string -> unit -> Task<int> }
-
-/// <summary><c>unit</c> in the middle of a curried chain is invalid.</summary>
-[<NoEquality; NoComparison>]
-type MiddleUnitApi = { go: string -> unit -> bool -> Task<int> }
-
-/// <summary>A curried chain ending in a non-<c>Task</c> range is invalid.</summary>
-[<NoEquality; NoComparison>]
-type CurriedAsyncApi = { go: int -> string -> Async<int> }
-
-/// <summary>
-/// A function-typed argument: reflected fine, unserializable at binding. The greedy walk means
-/// the trailing function is an argument, never a "returned function".
-/// </summary>
-[<NoEquality; NoComparison>]
-type FunctionArgumentApi = { go: string -> (int -> int) -> Task<unit> }
 
 /// <summary>A record with a private representation is invalid.</summary>
 [<NoEquality; NoComparison>]
@@ -299,93 +264,9 @@ let ``a plain Task field fails construction`` () =
     test <@ error.Message.Contains "'Argument -> Task<'Reply>" @>
 
 [<Fact>]
-let ``a curried chain which does not end in Task fails construction`` () =
-    let error = failureFor typeof<CurriedAsyncApi>
+let ``a curried field fails construction`` () =
+    let error = failureFor typeof<CurriedApi>
     test <@ error.Message.Contains "'Argument -> Task<'Reply>" @>
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Curried fields: the greedy walk and its canonical tuple
-// ──────────────────────────────────────────────────────────────────────────────
-
-[<Fact>]
-let ``a curried field collects its arguments in order and canonicalizes to the tuple`` () =
-    let shape = shapeOf<CurriedApi> ()
-    let operation = shape.Operations.[0]
-
-    test <@ operation.ArgumentTypes = [| typeof<int>; typeof<string> |] @>
-    test <@ operation.ArgumentType = typeof<int * string> @>
-    test <@ operation.ReplyType = typeof<int> @>
-
-[<Fact>]
-let ``the curried and tupled spellings of one operation reflect to the same wire types`` () =
-    let curried = (shapeOf<CurriedApi> ()).Operations.[0]
-    let tupled = (shapeOf<TupledApi> ()).Operations.[0]
-
-    test <@ curried.FieldName = tupled.FieldName @>
-    test <@ curried.ArgumentType = tupled.ArgumentType @>
-    test <@ curried.ReplyType = tupled.ReplyType @>
-    // The field types differ — that is exactly what "two spellings" means.
-    test <@ curried.FunctionType <> tupled.FunctionType @>
-    test <@ tupled.ArgumentTypes = [| typeof<int * string> |] @>
-
-/// <remarks>
-/// Seven is the cap because <c>System.Tuple</c> starts nesting at eight: a canonical tuple
-/// inside the cap is always flat, so it is exactly the type an author would get by writing the
-/// tupled spelling by hand. This asserts the flatness rather than trusting it.
-/// </remarks>
-[<Fact>]
-let ``curried arities up to seven canonicalize to a flat tuple`` () =
-    let shape = shapeOf<ArityApi> ()
-
-    test <@ shape.Operations |> Array.map (fun op -> op.ArgumentTypes.Length) = [| 5; 6; 7 |] @>
-    test <@ shape.Operations.[0].ArgumentType = typeof<int * string * bool * int64 * double> @>
-    test <@ shape.Operations.[1].ArgumentType = typeof<int * string * bool * int64 * double * char> @>
-    test <@ shape.Operations.[2].ArgumentType = typeof<int * string * bool * int64 * double * char * byte> @>
-
-    for operation in shape.Operations do
-        // A flat System.Tuple`N: no TRest element, so the last generic argument is a real
-        // argument type and not another tuple.
-        test <@ operation.ArgumentType.GetGenericArguments().Length = operation.ArgumentTypes.Length @>
-        test <@ operation.ArgumentType.GetGenericArguments() = operation.ArgumentTypes @>
-
-[<Fact>]
-let ``a curried field past the arity cap fails construction with the record guidance`` () =
-    let error = failureFor typeof<OverCapApi>
-
-    test <@ error.Message.Contains "declares 8 curried arguments" @>
-    test <@ error.Message.Contains "at most 7 are supported" @>
-    test <@ error.Message.Contains "Group the inputs in a record" @>
-
-[<Fact>]
-let ``unit stays a zero-input operation and never becomes a one-tuple`` () =
-    let shape = shapeOf<GenericApi<int>> ()
-
-    test <@ shape.Operations.[0].ArgumentTypes = [| typeof<unit> |] @>
-    test <@ shape.Operations.[0].ArgumentType = typeof<unit> @>
-
-[<Fact>]
-let ``unit as a non-first curried argument fails construction`` () =
-    let trailing = failureFor typeof<TrailingUnitApi>
-    let middle = failureFor typeof<MiddleUnitApi>
-
-    test <@ trailing.Message.Contains "'unit' as curried argument 2 of 2" @>
-    test <@ trailing.Message.Contains "only valid as a field's sole argument" @>
-    test <@ middle.Message.Contains "'unit' as curried argument 2 of 3" @>
-
-/// <remarks>
-/// The walk is greedy to the first <c>Task&lt;_&gt;</c> range, so a field can never "return a
-/// function": a function-typed tail is consumed as another argument. That keeps the old rule
-/// that a function-typed argument is unserializable — it just fails at the serializer preflight
-/// rather than at shape reflection, exactly as it did for the tupled spelling.
-/// </remarks>
-[<Fact>]
-let ``the greedy walk consumes a function-typed tail as an argument`` () =
-    let shape = shapeOf<FunctionArgumentApi> ()
-    let operation = shape.Operations.[0]
-
-    test <@ operation.ArgumentTypes = [| typeof<string>; typeof<int -> int> |] @>
-    test <@ operation.ArgumentType = typeof<string * (int -> int)> @>
-    test <@ operation.ReplyType = typeof<unit> @>
 
 [<Fact>]
 let ``a record with a private representation fails construction`` () =

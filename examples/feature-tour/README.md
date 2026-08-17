@@ -52,24 +52,11 @@ Status means:
 
 These are not hypotheticals. Each was hit while writing the tour, and each is reproduced by code.
 
-### F# tuples of FSharp.Core generics do not cross the transport
+### F# tuples of FSharp.Core generics did not cross the transport — FIXED
 
-**This is a live bug, not a design limit.** An argument or reply that is a *tuple* whose elements
-are generic types from FSharp.Core (`option`, `list`, `Map`, …) fails at deserialization.
-
-| Shape | Result |
-|---|---|
-| `string option` | works |
-| `Colour * Colour` (non-generic F# DU) | works |
-| `string * string` | works |
-| `{ first: string option; second: string option }` (record) | works |
-| `string option list` | works |
-| `string option * string option` | **fails** |
-| `string list * string list` | **fails** |
-| `Map<string,int> * Map<string,int>` | **fails** |
-| `handle2`-style curried `string option -> string option -> …` | **fails** |
-
-Two different diagnostics, one root cause:
+**This was a live bug found while writing this tour; it is fixed now.** An argument or reply that
+was a *tuple* whose elements are generic types from FSharp.Core (`option`, `list`, `Map`, …)
+failed at deserialization with one of two diagnostics:
 
 ```text
 FSharpBinaryCodec: type 'Microsoft.FSharp.Collections.FSharpList`1[[System.String, System.Private.CoreLib, ...]]'
@@ -79,17 +66,20 @@ FSharpBinaryCodec: the payload declares type 'Microsoft.FSharp.Core.FSharpOption
 which is not assignable to the expected type 'System.Tuple`2[[...FSharpOption`1...],[...FSharpOption`1...]]'.
 ```
 
-Orleans' own `TupleCodec` decomposes the tuple and hands each element to the F# codec
-*individually*, as an untyped payload. The element's embedded type name is a `FullName`, whose
-outer generic type carries no assembly qualifier, so `Type.GetType` cannot find `FSharpList\`1`
-(which lives in FSharp.Core); and where the name *does* resolve, the expected-payload-type guard
-is still scoped to the whole tuple and rejects the element.
+Orleans owns `System.Tuple`, so a tuple payload never reaches the F# codec whole: Orleans' own
+`TupleCodec` decomposes it and hands each element to the F# codec *individually*, as its own
+field carrying only that element's `FullName`. Both halves of top-level payload handling were
+scoped to the declared type alone — the declaration table did not contain the elements (and
+`Type.GetType` cannot resolve a generic whose outer type lives in FSharp.Core), and the
+expected-payload-type guard compared each element against the whole tuple.
 
-The curried sugar (`handle2` … `handle7`) is affected because its canonical wire argument *is* a
-reference tuple.
+The fix declares a payload type's constituents with it and admits them in the guard. Tuples of
+`option`, `list`, `Map`, `Set`, `Result`, arrays, records and nested tuples now round-trip in both
+argument and reply position; the regression suite is
+`tests/Orleans.FSharp.Tests/FunctionalTupleCodecTests.fs`.
 
-**Workaround, and what this example does:** use a record instead of a tuple. `RequestContextTour.fs`
-returns a two-field `ContextView` record for exactly this reason.
+`RequestContextTour.fs` still returns a two-field `ContextView` record rather than a tuple — a
+record was always the clearer shape for a named pair, and it is no longer a workaround.
 
 ### `ClearStateAsync` leaves an F# record with null fields
 

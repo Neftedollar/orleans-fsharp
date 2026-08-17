@@ -369,13 +369,6 @@ type internal FunctionalCallSite
 /// The typed client-closure factory. Its generic method is closed once per operation
 /// descriptor while the contract is sealed, so binding and calling never close a generic.
 /// </summary>
-/// <remarks>
-/// A curried field gets a curried <c>Field</c> closure of that field's exact function type,
-/// which accumulates the arguments and fires the ordinary tupled send at the last one — the
-/// tuple is built in declaration order, so the wire payload is byte-identical to the tupled
-/// spelling of the same operation. <c>Cancellable</c> stays canonical (it takes the tuple),
-/// because the raw selector calls on <c>FunctionalGrainRef</c> speak the canonical spelling.
-/// </remarks>
 [<AbstractClass; Sealed>]
 type internal BoundCallFactory =
 
@@ -386,104 +379,26 @@ type internal BoundCallFactory =
             box (fun (argument: 'Argument) (cancellationToken: CancellationToken) ->
                 site.Invoke<'Argument, 'Reply>(argument, cancellationToken)) }
 
-    /// <summary>Create the closures of a curried two-argument operation.</summary>
-    static member CreateCurried2<'A1, 'A2, 'Reply>(site: FunctionalCallSite) : BoundCall =
-        { Field =
-            box (fun (a1: 'A1) (a2: 'A2) -> site.Invoke<'A1 * 'A2, 'Reply>((a1, a2), CancellationToken.None))
-          Cancellable =
-            box (fun (argument: 'A1 * 'A2) (cancellationToken: CancellationToken) ->
-                site.Invoke<'A1 * 'A2, 'Reply>(argument, cancellationToken)) }
-
-    /// <summary>Create the closures of a curried three-argument operation.</summary>
-    static member CreateCurried3<'A1, 'A2, 'A3, 'Reply>(site: FunctionalCallSite) : BoundCall =
-        { Field =
-            box (fun (a1: 'A1) (a2: 'A2) (a3: 'A3) ->
-                site.Invoke<'A1 * 'A2 * 'A3, 'Reply>((a1, a2, a3), CancellationToken.None))
-          Cancellable =
-            box (fun (argument: 'A1 * 'A2 * 'A3) (cancellationToken: CancellationToken) ->
-                site.Invoke<'A1 * 'A2 * 'A3, 'Reply>(argument, cancellationToken)) }
-
-    /// <summary>Create the closures of a curried four-argument operation.</summary>
-    static member CreateCurried4<'A1, 'A2, 'A3, 'A4, 'Reply>(site: FunctionalCallSite) : BoundCall =
-        { Field =
-            box (fun (a1: 'A1) (a2: 'A2) (a3: 'A3) (a4: 'A4) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4, 'Reply>((a1, a2, a3, a4), CancellationToken.None))
-          Cancellable =
-            box (fun (argument: 'A1 * 'A2 * 'A3 * 'A4) (cancellationToken: CancellationToken) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4, 'Reply>(argument, cancellationToken)) }
-
-    /// <summary>Create the closures of a curried five-argument operation.</summary>
-    static member CreateCurried5<'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>(site: FunctionalCallSite) : BoundCall =
-        { Field =
-            box (fun (a1: 'A1) (a2: 'A2) (a3: 'A3) (a4: 'A4) (a5: 'A5) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4 * 'A5, 'Reply>((a1, a2, a3, a4, a5), CancellationToken.None))
-          Cancellable =
-            box (fun (argument: 'A1 * 'A2 * 'A3 * 'A4 * 'A5) (cancellationToken: CancellationToken) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4 * 'A5, 'Reply>(argument, cancellationToken)) }
-
-    /// <summary>Create the closures of a curried six-argument operation.</summary>
-    static member CreateCurried6<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>(site: FunctionalCallSite) : BoundCall =
-        { Field =
-            box (fun (a1: 'A1) (a2: 'A2) (a3: 'A3) (a4: 'A4) (a5: 'A5) (a6: 'A6) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6, 'Reply>(
-                    (a1, a2, a3, a4, a5, a6),
-                    CancellationToken.None
-                ))
-          Cancellable =
-            box (fun (argument: 'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6) (cancellationToken: CancellationToken) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6, 'Reply>(argument, cancellationToken)) }
-
-    /// <summary>Create the closures of a curried seven-argument operation.</summary>
-    static member CreateCurried7<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>(site: FunctionalCallSite) : BoundCall =
-        { Field =
-            box (fun (a1: 'A1) (a2: 'A2) (a3: 'A3) (a4: 'A4) (a5: 'A5) (a6: 'A6) (a7: 'A7) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6 * 'A7, 'Reply>(
-                    (a1, a2, a3, a4, a5, a6, a7),
-                    CancellationToken.None
-                ))
-          Cancellable =
-            box (fun (argument: 'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6 * 'A7) (cancellationToken: CancellationToken) ->
-                site.Invoke<'A1 * 'A2 * 'A3 * 'A4 * 'A5 * 'A6 * 'A7, 'Reply>(argument, cancellationToken)) }
-
 /// <summary>Preclosing of the typed client-closure factory.</summary>
 [<RequireQualifiedAccess>]
 module internal BoundClosure =
 
-    let private factoryMethod (name: string) =
+    let private createMethod =
         match
             typeof<BoundCallFactory>
-                .GetMethod(name, BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+                .GetMethod("Create", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
         with
-        | null -> fail ContractStage $"the typed client-closure factory 'BoundCallFactory.{name}' was not found."
+        | null -> fail ContractStage "the typed client-closure factory 'BoundCallFactory.Create' was not found."
         | method -> method
-
-    /// <summary>One factory method per supported arity, indexed by argument count.</summary>
-    let private createMethods =
-        [| factoryMethod "Create"
-           factoryMethod "CreateCurried2"
-           factoryMethod "CreateCurried3"
-           factoryMethod "CreateCurried4"
-           factoryMethod "CreateCurried5"
-           factoryMethod "CreateCurried6"
-           factoryMethod "CreateCurried7" |]
 
     /// <summary>
     /// Close the client-closure factory over one operation's exact argument and reply types.
-    /// Called once per descriptor while the contract is sealed. A curried field closes the
-    /// factory of its arity over the collected argument types in declaration order.
+    /// Called once per descriptor while the contract is sealed.
     /// </summary>
-    let precompute (argumentTypes: Type[]) (replyType: Type) : Func<FunctionalCallSite, BoundCall> =
+    let precompute (argumentType: Type) (replyType: Type) : Func<FunctionalCallSite, BoundCall> =
         FunctionalInstrumentation.countGenericClosing ()
 
-        if argumentTypes.Length < 1 || argumentTypes.Length > createMethods.Length then
-            fail
-                ContractStage
-                $"an operation collected {argumentTypes.Length} argument types, which no client-closure factory supports."
-
-        let closed =
-            createMethods
-                .[argumentTypes.Length - 1]
-                .MakeGenericMethod(Array.append argumentTypes [| replyType |])
+        let closed = createMethod.MakeGenericMethod [| argumentType; replyType |]
 
         closed.CreateDelegate typeof<Func<FunctionalCallSite, BoundCall>> :?> Func<FunctionalCallSite, BoundCall>
 

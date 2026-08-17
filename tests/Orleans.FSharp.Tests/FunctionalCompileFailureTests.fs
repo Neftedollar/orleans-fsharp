@@ -58,18 +58,6 @@ type RoomApi =
 [<NoEquality; NoComparison>]
 type OtherApi = { ping: unit -> Task<unit> }
 
-type CurriedActor = private CurriedActor of unit
-type OverCapActor = private OverCapActor of unit
-
-[<NoEquality; NoComparison>]
-type CurriedApi =
-    { note: string -> bool -> Task<unit>
-      wide: int -> int -> int -> int -> int -> int -> int -> Task<int> }
-
-[<NoEquality; NoComparison>]
-type OverCapApi =
-    { over: int -> int -> int -> int -> int -> int -> int -> int -> Task<int> }
-
 type RoomState = { count: int }
 type OtherState = { total: int64 }
 
@@ -82,18 +70,6 @@ let roomContract =
 let otherContract =
     grainContract<OtherActor, string, OtherApi> () {
         grainType "chat.other"
-        stringKey
-    }
-
-let curriedContract =
-    grainContract<CurriedActor, string, CurriedApi> () {
-        grainType "chat.curried"
-        stringKey
-    }
-
-let overCapContract =
-    grainContract<OverCapActor, string, OverCapApi> () {
-        grainType "chat.overcap"
         stringKey
     }
 
@@ -377,176 +353,6 @@ let bad =
         stringKeyMapped RoomId.value RoomId
         readOnly (fun (api: OtherApi) -> api.ping)
     }
-"""
-
-    rejects accepted rejected |> ignore
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Curried fields
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// <remarks>
-/// The whole curried spelling in one snippet, asserted free of errors <em>and warnings</em>:
-/// the contract's policies and ID override, the arity-suffixed handler with an unannotated
-/// tuple pattern, and the curried call on the bound record. The handler body dereferences both
-/// tuple elements on purpose — that is the inference the arity-suffixed <c>handle2</c> exists
-/// to keep, and it is exactly what an overloaded <c>handle</c> would have broken.
-/// </remarks>
-[<Fact>]
-let ``a curried field compiles through contract, definition, and bound call`` () =
-    let accepted =
-        """
-let curried =
-    grainContract<CurriedActor, string, CurriedApi> () {
-        grainType "chat.curried"
-        stringKey
-        operationId "note" (_.note)
-        oneWay (_.note)
-        alwaysInterleave (_.note)
-        readOnly (_.wide)
-    }
-
-let curriedHandlers =
-    grainFor curriedContract {
-        defaultState (fun () -> { count = 0 })
-
-        handle2
-            (_.note)
-            (fun _ state (user, isTyping) ->
-                task { return { count = state.count + user.Length + (if isTyping then 1 else 0) }, () })
-
-        handle7 (_.wide) (fun _ state (a, b, c, d, e, f, g) -> task { return state, a + b + c + d + e + f + g })
-    }
-
-let curriedCalls (factory: IGrainFactory) =
-    let api = FunctionalGrain.ref curriedContract factory "general"
-    api.note "alice" true, api.wide 1 2 3 4 5 6 7
-"""
-
-    test <@ compileDiagnostics accepted = Array.empty @>
-
-[<Fact>]
-let ``a curried field is bound by the handle spelling of its own arity`` () =
-    let accepted =
-        """
-let ok =
-    grainFor curriedContract {
-        defaultState (fun () -> { count = 0 })
-        handle2 (_.note) (fun _ state (_: string, _: bool) -> task { return state, () })
-    }
-"""
-
-    // The tupled `handle` cannot take a curried field, and neither can the wrong arity.
-    let tupledSpelling =
-        """
-let bad =
-    grainFor curriedContract {
-        defaultState (fun () -> { count = 0 })
-        handle (_.note) (fun _ state (_: string * bool) -> task { return state, () })
-    }
-"""
-
-    let wrongArity =
-        """
-let alsoBad =
-    grainFor curriedContract {
-        defaultState (fun () -> { count = 0 })
-        handle2 (_.wide) (fun _ state (_: int, _: int) -> task { return state, 0 })
-    }
-"""
-
-    test <@ compileErrors accepted = Array.empty @>
-    test <@ compileErrors tupledSpelling <> Array.empty @>
-    test <@ compileErrors wrongArity <> Array.empty @>
-
-/// <remarks>
-/// The arity cap is enforced twice over: contract construction rejects a field with more than
-/// seven curried arguments at run time with the "group the inputs in a record" diagnostic, and
-/// the public surface simply has no spelling for an eighth argument — so a contract that tries
-/// to configure or handle such a field does not compile either.
-/// </remarks>
-[<Fact>]
-let ``a curried field past the arity cap has no spelling`` () =
-    let accepted =
-        """
-let ok =
-    grainContract<CurriedActor, string, CurriedApi> () {
-        grainType "chat.curried"
-        stringKey
-        readOnly (_.wide)
-    }
-"""
-
-    let overCapPolicy =
-        """
-let bad =
-    grainContract<OverCapActor, string, OverCapApi> () {
-        grainType "chat.overcap"
-        stringKey
-        readOnly (_.over)
-    }
-"""
-
-    let overCapHandler =
-        """
-let alsoBad =
-    grainFor overCapContract {
-        defaultState (fun () -> { count = 0 })
-        handle8 (_.over) (fun _ state (a, b, c, d, e, f, g, h) -> task { return state, a + b + c + d + e + f + g + h })
-    }
-"""
-
-    test <@ compileErrors accepted = Array.empty @>
-    test <@ compileErrors overCapPolicy <> Array.empty @>
-    test <@ compileErrors overCapHandler <> Array.empty @>
-
-[<Fact>]
-let ``oneWay on a curried field still requires a Task of unit tail`` () =
-    let accepted =
-        """
-let ok =
-    grainContract<CurriedActor, string, CurriedApi> () {
-        grainType "chat.curried"
-        stringKey
-        oneWay (_.note)
-    }
-"""
-
-    let rejected =
-        """
-let bad =
-    grainContract<CurriedActor, string, CurriedApi> () {
-        grainType "chat.curried"
-        stringKey
-        oneWay (_.wide)
-    }
-"""
-
-    rejects accepted rejected |> ignore
-
-/// <remarks>
-/// The documented limit of the sugar: <c>FunctionalGrainRef.call</c> and
-/// <c>callCancellable</c> are curried members, and F# forbids overloading a member that takes
-/// curried arguments (FS0816), so the raw selector calls speak only the canonical tupled
-/// spelling. A curried field is called through the bound API record instead; an operation that
-/// needs the raw cancellable call is spelled tupled. This pins the limit so it cannot drift
-/// unnoticed — delete it together with the docs paragraph if the raw calls ever grow a curried
-/// form.
-/// </remarks>
-[<Fact>]
-let ``the raw selector calls take the canonical tupled spelling only`` () =
-    let accepted =
-        """
-let ok (factory: IGrainFactory) =
-    let api = FunctionalGrain.ref curriedContract factory "general"
-    api.note "alice" true
-"""
-
-    let rejected =
-        """
-let bad (factory: IGrainFactory) =
-    let raw = FunctionalGrain.rawRef curriedContract factory "general"
-    raw.call (_.note) ("alice", true)
 """
 
     rejects accepted rejected |> ignore
@@ -1098,3 +904,51 @@ let useClient (client: IClusterClient) =
 
     test <@ compileDiagnosticsWith warnOnConversions throughTheBinding = Array.empty @>
     test <@ compileDiagnosticsWith warnOnConversions upcastAtTheCall = Array.empty @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Multi-input operations are spelled tupled, and only tupled
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <remarks>
+/// The tupled spelling is the design: an operation takes one argument, and a multi-input
+/// operation takes a tuple. A curried field is refused twice over, which is what makes the
+/// rule enforceable rather than advisory — the CE's selector-shaped operations cannot even be
+/// applied to it (this fixture), and shape reflection refuses to build the contract at all
+/// (<c>FunctionalShapeTests."a curried field fails construction"</c>). The positive twin proves
+/// the rejection is about the currying and not about the surrounding snippet.
+/// </remarks>
+[<Fact>]
+let ``a curried API field cannot be configured through the contract builder`` () =
+    let tupled =
+        """
+[<NoEquality; NoComparison>]
+type TupledApi =
+    { tag: (string * string) -> Task<string> }
+
+type TupledActor = private TupledActor of unit
+
+let tupledContract =
+    grainContract<TupledActor, string, TupledApi> () {
+        grainType "chat.tupled"
+        stringKey
+        readOnly (_.tag)
+    }
+"""
+
+    let curried =
+        """
+[<NoEquality; NoComparison>]
+type CurriedApi =
+    { tag: string -> string -> Task<string> }
+
+type CurriedActor = private CurriedActor of unit
+
+let curriedContract =
+    grainContract<CurriedActor, string, CurriedApi> () {
+        grainType "chat.curried"
+        stringKey
+        readOnly (_.tag)
+    }
+"""
+
+    rejects tupled curried |> ignore

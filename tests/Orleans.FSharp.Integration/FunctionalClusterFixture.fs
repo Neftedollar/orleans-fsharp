@@ -91,10 +91,10 @@ type ProbeApi =
       /// one field at a time, each carrying only its own type name. It is the shape that used
       /// to fail on the first call over the real transport.
       blend: (string option * string list) -> Task<string option * string list>
-      /// A CURRIED field. Both arguments are strings on purpose: a closure that assembled
-      /// the canonical tuple in the wrong order would still type-check, so only the value
-      /// the silo observes can prove the order survives the real wire.
-      tag: string -> string -> Task<string> }
+      /// A two-input operation, spelled the only way there is: one tuple argument. Both
+      /// elements are strings on purpose — a tuple sent in the wrong order would still
+      /// type-check, so only the value the silo observes can prove the order survives the wire.
+      tag: (string * string) -> Task<string> }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cross-activation observation table
@@ -228,9 +228,8 @@ let private definitionFor (contract: GrainContract<'Actor, ProbeId, ProbeApi>) =
 
         handle (_.echo) (fun _ state (argument: string) -> task { return state, argument })
 
-        // The curried spelling end to end: the client field is curried, the wire argument is
-        // the canonical tuple, and the handler is tupled.
-        handle2 (_.tag) (fun _ state (name, value) -> task { return { last = name }, $"{name}={value}" })
+        handle (_.tag) (fun _ state ((name, value): string * string) ->
+            task { return { last = name }, $"{name}={value}" })
 
         handle (_.identity) (fun context state () ->
             task {

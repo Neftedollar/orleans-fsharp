@@ -20,9 +20,7 @@ type internal FunctionalOperation =
         OperationId: string
         /// The field's exact CLR function type.
         FunctionType: Type
-        /// The curried argument types in declaration order; a single element for a tupled field.
-        ArgumentTypes: Type[]
-        /// The operation's canonical wire argument type: the sole argument, or the F# tuple of them.
+        /// The operation's exact argument type.
         ArgumentType: Type
         /// The operation's exact reply type.
         ReplyType: Type
@@ -200,53 +198,6 @@ module internal ContractDraft =
 
         current.Add operation.Index
 
-    // The four selector-driven custom operations are spelled once per supported arity, so a
-    // curried field configures exactly like a tupled one. Each spelling differs only in the
-    // selector's type, so the effect of every one of them lives here, applied to the already
-    // resolved descriptor.
-
-    /// <summary>Apply <c>readOnly</c> to a resolved field.</summary>
-    let applyReadOnly<'Actor, 'Key, 'Api> (state: GrainContractDraft<'Actor, 'Key, 'Api>) (operation: ApiOperationShape) =
-        withState<'Actor, 'Key, 'Api>
-            { state.State with
-                ReadOnly = addPolicy "readOnly" state.State.ReadOnly operation }
-
-    /// <summary>Apply <c>oneWay</c> to a resolved field.</summary>
-    let applyOneWay<'Actor, 'Key, 'Api> (state: GrainContractDraft<'Actor, 'Key, 'Api>) (operation: ApiOperationShape) =
-        withState<'Actor, 'Key, 'Api>
-            { state.State with
-                OneWay = addPolicy "oneWay" state.State.OneWay operation }
-
-    /// <summary>Apply <c>alwaysInterleave</c> to a resolved field.</summary>
-    let applyAlwaysInterleave<'Actor, 'Key, 'Api>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>)
-        (operation: ApiOperationShape)
-        =
-        withState<'Actor, 'Key, 'Api>
-            { state.State with
-                AlwaysInterleave = addPolicy "alwaysInterleave" state.State.AlwaysInterleave operation }
-
-    /// <summary>Validate and apply an <c>operationId</c> override to a resolved field.</summary>
-    let applyOperationId<'Actor, 'Key, 'Api>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>)
-        (stableWireId: string)
-        (operation: ApiOperationShape)
-        =
-        if state.State.OperationIds.ContainsKey operation.Index then
-            fail ContractStage $"'operationId' is applied more than once to API field '{operation.FieldName}'."
-
-        withState<'Actor, 'Key, 'Api>
-            { state.State with
-                OperationIds = state.State.OperationIds.Add(operation.Index, stableWireId) }
-
-    /// <summary>Validate an <c>operationId</c> wire ID before it reaches a selector.</summary>
-    let checkOperationId (stableWireId: string) =
-        if isBlank stableWireId then
-            fail ContractStage "'operationId' requires a non-blank wire ID."
-
-        if containsNul stableWireId then
-            fail ContractStage $"'operationId' value '{stableWireId}' must not contain a NUL character."
-
     /// <summary>
     /// Derive the default grain type name from the actor brand's CLR simple name, used when the
     /// contract omits an explicit 'grainType'. Only a simple, non-generic, non-nested brand
@@ -319,7 +270,6 @@ module internal ContractDraft =
                   FieldName = field.FieldName
                   OperationId = operationId
                   FunctionType = field.FunctionType
-                  ArgumentTypes = field.ArgumentTypes
                   ArgumentType = field.ArgumentType
                   ReplyType = field.ReplyType
                   IsReadOnly = isReadOnly
@@ -328,7 +278,7 @@ module internal ContractDraft =
                   RequestToken = ProtocolToken.request grainTypeName version operationId
                   ReplyToken = ProtocolToken.reply grainTypeName version operationId
                   AdmissionFlags = AdmissionFlags.compose isReadOnly isOneWay isAlwaysInterleave
-                  ClosureFactory = BoundClosure.precompute field.ArgumentTypes field.ReplyType })
+                  ClosureFactory = BoundClosure.precompute field.ArgumentType field.ReplyType })
 
         let seen = Dictionary<string, string>(StringComparer.Ordinal)
 
@@ -455,174 +405,37 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Select Orleans read-only scheduling for one operation.</summary>
-    /// <remarks>
-    /// This operation, <c>oneWay</c>, <c>alwaysInterleave</c>, and <c>operationId</c> each have
-    /// one spelling per supported argument arity, so a curried API field is configured exactly
-    /// like the tupled spelling of the same operation.
-    /// </remarks>
     [<CustomOperation("readOnly")>]
     member _.ReadOnly<'Argument, 'Reply>
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector<'Api, 'Argument, 'Reply>)
         =
-        ContractDraft.applyReadOnly state (ApiShape.resolve state.State.Shape "readOnly" selector)
+        let operation = ApiShape.resolve state.State.Shape "readOnly" selector
 
-    /// <summary>Select Orleans read-only scheduling for a curried two-argument operation.</summary>
-    [<CustomOperation("readOnly")>]
-    member _.ReadOnly<'A1, 'A2, 'Reply>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector2<'Api, 'A1, 'A2, 'Reply>)
-        =
-        ContractDraft.applyReadOnly state (ApiShape.resolveField state.State.Shape "readOnly" selector)
-
-    /// <summary>Select Orleans read-only scheduling for a curried three-argument operation.</summary>
-    [<CustomOperation("readOnly")>]
-    member _.ReadOnly<'A1, 'A2, 'A3, 'Reply>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector3<'Api, 'A1, 'A2, 'A3, 'Reply>)
-        =
-        ContractDraft.applyReadOnly state (ApiShape.resolveField state.State.Shape "readOnly" selector)
-
-    /// <summary>Select Orleans read-only scheduling for a curried four-argument operation.</summary>
-    [<CustomOperation("readOnly")>]
-    member _.ReadOnly<'A1, 'A2, 'A3, 'A4, 'Reply>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector4<'Api, 'A1, 'A2, 'A3, 'A4, 'Reply>)
-        =
-        ContractDraft.applyReadOnly state (ApiShape.resolveField state.State.Shape "readOnly" selector)
-
-    /// <summary>Select Orleans read-only scheduling for a curried five-argument operation.</summary>
-    [<CustomOperation("readOnly")>]
-    member _.ReadOnly<'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector5<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>
-        ) =
-        ContractDraft.applyReadOnly state (ApiShape.resolveField state.State.Shape "readOnly" selector)
-
-    /// <summary>Select Orleans read-only scheduling for a curried six-argument operation.</summary>
-    [<CustomOperation("readOnly")>]
-    member _.ReadOnly<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector6<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>
-        ) =
-        ContractDraft.applyReadOnly state (ApiShape.resolveField state.State.Shape "readOnly" selector)
-
-    /// <summary>Select Orleans read-only scheduling for a curried seven-argument operation.</summary>
-    [<CustomOperation("readOnly")>]
-    member _.ReadOnly<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector7<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>
-        ) =
-        ContractDraft.applyReadOnly state (ApiShape.resolveField state.State.Shape "readOnly" selector)
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                ReadOnly = ContractDraft.addPolicy "readOnly" state.State.ReadOnly operation }
 
     /// <summary>Select one-way delivery for one <c>Task&lt;unit&gt;</c> operation.</summary>
     [<CustomOperation("oneWay")>]
     member _.OneWay<'Argument>
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector<'Api, 'Argument, unit>)
         =
-        ContractDraft.applyOneWay state (ApiShape.resolve state.State.Shape "oneWay" selector)
+        let operation = ApiShape.resolve state.State.Shape "oneWay" selector
 
-    /// <summary>Select one-way delivery for a curried two-argument <c>Task&lt;unit&gt;</c> operation.</summary>
-    [<CustomOperation("oneWay")>]
-    member _.OneWay<'A1, 'A2>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector2<'Api, 'A1, 'A2, unit>)
-        =
-        ContractDraft.applyOneWay state (ApiShape.resolveField state.State.Shape "oneWay" selector)
-
-    /// <summary>Select one-way delivery for a curried three-argument <c>Task&lt;unit&gt;</c> operation.</summary>
-    [<CustomOperation("oneWay")>]
-    member _.OneWay<'A1, 'A2, 'A3>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector3<'Api, 'A1, 'A2, 'A3, unit>)
-        =
-        ContractDraft.applyOneWay state (ApiShape.resolveField state.State.Shape "oneWay" selector)
-
-    /// <summary>Select one-way delivery for a curried four-argument <c>Task&lt;unit&gt;</c> operation.</summary>
-    [<CustomOperation("oneWay")>]
-    member _.OneWay<'A1, 'A2, 'A3, 'A4>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector4<'Api, 'A1, 'A2, 'A3, 'A4, unit>)
-        =
-        ContractDraft.applyOneWay state (ApiShape.resolveField state.State.Shape "oneWay" selector)
-
-    /// <summary>Select one-way delivery for a curried five-argument <c>Task&lt;unit&gt;</c> operation.</summary>
-    [<CustomOperation("oneWay")>]
-    member _.OneWay<'A1, 'A2, 'A3, 'A4, 'A5>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector5<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, unit>
-        ) =
-        ContractDraft.applyOneWay state (ApiShape.resolveField state.State.Shape "oneWay" selector)
-
-    /// <summary>Select one-way delivery for a curried six-argument <c>Task&lt;unit&gt;</c> operation.</summary>
-    [<CustomOperation("oneWay")>]
-    member _.OneWay<'A1, 'A2, 'A3, 'A4, 'A5, 'A6>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector6<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, unit>
-        ) =
-        ContractDraft.applyOneWay state (ApiShape.resolveField state.State.Shape "oneWay" selector)
-
-    /// <summary>Select one-way delivery for a curried seven-argument <c>Task&lt;unit&gt;</c> operation.</summary>
-    [<CustomOperation("oneWay")>]
-    member _.OneWay<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector7<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, unit>
-        ) =
-        ContractDraft.applyOneWay state (ApiShape.resolveField state.State.Shape "oneWay" selector)
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                OneWay = ContractDraft.addPolicy "oneWay" state.State.OneWay operation }
 
     /// <summary>Permit a read-only or one-way operation to interleave.</summary>
     [<CustomOperation("alwaysInterleave")>]
     member _.AlwaysInterleave<'Argument, 'Reply>
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector<'Api, 'Argument, 'Reply>)
         =
-        ContractDraft.applyAlwaysInterleave state (ApiShape.resolve state.State.Shape "alwaysInterleave" selector)
+        let operation = ApiShape.resolve state.State.Shape "alwaysInterleave" selector
 
-    /// <summary>Permit a curried two-argument read-only or one-way operation to interleave.</summary>
-    [<CustomOperation("alwaysInterleave")>]
-    member _.AlwaysInterleave<'A1, 'A2, 'Reply>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector2<'Api, 'A1, 'A2, 'Reply>)
-        =
-        ContractDraft.applyAlwaysInterleave state (ApiShape.resolveField state.State.Shape "alwaysInterleave" selector)
-
-    /// <summary>Permit a curried three-argument read-only or one-way operation to interleave.</summary>
-    [<CustomOperation("alwaysInterleave")>]
-    member _.AlwaysInterleave<'A1, 'A2, 'A3, 'Reply>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector3<'Api, 'A1, 'A2, 'A3, 'Reply>)
-        =
-        ContractDraft.applyAlwaysInterleave state (ApiShape.resolveField state.State.Shape "alwaysInterleave" selector)
-
-    /// <summary>Permit a curried four-argument read-only or one-way operation to interleave.</summary>
-    [<CustomOperation("alwaysInterleave")>]
-    member _.AlwaysInterleave<'A1, 'A2, 'A3, 'A4, 'Reply>
-        (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector4<'Api, 'A1, 'A2, 'A3, 'A4, 'Reply>)
-        =
-        ContractDraft.applyAlwaysInterleave state (ApiShape.resolveField state.State.Shape "alwaysInterleave" selector)
-
-    /// <summary>Permit a curried five-argument read-only or one-way operation to interleave.</summary>
-    [<CustomOperation("alwaysInterleave")>]
-    member _.AlwaysInterleave<'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector5<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>
-        ) =
-        ContractDraft.applyAlwaysInterleave state (ApiShape.resolveField state.State.Shape "alwaysInterleave" selector)
-
-    /// <summary>Permit a curried six-argument read-only or one-way operation to interleave.</summary>
-    [<CustomOperation("alwaysInterleave")>]
-    member _.AlwaysInterleave<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector6<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>
-        ) =
-        ContractDraft.applyAlwaysInterleave state (ApiShape.resolveField state.State.Shape "alwaysInterleave" selector)
-
-    /// <summary>Permit a curried seven-argument read-only or one-way operation to interleave.</summary>
-    [<CustomOperation("alwaysInterleave")>]
-    member _.AlwaysInterleave<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            selector: OperationSelector7<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>
-        ) =
-        ContractDraft.applyAlwaysInterleave state (ApiShape.resolveField state.State.Shape "alwaysInterleave" selector)
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                AlwaysInterleave = ContractDraft.addPolicy "alwaysInterleave" state.State.AlwaysInterleave operation }
 
     /// <summary>Override the stable wire ID of one operation, keeping it across a field rename.</summary>
     [<CustomOperation("operationId")>]
@@ -632,99 +445,19 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
             stableWireId: string,
             selector: OperationSelector<'Api, 'Argument, 'Reply>
         ) =
-        ContractDraft.checkOperationId stableWireId
+        if isBlank stableWireId then
+            fail ContractStage "'operationId' requires a non-blank wire ID."
 
-        ContractDraft.applyOperationId
-            state
-            stableWireId
-            (ApiShape.resolve state.State.Shape "operationId" selector)
+        if containsNul stableWireId then
+            fail ContractStage $"'operationId' value '{stableWireId}' must not contain a NUL character."
 
-    /// <summary>Override the stable wire ID of a curried two-argument operation.</summary>
-    [<CustomOperation("operationId")>]
-    member _.OperationId<'A1, 'A2, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            stableWireId: string,
-            selector: OperationSelector2<'Api, 'A1, 'A2, 'Reply>
-        ) =
-        ContractDraft.checkOperationId stableWireId
+        let operation = ApiShape.resolve state.State.Shape "operationId" selector
 
-        ContractDraft.applyOperationId
-            state
-            stableWireId
-            (ApiShape.resolveField state.State.Shape "operationId" selector)
+        if state.State.OperationIds.ContainsKey operation.Index then
+            fail
+                ContractStage
+                $"'operationId' is applied more than once to API field '{operation.FieldName}'."
 
-    /// <summary>Override the stable wire ID of a curried three-argument operation.</summary>
-    [<CustomOperation("operationId")>]
-    member _.OperationId<'A1, 'A2, 'A3, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            stableWireId: string,
-            selector: OperationSelector3<'Api, 'A1, 'A2, 'A3, 'Reply>
-        ) =
-        ContractDraft.checkOperationId stableWireId
-
-        ContractDraft.applyOperationId
-            state
-            stableWireId
-            (ApiShape.resolveField state.State.Shape "operationId" selector)
-
-    /// <summary>Override the stable wire ID of a curried four-argument operation.</summary>
-    [<CustomOperation("operationId")>]
-    member _.OperationId<'A1, 'A2, 'A3, 'A4, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            stableWireId: string,
-            selector: OperationSelector4<'Api, 'A1, 'A2, 'A3, 'A4, 'Reply>
-        ) =
-        ContractDraft.checkOperationId stableWireId
-
-        ContractDraft.applyOperationId
-            state
-            stableWireId
-            (ApiShape.resolveField state.State.Shape "operationId" selector)
-
-    /// <summary>Override the stable wire ID of a curried five-argument operation.</summary>
-    [<CustomOperation("operationId")>]
-    member _.OperationId<'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            stableWireId: string,
-            selector: OperationSelector5<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'Reply>
-        ) =
-        ContractDraft.checkOperationId stableWireId
-
-        ContractDraft.applyOperationId
-            state
-            stableWireId
-            (ApiShape.resolveField state.State.Shape "operationId" selector)
-
-    /// <summary>Override the stable wire ID of a curried six-argument operation.</summary>
-    [<CustomOperation("operationId")>]
-    member _.OperationId<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            stableWireId: string,
-            selector: OperationSelector6<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'Reply>
-        ) =
-        ContractDraft.checkOperationId stableWireId
-
-        ContractDraft.applyOperationId
-            state
-            stableWireId
-            (ApiShape.resolveField state.State.Shape "operationId" selector)
-
-    /// <summary>Override the stable wire ID of a curried seven-argument operation.</summary>
-    [<CustomOperation("operationId")>]
-    member _.OperationId<'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            stableWireId: string,
-            selector: OperationSelector7<'Api, 'A1, 'A2, 'A3, 'A4, 'A5, 'A6, 'A7, 'Reply>
-        ) =
-        ContractDraft.checkOperationId stableWireId
-
-        ContractDraft.applyOperationId
-            state
-            stableWireId
-            (ApiShape.resolveField state.State.Shape "operationId" selector)
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                OperationIds = state.State.OperationIds.Add(operation.Index, stableWireId) }

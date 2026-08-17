@@ -105,19 +105,18 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
         }
 
     /// <remarks>
-    /// The curried spelling over the real Orleans transport: the client field is curried, the
-    /// silo handler is tupled, and both arguments are strings so a tuple assembled in the wrong
-    /// order would still type-check and still be caught here.
+    /// A two-input operation over the real Orleans transport. Both elements are strings, so a
+    /// tuple that arrived transposed would still type-check and would still be caught here.
     /// </remarks>
     [<Fact>]
-    member _.``a curried field crosses the real wire in declaration order``() =
+    member _.``a tuple argument crosses the real wire in declaration order``() =
         task {
-            let probe = fixture.Probe $"curried-{Guid.NewGuid():N}"
-            let! reply = probe.api.tag "region" "eu-west"
+            let probe = fixture.Probe $"tag-{Guid.NewGuid():N}"
+            let! reply = probe.api.tag ("region", "eu-west")
             Assert.Equal<string>("region=eu-west", reply)
 
-            // The handler stored its FIRST tuple element, which must be the first curried
-            // argument and not the second.
+            // The handler stored its FIRST tuple element, which must be the first element of
+            // the tuple the client sent and not the second.
             let! last = probe.api.stateRead ()
             Assert.Equal<string>("region", last)
         }

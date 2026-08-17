@@ -35,10 +35,9 @@ See [Functional Grain Runtime](/orleans-fsharp/functional-grains/) for the full 
 | `alwaysInterleave` | `selector -> ...` | Interleaves regardless of `readOnly`/`oneWay` |
 | `operationId` | `string -> selector -> ...` | Override an operation's wire ID, decoupling it from the F# field name |
 
-`readOnly`, `oneWay`, `alwaysInterleave`, and `operationId` each have one spelling per curried
-argument arity (1-7), so a curried API field — `typing: string -> bool -> Task<unit>`, sugar for
-the canonical `(string * bool) -> Task<unit>` — is configured exactly like the tupled spelling.
-See [Functional grains](/orleans-fsharp/functional-grains/), "Two spellings, one operation".
+Every API field takes exactly one argument; a multi-input operation groups its inputs in a tuple
+(`typing: (string * bool) -> Task<unit>`). A field spelled curried fails contract construction.
+See [Functional grains](/orleans-fsharp/functional-grains/), "One operation, one argument".
 
 ### Definition builder — `grainFor contract { }`
 
@@ -47,7 +46,6 @@ See [Functional grains](/orleans-fsharp/functional-grains/), "Two spellings, one
 | `defaultState` | `unit -> 'State` | Ephemeral state factory, called once per activation |
 | `initialState` | `'Key -> 'State` | Key-aware ephemeral state factory |
 | `handle` | `selector -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> 'Arg -> Task<'State * 'Reply>)` | Attach a handler to one API operation |
-| `handle2` … `handle7` | `selector -> (FunctionalGrainContext<'Actor,'Key> -> 'State -> ('A1 * … * 'An) -> Task<'State * 'Reply>)` | Attach a handler to a *curried* API field of that arity; the handler always takes the canonical tuple |
 | `stateFrom` | `PersistentStateRef<'State>` | Attach the primary persistent-state descriptor |
 | `usePersistentState` | `PersistentStateRef<'S> -> ('Key -> 'S)` | Attach an additional named persistent-state descriptor (repeatable) |
 | `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
@@ -63,8 +61,8 @@ See [Functional grains](/orleans-fsharp/functional-grains/), "Two spellings, one
 | `GrainContract<'Actor, 'Key, 'Api>` | Sealed result of `grainContract { }` |
 | `FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>` | Sealed result of `grainFor { }` |
 | `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context passed to every handler/hook/timer/reminder callback |
-| `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed wrapper: `key`, `api`, `call(selector, arg)`, `callCancellable(selector, arg, ct)` — both take the canonical tupled spelling only |
-| `OperationSelector<'Api,'Arg,'Reply>` / `OperationSelector2` … `OperationSelector7` | A field projection (`_.join`); the numbered forms select a curried field of that arity |
+| `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed wrapper: `key`, `api`, `call(selector, arg)`, `callCancellable(selector, arg, ct)` |
+| `OperationSelector<'Api,'Arg,'Reply>` | A field projection (`_.join`) |
 | `PersistentStateRef<'State>` | Immutable descriptor returned by `PersistentState.create` |
 | `Handler<'Actor,'Key,'State,'Argument,'Reply>` | `FunctionalGrainContext<'Actor,'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>` |
 | `ActivateHook` / `DeactivateHook` / `ReminderHook` / `TimerHook` | Hook type aliases used by `onActivate` / `onDeactivate` / `onReminder` / `onTimer` |
