@@ -28,6 +28,7 @@ open FeatureTour.VersioningTour
 open FeatureTour.Streams
 open FeatureTour.ObserverTour
 open FeatureTour.Broadcast
+open FeatureTour.Implicit
 open FeatureTour.Interop
 open FeatureTour.Placement
 open FeatureTour.Heterogeneous
@@ -537,7 +538,7 @@ let private runBroadcast (factory: IGrainFactory) =
 
 let private runHeterogeneous () =
     task {
-        section 11 "Heterogeneous cluster — one grain type advertised by only one silo"
+        section 12 "Heterogeneous cluster — one grain type advertised by only one silo"
 
         say "deploying a two-silo cluster (Microsoft.Orleans.TestingHost, in-process silos)..."
         let! observation = HeterogeneousRun.run ()
@@ -597,6 +598,84 @@ let private runPlacement (factory: IGrainFactory) =
             verdict "WALL — the placement properties did not take effect; see the README"
     }
 
+let private runImplicit (factory: IGrainFactory) =
+    task {
+        section 11 "Implicit subscriptions — onStream / onBroadcast activate the grain on publish"
+
+        let mailer = MailerApi.ref factory "mailer"
+        let inboxKey = $"inbox-{Guid.NewGuid():N}"
+
+        // Nothing has ever touched this grain id. The publish below is the ONLY interaction.
+        let! _ = mailer.post (TourImplicit.StreamNamespace, inboxKey, "first")
+
+        let streamPrefix = $"stream {inboxKey}"
+        let broadcastPrefix = $"broadcast {inboxKey}"
+
+        let! delivered =
+            waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf streamPrefix = 1 })
+
+        if delivered then
+            say $"published to stream namespace '{TourImplicit.StreamNamespace}' key '{inboxKey}' — nothing called the grain"
+            let observed = ImplicitLog.countOf streamPrefix
+            say $"the onStream hook ran on a grain that did not exist: {observed} delivery"
+        else
+            say $"no implicit stream delivery observed within 30s for key '{inboxKey}'"
+
+        // A second item, so the transcript shows the hook seeing the state the first one left.
+        let! _ = mailer.post (TourImplicit.StreamNamespace, inboxKey, "second")
+
+        let! bothDelivered =
+            waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf streamPrefix = 2 })
+
+        // The broadcast arm of the same machinery, on the same grain id.
+        let! _ = mailer.broadcast (TourImplicit.ChannelNamespace, inboxKey, "all-hands")
+
+        let! broadcastDelivered =
+            waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf broadcastPrefix = 1 })
+
+        // The negative control: a namespace no definition declares publishes no binding, so
+        // Orleans resolves no implicit subscriber and nothing is activated at all.
+        let undeliveredKey = $"inbox-{Guid.NewGuid():N}"
+        let! _ = mailer.post (TourImplicit.UndeclaredNamespace, undeliveredKey, "into the void")
+        do! Task.Delay(TimeSpan.FromSeconds 2.0)
+        let undeclaredDeliveries = ImplicitLog.countOf $"stream {undeliveredKey}"
+
+
+        // Only now is the grain called, to read back the state the hooks published.
+        let inbox = InboxApi.ref factory inboxKey
+        let! snapshot = inbox.snapshot ()
+
+        say $"state after the deliveries: mail={snapshot.mail} announcements={snapshot.announcements}"
+        say $"activations of that grain: {snapshot.activations} (the FIRST one was caused by the publish)"
+        say $"stream cursor seen by the last delivery: {snapshot.cursor}"
+        say $"publish to undeclared namespace '{TourImplicit.UndeclaredNamespace}': {undeclaredDeliveries} deliveries"
+
+        detail "InboxDefinition (Implicit.fs) declares 'onStream TourStreams tour-implicit-mail' and"
+        detail "'onBroadcast TourBroadcast tour-implicit-announcements' — the registry's properties"
+        detail "provider publishes the same manifest binding an [ImplicitStreamSubscription] /"
+        detail "[ImplicitChannelSubscription] class publishes (binding.attr-N.type / .pattern /"
+        detail ".streamid-mapper), and the activation implements Orleans' IStreamSubscriptionObserver"
+        detail "and IOnBroadcastChannelSubscribed so the pending item is delivered rather than dropped."
+        detail "Delivery follows the timer-hook rules: whole-state replacement, published only on a"
+        detail "successful return, no implicit storage write. A throwing hook is retried by Orleans"
+        detail "for up to MaxEventDeliveryTime and never faults the implicit subscription."
+
+        let holds =
+            delivered
+            && bothDelivered
+            && broadcastDelivered
+            && undeclaredDeliveries = 0
+            && snapshot.mail = [ "first"; "second" ]
+            && snapshot.announcements = [ "all-hands" ]
+            && snapshot.activations = 1
+
+        if holds then
+            verdict
+                "SUPPORTED — a publish activates the functional grain the stream key names and the declared hook receives the item"
+        else
+            verdict "UNEXPECTED — implicit delivery did not hold; see the observation lines above"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -617,6 +696,7 @@ let private runTour (host: IHost) =
         do! runObservers factory
         do! runBroadcast factory
         do! runPlacement factory
+        do! runImplicit factory
 
         printfn ""
         printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
@@ -658,6 +738,10 @@ let main _argv =
         // operation (spec 004 item 4), declared on WorkerDefinition itself in Placement.fs — no
         // separate IGrainPropertiesProvider registration needed here any more.
         silo.AddFunctionalGrain WorkerDefinition.definition |> ignore
+        // Feature 11 / status-matrix row 11: implicit subscriptions (spec 004 item 1). The
+        // inbox definition declares onStream/onBroadcast; nothing else is registered for it.
+        silo.AddFunctionalGrain InboxDefinition.definition |> ignore
+        silo.AddFunctionalGrain MailerDefinition.definition |> ignore
 
         // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
         // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the
