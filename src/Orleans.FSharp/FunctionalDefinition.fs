@@ -884,7 +884,10 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// <c>placement</c>; rejects <c>stateFrom</c>, <c>usePersistentState</c>, <c>onReminder</c>,
     /// and <c>collectionAge</c> at sealing, in either declaration order -- durable identity and
     /// idle collection age are both meaningless for activations Orleans may create, deactivate,
-    /// and re-create at will.
+    /// and re-create at will. It also rejects <c>onStream</c> and <c>onBroadcast</c>: Orleans'
+    /// <c>SiloStreamProviderRuntime.BindExtension</c> refuses to bind a consumer extension to a
+    /// stateless worker at all, and implicit delivery addresses one activation identity derived
+    /// from the stream key.
     /// </summary>
     [<CustomOperation("statelessWorker")>]
     member _.StatelessWorker<'State>
