@@ -35,6 +35,29 @@ type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
     let atm key = atmRef fixture.Client key
     let mixed key = mixedRef fixture.Client key
 
+    /// <summary>
+    /// Activate a batch of account keys and group them by the silo they landed on.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a batch grouped afterwards rather than a search over adjacent pairs. Orleans'
+    /// placement is free to be correlated between consecutive activations — an
+    /// activation-count-based director alternates them — and a pairwise search then either always
+    /// succeeds or always fails depending on which pairing it is looking for. Grouping a batch
+    /// needs only that the cluster used both silos at all, which is the property the test is
+    /// actually relying on.
+    /// </remarks>
+    let placeAccounts (suffix: string) (count: int) =
+        task {
+            let placements = ResizeArray<string * string>()
+
+            for index in 0 .. count - 1 do
+                let key = $"p{index}-{suffix}"
+                let! silo = (account key).whereAmI ()
+                placements.Add(key, silo)
+
+            return placements |> Seq.groupBy snd |> Seq.map (fun (silo, keys) -> silo, keys |> Seq.map fst |> Seq.toList) |> Seq.toList
+        }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Step 0 — the seam probe: one transaction, two functional grains
     // ──────────────────────────────────────────────────────────────────────────
@@ -373,31 +396,21 @@ type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
     // ──────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// A transaction whose participants live on two different silos. The keys are chosen by
-    /// asking the activations where they are, so the test is a real cross-silo case rather than a
-    /// hopeful one; if two silos never separate, the test says so instead of passing quietly.
+    /// A transaction whose participants live on two different silos. The keys are chosen from an
+    /// observed placement, so this is a real cross-silo case rather than a hopeful one; if the
+    /// cluster never used both silos, the test says so instead of passing quietly.
     /// </summary>
     [<Fact>]
     member _.``a transaction commits across two silos``() =
         task {
             let suffix = Guid.NewGuid().ToString "N"
-            let mutable found = None
-            let mutable index = 0
+            let! grouped = placeAccounts suffix 24
 
-            while found.IsNone && index < 40 do
-                let left = $"x{index}-{suffix}"
-                let right = $"y{index}-{suffix}"
-                let! leftSilo = (account left).whereAmI ()
-                let! rightSilo = (account right).whereAmI ()
+            test <@ List.length grouped >= 2 @>
 
-                if leftSilo <> rightSilo then
-                    found <- Some(left, right)
+            let left = grouped |> List.item 0 |> snd |> List.head
+            let right = grouped |> List.item 1 |> snd |> List.head
 
-                index <- index + 1
-
-            test <@ found.IsSome @>
-
-            let left, right = found.Value
             do! (account left).deposit 50m
             do! (atm suffix).transfer (left, right, 30m)
 
@@ -406,6 +419,47 @@ type FunctionalPhaseDIntegrationTests(fixture: FunctionalPhaseDFixture) =
 
             test <@ leftBalance = 20m @>
             test <@ rightBalance = 30m @>
+        }
+
+    /// <summary>
+    /// The same transaction with every participant on ONE silo. This is the path that never
+    /// serializes the request, so it is the path that depends on the transactional local copier
+    /// carrying the forked <c>TransactionInfo</c> — a broken copier would leave the participant
+    /// outside the transaction, and only a deliberately same-silo case can prove it is not.
+    /// </summary>
+    [<Fact>]
+    member _.``a transaction commits with every participant on one silo``() =
+        task {
+            let suffix = Guid.NewGuid().ToString "N"
+            let! grouped = placeAccounts suffix 24
+
+            let together =
+                grouped |> List.tryPick (fun (_, keys) -> if List.length keys >= 2 then Some keys else None)
+
+            test <@ together.IsSome @>
+
+            let keys = together.Value
+            let left = List.item 0 keys
+            let right = List.item 1 keys
+
+            do! (account left).deposit 70m
+            do! (atm suffix).transfer (left, right, 25m)
+
+            let! leftBalance = (account left).balance ()
+            let! rightBalance = (account right).balance ()
+
+            test <@ leftBalance = 45m @>
+            test <@ rightBalance = 25m @>
+
+            // And the abort half on the same-silo path.
+            let! _ =
+                Assert.ThrowsAnyAsync<exn>(fun () -> (atm suffix).transfer (left, right, 999m) :> Task)
+
+            let! leftAfter = (account left).balance ()
+            let! rightAfter = (account right).balance ()
+
+            test <@ leftAfter = 45m @>
+            test <@ rightAfter = 25m @>
         }
 
     // ──────────────────────────────────────────────────────────────────────────
