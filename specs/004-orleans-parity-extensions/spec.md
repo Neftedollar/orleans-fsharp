@@ -365,24 +365,113 @@ report).
 
 ## 9. C#-callable facade
 
+**Status (Phase A, Task A2 — delivered):** implemented on
+`feat/004-parity-phase-a` (`src/Orleans.FSharp/FunctionalInterop.fs`).
+
 **Gap (compiler-verified above):** calling functional grains from C# works
 but is non-idiomatic (`.Invoke` chains, `Module`-suffixed names,
 `FSharpResult` handling) and requires knowing to pin FSharp.Core.
 
-**Design sketch:**
+**Resolved design — the consumer declares the interface, the library binds it.**
+The sketch's "generated-at-bind C# view … whose members are ordinary
+`Task<TReply> Op(TArg arg)` delegates" is not what shipped, and the difference
+matters: a *generated* view can only be reached through `dynamic` or through a
+name C# cannot see at compile time, so the consumer would still not get an
+interface call. What ships instead inverts it — the consumer writes the
+interface, and the library binds *that*:
 
-- A generated-at-bind C# view: `FunctionalGrain.forCSharp(contract, factory, key)`
-  returning an object whose members are ordinary `Task<TReply> Op(TArg arg)`
-  delegates (precedent: the old model's `GrainContext.forCSharp`);
-  `FSharpResult` replies get `TryOk(out T)` helpers or are left to the
-  consumer with documented patterns.
-- A short "Calling from C#" docs page: assembly references, the FSharp.Core
-  pin, record construction from C#, Result handling.
-- Streaming replies (item 6) and observer handles must keep C#-consumable
-  shapes (`IAsyncEnumerable<T>`, plain handle classes) — this item is the
-  enforcement point for the C#-surface rule.
+```csharp
+public interface IChatRoom {
+    Task Join(string user);
+    Task<FSharpResult<int, ChatError>> Say(string sender, string message);
+    Task<int> MemberCount();
+}
 
-**Size:** S/M.
+var room = FunctionalGrainInterop.For<IChatRoom>(RoomApiModule.contract, factory, "general");
+```
+
+`For<TFacade>` materializes the interface with `System.Reflection.DispatchProxy`.
+Nothing is code-generated, no build step is added, and the F# side of a contract
+is unchanged.
+
+**Binding rules, all enforced at the `For` call and none on a call** (the
+spec's own earliest-stage-validation rule):
+
+1. **Name mapping** — a member matches an operation whose **operation ID**
+   (the record field name unless `operationId` overrode it) differs only by
+   case (`OrdinalIgnoreCase`). `[FunctionalOperation("say")]` on the member
+   overrides the name match and is matched **exactly** (`Ordinal`) — the
+   attribute is the documented way to disambiguate operation IDs that differ
+   only by case, which a case-folding override could not name. Two operations
+   matching one member is an error naming both.
+2. **Coverage** — every member must map; an unmapped member is an error
+   listing the contract's operations. Unmapped **operations** are fine:
+   partial facades are supported and documented (a read-only facade and a
+   writer facade over one contract is the intended use).
+3. **Argument shape** — a `unit` argument maps to a parameterless member; a
+   single argument to one parameter of exactly that type; a tuple argument to
+   that many parameters in order (the facade packs them with a precomputed
+   `FSharpValue.PreComputeTupleConstructor`, which handles the nested
+   representation beyond seven elements) **or**, alternatively, to one
+   parameter of the tuple type. Anything else is an error naming expected and
+   actual. A trailing `CancellationToken` is just an extra parameter and is
+   rejected as one; remote cancellation stays on `FunctionalGrainRef.callCancellable`.
+4. **Reply shape** — exactly `Task<'Reply>`; a `unit` reply additionally
+   accepts the non-generic `Task`, which is what a C# author writes.
+   `Task<Unit>` is accepted too, for generic code that needs a value. `void`,
+   `ValueTask`, a bare `T`, and a mismatched `Task<T>` are errors.
+5. **Rejected member shapes** — generic members, `ref`/`out`/`in` parameters,
+   properties, events, default interface methods, and static members. Members
+   of extended interfaces are included, which is what makes
+   `interface IChatRoom : IDisposable` an error rather than a surprise. A
+   *non-public* facade interface is **not** rejected: `DispatchProxy` emits
+   the access-check suppression it needs, proven by test.
+6. **Preclosing** — one invoker per member, closed over the operation's exact
+   argument and reply types while the plan is built, over the same preclosed
+   `BoundCall.Field` closure an F# caller reaches through the API record. The
+   plan is cached per (interface, contract) pair and the typed contract binder
+   per contract CLR type, so binding a second key closes no generic at all. A
+   call performs one dictionary lookup, one delegate call, and the grain call
+   — asserted against the runtime's instrumentation counters, with a
+   counterweight test proving those same counters are non-zero while the
+   facade is created.
+
+**A non-generic contract base was required.** C# has no partial type-argument
+inference, so `For<IChatRoom>(contract, factory, key)` can only compile when
+every *parameter* type is non-generic or inferable. `GrainContract<'Actor,
+'Key, 'Api>` therefore gained an abstract base, `FunctionalContract`, carrying
+the key type and the operation descriptors; the domain key is passed as
+`obj` and type-checked against the contract at the `For` call. This is the one
+place the facade trades a compile-time check for an earliest-stage runtime
+one, and it buys the single-type-argument call site the whole item exists for.
+
+**FSharp.Core, measured rather than assumed.** The sketch's "requires knowing
+to pin FSharp.Core" overstates it. The packed `Orleans.FSharp` nuspec declares
+`FSharp.Core >= 10.1.201`, and a `ProjectReference` flows it too, so a C#
+consumer that references nothing else compiles with no FSharp.Core reference
+of its own (verified both ways). What actually breaks is a *lower direct*
+reference, since a direct `PackageReference` wins over a transitive one:
+NU1605 "package downgrade", a warning by default and an error under
+`TreatWarningsAsErrors`. Documented in that form.
+
+**Delivered artifacts:** `docs/calling-from-csharp.md` + published mirror
+(assembly references, hosting from C#, the interface pattern, mapping rules,
+`Result`/`Option`/list reading, the full rejection list, the honest per-call
+cost); `examples/chat-room/src/Interop` — a C# console project that hosts the
+F# room with `AddFunctionalGrain` and drives it through the facade, run (not
+merely built) by the CI examples job; 44 unit tests over C#-declared fixture
+interfaces (`tests/Orleans.FSharp.Tests.Facades`, C# because default interface
+methods and events cannot be declared in F# at all).
+
+**Follow-up, deliberately out of scope here:** a facade over
+`FunctionalObserverHandle`. A C# process can already *be pushed to* — the
+handle is an ordinary operation argument — but the handler side is still an F#
+record, so "C# can consume everything" is not yet true for observers. Same for
+streaming replies (item 6): its `IAsyncEnumerable<'T>` shape must stay
+C#-consumable, and this item is the enforcement point for that rule, but
+nothing about streaming is implemented here.
+
+**Size:** S/M as estimated.
 
 ---
 

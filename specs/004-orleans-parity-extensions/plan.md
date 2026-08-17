@@ -14,7 +14,7 @@ validation; C#-consumable surfaces.
 | # | Task | Spec item | Model |
 |---|---|---|---|
 | A1 | First-class placement (`statelessWorker` / `placement`) + lifecycle-stage hooks (`onLifecycle`) + `Scripting.startOnPorts` functional hosting | 4, 8 | sonnet |
-| A2 | C# facade (`forCSharp`) + "Calling from C#" docs | 9 | opus after controller design probe |
+| A2 | C# facade (`FunctionalGrainInterop.For<TFacade>`) + "Calling from C#" docs | 9 | opus after controller design probe |
 
 A2 gate: the controller probes the facade mechanism (DispatchProxy vs typed
 helper vs source-gen) with a compiler check BEFORE the brief promises a
