@@ -307,7 +307,7 @@ let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider)
         // Arm (a): a genuinely external Orleans client, connected over the localhost gateway.
         let externalSubscriber = "external-client"
         let clientBuilder = Host.CreateApplicationBuilder()
-        clientBuilder.Logging.SetMinimumLevel LogLevel.Warning |> ignore
+        clientBuilder.Logging.SetMinimumLevel LogLevel.Error |> ignore
 
         clientBuilder.UseOrleansClient(fun client ->
             client.UseLocalhostClustering() |> ignore
@@ -567,7 +567,11 @@ let main _argv =
     preloadTourAssemblies ()
 
     let builder = Host.CreateApplicationBuilder()
-    builder.Logging.SetMinimumLevel LogLevel.Warning |> ignore
+    // Error, not Warning: a clean transcript is the point of this example. Orleans logs a
+    // ServerGC advisory at startup and a "Connection reset by peer" warning when the tour's
+    // external client host shuts down; both are expected and would only obscure the sections.
+    // Genuine failures are logged at Error and still appear.
+    builder.Logging.SetMinimumLevel LogLevel.Error |> ignore
 
     SiloConfig.applyToHost siloConfiguration builder
 
