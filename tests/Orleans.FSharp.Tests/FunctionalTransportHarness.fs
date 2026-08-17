@@ -215,6 +215,63 @@ type UnconfiguredFactory() =
 
         member _.GetGrain(_interfaceType: Type, _grainKey: IdSpan) : IAddressable = notSupported ()
 
+/// <summary>
+/// A grain factory that counts <c>CreateObjectReference</c> calls instead of performing them, so
+/// a test can prove a code path did or did not reach it at all -- the shape task 17 uses to show
+/// that a rejected observer type creates no Orleans object reference: register this as the
+/// process's <c>IGrainFactory</c>, drive the code path under test, then assert
+/// <c>CreatedCount = 0</c>. Every other member still fails loudly, exactly like
+/// <c>UnconfiguredFactory</c>, so a path that reaches anything else this factory does not model
+/// fails the test just as clearly as a leaked reference would.
+/// </summary>
+type CountingObserverFactory() =
+    let mutable created = 0
+
+    /// <summary>How many times <c>CreateObjectReference</c> has been called.</summary>
+    member _.CreatedCount = created
+
+    interface IGrainFactory with
+        member _.GetGrain<'T when 'T :> IGrainWithGuidKey>(_primaryKey: Guid, _prefix: string) : 'T = notSupported ()
+
+        member _.GetGrain<'T when 'T :> IGrainWithIntegerKey>(_primaryKey: int64, _prefix: string) : 'T =
+            notSupported ()
+
+        member _.GetGrain<'T when 'T :> IGrainWithStringKey>(_primaryKey: string, _prefix: string) : 'T =
+            notSupported ()
+
+        member _.GetGrain<'T when 'T :> IGrainWithGuidCompoundKey>
+            (_primaryKey: Guid, _keyExtension: string, _prefix: string)
+            : 'T =
+            notSupported ()
+
+        member _.GetGrain<'T when 'T :> IGrainWithIntegerCompoundKey>
+            (_primaryKey: int64, _keyExtension: string, _prefix: string)
+            : 'T =
+            notSupported ()
+
+        member _.CreateObjectReference<'T when 'T :> IGrainObserver>(_obj: IGrainObserver) : 'T =
+            created <- created + 1
+            notSupported ()
+
+        member _.DeleteObjectReference<'T when 'T :> IGrainObserver>(_obj: IGrainObserver) : unit = notSupported ()
+        member _.GetGrain(_interfaceType: Type, _primaryKey: Guid) : IGrain = notSupported ()
+        member _.GetGrain(_interfaceType: Type, _primaryKey: int64) : IGrain = notSupported ()
+        member _.GetGrain(_interfaceType: Type, _primaryKey: string) : IGrain = notSupported ()
+
+        member _.GetGrain(_interfaceType: Type, _primaryKey: Guid, _keyExtension: string) : IGrain = notSupported ()
+
+        member _.GetGrain(_interfaceType: Type, _primaryKey: int64, _keyExtension: string) : IGrain = notSupported ()
+
+        member _.GetGrain<'T when 'T :> IAddressable>(_grainId: GrainId) : 'T = notSupported ()
+        member _.GetGrain(_grainId: GrainId) : IAddressable = notSupported ()
+
+        member _.GetGrain(_grainId: GrainId, _interfaceType: GrainInterfaceType) : IAddressable = notSupported ()
+
+        member _.GetGrain(_interfaceType: Type, _grainKey: IdSpan, _grainClassNamePrefix: string) : IAddressable =
+            notSupported ()
+
+        member _.GetGrain(_interfaceType: Type, _grainKey: IdSpan) : IAddressable = notSupported ()
+
 // ──────────────────────────────────────────────────────────────────────────────
 // In-memory target
 // ──────────────────────────────────────────────────────────────────────────────

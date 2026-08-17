@@ -106,9 +106,9 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
 
     /// <summary>Validate and seal the draft into an immutable observer contract.</summary>
     member _.Run(draft: ObserverContractDraft<'Brand, 'Api>) : ObserverContract<'Brand, 'Api> =
-        let observerTypeName =
+        let observerTypeName, isObserverTypeExplicit =
             match draft.ObserverTypeName with
-            | Some value -> value
+            | Some value -> value, true
             | None ->
                 // The brand's simple CLR name, on exactly the terms grainContract derives from.
                 let brand = typeof<'Brand>
@@ -123,7 +123,19 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
                         ContractStage
                         $"the observer brand '{brand.FullName}' is a nested type (declared inside another type or inside an F# 'module' rather than a 'namespace'), so its CLR name cannot supply a derived 'observerType'. Declare an explicit 'observerType' for this contract."
 
-                brand.Name
+                brand.Name, false
+
+        // Defence in depth for an explicit value (already checked when the 'observerType' custom
+        // operation ran); the sole check for the derived brand-name path, which never runs through
+        // that custom operation at all -- see GrainContract's matching 'grainType' comment for why
+        // a CLR simple name is not exempt from the fixed transport's own bounds.
+        ensureWireText
+            ContractStage
+            (if isObserverTypeExplicit then
+                 "'observerType'"
+             else
+                 $"the 'observerType' derived from observer brand '{typeof<'Brand>.FullName}'")
+            observerTypeName
 
         let version = draft.Version |> Option.defaultValue 1
         let shape = ApiShape.of'<'Api> ()
@@ -137,6 +149,14 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
                     fail
                         ContractStage
                         $"the push operation '{field.FieldName}' of observer type '{observerTypeName}' returns Task<{field.ReplyType.FullName}>, but an observer never returns data. Every push operation must have the shape 'Msg -> Task<unit>."
+
+                // A push operation's wire ID is always its handler-record field name -- there is
+                // no override to validate at the point it is declared, the way an explicit
+                // 'operationId' is; this is the only place it can be checked.
+                ensureWireText
+                    ContractStage
+                    $"the operation ID for push field '{field.FieldName}' of observer type '{observerTypeName}'"
+                    field.FieldName
 
                 { Index = field.Index
                   OperationId = field.FieldName
@@ -152,8 +172,7 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
         if isBlank value then
             fail ContractStage "'observerType' requires a non-blank value."
 
-        if containsNul value then
-            fail ContractStage $"'observerType' value '{value}' must not contain a NUL character."
+        ensureWireText ContractStage "'observerType'" value
 
         match state.ObserverTypeName with
         | Some existing ->
@@ -289,6 +308,16 @@ module FunctionalObserver =
         (services: IServiceProvider)
         (handlers: 'Api)
         : FunctionalObserverHandle<'Brand, 'Api> =
+        // Defence in depth, and load-bearing for ordering: ObserverContractBuilder.Run already
+        // validates the observer type against the fixed transport's own wire-text constraints
+        // when the contract is sealed, but this function must not lean on that invariant holding
+        // for every contract it is ever handed. Checking again here, before anything below builds
+        // or registers a thing, is what keeps a rejected value from ever reaching
+        // CreateObjectReference below -- the FunctionalObserverHandle constructor re-checks the
+        // same value once more (its own defence in depth), but by then the Orleans object
+        // reference would already exist and nothing could unsubscribe it.
+        ensureWireText BindingStage "'observerType'" contract.ObserverTypeName
+
         if obj.ReferenceEquals(handlers, null) then
             fail ContractStage $"the handler record of observer type '{contract.ObserverTypeName}' must not be null."
 

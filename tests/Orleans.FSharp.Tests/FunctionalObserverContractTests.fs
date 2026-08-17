@@ -7,8 +7,11 @@ module Orleans.FSharp.Tests.FunctionalObserverContractTests
 open System
 open System.Collections.Concurrent
 open System.Threading.Tasks
+open Microsoft.Extensions.DependencyInjection
 open Xunit
 open Swensen.Unquote
+open Orleans
+open Orleans.Serialization
 open Orleans.FSharp
 open Orleans.FSharp.Tests.FunctionalTransportHarness
 
@@ -24,6 +27,21 @@ type RoomObserverApi =
 
 [<NoEquality; NoComparison>]
 type ReplyingObserverApi = { ask: string -> Task<int> }
+
+/// <summary>
+/// A fixture whose sole push field name is 513 characters -- one past the fixed transport's
+/// MaxWireTextLength (512). A push operation's wire ID is always its handler-record field name
+/// (there is no 'operationId' override to write a length violation into for the observer side),
+/// so this is the only way to exercise the derived-operation-ID length check on an observer
+/// contract, mirroring FunctionalContractTests.LongFieldApi on the grain side.
+/// </summary>
+[<NoEquality; NoComparison>]
+type LongPushFieldApi = { ``aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`` : string -> Task<unit> }
+
+/// <summary>The exact field name declared above, for the test that names it in a diagnostic.</summary>
+module LongPushFieldApi =
+    [<Literal>]
+    let longFieldName = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 let private rejects (body: unit -> unit) =
     Assert.Throws<InvalidOperationException>(Action body)
@@ -53,6 +71,24 @@ let ``an observer type is derived on exactly the terms a grain type is`` () =
 
     test <@ error.Message.Contains "is a nested type" @>
     test <@ error.Message.Contains "Declare an explicit 'observerType'" @>
+
+/// <remarks>
+/// Exercises the DERIVED half of observer-type validation specifically, mirroring
+/// FunctionalContractTests's "over-length derived grain type" test: the explicit-'observerType'
+/// tests further down go through ObserverContractBuilder.ObserverType, a different code path in
+/// ObserverContractBuilder.Run from the one that validates an omitted 'observerType''s derived
+/// name. Reuses GrainTypeDerivation's 513-character brand fixture -- the derivation rule and its
+/// wire-text bound are brand-agnostic, so the same fixture proves the same thing for either side.
+/// </remarks>
+[<Fact>]
+let ``an over-length derived observer type fails contract construction`` () =
+    let error =
+        rejects (fun () ->
+            observerContract<Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``, RoomObserverApi> () { version 1 }
+            |> ignore)
+
+    test <@ error.Message.Contains "the 'observerType' derived from observer brand" @>
+    test <@ error.Message.Contains "at most 512 characters" @>
 
 [<Fact>]
 let ``an observer version defaults to one`` () =
@@ -87,6 +123,103 @@ let ``a blank or repeated observer type is rejected`` () =
             |> ignore)
 
     test <@ repeated.Message.Contains "already set" @>
+
+[<Fact>]
+let ``a newline-carrying observer type fails contract construction`` () =
+    let error =
+        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> () { observerType "chat\nroom" } |> ignore)
+
+    test <@ error.Message.Contains "control character" @>
+
+[<Fact>]
+let ``an over-length observer type fails contract construction with the transport's own bound`` () =
+    let tooLong = String.replicate 513 "a"
+
+    let error =
+        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> () { observerType tooLong } |> ignore)
+
+    test <@ error.Message.Contains "at most 512 characters" @>
+    test <@ error.Message.Contains "513 were supplied" @>
+
+[<Fact>]
+let ``an observer type at exactly the transport's bound is accepted`` () =
+    let atLimit = String.replicate 512 "a"
+    let contract = observerContract<RoomObserver, RoomObserverApi> () { observerType atLimit }
+
+    test <@ contract.ObserverTypeName = atLimit @>
+
+/// <remarks>
+/// A push operation's wire ID is always its handler-record field name -- there is no
+/// 'operationId' override on the observer side, so this is the only route to a derived-ID
+/// violation. Mirrors <c>FunctionalContractTests.LongFieldApi</c>: verified with <c>dotnet fsi</c>
+/// that an F# double-backtick identifier can carry 513 ordinary characters but not a raw control
+/// character, so length is the constructible half of this case.
+/// </remarks>
+[<Fact>]
+let ``an over-length derived push operation ID from a double-backtick field name fails contract construction, naming the field``
+    ()
+    =
+    let error =
+        rejects (fun () ->
+            observerContract<RoomObserver, LongPushFieldApi> () { observerType "chat.room.observer" } |> ignore)
+
+    test <@ error.Message.Contains "the operation ID for push field" @>
+    test <@ error.Message.Contains LongPushFieldApi.longFieldName @>
+    test <@ error.Message.Contains "at most 512 characters" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// createFrom ordering
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// A services provider carrying everything <c>FunctionalObserver.createFrom</c>'s happy path
+/// needs -- the serializer, the F# binary codec, a payload codec, and an <c>IGrainFactory</c> --
+/// built around <paramref name="factory"/> rather than <c>buildServices</c>'s stock one, so a
+/// test can observe whether <c>CreateObjectReference</c> was ever reached. If createFrom's
+/// ordering fix ever regresses, this is what lets execution actually GET to the factory (instead
+/// of failing earlier for an unrelated missing-service reason and passing the test for the wrong
+/// reason).
+/// </summary>
+let private servicesOver (factory: IGrainFactory) : IServiceProvider =
+    let services = ServiceCollection()
+
+    ServiceCollectionExtensions.AddSerializer(
+        services,
+        Action<ISerializerBuilder>(fun builder ->
+            FunctionalTransportSerialization.AddFunctionalTransport builder |> ignore
+            FSharpBinaryCodecRegistration.addToSerializerBuilder builder |> ignore)
+    )
+    |> ignore
+
+    services.AddSingleton<IGrainFactory>(factory) |> ignore
+
+    services.AddSingleton<IFunctionalPayloadCodec>(fun sp -> payloadCodec sp :> IFunctionalPayloadCodec)
+    |> ignore
+
+    services.BuildServiceProvider()
+
+[<Fact>]
+let ``a rejected observer type creates no Orleans object reference before createFrom fails`` () =
+    // ObserverContractBuilder.Run can no longer produce a contract with an invalid observer type
+    // (F2's other half), so the only way to hand createFrom one is to reuse a validly-sealed
+    // contract's Shape/Operations -- both internal, reachable from this project -- with the
+    // offending name substituted directly through the internal constructor.
+    let valid = observerContract<RoomObserver, RoomObserverApi> () { observerType "chat.room.observer" }
+
+    let badContract =
+        ObserverContract<RoomObserver, RoomObserverApi>("bad\nobserver", valid.Version, valid.Shape, valid.Operations)
+
+    let factory = CountingObserverFactory()
+    let services = servicesOver factory
+
+    let handlers: RoomObserverApi =
+        { onMessage = (fun _ -> Task.FromResult())
+          onClosed = (fun _ -> Task.FromResult()) }
+
+    let error = rejects (fun () -> FunctionalObserver.createFrom badContract services handlers |> ignore)
+
+    test <@ error.Message.Contains "control character" @>
+    test <@ factory.CreatedCount = 0 @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // The notify direction
