@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ChatRoom.Interop</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- FSharp.Core is an explicit reference on purpose. It arrives transitively through the F#
+         project reference below, so the build would succeed without this line; naming it is what
+         pins the version a C# consumer compiles against once the same code references
+         Orleans.FSharp as a NuGet package instead. See docs/calling-from-csharp.md. -->
+    <PackageReference Include="FSharp.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Orleans.FSharp carries FunctionalGrainInterop and [FunctionalOperation];
+         Orleans.FSharp.Runtime carries AddFunctionalGrain, which hosts the definition. -->
+    <ProjectReference Include="../../../../src/Orleans.FSharp/Orleans.FSharp.fsproj" />
+    <ProjectReference Include="../../../../src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj" />
+    <ProjectReference Include="..\Grains\Grains.fsproj" />
+  </ItemGroup>
+
+</Project>
