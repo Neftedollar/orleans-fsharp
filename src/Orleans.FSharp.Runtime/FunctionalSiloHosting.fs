@@ -32,8 +32,11 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
         let options = services.GetRequiredService<IOptions<GrainTypeOptions>>().Value
         let snapshot = registry.Snapshot
 
-        let openMarker = typedefof<FunctionalGrainMarker<_>>
         let openInterface = typedefof<IFunctionalGrainTarget<_>>
+
+        let openMarkers =
+            [| typedefof<FunctionalGrainMarker<_>>
+               typedefof<FunctionalInterleavingGrainMarker<_>> |]
 
         let isOpen (definition: Type) (candidate: Type) =
             candidate = definition
@@ -41,7 +44,10 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                 && not candidate.IsConstructedGenericType
                 && candidate.GetGenericTypeDefinition() = definition)
 
-        if options.Classes |> Seq.exists (isOpen openMarker) then
+        if
+            options.Classes
+            |> Seq.exists (fun candidate -> openMarkers |> Array.exists (fun open' -> isOpen open' candidate))
+        then
             fail
                 StartupStage
                 "the open generic functional marker is still registered as a grain class; the functional GrainTypeOptions post-configure did not run."

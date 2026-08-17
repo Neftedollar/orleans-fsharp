@@ -6,6 +6,29 @@ open Orleans.Runtime
 open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>
+/// Which contract versions a hosted definition admits. A closed set rather than a predicate:
+/// every accepted version needs its own precomputed pair of protocol tokens (a token is the
+/// digest of grain type, <b>version</b>, operation ID, and direction), and a predicate's accepted
+/// set is unbounded, so it could not be precomputed at all — the host would have to hash per
+/// call. It is also what makes the diagnostic able to name the accepted range.
+/// </summary>
+/// <remarks>
+/// Accepting a version <b>asserts wire compatibility of the argument and reply shapes</b> across
+/// the accepted range. Nothing in the runtime converts between shapes: the payload is
+/// deserialized as the hosted definition's exact declared CLR type whatever version admitted it.
+/// A version this policy accepts must therefore be one whose argument and reply types the hosted
+/// definition can still read — that is the application's responsibility, and there is no magic.
+/// </remarks>
+type VersionPolicy =
+    /// <summary>Admit only the hosted contract version. The default, and spec-003 behaviour.</summary>
+    | Exact
+    /// <summary>
+    /// Admit every version from <c>minVersion</c> up to and including the hosted contract
+    /// version.
+    /// </summary>
+    | BackwardCompatible of minVersion: int
+
+/// <summary>
 /// An immutable operation descriptor sealed by contract construction. Later phases attach
 /// protocol tokens and preclosed typed adapters to the same descriptor identity.
 /// </summary>
@@ -30,6 +53,8 @@ type internal FunctionalOperation =
         IsOneWay: bool
         /// Always-interleave admission; valid only with read-only or one-way.
         IsAlwaysInterleave: bool
+        /// The contract version this operation was introduced at; <c>1</c> unless declared.
+        SinceVersion: int
         /// The precomputed request-direction protocol token.
         RequestToken: byte[]
         /// The precomputed reply-direction protocol token.
@@ -89,6 +114,9 @@ type GrainContract<'Actor, 'Key, 'Api>
         grainTypeName: string,
         isGrainTypeExplicit: bool,
         version: int,
+        acceptedVersions: VersionPolicy,
+        isReentrant: bool,
+        mayInterleave: (IFunctionalRequestMetadata -> bool) option,
         shape: ApiShape,
         keyCodec: KeyCodec<'Key>,
         operations: FunctionalOperation[]
@@ -125,6 +153,24 @@ type GrainContract<'Actor, 'Key, 'Api>
 
     /// <summary>The application contract version carried in every request.</summary>
     member internal _.Version = version
+
+    /// <summary>Which request versions a definition hosting this contract admits.</summary>
+    member internal _.AcceptedVersions = acceptedVersions
+
+    /// <summary>
+    /// The lowest request version a definition hosting this contract admits: the contract version
+    /// itself under <c>Exact</c>, the declared floor under <c>BackwardCompatible</c>.
+    /// </summary>
+    member internal _.MinAcceptedVersion =
+        match acceptedVersions with
+        | Exact -> version
+        | BackwardCompatible minVersion -> minVersion
+
+    /// <summary>True when the whole grain was declared <c>reentrant</c>.</summary>
+    member internal _.IsReentrant = isReentrant
+
+    /// <summary>The declared <c>mayInterleave</c> predicate, when the contract declares one.</summary>
+    member internal _.MayInterleave = mayInterleave
 
     /// <summary>The configured key codec.</summary>
     member internal _.KeyCodec = keyCodec
@@ -171,10 +217,14 @@ type internal ContractDraftState<'Key> =
     { Shape: ApiShape
       GrainTypeName: string option
       Version: int option
+      AcceptedVersions: VersionPolicy option
+      IsReentrant: bool
+      MayInterleave: (IFunctionalRequestMetadata -> bool) option
       KeyCodec: KeyCodec<'Key> option
       ReadOnly: Set<int>
       OneWay: Set<int>
       AlwaysInterleave: Set<int>
+      SinceVersions: Map<int, int>
       OperationIds: Map<int, string> }
 
 /// <summary>
@@ -195,10 +245,14 @@ module internal ContractDraft =
             { Shape = ApiShape.of'<'Api> ()
               GrainTypeName = None
               Version = None
+              AcceptedVersions = None
+              IsReentrant = false
+              MayInterleave = None
               KeyCodec = None
               ReadOnly = Set.empty
               OneWay = Set.empty
               AlwaysInterleave = Set.empty
+              SinceVersions = Map.empty
               OperationIds = Map.empty }
         )
 
@@ -267,6 +321,36 @@ module internal ContractDraft =
 
         let version = state.Version |> Option.defaultValue 1
 
+        let acceptedVersions = state.AcceptedVersions |> Option.defaultValue Exact
+
+        // A version floor above the hosted version admits nothing at all, and a floor at or below
+        // zero is not a version. Both are checked here rather than in the custom operation so the
+        // rule holds however 'acceptsVersions' and 'version' were ordered in the expression.
+        let minAcceptedVersion =
+            match acceptedVersions with
+            | Exact -> version
+            | BackwardCompatible minVersion ->
+                if minVersion <= 0 then
+                    fail
+                        ContractStage
+                        $"'acceptsVersions (BackwardCompatible {minVersion})' for grain type '{grainTypeName}' requires a positive minimum version."
+
+                if minVersion > version then
+                    fail
+                        ContractStage
+                        $"'acceptsVersions (BackwardCompatible {minVersion})' for grain type '{grainTypeName}' is above its own contract version {version}, so the contract would admit no request at all."
+
+                minVersion
+
+        // "Sealing: mutually exclusive with 'reentrant'." A whole-grain reentrant activation
+        // interleaves every request unconditionally, so a predicate could only ever be consulted
+        // to be ignored -- Orleans' ReentrantPredicate returns true before any other predicate is
+        // reached (GrainCanInterleave.MayInterleave returns on the first true).
+        if state.IsReentrant && state.MayInterleave.IsSome then
+            fail
+                ContractStage
+                $"grain type '{grainTypeName}' declares both 'reentrant' and 'mayInterleave'. A reentrant activation interleaves every request unconditionally, so the predicate could never refuse one; declare exactly one of the two."
+
         let keyCodec =
             match state.KeyCodec with
             | None ->
@@ -314,6 +398,64 @@ module internal ContractDraft =
                         ContractStage
                         $"API field '{field.FieldName}' of '{grainTypeName}' uses 'alwaysInterleave' without 'readOnly' or 'oneWay'."
 
+                // Spec 004 item 5. A contract-level interleaving policy and the per-operation
+                // 'alwaysInterleave' flag are decided in different places and in a fixed order:
+                // Orleans' ActivationData.MayInvokeRequest returns true for an
+                // InvokeMethodOptions.AlwaysInterleave message BEFORE it ever looks at the
+                // GrainCanInterleave component both 'reentrant' and 'mayInterleave' install. So
+                // the flag is an unconditional grant the contract-level policy can neither widen
+                // (under 'reentrant' every request already interleaves) nor revoke (under
+                // 'mayInterleave' the predicate is never consulted for it). Either combination is
+                // an unambiguously dead declaration, and it is rejected here rather than left to
+                // surprise the author at the first concurrent call.
+                //
+                // 'readOnly' and 'oneWay' are NOT rejected, because in this runtime neither is
+                // only a scheduling flag: 'readOnly' also makes the invocation state-neutral (its
+                // replacement state is discarded and its persistent-state facades reject the
+                // setter -- FunctionalDispatch.dispatch), and 'oneWay' is a delivery mode with no
+                // reply. Both keep their full meaning on a reentrant grain.
+                if isAlwaysInterleave && state.IsReentrant then
+                    fail
+                        ContractStage
+                        $"API field '{field.FieldName}' of '{grainTypeName}' uses 'alwaysInterleave' on a contract declared 'reentrant'. Every request to a reentrant activation already interleaves, so the flag adds nothing; remove it, or remove 'reentrant'."
+
+                if isAlwaysInterleave && state.MayInterleave.IsSome then
+                    fail
+                        ContractStage
+                        $"API field '{field.FieldName}' of '{grainTypeName}' uses 'alwaysInterleave' on a contract declared 'mayInterleave'. Orleans admits an always-interleave request before it consults any predicate, so the predicate could never refuse this operation; remove the flag, or decide this operation inside the predicate."
+
+                // Spec 004 item 7. A 'sinceVersion' that is not strictly above the lowest admitted
+                // version can never reject anything -- every admitted version is already at or
+                // above it -- so it is a declaration with no effect, in a contract whose other
+                // declarations all have one. Rejected here, naming the policy that made it dead.
+                let sinceVersion =
+                    match state.SinceVersions |> Map.tryFind field.Index with
+                    | None -> 1
+                    | Some declared ->
+                        if declared <= 0 then
+                            fail
+                                ContractStage
+                                $"'sinceVersion {declared}' on API field '{field.FieldName}' of '{grainTypeName}' must be a positive integer."
+
+                        if declared > version then
+                            fail
+                                ContractStage
+                                $"'sinceVersion {declared}' on API field '{field.FieldName}' of '{grainTypeName}' is above the contract version {version}, so the operation does not exist at the version this contract publishes."
+
+                        if declared <= minAcceptedVersion then
+                            let policy =
+                                match acceptedVersions with
+                                | Exact ->
+                                    $"the default 'acceptsVersions Exact' policy admits version {version} only"
+                                | BackwardCompatible floor ->
+                                    $"'acceptsVersions (BackwardCompatible {floor})' admits versions {floor} through {version}"
+
+                            fail
+                                ContractStage
+                                $"'sinceVersion {declared}' on API field '{field.FieldName}' of '{grainTypeName}' can never reject a call, because {policy}. Declare a lower 'acceptsVersions' floor, or remove 'sinceVersion'."
+
+                        declared
+
                 { Index = field.Index
                   FieldName = field.FieldName
                   OperationId = operationId
@@ -323,6 +465,7 @@ module internal ContractDraft =
                   IsReadOnly = isReadOnly
                   IsOneWay = isOneWay
                   IsAlwaysInterleave = isAlwaysInterleave
+                  SinceVersion = sinceVersion
                   RequestToken = ProtocolToken.request grainTypeName version operationId
                   ReplyToken = ProtocolToken.reply grainTypeName version operationId
                   AdmissionFlags = AdmissionFlags.compose isReadOnly isOneWay isAlwaysInterleave
@@ -338,7 +481,17 @@ module internal ContractDraft =
                     $"operation ID '{operation.OperationId}' of '{grainTypeName}' is used by both API field '{owner}' and API field '{operation.FieldName}'."
             | _ -> seen.[operation.OperationId] <- operation.FieldName
 
-        GrainContract<'Actor, 'Key, 'Api>(grainTypeName, isGrainTypeExplicit, version, state.Shape, keyCodec, operations)
+        GrainContract<'Actor, 'Key, 'Api>(
+            grainTypeName,
+            isGrainTypeExplicit,
+            version,
+            acceptedVersions,
+            state.IsReentrant,
+            state.MayInterleave,
+            state.Shape,
+            keyCodec,
+            operations
+        )
 
 /// <summary>
 /// The <c>grainContract</c> computation expression: immutable contract metadata, exactly one
@@ -375,6 +528,120 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         match state.State.Version with
         | Some existing -> fail ContractStage $"'version' is already set to {existing}; it is allowed at most once."
         | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with Version = Some value }
+
+    /// <summary>
+    /// Admit request versions other than the hosted contract version; defaults to
+    /// <see cref="F:Orleans.FSharp.VersionPolicy.Exact"/>, which is spec-003 behaviour.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Admission only. The wire format, the storage identity, and the stable operation IDs are
+    /// unchanged by this operation — an accepted older request is dispatched through exactly the
+    /// same descriptor, with exactly the same admission flags, onto exactly the same grain
+    /// identity as a current-version one.
+    /// </para>
+    /// <para>
+    /// <b>Accepting a version asserts wire compatibility.</b> The argument payload is deserialized
+    /// as this definition's exact declared CLR type no matter which version admitted it, and the
+    /// reply is serialized the same way. Nothing converts between shapes and nothing inspects an
+    /// older shape: declaring <c>BackwardCompatible n</c> is the application stating that every
+    /// version from <c>n</c> upwards still sends and reads the same argument and reply types for
+    /// every operation it can invoke. An operation whose shape did change needs a new operation
+    /// (a new <c>operationId</c>), not a wider policy.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("acceptsVersions")>]
+    member _.AcceptsVersions(state: GrainContractDraft<'Actor, 'Key, 'Api>, policy: VersionPolicy) =
+        match state.State.AcceptedVersions with
+        | Some existing ->
+            fail ContractStage $"'acceptsVersions' is already set to {existing}; it is allowed at most once."
+        | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with AcceptedVersions = Some policy }
+
+    /// <summary>
+    /// Declare the contract version one operation was introduced at, so a call admitted at an
+    /// older version is refused for that operation by name.
+    /// </summary>
+    /// <remarks>
+    /// Only meaningful together with an <c>acceptsVersions</c> floor below the declared value:
+    /// sealing rejects a <c>sinceVersion</c> that no admitted version could ever fall below.
+    /// </remarks>
+    [<CustomOperation("sinceVersion")>]
+    member _.SinceVersion<'Argument, 'Reply>
+        (
+            state: GrainContractDraft<'Actor, 'Key, 'Api>,
+            introducedAt: int,
+            selector: OperationSelector<'Api, 'Argument, 'Reply>
+        ) =
+        let operation = ApiShape.resolve state.State.Shape "sinceVersion" selector
+
+        if state.State.SinceVersions.ContainsKey operation.Index then
+            fail ContractStage $"'sinceVersion' is applied more than once to API field '{operation.FieldName}'."
+
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                SinceVersions = state.State.SinceVersions.Add(operation.Index, introducedAt) }
+
+    /// <summary>
+    /// Make the whole grain reentrant: every request may enter an activation that is already
+    /// executing one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This publishes Orleans' own <c>reentrant</c> grain-type property, so the activation is
+    /// reentrant in exactly the sense a <c>[Reentrant]</c> grain class is.
+    /// </para>
+    /// <para>
+    /// <b>Whole-state replacement is not made concurrency-safe by this.</b> A handler receives the
+    /// state as it was when it started and publishes its replacement when it returns, so two
+    /// interleaved handlers that both mutate state produce a last-writer-wins result: the second
+    /// one's replacement overwrites the first's. Reentrancy is for activations whose interleaving
+    /// operations do not both write — a long call that awaits an external service while short
+    /// reads continue, for instance. Declare the non-mutating operations <c>readOnly</c> so their
+    /// replacement is discarded rather than published.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("reentrant")>]
+    member _.Reentrant(state: GrainContractDraft<'Actor, 'Key, 'Api>) =
+        if state.State.IsReentrant then
+            fail ContractStage "'reentrant' is declared more than once; it is allowed at most once."
+
+        ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with IsReentrant = true }
+
+    /// <summary>
+    /// Decide per request whether it may enter an activation that is already executing one.
+    /// </summary>
+    /// <param name="predicate">
+    /// Receives the request's <see cref="T:Orleans.FSharp.IFunctionalRequestMetadata"/> — grain
+    /// type, contract version, operation ID, the three admission flags, and the payload length.
+    /// <b>Metadata only:</b> the argument payload is never deserialized to decide admission, which
+    /// is what keeps spec 003's protocol-before-payload invariant intact. The predicate runs on
+    /// the activation's own scheduling path, so it must be cheap, pure, and non-blocking.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>Orleans consults the predicate for the running request too.</b>
+    /// <c>ActivationData.MayInvokeRequest</c> admits the incoming request when
+    /// <c>predicate(incoming) || predicate(blocking)</c> — so an operation the predicate accepts
+    /// also lets <i>anything</i> interleave with it while it is the one executing. Write the
+    /// predicate as a statement about which operations are safe to overlap, not as a one-sided
+    /// allow-list.
+    /// </para>
+    /// <para>
+    /// A throwing predicate rejects the incoming request: Orleans logs the failure and rethrows,
+    /// and the message is rejected to its caller as transient. The runtime wraps the fault in a
+    /// transport-stage diagnostic naming the grain type and operation so it is attributable.
+    /// </para>
+    /// </remarks>
+    [<CustomOperation("mayInterleave")>]
+    member _.MayInterleave
+        (state: GrainContractDraft<'Actor, 'Key, 'Api>, predicate: IFunctionalRequestMetadata -> bool)
+        =
+        if obj.ReferenceEquals(predicate, null) then
+            fail ContractStage "'mayInterleave' requires a predicate."
+
+        match state.State.MayInterleave with
+        | Some _ -> fail ContractStage "'mayInterleave' is declared more than once; it is allowed at most once."
+        | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with MayInterleave = Some predicate }
 
     /// <summary>Use the native Orleans string key.</summary>
     [<CustomOperation("stringKey")>]

@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Globalization
 open Microsoft.Extensions.Options
 open Orleans
+open Orleans.Concurrency
 open Orleans.Configuration
 open Orleans.Metadata
 open Orleans.Runtime
@@ -186,6 +187,30 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
                 // "max-local-instances" and "remove-idle-workers" are StatelessWorkerAttribute-internal key
                 // names with no WellKnownGrainTypeProperties constant, so they are literals here too, exactly
                 // as examples/feature-tour/src/FeatureTour/Placement.fs already documents them.
+                // Spec 004 item 5. Both keys are written by constructing the REAL Orleans
+                // attribute and taking its own Populate output, exactly as the implicit-
+                // subscription bindings below take GetBindings': the property names and values
+                // are then Orleans' own, not a transcription of them.
+                //
+                // [Reentrant] contributes nothing but a property, so this is complete. Orleans'
+                // ReentrantSharedComponentsConfigurator (an IConfigureGrainTypeComponents
+                // registered by DefaultSiloServices) reads it back and installs the
+                // GrainCanInterleave component holding ReentrantPredicate.Instance, which
+                // ActivationData.MayInvokeRequest consults.
+                //
+                // [MayInterleave] additionally NAMES a method that Orleans reflects off the grain
+                // class, and a property cannot supply that -- which is why the grain class of a
+                // definition declaring 'mayInterleave' is FunctionalInterleavingGrainMarker,
+                // whose own attribute would already publish this key. It is written here as well
+                // so the publication does not depend on the ordering of the attribute provider
+                // relative to this one; both writes carry the same value.
+                if entry.Definition.IsReentrant then
+                    ReentrantAttribute().Populate(services, grainClass, grainType, properties)
+
+                if entry.Definition.MayInterleave.IsSome then
+                    MayInterleaveAttribute(FunctionalInterleave.CallbackName)
+                        .Populate(services, grainClass, grainType, properties)
+
                 match entry.Definition.Placement with
                 | Some(Strategy strategy) ->
                     let value =
@@ -245,11 +270,14 @@ type internal FunctionalGrainTypeOptionsPostConfigure(registry: FunctionalGrainR
             if String.Equals(name, Options.DefaultName, StringComparison.Ordinal) then
                 let snapshot = registry.Freeze()
 
-                let openMarker = typedefof<FunctionalGrainMarker<_>>
                 let openInterface = typedefof<IFunctionalGrainTarget<_>>
 
+                let openMarkers =
+                    [| typedefof<FunctionalGrainMarker<_>>
+                       typedefof<FunctionalInterleavingGrainMarker<_>> |]
+
                 options.Classes
-                |> Seq.filter (isOpenFunctional openMarker)
+                |> Seq.filter (fun candidate -> openMarkers |> Array.exists (fun open' -> isOpenFunctional open' candidate))
                 |> Seq.toArray
                 |> Array.iter (fun candidate -> options.Classes.Remove candidate |> ignore)
 

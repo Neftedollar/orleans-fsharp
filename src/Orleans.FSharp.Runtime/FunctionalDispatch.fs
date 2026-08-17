@@ -125,10 +125,18 @@ module internal FunctionalDispatch =
                 TransportStage
                 $"this activation hosts grain type '{grainTypeName}' but received a request addressed to '{envelope.GrainType}'."
 
-        if envelope.ContractVersion <> definition.Version then
-            fail
-                TransportStage
-                $"grain type '{grainTypeName}' hosts contract version {definition.Version} but received version {envelope.ContractVersion}."
+        // Spec 004 item 7: admission is the ONLY thing the version policy changes. Under the
+        // default Exact policy this is the spec-003 equality test and the spec-003 sentence,
+        // unchanged; under BackwardCompatible it is a range test. Everything downstream --
+        // descriptor resolution, admission flags, the payload codec, storage identity -- reads
+        // the same values either way.
+        if not (definition.AcceptsVersion envelope.ContractVersion) then
+            fail TransportStage (definition.VersionRejection envelope.ContractVersion)
+
+        // The version the rest of dispatch answers in. It is the CALLER's version, not the
+        // hosted one: protocol tokens are version-derived, so an admitted older caller must be
+        // met with its own version's tokens in both directions.
+        let requestVersion = envelope.ContractVersion
 
         if isNull envelope.Payload then
             fail
@@ -164,11 +172,25 @@ module internal FunctionalDispatch =
                     TransportStage
                     $"grain type '{grainTypeName}' hosts no operation '{envelope.OperationId}' at contract version {definition.Version}."
 
-        // 3. Compare the exact protocol token and the admission flags with the descriptor.
-        if not (ProtocolToken.equal envelope.ProtocolToken operation.RequestToken) then
+        // 2b. Spec 004 item 7: the operation must exist at the ADMITTED version. Checked before
+        //     the token comparison because it is the more specific fault and the token check
+        //     cannot catch it -- an older caller's token is computed from its own version, which
+        //     is exactly the token this host now expects for that version, so a v(n-1) call to an
+        //     operation introduced at v(n) would otherwise be admitted and its argument
+        //     deserialized as the newer declared type.
+        if operation.SinceVersion > requestVersion then
             fail
                 TransportStage
-                $"the request for operation '{operation.OperationId}' on grain type '{grainTypeName}' carries protocol token {ProtocolToken.toHex envelope.ProtocolToken}, but {ProtocolToken.toHex operation.RequestToken} was expected."
+                $"operation '{operation.OperationId}' on grain type '{grainTypeName}' was introduced at contract version {operation.SinceVersion}, but the request declares version {requestVersion}."
+
+        // 3. Compare the exact protocol token and the admission flags with the descriptor, at the
+        //    admitted request version.
+        let struct (expectedRequestToken, expectedReplyToken) = operation.TokensFor requestVersion
+
+        if not (ProtocolToken.equal envelope.ProtocolToken expectedRequestToken) then
+            fail
+                TransportStage
+                $"the request for operation '{operation.OperationId}' on grain type '{grainTypeName}' carries protocol token {ProtocolToken.toHex envelope.ProtocolToken}, but {ProtocolToken.toHex expectedRequestToken} was expected."
 
         if envelope.AdmissionFlags <> operation.AdmissionFlags then
             fail
@@ -238,7 +260,7 @@ module internal FunctionalDispatch =
                                 payload.Length
                                 env.MaxPayloadBytes
 
-                            return FunctionalReply(operation.ReplyToken, payload)
+                            return FunctionalReply(expectedReplyToken, payload)
                         with error when operation.IsOneWay ->
                             // A one-way target failure is never returned to that caller: the
                             // caller's send completed at the local acknowledgement. It is
@@ -280,7 +302,7 @@ module internal FunctionalDispatch =
                         activity
                             .SetTag("grainType", grainTypeName)
                             .SetTag("operationId", operation.OperationId)
-                            .SetTag("version", definition.Version)
+                            .SetTag("version", requestVersion)
                             .SetTag("grainId", string env.GrainContext.GrainId)
                             .SetTag("outcome", outcome)
                         |> ignore
@@ -293,7 +315,7 @@ module internal FunctionalDispatch =
                             "Functional dispatch grainType={GrainType} operationId={OperationId} version={Version} grainId={GrainId} outcome={Outcome}",
                             grainTypeName,
                             operation.OperationId,
-                            definition.Version,
+                            requestVersion,
                             env.GrainContext.GrainId,
                             outcome
                         )

@@ -8,33 +8,96 @@ open Orleans
 open Orleans.Concurrency
 open Orleans.Runtime
 open Orleans.Serialization.Invocation
+open Orleans.FSharp.FunctionalDiagnostics
 
-/// TEMPORARY spec-004 Phase C Step-0 probe scaffolding. Reverted once the probe is recorded.
+/// <summary>
+/// The process-wide table behind the <c>mayInterleave</c> callback, keyed by the closed
+/// interleaving marker type of each grain type that declares one.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Why a table and not an ordinary field.</b> Orleans reaches a per-message interleave
+/// predicate in exactly one way: <c>MayInterleaveConfiguratorProvider</c> reads the
+/// <c>may-interleave-predicate</c> grain property, reflects a method of that name off the
+/// <b>grain class</b>, and wraps it. The component it stores it in
+/// (<c>GrainCanInterleave</c>) and the interface it stores it as (<c>IMayInterleavePredicate</c>)
+/// are both internal to <c>Orleans.Runtime</c>, so nothing outside Orleans can install one
+/// directly. A <b>static</b> callback is the only usable shape:
+/// <c>MayInterleaveStaticPredicate</c> discards the grain instance, and the instanced form binds
+/// <c>instance as TGrainClass</c> — which is always <c>null</c> here, because the functional
+/// activation instance is <c>FunctionalGrainTarget&lt;'Actor&gt;</c> and the grain class is the
+/// marker. A static callback has no <c>this</c> to carry the definition, so the definition is
+/// looked up by the identity the callback does have: its own closed marker type.
+/// </para>
+/// <para>
+/// Entries are written while the silo's service collection is being configured — before any
+/// activation exists — and are never removed. Two silos in one process registering the same
+/// definition write the same value; a grain type registered on both writes it twice, idempotently.
+/// </para>
+/// </remarks>
 [<RequireQualifiedAccess>]
-module internal FunctionalInterleaveProbe =
-    let seen = ConcurrentQueue<string>()
-    let mutable predicate: (IFunctionalRequestMetadata -> bool) option = None
+module internal FunctionalInterleave =
 
-    let evaluate (request: IInvokable) : bool =
+    /// <summary>The public method name every interleaving marker exposes.</summary>
+    [<Literal>]
+    let CallbackName = "MayInterleave"
+
+    [<ReferenceEquality>]
+    type internal Registration =
+        { GrainTypeName: string
+          Predicate: IFunctionalRequestMetadata -> bool }
+
+    let private table = ConcurrentDictionary<Type, Registration>()
+
+    /// <summary>Bind one grain type's declared predicate to its closed marker type.</summary>
+    let register (markerType: Type) (grainTypeName: string) (predicate: IFunctionalRequestMetadata -> bool) =
+        table.[markerType] <-
+            { GrainTypeName = grainTypeName
+              Predicate = predicate }
+
+    /// <summary>The registration of one closed marker type, if it has one.</summary>
+    let tryFind (markerType: Type) =
+        match table.TryGetValue markerType with
+        | true, registration -> Some registration
+        | _ -> None
+
+    /// <summary>
+    /// Adapt Orleans' <c>IInvokable</c> callback to the declared metadata predicate. Every arm
+    /// that cannot reach a declared predicate answers <c>false</c> — "do not interleave" is the
+    /// spec-003 default and the only safe answer for a message this definition cannot identify.
+    /// </summary>
+    /// <remarks>
+    /// Argument 0 of a functional request is the <c>FunctionalRequestEnvelope</c>, which is the
+    /// <c>IFunctionalRequestMetadata</c> the predicate is declared over — so the predicate sees
+    /// the protocol fields and NEVER the argument payload, which is not deserialized until
+    /// dispatch admits the request. That is spec 003's protocol-before-payload invariant, held
+    /// intact on a path Orleans runs before dispatch is even reached.
+    /// </remarks>
+    let evaluate (markerType: Type) (request: IInvokable) : bool =
         if isNull (box request) then
-            seen.Enqueue "null-invokable"
             false
         else
-            match request.GetArgument 0 with
-            | :? IFunctionalRequestMetadata as metadata ->
-                let verdict =
-                    match predicate with
-                    | Some check -> check metadata
-                    | None -> false
-
-                seen.Enqueue $"{metadata.GrainType}/{metadata.OperationId}={verdict}"
-                verdict
-            | other ->
-                let name =
-                    if isNull other then "null" else other.GetType().Name
-
-                seen.Enqueue("non-envelope:" + name)
-                false
+            match tryFind markerType with
+            | None -> false
+            | Some registration ->
+                match request.GetArgument 0 with
+                | :? IFunctionalRequestMetadata as metadata when
+                    String.Equals(metadata.GrainType, registration.GrainTypeName, StringComparison.Ordinal)
+                    ->
+                    try
+                        registration.Predicate metadata
+                    with cause ->
+                        // Orleans logs and rethrows a failing predicate, and the message is then
+                        // rejected to its caller as transient (ActivationData.MayInvokeRequest ->
+                        // the message loop's catch -> RejectMessage). That behaviour is kept --
+                        // swallowing an application fault here would hide it and silently change
+                        // the activation's concurrency -- but the exception is wrapped so the
+                        // rejection names the grain type, the operation, and the stage.
+                        failCause
+                            TransportStage
+                            $"the 'mayInterleave' predicate of grain type '{registration.GrainTypeName}' failed while deciding whether operation '{metadata.OperationId}' may interleave."
+                            cause
+                | _ -> false
 
 /// <summary>
 /// The concrete manifest grain type of one actor brand.
@@ -54,14 +117,8 @@ module internal FunctionalInterleaveProbe =
 /// </para>
 /// </remarks>
 /// <typeparam name="TActor">The application's actor brand.</typeparam>
-[<Sealed>]
-[<MayInterleave("MayInterleave")>]
 type FunctionalGrainMarker<'Actor>() =
     inherit Grain()
-
-    /// TEMPORARY spec-004 Phase C Step-0 probe callback.
-    static member MayInterleave(request: IInvokable) : bool =
-        FunctionalInterleaveProbe.evaluate request
 
     interface IFunctionalGrainTarget<'Actor> with
         member _.DispatchAsync(_envelope: FunctionalRequestEnvelope, _cancellationToken: CancellationToken) =
@@ -76,6 +133,47 @@ type FunctionalGrainMarker<'Actor>() =
                 FunctionalTransportDiagnostics.Fail
                     $"the manifest marker for actor brand '{typeof<'Actor>.FullName}' received reminder '{reminderName}', which means the functional grain activator was not installed on this silo."
             )
+
+/// <summary>
+/// The manifest grain type of an actor brand whose contract declares <c>mayInterleave</c>. It
+/// adds exactly what Orleans needs to find a per-message interleave predicate on a grain class:
+/// the <c>[MayInterleave]</c> attribute and the public static callback it names.
+/// </summary>
+/// <remarks>
+/// <para>
+/// It is a separate type, used only for those grain types, for the same reason
+/// <c>FunctionalStreamingGrainTarget</c> is: the attribute is not inert.
+/// <c>AttributeGrainPropertiesProvider</c> writes the <c>may-interleave-predicate</c> property
+/// for every grain class carrying it, and <c>MayInterleaveConfiguratorProvider</c> then installs
+/// a predicate for every grain type whose properties contain that key — so putting the attribute
+/// on the shared marker would give every functional grain type in the cluster an interleave
+/// predicate it never asked for.
+/// </para>
+/// <para>
+/// This is also why <c>reentrant</c> does NOT get a marker of its own: <c>[Reentrant]</c>
+/// contributes a grain property and nothing else, so publishing that attribute's own
+/// <c>Populate</c> output from the registry's properties provider is complete fidelity.
+/// <c>[MayInterleave]</c> additionally names a method Orleans reflects off the grain class, which
+/// a published property alone cannot supply.
+/// </para>
+/// </remarks>
+/// <typeparam name="TActor">The application's actor brand.</typeparam>
+[<Sealed>]
+[<MayInterleave(FunctionalInterleave.CallbackName)>]
+type FunctionalInterleavingGrainMarker<'Actor>() =
+    inherit FunctionalGrainMarker<'Actor>()
+
+    /// <summary>
+    /// The callback <c>[MayInterleave]</c> names. Orleans reflects it off this closed marker type
+    /// and calls it for the incoming request and, separately, for the request currently
+    /// executing; it must return quickly and must not block.
+    /// </summary>
+    /// <param name="request">
+    /// The Orleans invocation being considered. For a functional call this is the fixed
+    /// <c>FunctionalRequest</c>, whose argument 0 is the request envelope.
+    /// </param>
+    static member MayInterleave(request: IInvokable) : bool =
+        FunctionalInterleave.evaluate typeof<FunctionalInterleavingGrainMarker<'Actor>> request
 
 /// <summary>
 /// The base every functional activation target derives from. It hands the Orleans-supplied

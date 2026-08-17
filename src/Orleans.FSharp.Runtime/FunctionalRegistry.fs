@@ -20,13 +20,35 @@ module internal FunctionalSiloDiagnostics =
 [<Sealed>]
 type internal FunctionalRegistryEntry(definition: FunctionalHostedDefinition) =
 
+    // A definition declaring 'mayInterleave' is published under the interleaving marker, which
+    // is the only functional grain class carrying Orleans' [MayInterleave] attribute and the
+    // static callback it names. Every other definition keeps the plain marker, so no grain type
+    // gets an interleave predicate it did not ask for.
     let markerType =
-        typedefof<FunctionalGrainMarker<_>>.MakeGenericType [| definition.ActorType |]
+        let openMarker =
+            if definition.MayInterleave.IsSome then
+                typedefof<FunctionalInterleavingGrainMarker<_>>
+            else
+                typedefof<FunctionalGrainMarker<_>>
+
+        openMarker.MakeGenericType [| definition.ActorType |]
+
+    do
+        // The callback Orleans reflects off the marker is static, so it cannot carry the
+        // definition; it finds it by its own closed marker type. Binding happens here, while the
+        // silo is still being configured, so it is in place long before any activation exists.
+        match definition.MayInterleave with
+        | Some predicate -> FunctionalInterleave.register markerType definition.GrainTypeName predicate
+        | None -> ()
 
     /// <summary>The non-generic hosted view of the registered definition.</summary>
     member _.Definition = definition
 
-    /// <summary>The closed <c>FunctionalGrainMarker&lt;'Actor&gt;</c> of this definition.</summary>
+    /// <summary>
+    /// The closed marker CLR type Orleans publishes as this definition's grain class:
+    /// <c>FunctionalInterleavingGrainMarker&lt;'Actor&gt;</c> when the contract declares
+    /// <c>mayInterleave</c>, <c>FunctionalGrainMarker&lt;'Actor&gt;</c> otherwise.
+    /// </summary>
     member _.MarkerType = markerType
 
     /// <summary>The explicit Orleans grain type name.</summary>

@@ -164,10 +164,6 @@ type internal FunctionalHostedOperation =
         OperationId: string
         /// The source API-record field name.
         FieldName: string
-        /// The precomputed request-direction protocol token.
-        RequestToken: byte[]
-        /// The precomputed reply-direction protocol token.
-        ReplyToken: byte[]
         /// The precomputed admission-flag byte of this operation.
         AdmissionFlags: byte
         /// Orleans read-only scheduling.
@@ -176,6 +172,25 @@ type internal FunctionalHostedOperation =
         IsOneWay: bool
         /// Always-interleave admission.
         IsAlwaysInterleave: bool
+        /// The contract version this operation was introduced at.
+        SinceVersion: int
+        /// The lowest request version this definition admits; the index origin of
+        /// <see cref="P:Orleans.FSharp.FunctionalHostedOperation.VersionTokens"/>.
+        MinAcceptedVersion: int
+        /// <summary>
+        /// The request-direction and reply-direction protocol tokens of this operation at every
+        /// admitted contract version, indexed by <c>version - MinAcceptedVersion</c>.
+        /// </summary>
+        /// <remarks>
+        /// A protocol token is the digest of grain type, <b>version</b>, operation ID, and
+        /// direction, so a caller at an older admitted version sends a different request token and
+        /// checks the reply against a different reply token than a current-version caller. A
+        /// version-tolerant host therefore cannot compare against one fixed pair: it has to answer
+        /// in the caller's own version. Every admitted version's pair is precomputed here, once,
+        /// while the definition is sealed -- which is only possible because the accepted set is a
+        /// closed range and not a predicate.
+        /// </remarks>
+        VersionTokens: struct (byte[] * byte[])[]
         /// The operation's exact argument type.
         ArgumentType: Type
         /// The operation's exact reply type.
@@ -183,6 +198,19 @@ type internal FunctionalHostedOperation =
         /// The preclosed typed handler adapter.
         Adapter: FunctionalServerAdapter
     }
+
+    /// <summary>The protocol-token pair this operation uses for one admitted request version.</summary>
+    member this.TokensFor(version: int) = this.VersionTokens.[version - this.MinAcceptedVersion]
+
+    /// <summary>The request-direction protocol token at the hosted contract version.</summary>
+    member this.RequestToken =
+        let struct (request, _) = this.VersionTokens.[this.VersionTokens.Length - 1]
+        request
+
+    /// <summary>The reply-direction protocol token at the hosted contract version.</summary>
+    member this.ReplyToken =
+        let struct (_, reply) = this.VersionTokens.[this.VersionTokens.Length - 1]
+        reply
 
 /// <summary>
 /// The non-generic view of one hosted functional definition. The silo registry, the manifest
@@ -195,6 +223,9 @@ type internal FunctionalHostedDefinition
         source: obj,
         grainTypeName: string,
         version: int,
+        acceptedVersions: VersionPolicy,
+        isReentrant: bool,
+        mayInterleave: (IFunctionalRequestMetadata -> bool) option,
         actorType: Type,
         interfaceType: Type,
         interfaceId: string,
@@ -238,6 +269,37 @@ type internal FunctionalHostedDefinition
 
     /// <summary>The application contract version this silo hosts.</summary>
     member _.Version = version
+
+    /// <summary>Which request versions this definition admits.</summary>
+    member _.AcceptedVersions = acceptedVersions
+
+    /// <summary>The lowest request version this definition admits.</summary>
+    member _.MinAcceptedVersion =
+        match acceptedVersions with
+        | Exact -> version
+        | BackwardCompatible minVersion -> minVersion
+
+    /// <summary>True when the whole grain is reentrant.</summary>
+    member _.IsReentrant = isReentrant
+
+    /// <summary>The declared per-request interleave predicate, when the contract declares one.</summary>
+    member _.MayInterleave = mayInterleave
+
+    /// <summary>True when this definition admits a request carrying that contract version.</summary>
+    member this.AcceptsVersion(requestVersion: int) =
+        requestVersion >= this.MinAcceptedVersion && requestVersion <= version
+
+    /// <summary>
+    /// The rejection text for a request version this definition does not admit. Under the default
+    /// <c>Exact</c> policy it is byte-for-byte the spec-003 sentence, so nothing that reads the
+    /// diagnostic changes when version tolerance ships unused.
+    /// </summary>
+    member this.VersionRejection(requestVersion: int) =
+        match acceptedVersions with
+        | Exact ->
+            $"grain type '{grainTypeName}' hosts contract version {version} but received version {requestVersion}."
+        | BackwardCompatible minVersion ->
+            $"grain type '{grainTypeName}' hosts contract version {version} and accepts versions {minVersion} through {version}, but received version {requestVersion}."
 
     /// <summary>The actor-brand CLR type.</summary>
     member _.ActorType = actorType
@@ -342,6 +404,7 @@ module internal FunctionalHosted =
 
         let contract = definition.Contract
         let metadata = contract.TargetMetadata
+        let minAcceptedVersion = contract.MinAcceptedVersion
 
         let operations =
             contract.Operations
@@ -355,14 +418,24 @@ module internal FunctionalHosted =
                         operation.ReplyType
                         (definition.HandlerFor operation)
 
+                // One token pair per admitted version, in ascending version order, so the last
+                // entry is always the hosted contract version's own pair. Under the default
+                // Exact policy this is a single-element array holding exactly the tokens spec
+                // 003 precomputed.
+                let versionTokens =
+                    [| for candidate in minAcceptedVersion .. contract.Version ->
+                           struct (ProtocolToken.request contract.GrainTypeName candidate operation.OperationId,
+                                   ProtocolToken.reply contract.GrainTypeName candidate operation.OperationId) |]
+
                 { OperationId = operation.OperationId
                   FieldName = operation.FieldName
-                  RequestToken = operation.RequestToken
-                  ReplyToken = operation.ReplyToken
                   AdmissionFlags = operation.AdmissionFlags
                   IsReadOnly = operation.IsReadOnly
                   IsOneWay = operation.IsOneWay
                   IsAlwaysInterleave = operation.IsAlwaysInterleave
+                  SinceVersion = operation.SinceVersion
+                  MinAcceptedVersion = minAcceptedVersion
+                  VersionTokens = versionTokens
                   ArgumentType = operation.ArgumentType
                   ReplyType = operation.ReplyType
                   Adapter = adapter })
@@ -442,6 +515,9 @@ module internal FunctionalHosted =
             box definition,
             contract.GrainTypeName,
             contract.Version,
+            contract.AcceptedVersions,
+            contract.IsReentrant,
+            contract.MayInterleave,
             typeof<'Actor>,
             metadata.InterfaceType,
             metadata.InterfaceId,

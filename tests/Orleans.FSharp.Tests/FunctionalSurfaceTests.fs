@@ -522,7 +522,8 @@ let private customOperations (builderType: Type) =
 [<Fact>]
 let ``the contract builder declares exactly the specified custom operations`` () =
     let expected =
-        [| "alwaysInterleave"
+        [| "acceptsVersions"
+           "alwaysInterleave"
            "grainType"
            "guidCompoundKey"
            "guidCompoundKeyMapped"
@@ -532,9 +533,12 @@ let ``the contract builder declares exactly the specified custom operations`` ()
            "int64CompoundKeyMapped"
            "int64Key"
            "int64KeyMapped"
+           "mayInterleave"
            "oneWay"
            "operationId"
            "readOnly"
+           "reentrant"
+           "sinceVersion"
            "stringKey"
            "stringKeyMapped"
            "version" |]
