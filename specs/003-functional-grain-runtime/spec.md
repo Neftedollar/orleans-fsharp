@@ -326,6 +326,15 @@ type FunctionalGrainContext<'Actor, 'Key> =
 type OperationSelector<'Api, 'Argument, 'Reply> =
     'Api -> ('Argument -> Task<'Reply>)
 
+// One selector abbreviation per curried arity, up to the cap of seven.
+type OperationSelector2<'Api, 'A1, 'A2, 'Reply> =
+    'Api -> ('A1 -> 'A2 -> Task<'Reply>)
+
+type OperationSelector3<'Api, 'A1, 'A2, 'A3, 'Reply> =
+    'Api -> ('A1 -> 'A2 -> 'A3 -> Task<'Reply>)
+
+// ... OperationSelector4 .. OperationSelector7 follow the same shape.
+
 type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
     FunctionalGrainContext<'Actor, 'Key> ->
     'State ->
@@ -509,6 +518,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> =
         selector: OperationSelector<'Api, 'Argument, 'Reply> ->
         GrainContractDraft<'Actor, 'Key, 'Api>
 
+    // readOnly, oneWay, alwaysInterleave, and operationId are each spelled once
+    // more per curried arity, with OperationSelector2 .. OperationSelector7 in the
+    // selector position and no other difference. A curried field is therefore
+    // configured exactly like the tupled spelling of the same operation.
+
 [<Sealed>]
 type FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>
 
@@ -542,6 +556,21 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> =
         selector: OperationSelector<'Api, 'Argument, 'Reply> *
         handler: Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> ->
         FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    [<CustomOperation("handle2")>]
+    member Handle2<'State, 'A1, 'A2, 'Reply> :
+        state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State> *
+        selector: OperationSelector2<'Api, 'A1, 'A2, 'Reply> *
+        handler: Handler<'Actor, 'Key, 'State, 'A1 * 'A2, 'Reply> ->
+        FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
+
+    // handle3 .. handle7 follow the same shape, each taking the selector of its
+    // arity and the handler of the corresponding canonical tuple. The arity is in
+    // the OPERATION NAME rather than in an overload of `handle` because F#
+    // type-checks a lambda argument of an overloaded method without the expected
+    // type: overloading `handle` stops the argument type flowing from the selector
+    // into the handler body, so an unannotated `fun context state post ->
+    // post.author` no longer infers.
 
     [<CustomOperation("stateFrom")>]
     member StateFrom<'State> :
@@ -673,10 +702,45 @@ Every field is an operation and has exactly this type:
 
 Use `unit -> Task<'Reply>` for an operation without domain input and
 `'Argument -> Task<unit>` for an acknowledged operation without a result.
-Multiple domain inputs are grouped in one tuple or record. `Async<'Reply>`,
-`ValueTask<'Reply>`, non-generic `Task`, curried multi-input functions, and
-non-function fields fail contract construction. Helpers are ordinary values in
-the companion module.
+Multiple domain inputs are grouped in one tuple or record.
+
+A field MAY also be spelled curried, which is sugar for the tupled spelling of
+the same operation:
+
+```fsharp
+typing: string -> bool -> Task<unit>          // curried spelling
+typing: (string * bool) -> Task<unit>         // canonical spelling
+```
+
+Shape reflection walks the field's function type greedily, collecting argument
+types in order until the range is exactly `Task<'Reply>`, and CANONICALIZES a
+field with N >= 2 collected arguments to the F# reference tuple of those types.
+The canonical argument type IS the operation's wire argument type: the two
+spellings above produce the same operation ID, the same protocol token, the same
+serializer preflight, and byte-identical payloads for the same values, so an
+application may move a field between them without a wire change. Handlers are
+always written against the canonical tuple; there is no handler-side currying.
+
+Because the walk consumes the whole chain, a field can never "return a
+function": a trailing function type is another argument, and only `Task<_>` ends
+a field. A function-typed argument remains unserializable and fails the
+serializer preflight at binding, exactly as in the tupled spelling.
+
+The arity cap is seven collected arguments, which is where `System.Tuple` stops
+nesting — a canonical tuple within the cap is always flat, so it is exactly the
+type an author would get by writing the tupled spelling by hand. An eighth
+argument fails contract construction with a diagnostic naming the count and
+directing the author to a record argument.
+
+`unit` means "no domain input" only as a field's SOLE argument: `unit ->
+Task<'Reply>` stays a zero-input operation and is never canonicalized to a
+one-tuple. `unit` in any later curried position is rejected, because there it
+would silently become an ordinary tuple slot that reads like an absent argument.
+
+`Async<'Reply>`, `ValueTask<'Reply>`, a non-generic `Task`, a curried chain that
+does not end in `Task<'Reply>`, more than seven curried arguments, `unit` after
+the first curried position, and non-function fields fail contract construction.
+Helpers are ordinary values in the companion module.
 
 Contract construction validates the complete record shape before returning a
 `GrainContract`.
@@ -697,8 +761,11 @@ Create one cached `ApiShape` for each closed API type:
 2. Read fields in declaration order with
    `FSharpType.GetRecordFields(apiType, BindingFlags.Public)`.
 3. For each field, use `FSharpType.IsFunction` and
-   `FSharpType.GetFunctionElements` to extract argument and range types.
-4. Verify that the range is exactly `Task<'Reply>` and record the reply type.
+   `FSharpType.GetFunctionElements` to walk the whole curried chain, collecting
+   argument types in order, and canonicalize two or more of them with
+   `FSharpType.MakeTupleType`.
+4. Verify that the range which ends the walk is exactly `Task<'Reply>`, record
+   the reply type, and apply the arity cap and the `unit` rules.
 5. Create one unique function object for each record field, with that field's
    exact function type, using `FSharpValue.MakeFunction`; its body throws if
    invoked. Fields with identical function types receive distinct objects.
@@ -867,7 +934,8 @@ Each immutable descriptor contains:
 
 - field index and source-field name;
 - stable operation ID;
-- exact argument and reply `Type` values;
+- the collected curried argument `Type` values in declaration order;
+- exact canonical argument and reply `Type` values;
 - policy flags;
 - precomputed request and reply protocol tokens;
 - a preclosed typed client-closure factory; and
@@ -891,6 +959,19 @@ A bound call performs argument serialization, fixed-request construction and
 send, reply validation, and typed reply deserialization. Its public return value
 is `Task<'Reply>`.
 
+The bound field of a CURRIED operation is a curried closure of that field's exact
+function type, preclosed at contract sealing like every other: it accumulates the
+arguments, builds the canonical tuple in declaration order, and fires the
+ordinary tupled send at the last one. A partial application sends nothing. The
+server adapter is closed over the canonical argument type, so the silo side of a
+curried operation is identical to the tupled spelling's.
+
+`FunctionalGrainRef.call` and `callCancellable` take the CANONICAL tupled
+spelling only. They are curried members and F# forbids overloading a member with
+curried arguments (FS0816), so there is no curried form of them: a curried field
+is called through the bound API record, and an operation that needs the raw
+cancellable call is spelled tupled.
+
 ## Definition, context, and state semantics
 
 ### Handler binding and definition validation
@@ -905,9 +986,16 @@ type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
     Task<'State * 'Reply>
 ```
 
-The single tupled `handle` custom operation links the selector and handler's
-`'Argument` and `'Reply` parameters. The definition retains the contract's
-`'Actor`, `'Key`, and `'Api` types plus one inferred `'State` type.
+The `handle` custom operation links the selector and handler's `'Argument` and
+`'Reply` parameters. A curried API field is bound by the spelling of its arity,
+`handle2` … `handle7`, whose handler takes the canonical tuple; handlers are
+never curried. The arity lives in the operation NAME rather than in an overload
+of `handle` because F# type-checks a lambda argument of an overloaded method
+without the expected type: overloading `handle` would stop the argument type
+flowing from the selector into the handler body, and an unannotated
+`fun context state post -> post.author` would stop inferring. The definition
+retains the contract's `'Actor`, `'Key`, and `'Api` types plus one inferred
+`'State` type.
 
 Definition sealing requires:
 
@@ -1712,7 +1800,16 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 - All five mapped key operations preserve the domain key type; reversed or
   otherwise mismatched encoder/decoder types fail to compile.
 - `oneWay (_.typing)` compiles, while selecting a field whose reply is not
-  `Task<unit>` fails to compile.
+  `Task<unit>` fails to compile — on a curried field as on a tupled one.
+- A curried field compiles through its contract (policies and `operationId`),
+  its definition (`handle2` … `handle7`, with an unannotated handler tuple
+  pattern whose elements are dereferenced in the body), and its curried bound
+  call, with no errors AND no warnings.
+- Binding a curried field with `handle` or with the wrong arity fails to
+  compile, and a field past the arity cap has no spelling at all: neither
+  `readOnly` nor any `handle` accepts an eighth argument.
+- `FunctionalGrainRef.call` / `callCancellable` take the canonical tupled
+  spelling only; a curried selector fails to compile there.
 - `stateFrom` accepts only `PersistentStateRef<'State>` for the definition's
   primary state; `usePersistentState` preserves each independent stored type,
   and `context.persistentState` returns the corresponding exact
@@ -1729,7 +1826,17 @@ Redis, then verifies that the same `GrainId` reloads committed state.
 - A helper or branch returning an original sentinel documents the physical-
   identity limit and still executes exactly once during construction.
 - Non-record, struct-record, open-generic, non-function, `Async`, `ValueTask`,
-  plain `Task`, and curried shapes fail construction.
+  plain `Task`, and curried chains not ending in `Task<'Reply>` fail
+  construction, as do more than seven curried arguments (with the record
+  guidance) and `unit` after the first curried position.
+- A curried field collects its arguments in order, canonicalizes to a FLAT
+  tuple at every arity up to the cap, and reflects to the same argument and
+  reply types as the tupled spelling of the same operation.
+- Two contracts differing only in currying produce the same operation IDs,
+  protocol tokens, admission flags, and byte-identical payloads for the same
+  values; the bound curried closure sends nothing until its last argument and
+  builds the tuple in declaration order (asserted with same-typed arguments, so
+  a reversed tuple would still type-check and still fail).
 - Shape, constructor, probe, and closed-thunk caches are reused.
 
 ### Contract, identity, and manifest tests
