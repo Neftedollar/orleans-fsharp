@@ -200,10 +200,21 @@ module internal FunctionalClientServices =
             // 2. Fixed request/reply serializers, copiers, and activators plus their type filter.
             FunctionalTransportSerialization.AddFunctionalTransport services |> ignore
 
-            // 3. Exact-type payload codec services.
+            // 3. Exact-type payload codec services. The interface registration is what the
+            //    observer handle codec resolves: it lives in the abstractions assembly and
+            //    cannot name the concrete codec, and a deserialized handle has to be paired
+            //    with the receiving process's serializer.
             services.TryAddSingleton<FunctionalPayloadCodec>(fun (provider: IServiceProvider) ->
                 let serializer = provider.GetRequiredService<Serializer>()
                 FunctionalPayloadCodec(serializer, serializer.SessionPool))
+
+            services.TryAddSingleton<IFunctionalPayloadCodec>(fun (provider: IServiceProvider) ->
+                provider.GetRequiredService<FunctionalPayloadCodec>() :> IFunctionalPayloadCodec)
+
+            // 3b. The observer transport: the notification envelope and the typed handle. Both
+            //     directions of the functional runtime are registered by one entry point, so a
+            //     process that can call a functional grain can also be pushed to by one.
+            FunctionalObserverSerialization.AddFunctionalObserverTransport services |> ignore
 
             // 4. Transport options with startup validation.
             services

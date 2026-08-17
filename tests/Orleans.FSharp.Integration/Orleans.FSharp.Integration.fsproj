@@ -55,6 +55,7 @@
     <Compile Include="FunctionalPhase5IntegrationTests.fs" />
     <Compile Include="ChatRoomSampleIntegrationTests.fs" />
     <Compile Include="FunctionalObserverIntegrationTests.fs" />
+    <Compile Include="FunctionalPushIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

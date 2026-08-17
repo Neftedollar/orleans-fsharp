@@ -32,6 +32,20 @@ module internal ProtocolToken =
     [<Literal>]
     let ReplyDirection = "reply"
 
+    /// <summary>
+    /// The lowercase direction literal of an observer notification.
+    /// </summary>
+    /// <remarks>
+    /// A notification token cannot collide with a grain-operation token even when an observer
+    /// type and a grain type share a name and an operation ID: the direction is part of the
+    /// hashed preimage, and "notify" is neither "request" nor "reply", so the three preimages
+    /// differ in their final NUL-separated field and hash to different digests. A collision
+    /// would need a SHA-256 preimage collision, not a naming coincidence. What the token detects
+    /// is the same thing it detects for grains — a notification routed to the wrong descriptor.
+    /// </remarks>
+    [<Literal>]
+    let NotifyDirection = "notify"
+
     /// <summary>Compute the token for one grain type, version, operation, and direction.</summary>
     let compute (grainType: string) (version: int) (operationId: string) (direction: string) : byte[] =
         let text =
@@ -52,6 +66,10 @@ module internal ProtocolToken =
     /// <summary>The reply-direction token.</summary>
     let reply grainType version operationId =
         compute grainType version operationId ReplyDirection
+
+    /// <summary>The notify-direction token of one observer type, version, and push operation.</summary>
+    let notify observerType version operationId =
+        compute observerType version operationId NotifyDirection
 
     /// <summary>Render a token as lowercase hexadecimal for diagnostics.</summary>
     let toHex (token: byte[]) =
