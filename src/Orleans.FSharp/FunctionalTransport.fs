@@ -130,7 +130,14 @@ module internal FunctionalTransportSource =
 /// returns it in <c>finally</c>. Sessions are never shared by concurrent calls.
 /// </remarks>
 [<Sealed>]
-type internal FunctionalPayloadCodec(serializer: Serializer, sessionPool: SerializerSessionPool) =
+type internal FunctionalPayloadCodec
+    (serializer: Serializer, sessionPool: SerializerSessionPool, ?maxPayloadBytes: int) =
+
+    let maxPayloadBytes =
+        defaultArg maxPayloadBytes FunctionalGrainTransportOptions.DefaultMaxPayloadBytes
+
+    /// <summary>The local payload-size limit this codec instance was built with.</summary>
+    member _.MaxPayloadBytes = maxPayloadBytes
 
     /// <summary>Serialize one value as its exact declared type into a fresh byte array.</summary>
     member _.Serialize<'T>(value: 'T) : byte[] =
@@ -180,6 +187,7 @@ type internal FunctionalPayloadCodec(serializer: Serializer, sessionPool: Serial
     interface IFunctionalPayloadCodec with
         member this.Serialize<'T>(value: 'T) = this.Serialize<'T> value
         member this.Deserialize<'T>(payload: byte[]) : 'T = this.Deserialize<'T> payload
+        member this.MaxPayloadBytes = maxPayloadBytes
 
 /// <summary>
 /// Serializer preflight: the injected codec provider must resolve an Orleans codec for every
@@ -416,10 +424,11 @@ module internal FunctionalTransportConfiguration =
             PayloadLimit.validateLimit options.Value.MaxPayloadBytes
         | _ -> FunctionalGrainTransportOptions.DefaultMaxPayloadBytes
 
-    /// <summary>The exact-type payload codec of this process.</summary>
+    /// <summary>The exact-type payload codec of this process, carrying this process's own limit.</summary>
     let payloadCodec (services: IServiceProvider) (grainTypeName: string) =
         match services.GetService typeof<Serializer> with
-        | :? Serializer as serializer -> FunctionalPayloadCodec(serializer, serializer.SessionPool)
+        | :? Serializer as serializer ->
+            FunctionalPayloadCodec(serializer, serializer.SessionPool, maxPayloadBytes services)
         | _ ->
             fail
                 BindingStage

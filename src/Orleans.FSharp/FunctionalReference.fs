@@ -206,7 +206,12 @@ module internal FunctionalClientServices =
             //    with the receiving process's serializer.
             services.TryAddSingleton<FunctionalPayloadCodec>(fun (provider: IServiceProvider) ->
                 let serializer = provider.GetRequiredService<Serializer>()
-                FunctionalPayloadCodec(serializer, serializer.SessionPool))
+
+                FunctionalPayloadCodec(
+                    serializer,
+                    serializer.SessionPool,
+                    FunctionalTransportConfiguration.maxPayloadBytes provider
+                ))
 
             services.TryAddSingleton<IFunctionalPayloadCodec>(fun (provider: IServiceProvider) ->
                 provider.GetRequiredService<FunctionalPayloadCodec>() :> IFunctionalPayloadCodec)

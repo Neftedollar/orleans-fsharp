@@ -1,7 +1,7 @@
 /// <summary>
 /// Protocol-token, admission-flag, and payload-limit tests for spec 003 Phase 2:
 /// the two golden SHA-256 vectors, the direction and length properties of the token, the
-/// admission-flag layout including reserved bits, and the four payload boundaries.
+/// admission-flag layout including reserved bits, and the six payload boundaries.
 /// </summary>
 module Orleans.FSharp.Tests.FunctionalProtocolTests
 
@@ -165,14 +165,32 @@ let ``reserved bits are detected and valid combinations are not`` () =
     test <@ AdmissionFlags.hasReserved 0xFFuy @>
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Payload limits — all four boundaries
+// Payload limits — all six boundaries
 // ──────────────────────────────────────────────────────────────────────────────
 
 let private boundaries =
     [ PayloadBoundary.CallerRequestSend, "caller request send", "request"
       PayloadBoundary.SiloRequestReceive, "silo request receive", "request"
       PayloadBoundary.SiloReplySend, "silo reply send", "reply"
-      PayloadBoundary.CallerReplyReceive, "caller reply receive", "reply" ]
+      PayloadBoundary.CallerReplyReceive, "caller reply receive", "reply"
+      PayloadBoundary.CallerNotifySend, "caller notify send", "notify"
+      PayloadBoundary.ObserverReceive, "observer receive", "notify" ]
+
+[<Fact>]
+let ``the owner label is grain type for the four request/reply boundaries and observer type for the two notification boundaries`` () =
+    let grainBoundaries =
+        [ PayloadBoundary.CallerRequestSend
+          PayloadBoundary.SiloRequestReceive
+          PayloadBoundary.SiloReplySend
+          PayloadBoundary.CallerReplyReceive ]
+
+    let observerBoundaries = [ PayloadBoundary.CallerNotifySend; PayloadBoundary.ObserverReceive ]
+
+    for boundary in grainBoundaries do
+        test <@ boundary.OwnerLabel = "grain type" @>
+
+    for boundary in observerBoundaries do
+        test <@ boundary.OwnerLabel = "observer type" @>
 
 [<Fact>]
 let ``each boundary reports its own name and direction`` () =

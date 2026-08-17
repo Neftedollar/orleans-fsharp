@@ -1172,11 +1172,15 @@ Golden vectors, rendered as lowercase hexadecimal:
 ### Payload limits and serializer registration
 
 `FunctionalGrainTransportOptions.MaxPayloadBytes` defaults to 16 MiB and must be
-positive. Enforce it at four boundaries: caller request send, silo request
-receive, silo reply send, and caller reply receive. Each endpoint uses its local
-configuration; Orleans' general message-size limit can be stricter. Diagnostics
-include grain type, operation ID, direction, actual size, and local limit, and
-exclude payload contents.
+positive. Enforce it at six boundaries: caller request send, silo request
+receive, silo reply send, caller reply receive, caller notify send, and
+observer receive — the last two are the notification-direction counterparts,
+checked in `notifier`/`notify`'s send path and in observer dispatch before
+typed deserialization. Each endpoint uses its local configuration; Orleans'
+general message-size limit can be stricter. Diagnostics include the owner type
+(grain type for the first four boundaries, observer type for the notification
+two), operation ID, direction, actual size, and local limit, and exclude
+payload contents.
 
 Client and silo registration add `FSharpBinaryCodec` as `IGeneralizedCodec`
 together with its type filter through

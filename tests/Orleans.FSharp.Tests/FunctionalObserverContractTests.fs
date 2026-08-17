@@ -306,3 +306,101 @@ let ``a bad selector on Notify fails loudly and leaves every subscription untouc
 
         test <@ manager.Count = 3 @>
     }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Payload limits: the two notification boundaries
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``an oversized notify is rejected at the caller notify send boundary before anything is dispatched`` () =
+    let services = buildServices true (Some 64)
+    let target = RecordingTarget()
+
+    let handle: FunctionalObserverHandle<RoomObserver, RoomObserverApi> =
+        handleOver services "chat.room.observer" 1 target
+
+    let push = FunctionalObserver.notifier handle (_.onMessage)
+
+    task {
+        let! error =
+            Assert.ThrowsAsync<InvalidOperationException>(fun () ->
+                push { author = String('x', 4096); text = "" } :> Task)
+
+        test <@ error.Message.Contains "caller notify send" @>
+        test <@ error.Message.Contains "notify" @>
+        test <@ error.Message.Contains "chat.room.observer" @>
+        test <@ error.Message.Contains "onMessage" @>
+        test <@ error.Message.Contains "64" @>
+        test <@ target.Received = [||] @>
+    }
+
+[<Fact>]
+let ``an oversized hand-built envelope is rejected at the observer receive boundary before the handler runs`` () =
+    let contract =
+        observerContract<RoomObserver, RoomObserverApi> () { observerType "chat.room.observer" }
+
+    let mutable handlerRan = false
+
+    let handlers: RoomObserverApi =
+        { onMessage = fun _ -> task { handlerRan <- true }
+          onClosed = fun _ -> task { handlerRan <- true } }
+
+    let services = buildServices true None
+    let codec = payloadCodec services :> IFunctionalPayloadCodec
+
+    let target =
+        FunctionalObserverObject<RoomObserver, RoomObserverApi>(contract, handlers, codec, 8, (fun _ -> ()))
+        :> IFunctionalObserverTarget
+
+    let oversizedPayload: byte[] = Array.zeroCreate 4096
+    let token = ProtocolToken.notify "chat.room.observer" 1 "onMessage"
+
+    let envelope =
+        FunctionalNotificationEnvelope("chat.room.observer", 1, "onMessage", token, oversizedPayload)
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () -> target.DispatchAsync envelope |> ignore)
+
+    test <@ error.Message.Contains "observer receive" @>
+    test <@ error.Message.Contains "onMessage" @>
+    test <@ error.Message.Contains "8" @>
+    test <@ not handlerRan @>
+
+[<Fact>]
+let ``an oversized Notify call fails once and leaves every subscription untouched`` () =
+    // The manager's field resolution hoists out of the fan-out loop for the selector; the
+    // payload-limit check hoists the SAME way, for the SAME reason: the per-subscriber loop
+    // catches a failed send and treats it as a dead reference, so a per-subscriber size check
+    // would let one oversized broadcast silently empty the whole subscriber set instead of
+    // failing loudly, once, up front.
+    let services = buildServices true (Some 64)
+    let manager = FunctionalObserverManager<RoomObserver, RoomObserverApi>(TimeSpan.FromMinutes 5.0)
+    let targets = [ for _ in 1..3 -> RecordingTarget() ]
+
+    for target in targets do
+        manager.Subscribe(handleOver services "chat.room.observer" 1 target)
+
+    task {
+        test <@ manager.Count = 3 @>
+
+        let! error =
+            Assert.ThrowsAsync<InvalidOperationException>(fun () ->
+                manager.Notify (_.onMessage) { author = String('x', 4096); text = "" } :> Task)
+
+        test <@ error.Message.Contains "caller notify send" @>
+        test <@ manager.Count = 3 @>
+        test <@ targets |> List.forall (fun target -> target.Received.Length = 0) @>
+    }
+
+[<Fact>]
+let ``a normal-size push is unaffected by the observer payload limit`` () =
+    let services = buildServices true (Some 4096)
+    let target = RecordingTarget()
+
+    let handle: FunctionalObserverHandle<RoomObserver, RoomObserverApi> =
+        handleOver services "chat.room.observer" 1 target
+
+    task {
+        do! FunctionalObserver.notify handle (_.onMessage) { author = "alice"; text = "hi" }
+        test <@ target.Received.Length = 1 @>
+    }

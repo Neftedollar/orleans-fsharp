@@ -183,7 +183,13 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
 /// </remarks>
 [<Sealed>]
 type internal FunctionalObserverObject<'Brand, 'Api>
-    (contract: ObserverContract<'Brand, 'Api>, handlers: 'Api, codec: IFunctionalPayloadCodec, onError: exn -> unit) =
+    (
+        contract: ObserverContract<'Brand, 'Api>,
+        handlers: 'Api,
+        codec: IFunctionalPayloadCodec,
+        maxPayloadBytes: int,
+        onError: exn -> unit
+    ) =
 
     let fields = contract.Shape.Operations |> Array.map (fun field -> field.Index)
 
@@ -210,6 +216,17 @@ type internal FunctionalObserverObject<'Brand, 'Api>
                 fail
                     TransportStage
                     $"the observer hosts '{contract.ObserverTypeName}' version {contract.Version} but received version {envelope.ContractVersion}."
+
+            // The receive-side payload boundary, checked before the operation is even resolved —
+            // the same relative position the silo's SiloRequestReceive boundary uses — so an
+            // oversized notification never reaches typed deserialization, whatever operation it
+            // names.
+            PayloadLimit.ensure
+                ObserverReceive
+                contract.ObserverTypeName
+                envelope.OperationId
+                envelope.Payload.Length
+                maxPayloadBytes
 
             let operation =
                 contract.Operations
@@ -285,6 +302,7 @@ module FunctionalObserver =
 
         let codec = codecOf services
         preflight services contract
+        let maxPayloadBytes = FunctionalTransportConfiguration.maxPayloadBytes services
 
         let logger =
             match services.GetService typeof<Microsoft.Extensions.Logging.ILoggerFactory> with
@@ -304,7 +322,8 @@ module FunctionalObserver =
             | None -> ()
 
         let target =
-            FunctionalObserverObject<'Brand, 'Api>(contract, handlers, codec, onError) :> IFunctionalObserverTarget
+            FunctionalObserverObject<'Brand, 'Api>(contract, handlers, codec, maxPayloadBytes, onError)
+            :> IFunctionalObserverTarget
 
         let reference =
             try
@@ -335,10 +354,10 @@ module FunctionalObserver =
     /// <summary>
     /// Build one push send from an already-resolved operation and a handle: this function itself
     /// performs no reflection, selector evaluation, or generic closing — it only computes the
-    /// notify token (a hash, not a reflective operation) and sends. Used by <c>notifier</c> once
-    /// resolution has happened.
+    /// notify token (a hash, not a reflective operation), enforces the caller-side payload
+    /// boundary, and sends. Used by <c>notifier</c> once resolution has happened.
     /// </summary>
-    let internal pushVia<'Brand, 'Api, 'Msg>
+    let private pushVia<'Brand, 'Api, 'Msg>
         (field: ApiOperationShape)
         (handle: FunctionalObserverHandle<'Brand, 'Api>)
         : 'Msg -> Task<unit> =
@@ -348,6 +367,13 @@ module FunctionalObserver =
         fun (message: 'Msg) ->
             task {
                 let payload = handle.Codec.Serialize<'Msg> message
+
+                PayloadLimit.ensure
+                    CallerNotifySend
+                    handle.ObserverType
+                    operationId
+                    payload.Length
+                    handle.Codec.MaxPayloadBytes
 
                 let envelope =
                     FunctionalNotificationEnvelope(handle.ObserverType, handle.ContractVersion, operationId, token, payload)
@@ -505,22 +531,57 @@ type FunctionalObserverManager<'Brand, 'Api>(expiry: TimeSpan) =
     /// subscriber inside it — the same hot-path rule <c>notifier</c> applies to a single handle
     /// applied here to the whole subscriber set: a fan-out of N subscribers pays one selector
     /// evaluation per <c>Notify</c> call, not N.
+    /// <para>
+    /// The message is likewise serialized and payload-limit-checked once, against an arbitrary
+    /// subscriber's codec — every handle in one manager was resolved through this SAME process's
+    /// registered payload codec, so any one of them carries this process's own limit. This is not
+    /// only an efficiency choice: the per-subscriber loop below catches a failed send and treats
+    /// it as a dead reference, so if the size check ran per subscriber instead, one oversized
+    /// message would silently empty the whole subscriber set rather than failing the call once,
+    /// loudly, with every subscription left untouched.
+    /// </para>
     /// </remarks>
     member this.Notify (selector: OperationSelector<'Api, 'Msg, unit>) (message: 'Msg) : Task<unit> =
         this.RemoveExpired()
 
         let shape = ApiShape.of'<'Api> ()
         let field = ApiShape.resolve shape "notify" selector
+        let operationId = field.FieldName
 
         task {
-            for pair in entries do
-                let handle, _ = pair.Value
+            match entries |> Seq.tryHead with
+            | None -> ()
+            | Some pair ->
+                let sample, _ = pair.Value
+                let payload = sample.Codec.Serialize<'Msg> message
 
-                try
-                    do! FunctionalObserver.pushVia field handle message
-                with _ ->
-                    // A send that the local path refuses means the object reference is gone.
-                    entries.TryRemove pair.Key |> ignore
+                PayloadLimit.ensure
+                    CallerNotifySend
+                    sample.ObserverType
+                    operationId
+                    payload.Length
+                    sample.Codec.MaxPayloadBytes
+
+                for pair in entries do
+                    let handle, _ = pair.Value
+
+                    let token =
+                        ProtocolToken.notify handle.ObserverType handle.ContractVersion operationId
+
+                    let envelope =
+                        FunctionalNotificationEnvelope(
+                            handle.ObserverType,
+                            handle.ContractVersion,
+                            operationId,
+                            token,
+                            payload
+                        )
+
+                    try
+                        do! handle.Target.DispatchAsync envelope
+                    with _ ->
+                        // A send that the local path refuses means the object reference is gone.
+                        entries.TryRemove pair.Key |> ignore
         }
 
 [<AutoOpen>]

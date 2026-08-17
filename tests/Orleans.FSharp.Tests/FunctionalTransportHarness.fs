@@ -12,6 +12,7 @@ open System.Collections.Concurrent
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Options
 open Orleans
 open Orleans.Runtime
 open Orleans.Serialization
@@ -48,10 +49,28 @@ let buildServices (withFSharpCodec: bool) (maxPayloadBytes: int option) : Servic
 
     services.BuildServiceProvider()
 
-/// <summary>The exact-type payload codec of a harness service provider.</summary>
+/// <summary>
+/// The exact-type payload codec of a harness service provider, carrying whatever
+/// <c>FunctionalGrainTransportOptions.MaxPayloadBytes</c> <c>buildServices</c> configured (or the
+/// 16 MiB default when it did not) — exactly the production wiring, so a codec built here can
+/// exercise the caller-side notify payload boundary the way the real registered singleton does.
+/// </summary>
+/// <remarks>
+/// Deliberately reads the RAW configured value rather than going through
+/// <c>FunctionalTransportConfiguration.maxPayloadBytes</c>, which validates and throws on a
+/// non-positive value: that validation belongs to the one place production performs it (binding
+/// a reference / creating an observer), and <c>``a non-positive configured payload limit fails
+/// binding``</c> depends on nothing upstream of that call raising it first.
+/// </remarks>
 let payloadCodec (services: IServiceProvider) =
     let serializer = services.GetRequiredService<Serializer>()
-    FunctionalPayloadCodec(serializer, serializer.SessionPool)
+
+    let maxPayloadBytes =
+        match services.GetService typeof<IOptions<FunctionalGrainTransportOptions>> with
+        | :? IOptions<FunctionalGrainTransportOptions> as options -> options.Value.MaxPayloadBytes
+        | _ -> FunctionalGrainTransportOptions.DefaultMaxPayloadBytes
+
+    FunctionalPayloadCodec(serializer, serializer.SessionPool, maxPayloadBytes)
 
 // ──────────────────────────────────────────────────────────────────────────────
 // In-memory transport

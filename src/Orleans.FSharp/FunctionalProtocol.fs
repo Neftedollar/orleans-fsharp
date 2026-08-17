@@ -138,7 +138,7 @@ module internal FunctionalIds =
     let grainInterfaceType (grainType: string) =
         GrainInterfaceType.Create(interfaceId grainType)
 
-/// <summary>The four boundaries at which the payload limit is enforced.</summary>
+/// <summary>The six boundaries at which the payload limit is enforced.</summary>
 type internal PayloadBoundary =
     /// The caller serialized an argument and is about to send it.
     | CallerRequestSend
@@ -148,6 +148,10 @@ type internal PayloadBoundary =
     | SiloReplySend
     /// The caller received a reply and is about to deserialize it.
     | CallerReplyReceive
+    /// The caller serialized a notification message and is about to push it.
+    | CallerNotifySend
+    /// The observer received a notification and is about to dispatch it.
+    | ObserverReceive
 
     /// <summary>The wire direction this boundary belongs to.</summary>
     member this.Direction =
@@ -156,6 +160,8 @@ type internal PayloadBoundary =
         | SiloRequestReceive -> ProtocolToken.RequestDirection
         | SiloReplySend
         | CallerReplyReceive -> ProtocolToken.ReplyDirection
+        | CallerNotifySend
+        | ObserverReceive -> ProtocolToken.NotifyDirection
 
     /// <summary>The stable diagnostic name of this boundary.</summary>
     member this.Name =
@@ -164,11 +170,27 @@ type internal PayloadBoundary =
         | SiloRequestReceive -> "silo request receive"
         | SiloReplySend -> "silo reply send"
         | CallerReplyReceive -> "caller reply receive"
+        | CallerNotifySend -> "caller notify send"
+        | ObserverReceive -> "observer receive"
+
+    /// <summary>
+    /// The diagnostic label of the entity the boundary is scoped to: a grain type for the four
+    /// request/reply boundaries, an observer type for the two notification boundaries.
+    /// </summary>
+    member this.OwnerLabel =
+        match this with
+        | CallerRequestSend
+        | SiloRequestReceive
+        | SiloReplySend
+        | CallerReplyReceive -> "grain type"
+        | CallerNotifySend
+        | ObserverReceive -> "observer type"
 
 /// <summary>
 /// Payload-limit enforcement. Every endpoint enforces its own local configuration; Orleans'
-/// general message-size limit can be stricter. Diagnostics carry the grain type, operation ID,
-/// direction, actual size, and local limit, and never the payload contents.
+/// general message-size limit can be stricter. Diagnostics carry the owner type (grain type or
+/// observer type, per boundary), operation ID, direction, actual size, and local limit, and
+/// never the payload contents.
 /// </summary>
 [<RequireQualifiedAccess>]
 module internal PayloadLimit =
@@ -182,10 +204,14 @@ module internal PayloadLimit =
 
         maxPayloadBytes
 
-    /// <summary>Enforce the local limit at one boundary.</summary>
+    /// <summary>
+    /// Enforce the local limit at one boundary. <paramref name="ownerType"/> is the grain type
+    /// for the four request/reply boundaries and the observer type for the two notification
+    /// boundaries.
+    /// </summary>
     let ensure
         (boundary: PayloadBoundary)
-        (grainType: string)
+        (ownerType: string)
         (operationId: string)
         (actualBytes: int)
         (maxPayloadBytes: int)
@@ -193,4 +219,4 @@ module internal PayloadLimit =
         if actualBytes > maxPayloadBytes then
             fail
                 TransportStage
-                $"the {boundary.Direction} payload of operation '{operationId}' on grain type '{grainType}' is {actualBytes} bytes, which exceeds the local limit of {maxPayloadBytes} bytes at the {boundary.Name} boundary."
+                $"the {boundary.Direction} payload of operation '{operationId}' on {boundary.OwnerLabel} '{ownerType}' is {actualBytes} bytes, which exceeds the local limit of {maxPayloadBytes} bytes at the {boundary.Name} boundary."

@@ -340,4 +340,13 @@ internal interface IFunctionalPayloadCodec
 
     /// <summary>Deserialize one value as its exact declared type.</summary>
     T Deserialize<T>(byte[] payload);
+
+    /// <summary>
+    /// The local payload-size limit of the process that owns this codec instance. Carried here,
+    /// alongside serialization, because a functional observer handle already re-resolves this
+    /// codec per process (see <see cref="FunctionalObserverHandle{TBrand,TApi}.Codec"/>): a
+    /// handle's send-side payload check reads the limit of whichever process is about to push
+    /// through it, exactly as it already reads that process's own serializer.
+    /// </summary>
+    int MaxPayloadBytes { get; }
 }
