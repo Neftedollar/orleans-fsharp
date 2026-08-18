@@ -307,6 +307,21 @@ module internal SerializerPreflight =
         for stateName, storedType in states do
             checkType provider grainTypeName "stored state" $"transactional state '{stateName}'" storedType
 
+    /// <summary>
+    /// Validate the state and event types of a journaled definition. Spec 004 item 3.
+    /// </summary>
+    /// <remarks>
+    /// Declaring both is not optional bookkeeping, it is what makes a journal readable again.
+    /// Every stored view and every stored entry is a payload produced by the exact-type codec,
+    /// which makes Orleans elide the field type, so the F# binary codec has to resolve the type
+    /// from the name embedded in the bytes — and its fallback, <c>Type.GetType</c>, searches only
+    /// <c>Orleans.FSharp</c> and the core library. Without the declaration a journal written by an
+    /// application assembly serializes and then cannot be replayed.
+    /// </remarks>
+    let ensureJournalTypes (provider: ICodecProvider) (grainTypeName: string) (stateType: Type) (eventType: Type) =
+        checkType provider grainTypeName "journal state" "the journal" stateType
+        checkType provider grainTypeName "journal event" "the journal" eventType
+
 /// <summary>
 /// The preclosed pair of client closures of one bound operation: the bound API-record field
 /// and its cancellable form. Both are boxed values of the field's exact function type.

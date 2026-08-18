@@ -194,10 +194,69 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                           Instance = blueprint.Create transactionalFactory
                           Initial = blueprint.Initialize key })
 
+            // Spec 004 item 3, step 1b of the activation order: a journaled definition's log-view
+            // adaptor is installed at GrainLifecycleStage.SetupState -- the same stage Orleans'
+            // own LogConsistentGrain installs at, and the same stage a persistent-state facet
+            // loads at -- so the journal is replayed before the activation serves anything.
+            //
+            // The subscription is made HERE, synchronously inside CreateInstance, for the same
+            // reason the onLifecycle hooks below are: it is before any lifecycle stage of this
+            // activation has started, so it is registered in time for every one of them.
+            // Implementing ILifecycleParticipant<IGrainLifecycle> on the target would work too
+            // (ActivationData.SetGrainInstance calls Participate on any instance that implements
+            // it, whichever activator produced it), but it would put a second, differently-ordered
+            // subscription mechanism on the same type.
+            let journalHost =
+                match definition.Journal with
+                | None -> None
+                | Some blueprint ->
+                    let host =
+                        FunctionalJournalHost(
+                            blueprint,
+                            definition.GrainTypeName,
+                            grainContext,
+                            codec :> IFunctionalPayloadCodec,
+                            logger,
+                            key
+                        )
+
+                    grainContext.ObservableLifecycle.Subscribe(
+                        $"Orleans.FSharp.Functional.{definition.GrainTypeName}.journal.setup",
+                        GrainLifecycleStage.SetupState,
+                        Func<CancellationToken, Task>(fun _ ->
+                            host.Install()
+                            Task.CompletedTask),
+                        Func<CancellationToken, Task>(fun _ -> host.DeactivateAsync())
+                    )
+                    |> ignore
+
+                    grainContext.ObservableLifecycle.Subscribe(
+                        $"Orleans.FSharp.Functional.{definition.GrainTypeName}.journal.preActivate",
+                        GrainLifecycleStage.Activate - 1,
+                        Func<CancellationToken, Task>(fun _ -> host.PreActivateAsync())
+                    )
+                    |> ignore
+
+                    grainContext.ObservableLifecycle.Subscribe(
+                        $"Orleans.FSharp.Functional.{definition.GrainTypeName}.journal.replay",
+                        GrainLifecycleStage.Activate + 1,
+                        Func<CancellationToken, Task>(fun _ -> host.ReplayAsync())
+                    )
+                    |> ignore
+
+                    Some host
+
             let mutable deactivate = fun () -> ()
             let mutable delay = fun (_: TimeSpan) -> ()
             let mutable registerReminder = fun (_: string) (_: TimeSpan) (_: TimeSpan) -> Unchecked.defaultof<Task<IGrainReminder>>
             let mutable createTimer = fun (_: CancellationToken -> Task) (_: GrainTimerCreationOptions) -> ()
+
+            let activationState =
+                FunctionalActivationState(definition, facets, transactionalFacets)
+
+            match journalHost with
+            | Some host -> activationState.AttachJournal(host :> IFunctionalJournalAccess)
+            | None -> ()
 
             let env =
                 { Definition = definition
@@ -209,7 +268,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                   Codec = codec
                   MaxPayloadBytes = FunctionalTransportConfiguration.maxPayloadBytes services
                   Key = key
-                  State = FunctionalActivationState(definition, facets, transactionalFacets)
+                  State = activationState
                   DeactivateOnIdle = fun () -> deactivate ()
                   DelayDeactivation = fun timeSpan -> delay timeSpan
                   RegisterReminder = fun name dueTime period -> registerReminder name dueTime period

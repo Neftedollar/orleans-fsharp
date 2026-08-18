@@ -47,6 +47,10 @@ module internal FunctionalDiagnostics =
     [<Literal>]
     let TransportStage = "Orleans.FSharp functional transport"
 
+    /// <summary>Prefix identifying the stage in every journaled-activation diagnostic.</summary>
+    [<Literal>]
+    let JournalStage = "Orleans.FSharp functional journal"
+
     /// <summary>Raise a construction-stage diagnostic.</summary>
     let fail<'T> (stage: string) (message: string) : 'T =
         raise (InvalidOperationException(stage + ": " + message))

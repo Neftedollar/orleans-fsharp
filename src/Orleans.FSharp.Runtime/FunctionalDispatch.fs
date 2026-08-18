@@ -91,7 +91,8 @@ module internal FunctionalContextFactory =
                         env.Definition.GrainTypeName
                         (env.Codec :> IFunctionalPayloadCodec)
                         scope
-                | None -> null }
+                | None -> null
+          Journal = env.State.Journal }
 
     /// <summary>
     /// The invocation context core of one implicit stream or broadcast delivery: the ordinary
@@ -283,8 +284,33 @@ module internal FunctionalDispatch =
 
                             // Read-only, state-neutral interleaved, and transaction-scoped
                             // operations discard their replacement.
-                            if not stateNeutral then
-                                env.State.Publish nextState
+                            //
+                            // Spec 004 item 3: for a journaled definition the adapter's first
+                            // result is not a replacement state but the boxed list of events the
+                            // handler raised, so the same rule appends and confirms them instead
+                            // of publishing. Confirmation happens HERE -- after the handler
+                            // returned and before the reply is built -- which is what makes
+                            // "confirmed before the caller sees the reply" a property of the
+                            // runtime rather than of every handler.
+                            match env.State.Journal with
+                            | null ->
+                                if not stateNeutral then
+                                    env.State.Publish nextState
+                            | journal ->
+                                let raised = unbox<obj list> nextState
+
+                                if stateNeutral then
+                                    // A readOnly or alwaysInterleave operation may run while
+                                    // another turn is in flight, so an append from it would
+                                    // interleave with that turn's own appends and be ordered by
+                                    // nothing. Dropping the events silently would be worse: the
+                                    // handler believed it had changed the grain.
+                                    if not (List.isEmpty raised) then
+                                        fail
+                                            JournalStage
+                                            $"operation '{operation.OperationId}' of grain type '{grainTypeName}' raised {List.length raised} event(s), but it is declared 'readOnly' or 'alwaysInterleave'. Such an operation may run while another turn of this activation is in flight, so its appends could not be ordered against that turn's. Declare the operation without 'readOnly'/'alwaysInterleave', or return no events."
+                                else
+                                    do! journal.RaiseAndConfirm raised
 
                             // 7. The silo reply limit, then the descriptor's reply token and
                             //    fresh payload.
@@ -423,9 +449,24 @@ module internal FunctionalLifecycle =
         task {
             env.State.Initialize env.Key
 
-            match env.Definition.OnActivate with
-            | None -> ()
-            | Some hook ->
+            match env.Definition.OnActivate, env.Definition.Journal with
+            | _, Some journal ->
+                // A journaled definition's activation hook returns no replacement state: the
+                // journal has already been replayed by the time this runs, and the only way to
+                // change the state is to raise an event.
+                match journal.OnActivate with
+                | None -> ()
+                | Some hook ->
+                    let scope =
+                        FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", false)
+
+                    try
+                        let core = FunctionalContextFactory.core env cancellationToken scope
+                        do! hook.Invoke(env.Key, core, env.State.Current)
+                    finally
+                        scope.Expire()
+            | None, None -> ()
+            | Some hook, None ->
                 let scope =
                     FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", true)
 
@@ -453,6 +494,33 @@ module internal FunctionalLifecycle =
         (cancellationToken: CancellationToken)
         : Task =
         task {
+            match env.Definition.Journal with
+            | Some journal ->
+                match journal.OnDeactivate with
+                | None -> ()
+                | Some hook ->
+                    let scope =
+                        FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", false)
+
+                    try
+                        try
+                            let core = FunctionalContextFactory.core env cancellationToken scope
+                            do! hook.Invoke(env.Key, core, reason, env.State.Current)
+                        with error ->
+                            env.Logger.LogError(
+                                error,
+                                "Functional onDeactivate hook of grain type {GrainType} failed on {GrainId} (reason {Reason}): {Message}. The runtime performs no retry.",
+                                env.Definition.GrainTypeName,
+                                env.GrainContext.GrainId,
+                                reason.ReasonCode,
+                                error.Message
+                            )
+
+                            ExceptionDispatchInfo.Capture(error).Throw()
+                    finally
+                        scope.Expire()
+            | None ->
+
             match env.Definition.OnDeactivate with
             | None -> ()
             | Some _ when not env.State.IsInitialized ->

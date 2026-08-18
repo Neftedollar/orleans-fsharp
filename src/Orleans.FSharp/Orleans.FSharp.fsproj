@@ -49,6 +49,7 @@
     <Compile Include="FunctionalReference.fs" />
     <Compile Include="FunctionalContract.fs" />
     <Compile Include="FunctionalDefinition.fs" />
+    <Compile Include="FunctionalJournaledDefinition.fs" />
     <Compile Include="FunctionalHosted.fs" />
     <Compile Include="FunctionalBinding.fs" />
     <Compile Include="FunctionalInterop.fs" />

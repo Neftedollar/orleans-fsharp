@@ -10,6 +10,42 @@ open Orleans.Streams
 open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>
+/// The activation-side journal of a <c>journaledGrainFor</c> definition, as an invocation context
+/// and the dispatch path see it. Implemented by the runtime over an Orleans log-view adaptor.
+/// </summary>
+/// <remarks>
+/// Every member is boxed rather than generic because a hosted definition is non-generic by the
+/// time an activation exists — exactly the reason the primary-state seam is boxed too. The exact
+/// state and event types are recovered by the definition's preclosed encoders.
+/// </remarks>
+[<AllowNullLiteral>]
+type internal IFunctionalJournalAccess =
+
+    /// <summary>The confirmed view, decoded into the definition's state type and boxed.</summary>
+    abstract Current: obj
+
+    /// <summary>
+    /// The length of the confirmed prefix of the journal: how many events have been appended and
+    /// confirmed for this grain, ever.
+    /// </summary>
+    abstract ConfirmedVersion: int
+
+    /// <summary>The definition's declared event type, so a typed call can be checked against it.</summary>
+    abstract EventType: Type
+
+    /// <summary>
+    /// Append the boxed events and wait until they are confirmed. This is the per-turn
+    /// confirmation the dispatch path performs for a handler's returned events.
+    /// </summary>
+    abstract RaiseAndConfirm: obj list -> Task
+
+    /// <summary>
+    /// Append the boxed events at the current confirmed position only, reporting whether they were
+    /// accepted. <c>false</c> means another writer appended first.
+    /// </summary>
+    abstract RaiseConditional: obj list -> Task<bool>
+
+/// <summary>
 /// Activation-supplied services behind one invocation context. Phase 4 fills this record for
 /// every request, hook, timer, and reminder callback.
 /// </summary>
@@ -49,6 +85,11 @@ type internal FunctionalContextCore =
         /// Typed lookup of an attached transactional state facet, boxed as
         /// <c>FunctionalTransactionalState&lt;_&gt;</c>.
         ResolveTransactionalState: TransactionalStateDescriptor -> obj
+        /// <summary>
+        /// The activation's journal, or <c>null</c> for every definition that is not a
+        /// <c>journaledGrainFor</c> one.
+        /// </summary>
+        Journal: IFunctionalJournalAccess
     }
 
 /// <summary>
@@ -154,6 +195,58 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
                 TransactionalStage
                 $"no transactional state named '{descriptor.StateName}' with storage '{descriptor.StorageName}' and stored type '{descriptor.StoredType.FullName}' is attached to this definition."
 
+    /// <summary>
+    /// The version of this activation's journal: how many events have been appended and confirmed
+    /// for this grain, ever. It is Orleans' <c>ConfirmedVersion</c>, the same number
+    /// <c>JournaledGrain.Version</c> reports.
+    /// </summary>
+    /// <remarks>
+    /// It is the version of the state the handler was handed, because the runtime confirms a
+    /// turn's events after the handler returns: a handler that raises three events still observes
+    /// the version it started from. Available only on a <c>journaledGrainFor</c> definition.
+    /// </remarks>
+    member _.journalVersion: int =
+        match core.Journal with
+        | null ->
+            fail
+                DefinitionStage
+                "'journalVersion' is available only inside a definition built with 'journaledGrainFor'. An ordinary 'grainFor' definition has no journal."
+        | journal -> journal.ConfirmedVersion
+
+    /// <summary>
+    /// Append events at the journal's current confirmed position <b>only</b>, and report whether
+    /// they were accepted. <c>false</c> means the position moved first and nothing was appended.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is Orleans' <c>TryAppendRange</c> — <c>JournaledGrain.RaiseConditionalEvents</c> —
+    /// and it is the only way a handler can make an append conditional on the state it read. The
+    /// events returned by the handler are appended unconditionally instead, which is what makes
+    /// the ordinary path a single round trip.
+    /// </para>
+    /// <para>
+    /// <b>It can only ever answer <c>false</c> when something else can write this grain's journal
+    /// between the read and the append.</b> With a non-reentrant definition on a single cluster
+    /// nothing can: the activation is the sole writer and Orleans does not interleave its turns,
+    /// so a conditional append always succeeds. It becomes meaningful for a <c>reentrant</c> or
+    /// <c>mayInterleave</c> contract, where a second turn of the same activation can append
+    /// between this handler's read and its append.
+    /// </para>
+    /// </remarks>
+    member _.raiseConditional<'Event>(events: 'Event list) : Task<bool> =
+        match core.Journal with
+        | null ->
+            fail
+                DefinitionStage
+                "'raiseConditional' is available only inside a definition built with 'journaledGrainFor'. An ordinary 'grainFor' definition has no journal."
+        | journal ->
+            if journal.EventType <> typeof<'Event> then
+                fail
+                    DefinitionStage
+                    $"'raiseConditional' was called with events of type '{typeof<'Event>.FullName}', but this definition's declared event type is '{journal.EventType.FullName}'."
+
+            journal.RaiseConditional(events |> List.map box)
+
     /// <summary>Read a typed value from the Orleans request context.</summary>
     member _.tryGetRequestContext<'Value>(name: string) : 'Value option =
         match RequestContext.Get name with
@@ -173,6 +266,29 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
 /// </summary>
 type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
     FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>
+
+/// <summary>
+/// A handler for one API operation of a journaled definition. It receives the invocation context,
+/// the current confirmed state, and the exact argument, and returns the events to append together
+/// with the exact reply.
+/// </summary>
+/// <remarks>
+/// A journaled handler never returns a replacement state: the state is the fold of the journal, so
+/// the only way to change it is to raise an event and let <c>apply</c> fold it. The runtime
+/// appends the returned events and confirms them before the reply leaves the activation.
+/// </remarks>
+type JournaledHandler<'Actor, 'Key, 'State, 'Event, 'Argument, 'Reply> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> Task<'Event list * 'Reply>
+
+/// <summary>
+/// An activation hook of a journaled definition. It runs after the journal has been replayed and
+/// returns no replacement state — the journal is the state.
+/// </summary>
+type JournaledActivateHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> Task<unit>
+
+/// <summary>A deactivation hook of a journaled definition.</summary>
+type JournaledDeactivateHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> -> DeactivationReason -> 'State -> Task<unit>
 
 /// <summary>An activation hook; its returned state is published in memory only.</summary>
 type ActivateHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> Task<'State>

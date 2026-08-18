@@ -93,6 +93,114 @@ module internal ServerAdapter =
             .Invoke handler
 
 /// <summary>
+/// The preclosed typed server adapter of one operation of a JOURNALED definition. It has exactly
+/// the <see cref="T:Orleans.FSharp.FunctionalServerAdapter"/> shape, and the <c>obj</c> it returns
+/// is the boxed <c>obj list</c> of events the handler raised rather than a replacement state: a
+/// journaled definition's state is the fold of its journal, so nothing else can replace it.
+/// </summary>
+[<AbstractClass; Sealed>]
+type internal JournaledServerAdapterFactory =
+
+    /// <summary>Close one journaled handler over its exact types.</summary>
+    static member Create<'Actor, 'Key, 'State, 'Event, 'Argument, 'Reply>(handler: obj) : FunctionalServerAdapter =
+        let typed =
+            unbox<JournaledHandler<'Actor, 'Key, 'State, 'Event, 'Argument, 'Reply>> handler
+
+        FunctionalServerAdapter(fun invocation ->
+            let argument = invocation.Codec.Deserialize<'Argument> invocation.Payload
+
+            task {
+                let context =
+                    FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> invocation.Key, invocation.Core)
+
+                let! events, reply = typed context (unbox<'State> invocation.State) argument
+                let payload = invocation.Codec.Serialize<'Reply> reply
+                return box (events |> List.map box), payload
+            })
+
+/// <summary>Preclosing of the journaled server-adapter factory.</summary>
+[<RequireQualifiedAccess>]
+module internal JournaledServerAdapter =
+
+    let private createMethod =
+        match
+            typeof<JournaledServerAdapterFactory>
+                .GetMethod("Create", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+        with
+        | null ->
+            fail
+                DefinitionStage
+                "the journaled server-adapter factory 'JournaledServerAdapterFactory.Create' was not found."
+        | method -> method
+
+    /// <summary>Close the journaled server-adapter factory over one operation's exact types.</summary>
+    let precompute
+        (actorType: Type)
+        (keyType: Type)
+        (stateType: Type)
+        (eventType: Type)
+        (argumentType: Type)
+        (replyType: Type)
+        (handler: obj)
+        : FunctionalServerAdapter =
+        FunctionalInstrumentation.countGenericClosing ()
+
+        let closed =
+            createMethod.MakeGenericMethod [| actorType; keyType; stateType; eventType; argumentType; replyType |]
+
+        (closed.CreateDelegate typeof<Func<obj, FunctionalServerAdapter>> :?> Func<obj, FunctionalServerAdapter>)
+            .Invoke handler
+
+/// <summary>
+/// The preclosed typed adapter of a journaled definition's <c>onActivate</c> hook: boxed key,
+/// context core, boxed replayed state. It returns no replacement state.
+/// </summary>
+type internal FunctionalJournaledHookAdapter = delegate of obj * FunctionalContextCore * obj -> Task
+
+/// <summary>The preclosed typed adapter of a journaled definition's <c>onDeactivate</c> hook.</summary>
+type internal FunctionalJournaledDeactivateAdapter =
+    delegate of obj * FunctionalContextCore * DeactivationReason * obj -> Task
+
+/// <summary>
+/// Everything the silo side needs to host one definition's journal, with every generic already
+/// closed at definition time.
+/// </summary>
+/// <remarks>
+/// The four codec closures are what keeps the durable form of a journal free of CLR type names:
+/// both the view and every entry are carried as bytes produced by the definition's <b>exact</b>
+/// declared state and event types, which is the same byte boundary the transport puts between a
+/// caller and a handler.
+/// </remarks>
+[<ReferenceEquality>]
+type internal FunctionalJournalBlueprint =
+    {
+        /// The name of the registered <c>ILogViewAdaptorFactory</c> this journal lives in.
+        ProviderName: string
+        /// The named <c>IGrainStorage</c> the provider writes through, or the silo default.
+        StorageName: string option
+        /// The definition's declared state type.
+        StateType: Type
+        /// The definition's declared event type.
+        EventType: Type
+        /// The declared initial state for one boxed domain key.
+        Initial: obj -> obj
+        /// The replay fold over boxed state and boxed event.
+        Apply: obj -> obj -> obj
+        /// Serialize the boxed state as its exact declared type.
+        EncodeState: IFunctionalPayloadCodec -> obj -> byte[]
+        /// Deserialize the boxed state as its exact declared type.
+        DecodeState: IFunctionalPayloadCodec -> byte[] -> obj
+        /// Serialize a boxed event as its exact declared type.
+        EncodeEvent: IFunctionalPayloadCodec -> obj -> byte[]
+        /// Deserialize a boxed event as its exact declared type.
+        DecodeEvent: IFunctionalPayloadCodec -> byte[] -> obj
+        /// The preclosed activation hook, when the definition declares one.
+        OnActivate: FunctionalJournaledHookAdapter option
+        /// The preclosed deactivation hook, when the definition declares one.
+        OnDeactivate: FunctionalJournaledDeactivateAdapter option
+    }
+
+/// <summary>
 /// The preclosed typed adapter of the functional <c>onActivate</c> hook. It receives the boxed
 /// domain key, the invocation context core, and the boxed current primary state, and returns the
 /// boxed replacement state, which is published in memory only.
@@ -254,7 +362,8 @@ type internal FunctionalHostedDefinition
         timers: FunctionalHostedTimer[],
         streamBindings: FunctionalStreamDeclaration[],
         placement: PlacementConfiguration option,
-        lifecycleHooks: (LifecycleStage * FunctionalLifecycleAdapter)[]
+        lifecycleHooks: (LifecycleStage * FunctionalLifecycleAdapter)[],
+        journal: FunctionalJournalBlueprint option
     ) =
 
     let facets =
@@ -397,6 +506,14 @@ type internal FunctionalHostedDefinition
 
     /// <summary>Declared <c>onLifecycle</c> hooks with their preclosed adapters.</summary>
     member _.LifecycleHooks = lifecycleHooks
+
+    /// <summary>
+    /// The journal of a <c>journaledGrainFor</c> definition, and <c>None</c> for every ordinary
+    /// <c>grainFor</c> one. Its presence is what makes an activation install a log-view adaptor,
+    /// read its state from the journal instead of from an in-memory cell, and treat a handler's
+    /// returned value as events rather than as a replacement state.
+    /// </summary>
+    member _.Journal = journal
 
     /// <summary>Look up a declared reminder by its exact ordinal name.</summary>
     member _.TryFindReminder(reminderName: string) =
@@ -552,5 +669,123 @@ module internal FunctionalHosted =
             timers,
             List.toArray definition.StreamBindings,
             definition.Placement,
-            lifecycleHooks
+            lifecycleHooks,
+            None
+        )
+
+/// <summary>Construction of the non-generic hosted view of a sealed journaled definition.</summary>
+[<RequireQualifiedAccess>]
+module internal FunctionalJournaledHosted =
+
+    /// <summary>Build the silo-side view of one sealed journaled definition.</summary>
+    let create
+        (definition: FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>)
+        : FunctionalHostedDefinition =
+        if obj.ReferenceEquals(definition, null) then
+            fail
+                DefinitionStage
+                "AddFunctionalJournaledGrain requires a sealed functional journaled grain definition."
+
+        let contract = definition.Contract
+        let metadata = contract.TargetMetadata
+        let minAcceptedVersion = contract.MinAcceptedVersion
+
+        let operations =
+            contract.Operations
+            |> Array.map (fun operation ->
+                let adapter =
+                    JournaledServerAdapter.precompute
+                        typeof<'Actor>
+                        typeof<'Key>
+                        typeof<'State>
+                        typeof<'Event>
+                        operation.ArgumentType
+                        operation.ReplyType
+                        (definition.HandlerFor operation)
+
+                let versionTokens =
+                    [| for candidate in minAcceptedVersion .. contract.Version ->
+                           struct (ProtocolToken.request contract.GrainTypeName candidate operation.OperationId,
+                                   ProtocolToken.reply contract.GrainTypeName candidate operation.OperationId) |]
+
+                { OperationId = operation.OperationId
+                  FieldName = operation.FieldName
+                  AdmissionFlags = operation.AdmissionFlags
+                  IsReadOnly = operation.IsReadOnly
+                  IsOneWay = operation.IsOneWay
+                  IsAlwaysInterleave = operation.IsAlwaysInterleave
+                  Transaction = operation.Transaction
+                  IsTransactionScoped = operation.IsTransactionScoped
+                  SinceVersion = operation.SinceVersion
+                  MinAcceptedVersion = minAcceptedVersion
+                  VersionTokens = versionTokens
+                  ArgumentType = operation.ArgumentType
+                  ReplyType = operation.ReplyType
+                  Adapter = adapter })
+
+        let configuration =
+            match definition.Journal with
+            | Some journal -> journal
+            | None ->
+                // Unreachable: sealing rejects a journaled definition without 'logProvider'.
+                fail
+                    DefinitionStage
+                    $"the journaled definition of grain type '{contract.GrainTypeName}' has no log-consistency provider."
+
+        let onActivate =
+            definition.OnActivate
+            |> Option.map (fun hook ->
+                FunctionalJournaledHookAdapter(fun key core state ->
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    hook context (unbox<'State> state) :> Task))
+
+        let onDeactivate =
+            definition.OnDeactivate
+            |> Option.map (fun hook ->
+                FunctionalJournaledDeactivateAdapter(fun key core reason state ->
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    hook context reason (unbox<'State> state) :> Task))
+
+        let blueprint =
+            { ProviderName = configuration.ProviderName
+              StorageName = configuration.StorageName
+              StateType = typeof<'State>
+              EventType = typeof<'Event>
+              Initial = fun key -> box (definition.Initial(unbox<'Key> key))
+              Apply = fun state event -> box (definition.Apply (unbox<'State> state) (unbox<'Event> event))
+              EncodeState = fun codec value -> codec.Serialize<'State>(unbox<'State> value)
+              DecodeState = fun codec payload -> box (codec.Deserialize<'State> payload)
+              EncodeEvent = fun codec value -> codec.Serialize<'Event>(unbox<'Event> value)
+              DecodeEvent = fun codec payload -> box (codec.Deserialize<'Event> payload)
+              OnActivate = onActivate
+              OnDeactivate = onDeactivate }
+
+        FunctionalHostedDefinition(
+            box definition,
+            contract.GrainTypeName,
+            contract.Version,
+            contract.AcceptedVersions,
+            contract.IsReentrant,
+            contract.MayInterleave,
+            typeof<'Actor>,
+            metadata.InterfaceType,
+            metadata.InterfaceId,
+            contract.ApiType,
+            typeof<'State>,
+            operations,
+            (fun grainId -> box (contract.KeyOf grainId)),
+            (fun key -> box (definition.Initial(unbox<'Key> key))),
+            contract.DeclaredTypes,
+            None,
+            Array.empty,
+            Array.empty,
+            None,
+            None,
+            definition.CollectionAge,
+            Array.empty,
+            Array.empty,
+            Array.empty,
+            definition.Placement,
+            Array.empty,
+            Some blueprint
         )

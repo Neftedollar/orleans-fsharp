@@ -74,7 +74,8 @@ let private makeContextWithToken
           DeactivateOnIdle = fun () -> deactivated <- deactivated + 1
           DelayDeactivation = fun span -> delayed <- span
           ResolvePersistentState = resolve
-          ResolveTransactionalState = fun _ -> null }
+          ResolveTransactionalState = fun _ -> null
+          Journal = null }
 
     let context = FunctionalGrainContext<SurfaceActor, string>("general", core)
     context, (fun () -> deactivated), (fun () -> delayed)
