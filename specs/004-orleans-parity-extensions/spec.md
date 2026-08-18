@@ -663,6 +663,11 @@ journaledGrainFor accountContract {
 - **Reentrancy is allowed but unguarded.** A `reentrant` journaled contract interleaves turns that
   each read the confirmed state and append; the appends are ordered by the adaptor but the decisions
   are not. `raiseConditional` is the tool for that, and using it is the application's call.
+- **No `FunctionalScripting` registration.** `FunctionalGrainRegistration.of'` boxes a `grainFor`
+  definition only. A journaled one needs a log-consistency provider registered on the same builder,
+  and `FunctionalScripting.startOnPorts` exposes no hook for that — so boxing a journaled definition
+  would ship a path that always fails startup validation. Both halves (the boxing overload and a
+  configuration hook, or a convention for the two built-in providers) belong in one follow-up.
 
 **Size:** L — as estimated. The step-0 probe was the majority of the risk and most of the surprises;
 the definition kind, the runtime, and the dispatch change were mechanical once the four mechanism
