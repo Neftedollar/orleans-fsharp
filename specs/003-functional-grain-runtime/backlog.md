@@ -69,3 +69,10 @@ Each item is grounded in a verified finding; pointers name the evidence.
     apply once` (a 3 s hold against a 2 s LockAcquireTimeout), and the
     pre-existing `TemplateTests.template generated tests all pass` (shells
     out to `dotnet new`; failed once under full-suite load, passes alone).
+    Phase E observation (2026-08-18): one full-suite run at Orleans 10.2.2
+    reported a single failure whose name was NOT captured (only the tail was
+    read), and it did not reproduce in 6 subsequent full-suite runs (4 at
+    10.2.2, 2 at the floor) nor in 4 runs of the Phase E suites alone. It is
+    recorded unattributed rather than pinned on this family: without the name
+    that would be a guess. It does raise the priority of the hardening ticket —
+    and of always capturing full test output on a verification run.
