@@ -29,9 +29,13 @@
 - `Stream.asTaskSeq` no longer fires its stream subscription and forgets it: the subscription
   is awaited on the first pull, so a subscription failure surfaces to the consumer instead of
   leaving it pulling forever from a stream it was never subscribed to. The integration test
-  that guessed a 500 ms subscription-setup delay (and hung on slower CI runners — main red
-  since 2026-08-12) now proves the subscription live with a re-published sentinel instead of
-  sleeping.
+  that guessed a 500 ms subscription-setup delay now proves the subscription live with a
+  re-published sentinel instead of sleeping. (Attribution correction: main's red
+  full-integration job since 2026-08-12 was NOT this test's race — it was SDK 10.0.400
+  reaching the CI runners and compiling `taskSeq` bodies down the dynamic resumable path
+  TaskSeq 0.6.0 does not implement; the SDK is now pinned to 10.0.201. This fix stands on
+  its own merits: a fire-and-forget subscription whose failure vanishes is a real defect
+  regardless.)
 
 ### Changed
 

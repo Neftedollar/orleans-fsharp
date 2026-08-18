@@ -33,9 +33,16 @@ jobs:
             arg: '-p:OrleansVersion=10.2.2'
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      # The SDK is PINNED, not floated. SDK 10.0.400's F# compiler compiles this repo's
+      # `taskSeq { }` bodies down the DYNAMIC resumable-code path, and FSharp.Control.TaskSeq
+      # 0.6.0 throws "No dynamic implementation for TaskSeq yet" the moment one is enumerated —
+      # this is what turned main's full-integration red from 2026-08-12 (the day runners picked
+      # up .400) and failed every Phase F streaming test after spec-004 merged. 10.0.201 is the
+      # verified-good compiler. Unpin only after TaskSeq ships a dynamic implementation or the
+      # taskSeq call sites are proven static-compilable under the newer compiler.
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.201'
       # `dotnet build` before any `dotnet test` step is deliberate, not incidental: the very
       # first compile after a cold NuGet cache can, in rare cases, complete without Orleans'
       # own source-generated codegen having been applied to every assembly in the same MSBuild
@@ -105,7 +112,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.201'
       - run: dotnet build --verbosity normal ${{ matrix.arg }}
       # ORLEANS_FSHARP_REDIS makes RequiresRedisAttribute (RedisIntegrationTests.fs) admit
       # rather than skip every test it gates, including spec 003's durability proof: stop and
@@ -129,7 +136,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.201'
       # Each example ships its own .sln (referencing src/ via ProjectReference) and is
       # NOT part of the root solution, so they would otherwise rot undetected. Build
       # every one; collect all failures instead of stopping at the first.
@@ -181,7 +188,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.201'
       # `dotnet build` before `dotnet test` is deliberate, not incidental: this job runs on a
       # fresh runner with a cold NuGet cache, so it is exactly the cold-cache silent-codegen-skip
       # hazard docs/functional-grains.md documents (see build-and-test's identical comment above).
@@ -204,7 +211,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.201'
       # `dotnet build` before `dotnet test` is deliberate, not incidental: this job runs on a
       # fresh runner with a cold NuGet cache, so it is exactly the cold-cache silent-codegen-skip
       # hazard docs/functional-grains.md documents (see build-and-test's identical comment above).
@@ -268,7 +275,7 @@ jobs:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.201'
       - name: Check for vulnerable packages
         run: dotnet list package --vulnerable --include-transitive | grep -q "Critical\|High" && exit 1 || exit 0
 
@@ -301,7 +308,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.201'
       - run: dotnet build --configuration Release --verbosity normal
       - run: dotnet pack --configuration Release --output ./nupkgs --verbosity normal
 
