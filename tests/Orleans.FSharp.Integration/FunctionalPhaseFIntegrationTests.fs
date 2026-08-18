@@ -625,3 +625,52 @@ type FunctionalPhaseFTests(fixture: FunctionalPhaseFFixture) =
             // value: an upstream fix must not turn this suite red.
             test <@ viaMap >= direct && viaFor >= direct @>
         }
+
+    /// <summary>
+    /// Phase C's `mayInterleave` composed with a streaming operation. The predicate runs on
+    /// Orleans' own scheduling path for every message queued to a busy activation, and an
+    /// enumeration's messages are Orleans' extension invokables rather than functional requests —
+    /// a predicate that tried to read a functional envelope out of one would throw, and Orleans
+    /// would reject the call that triggered it as transient. Nothing here is rejected, the stream
+    /// is correct, and the predicate reports only operation IDs of this contract.
+    /// </summary>
+    [<Fact>]
+    member _.``mayInterleave composes with a streaming operation``() =
+        task {
+            let key = unique ()
+            let api = selectiveRef fixture.Client key
+
+            // Activate first. Orleans consults an interleaving policy only for a message that
+            // arrives while the activation is already EXECUTING one, so a cold activation would
+            // queue both calls behind activation and admit the second without ever reaching the
+            // predicate — which is how the first version of this test managed to assert against an
+            // empty observation list.
+            let! _ = api.peek ()
+
+            // Now occupy the activation with a call the predicate refuses.
+            let parked = api.park 2000
+            do! Task.Delay 250
+
+            // Admitted by the predicate while `park` is the blocking request.
+            let! peeked = api.peek ()
+
+            // And a whole enumeration, whose messages take the earlier [AlwaysInterleave] exit.
+            let! numbers = collect (api.numbers 4)
+
+            let! parkResult = parked
+
+            test <@ numbers = [ 1; 2; 3; 4 ] @>
+            test <@ peeked = 0 @>
+            test <@ parkResult = 1 @>
+
+            let observed = PhaseFPredicate.observed () |> List.distinct |> List.sort
+
+            // Non-vacuity: the predicate really did run. Without this the forall below would pass
+            // on an empty list and prove nothing.
+            test <@ List.contains "peek" observed @>
+
+            // Only this contract's own operations ever reached it: an extension invokable's
+            // argument 0 is a Guid, not an IFunctionalRequestMetadata, and the callback answers
+            // false for it instead of throwing.
+            test <@ observed |> List.forall (fun id -> List.contains id [ "numbers"; "park"; "peek" ]) @>
+        }

@@ -62,6 +62,10 @@ module PhaseFGrainTypes =
     [<Literal>]
     let Placed = "phasef.placed"
 
+    /// A contract declaring `mayInterleave` alongside a streaming field.
+    [<Literal>]
+    let Selective = "phasef.selective"
+
 [<RequireQualifiedAccess>]
 module PhaseFLimits =
     /// The silo's functional payload limit: big enough that a 200 KiB item reaches the caller.
@@ -418,6 +422,66 @@ let placedDefinition =
     }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// mayInterleave composed with streaming
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// <summary>Every operation ID the interleave predicate was consulted for.</summary>
+[<RequireQualifiedAccess>]
+module PhaseFPredicate =
+    let private seen = ConcurrentQueue<string>()
+
+    let record (operationId: string) = seen.Enqueue operationId
+
+    let observed () = seen.ToArray() |> Array.toList
+
+[<NoEquality; NoComparison>]
+type SelectiveApi =
+    { numbers: int -> IAsyncEnumerable<int>
+      peek: unit -> Task<int>
+      park: int -> Task<int> }
+
+type SelectiveActor = private SelectiveActor of unit
+
+/// <summary>
+/// The predicate is metadata-only and is consulted on Orleans' own scheduling path, for the
+/// incoming request AND for the one currently executing. An enumeration's messages are Orleans'
+/// extension invokables, not functional requests — if the predicate could be confused by one it
+/// would throw, and Orleans would reject the call that triggered it as transient. This contract
+/// exists to make that a test rather than an assumption.
+/// </summary>
+let selectiveContract =
+    grainContract<SelectiveActor, string, SelectiveApi> () {
+        grainType PhaseFGrainTypes.Selective
+        version 1
+        stringKey
+
+        mayInterleave (fun metadata ->
+            PhaseFPredicate.record metadata.OperationId
+            metadata.OperationId = "peek")
+    }
+
+let selectiveRef = FunctionalGrain.ref selectiveContract
+
+let selectiveDefinition =
+    grainFor selectiveContract {
+        defaultState (fun () -> 0)
+
+        handleStream (_.numbers) (fun _ _ (count: int) ->
+            taskSeq {
+                for index in 1..count do
+                    yield index
+            })
+
+        handle (_.peek) (fun _ state () -> task { return state, state })
+
+        handle (_.park) (fun _ state (milliseconds: int) ->
+            task {
+                do! Task.Delay milliseconds
+                return state + 1, state + 1
+            })
+    }
+
+// ──────────────────────────────────────────────────────────────────────────────
 // A journaled definition with a streaming operation
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -500,6 +564,7 @@ type PhaseFSiloConfigurator() =
             siloBuilder.AddFunctionalGrain relayDefinition |> ignore
             siloBuilder.AddFunctionalGrain versionedDefinition |> ignore
             siloBuilder.AddFunctionalGrain placedDefinition |> ignore
+            siloBuilder.AddFunctionalGrain selectiveDefinition |> ignore
             siloBuilder.AddFunctionalJournaledGrain ledgerDefinition |> ignore
 
 type PhaseFClientConfigurator() =
