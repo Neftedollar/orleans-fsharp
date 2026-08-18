@@ -475,6 +475,24 @@ module internal DefinitionDraft =
                     DefinitionStage
                     $"grain type '{grainTypeName}' combines 'statelessWorker' with '{binding.OperationName}'. Orleans refuses to bind a stream or broadcast consumer extension to a stateless worker (SiloStreamProviderRuntime.BindExtension), and implicit delivery addresses one activation identity derived from the stream key, which multiplexed local activations cannot honor."
             | None -> ()
+
+            // Spec 004 item 6. A server-streaming reply is a conversation with ONE activation:
+            // Orleans keeps the open enumerator in that activation's own
+            // AsyncEnumerableGrainExtension, keyed by a request id the caller generated, and every
+            // MoveNext has to reach the same activation to find it. A stateless worker offers no
+            // such continuity -- StatelessWorkerGrainContext.ReceiveMessageInternal picks a worker
+            // per MESSAGE (the first inactive one, else the least-loaded, else a newly created one
+            // up to maxLocalWorkers), and StatelessWorkerDirector places on whichever silo the
+            // caller happened to reach -- so a second MoveNext can arrive at an activation that has
+            // no record of the enumerator and answer MissingEnumeratorError, which surfaces as a
+            // mid-stream EnumerationAbortedException. That is a load- and topology-dependent
+            // failure, which is exactly the kind this runtime refuses at sealing.
+            match state.Contract.Operations |> Array.tryFind (fun operation -> operation.IsStreaming) with
+            | Some operation ->
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with the streaming API field '{operation.FieldName}'. An open enumeration lives in one activation's own grain extension and every MoveNext must reach that activation, but a stateless worker routes each message to whichever local worker is free (StatelessWorkerGrainContext.ReceiveMessageInternal) on whichever silo the caller reached (StatelessWorkerDirector), so the stream would abort mid-enumeration. Use 'placement PreferLocal' if the intent was to keep the work near the caller."
+            | None -> ()
         | Some(Strategy _)
         | None -> ()
 
