@@ -86,11 +86,34 @@ handle (_.typing) (fun context state (user, isTyping) ->
 ```
 
 A field spelled curried (`UserId -> bool -> Task<unit>`) is **not** an operation and fails
-contract construction: every API field must have the shape `'Argument -> Task<'Reply>`. Neither
-is a field that returns a function, or one whose range is `Async<'Reply>`, `ValueTask<'Reply>`,
-or a non-generic `Task`. `unit` means "no domain input" (`unit -> Task<'Reply>`).
+contract construction: every API field must have the shape `'Argument -> Task<'Reply>` or
+`'Argument -> IAsyncEnumerable<'Item>`. Neither is a field that returns a function, or one whose
+range is `Async<'Reply>`, `ValueTask<'Reply>`, a non-generic `Task`, or a synchronous `seq<_>`.
+`unit` means "no domain input" (`unit -> Task<'Reply>`).
 
 `FunctionalGrainRef.call` and `callCancellable` take the same one-argument shape.
+
+### The second field kind: a streaming reply
+
+`'Argument -> IAsyncEnumerable<'Item>` makes the operation **server-streaming** — the handler
+produces items over time and the caller receives each one as it is produced. It is bound with
+`handleStream` instead of `handle`, and the handler returns items only, with no replacement state:
+
+```fsharp
+{ tail: int -> IAsyncEnumerable<Entry> }
+
+handleStream (_.tail) (fun context state (count: int) ->
+    taskSeq {
+        for entry in state |> List.truncate count do
+            yield entry
+    })
+```
+
+It rides Orleans' own async-enumerable grain extension, so an open enumeration never blocks an
+ordinary call to the same activation, disposing the enumerator cancels the producer, and an
+abandoned enumerator is collected by Orleans. A streaming handler is state-neutral, and none of the
+four admission policies compose with it. The full rules are in
+[Server-Streaming Replies](streaming-replies.md).
 
 ## Why the actor brand
 
@@ -1704,6 +1727,7 @@ carries `[<Obsolete>]`.
 - `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the complete runnable sample this guide's
   examples are drawn from
 - [Event Sourcing](event-sourcing.md) -- `journaledGrainFor`, the journaled definition kind
+- [Server-Streaming Replies](streaming-replies.md) -- the `IAsyncEnumerable<'Item>` field kind
 - `specs/003-functional-grain-runtime/spec.md` -- the full normative specification
 
 ## A build note for contributors: codegen and cold caches

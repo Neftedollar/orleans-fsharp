@@ -245,6 +245,42 @@ code that needs a value.
 
 `void`, `ValueTask`, a bare `T`, and a `Task<T>` whose `T` is not the reply type are all rejected.
 
+### Streaming operations
+
+An operation whose API field returns `IAsyncEnumerable<'Item>` maps to a member returning the BCL
+`IAsyncEnumerable<TItem>` — no `Task` wrapper, and nothing of this library's own in the signature:
+
+```fsharp
+// F#
+type FeedApi =
+    { post: string -> Task<int>
+      tail: int -> IAsyncEnumerable<Entry> }
+```
+
+```csharp
+// C#
+public interface IFeed
+{
+    Task<int> Post(string text);
+    IAsyncEnumerable<Entry> Tail(int count);
+}
+
+var feed = FunctionalGrainInterop.For<IFeed>(FeedApiModule.contract, client, "general");
+
+await foreach (var entry in feed.Tail(20))
+{
+    Console.WriteLine(entry.text);
+}
+```
+
+`await foreach` disposes the enumerator when the loop ends or is broken out of, and that disposal
+travels to the target: it cancels the producer and runs its `finally` blocks. See
+[Server-Streaming Replies](streaming-replies.md).
+
+A `Task<IAsyncEnumerable<TItem>>` return is rejected, and so is `IAsyncEnumerable<TItem>` on a
+member bound to a non-streaming operation — the diagnostic names the operation and the shape it
+requires.
+
 ### Reading F# replies
 
 The replies arrive as the F# types the grain returns. They are ordinary .NET types, and C# reads
@@ -299,6 +335,7 @@ an extended interface names that interface too.
 | A member matching two operations by case | name the intended one with the attribute |
 | An override naming no operation | the override is exact, so a case-folded ID does not resolve |
 | A wrong argument or reply shape | see the two sections above |
+| A streaming operation not returning `IAsyncEnumerable<TItem>` | the item type is BCL so that `await foreach` needs no wrapper |
 | A null contract, factory, or key | and a key whose type is not the contract's key type |
 
 Inherited interfaces are included in all of this, which is worth knowing before adding one:
@@ -374,4 +411,5 @@ handler side is still an F# record. That is a separate step; see spec 004 item 9
 - [Functional Grain Runtime](functional-grains.md) — the contract and definition this facade binds
 - [Event Sourcing](event-sourcing.md) — a facade over a journaled contract
 - [Serialization](serialization.md) — which F# types cross the wire and how
+- [Server-Streaming Replies](streaming-replies.md) — `await foreach` over a facade member
 - [Streaming](streaming.md) — observers, streams, and broadcast channels

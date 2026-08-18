@@ -35,6 +35,7 @@ open FeatureTour.Interop
 open FeatureTour.Placement
 open FeatureTour.Heterogeneous
 open FeatureTour.EventSourcing
+open FeatureTour.StreamingReplies
 
 // ── Silo ─────────────────────────────────────────────────────────────────────
 
@@ -960,6 +961,105 @@ let private runEventSourcing (factory: IGrainFactory) =
             verdict "UNEXPECTED — event sourcing did not hold; see the observation lines above"
     }
 
+
+let private runStreamingReplies (factory: IGrainFactory) =
+    task {
+        section 16 "Server-streaming replies — an API field returning IAsyncEnumerable<'Item>"
+
+        let run = Guid.NewGuid().ToString("N").Substring(0, 8)
+        let api = TickerApi.ref factory $"ticker-{run}"
+
+        // ── Incremental delivery ────────────────────────────────────────────────
+        let watchLabel = $"watch-{run}"
+        let stream = api.watch (watchLabel, 4)
+        let enumerator = stream.GetAsyncEnumerator CancellationToken.None
+        let received = ResizeArray<Tick>()
+        let mutable incremental = true
+
+        for index in 0..3 do
+            // Nothing may have been produced beyond what has already been consumed.
+            if Produced.count watchLabel <> index then
+                incremental <- false
+
+            Gates.release watchLabel index
+            let! moved = enumerator.MoveNextAsync()
+
+            if moved then
+                received.Add enumerator.Current
+            else
+                incremental <- false
+
+            // The producer is now parked at the NEXT gate, so it produced exactly one more.
+            if Produced.count watchLabel <> index + 1 then
+                incremental <- false
+
+        let! completed = enumerator.MoveNextAsync()
+        do! enumerator.DisposeAsync()
+
+        say $"await foreach over api.watch: {received.Count} items, the producer gated between each"
+        detail (String.Join(", ", received |> Seq.map _.note))
+        detail "after every item the producer had produced exactly that many and no more — this is"
+        detail "delivery as it is produced, not one batch handed over at the end."
+
+        // ── An ordinary call while a stream is open ─────────────────────────────
+        let openLabel = $"open-{run}"
+        let! _ = api.bump 7
+        let openStream = api.watch (openLabel, 3)
+        let openEnumerator = openStream.GetAsyncEnumerator CancellationToken.None
+        Gates.release openLabel 0
+        let! _ = openEnumerator.MoveNextAsync()
+
+        // The producer is parked at gate 1: a MoveNext is in flight and long-polling.
+        let clock = Diagnostics.Stopwatch.StartNew()
+        let! pinged = api.ping ()
+        clock.Stop()
+        Gates.releaseAll openLabel 3
+        do! openEnumerator.DisposeAsync()
+
+        say $"an ordinary call while that enumeration was open: ping -> {pinged} in {clock.ElapsedMilliseconds}ms"
+        detail "every message of an enumeration — StartEnumeration, MoveNext, DisposeAsync — carries"
+        detail "Orleans' own [AlwaysInterleave], so it never becomes the activation's blocking"
+        detail "request and an ordinary call is admitted straight away."
+
+        // ── Cancellation on disposal ────────────────────────────────────────────
+        let followLabel = $"follow-{run}"
+        let followEnumerator = (api.follow followLabel).GetAsyncEnumerator CancellationToken.None
+        let! firstFollow = followEnumerator.MoveNextAsync()
+        do! followEnumerator.DisposeAsync()
+
+        let! observed =
+            waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                task { return Produced.ending followLabel <> "(still running)" })
+
+        say $"disposing an open enumerator early: the producer reports '{Produced.ending followLabel}'"
+        detail "disposal sends DisposeAsync for the request id; the target cancels the token it gave"
+        detail "the producer and then disposes it, so a `finally` in the handler really runs."
+        detail "an abandoned enumerator that is never disposed is collected by Orleans after one to"
+        detail "two MessagingOptions.ResponseTimeout periods, and a caller that returns is told."
+
+        // ── The negative control ────────────────────────────────────────────────
+        let refusal = Refusals.statelessWorkerWithAStream ()
+        say "the negative control — 'statelessWorker' declared alongside a streaming field:"
+        detail refusal
+
+        let holds =
+            incremental
+            && received.Count = 4
+            && not completed
+            && pinged = 7
+            && clock.Elapsed < TimeSpan.FromSeconds 10.0
+            && firstFollow
+            && observed
+            && Produced.ending followLabel = "cancelled, finally ran"
+            && refusal.Contains "combines 'statelessWorker' with the streaming API field"
+
+        if holds then
+            verdict
+                "SUPPORTED — a streaming API field delivers items as they are produced, does not block ordinary calls on the same activation, and cancels its producer when the caller disposes"
+        else
+            verdict "UNEXPECTED — a streaming observation above did not hold"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -984,6 +1084,7 @@ let private runTour (host: IHost) =
         do! runInterleaving factory
         do! runTransactions factory
         do! runEventSourcing factory
+        do! runStreamingReplies factory
 
         printfn ""
         printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
@@ -1056,6 +1157,8 @@ let main _argv =
         // Feature 15 / status-matrix row 14: event sourcing (spec 004 item 3).
         silo.AddFunctionalJournaledGrain BalanceDefinition.log |> ignore
         silo.AddFunctionalJournaledGrain BalanceDefinition.state |> ignore
+        // Feature 16 / status-matrix row 15: server-streaming replies (spec 004 item 6).
+        silo.AddFunctionalGrain TickerDefinition.definition |> ignore
 
         // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
         // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the
