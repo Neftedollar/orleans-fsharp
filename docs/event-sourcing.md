@@ -162,6 +162,12 @@ returned and before the reply leaves the activation**. So:
   a command the handler refused, leaves no trace and does not move the version.
 - Events raised by one handler are appended together. A later replay can never observe half of
   them.
+- A handler that **throws** appends nothing: the events never leave its return value.
+- A **one-way** operation appends and confirms in its own turn like any other, but its caller
+  completed at the local acknowledgement, so it learns nothing about the outcome — including
+  whether the append happened at all.
+- `raiseConditional` confirms *inside* the turn, so a handler that calls it and then reads its own
+  `state` argument is reading the pre-turn state, not the state its conditional append produced.
 
 ### When the confirm does not succeed
 

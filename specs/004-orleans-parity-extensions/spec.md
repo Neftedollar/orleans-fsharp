@@ -564,7 +564,11 @@ journaledGrainFor accountContract {
 - A handler observes the journal **as it was when the turn started**: `context.journalVersion` is the
   pre-turn version, and the `state` argument is the confirmed fold, never a tentative one.
 - **An empty event list performs no storage write at all** — a query, or a command the handler
-  refused, leaves no trace and does not move the version.
+  refused, leaves no trace and does not move the version. A handler that **throws** likewise
+  appends nothing: the events never leave its return value.
+- A **one-way** operation appends and confirms in its own turn like any other, but its caller
+  completed at the local acknowledgement and learns nothing about the outcome, the append
+  included.
 - **A mid-confirm failure does not fail the call.** Orleans' adaptor records the issue and retries
   forever with a delay ("be stubborn until we can read what is there"), so the turn *blocks*; what
   the caller observes is its own request timeout while the activation is still retrying. If the

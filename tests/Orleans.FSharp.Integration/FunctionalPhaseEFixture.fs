@@ -146,6 +146,10 @@ type AccountApi =
       useEscaped: unit -> Task<string>
       /// The address of the silo this activation lives on.
       whereAmI: unit -> Task<string>
+      /// Raises an event from a ONE-WAY operation: the caller learns nothing about the outcome.
+      noteOneWay: string -> Task<unit>
+      /// Throws after deciding on an event: nothing may be appended.
+      throwAfterDeciding: unit -> Task<unit>
       /// Deactivates the activation, so the next call replays from the journal.
       recycle: unit -> Task<unit> }
 
@@ -264,6 +268,14 @@ let accountDefinitionFor (contract: GrainContract<'Actor, string, AccountApi>) (
                 return [], details.SiloAddress.ToString()
             })
 
+        handle (_.noteOneWay) (fun _ state (note: string) -> task { return [ Noted note ], () })
+
+        handle (_.throwAfterDeciding) (fun _ state () ->
+            task {
+                let _decided = [ Deposited 999m ]
+                return failwith "the handler failed after deciding on its events"
+            })
+
         handle (_.recycle) (fun context state () ->
             task {
                 context.deactivateOnIdle ()
@@ -284,6 +296,7 @@ let logAccountContract =
         readOnly (_.whereAmI)
         readOnly (_.readOnlyRaise)
         readOnly (_.readOnlyConditional)
+        oneWay (_.noteOneWay)
     }
 
 let stateAccountContract =
@@ -296,6 +309,7 @@ let stateAccountContract =
         readOnly (_.whereAmI)
         readOnly (_.readOnlyRaise)
         readOnly (_.readOnlyConditional)
+        oneWay (_.noteOneWay)
     }
 
 let logAccountDefinition =

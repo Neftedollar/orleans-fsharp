@@ -39,6 +39,22 @@ let private freshKey (prefix: string) = $"{prefix}-{Guid.NewGuid():N}"
 /// </summary>
 let private settleDeactivation () = Task.Delay 1500
 
+/// <summary>Poll until the condition holds or the deadline passes.</summary>
+let private waitUntil (timeout: TimeSpan) (condition: unit -> Task<bool>) : Task<bool> =
+    task {
+        let deadline = DateTimeOffset.UtcNow + timeout
+        let mutable ok = false
+
+        while not ok && DateTimeOffset.UtcNow < deadline do
+            let! current = condition ()
+            ok <- current
+
+            if not ok then
+                do! Task.Delay 100
+
+        return ok
+    }
+
 /// <summary>Every message in an exception chain, so an assertion is not defeated by wrapping.</summary>
 let rec private messages (error: exn) : string list =
     match error with
@@ -253,6 +269,52 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
                 // Nothing was appended.
                 let! version = api.version ()
                 test <@ version = 0 @>
+        }
+
+    /// <remarks>
+    /// A one-way operation appends and confirms in its own turn like any other, but its caller
+    /// completed at the local acknowledgement and learns nothing about the outcome. The evidence
+    /// has to come from a later call, which is what this asserts.
+    /// </remarks>
+    [<Fact>]
+    member _.``a one-way operation still appends and confirms``() =
+        task {
+            for provider, account in accounts fixture do
+                let api = account (freshKey $"oneway-{provider}")
+
+                do! api.noteOneWay "from a one-way call"
+
+                let! settled =
+                    waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                        task {
+                            let! version = api.version ()
+                            return version = 1
+                        })
+
+                test <@ settled @>
+
+                let! history = api.history ()
+                test <@ history |> List.contains "from a one-way call" @>
+        }
+
+    /// <remarks>
+    /// A handler that throws after deciding on its events appends nothing: the events never leave
+    /// the handler's return value, so there is no partially applied turn to reason about.
+    /// </remarks>
+    [<Fact>]
+    member _.``a handler that throws appends nothing``() =
+        task {
+            for provider, account in accounts fixture do
+                let api = account (freshKey $"throw-{provider}")
+
+                let! _ = api.deposit 10m
+                let! failure = Assert.ThrowsAnyAsync<exn>(fun () -> api.throwAfterDeciding () :> Task)
+                test <@ mentions "failed after deciding" failure @>
+
+                let! version = api.version ()
+                let! balance = api.balance ()
+                test <@ version = 1 @>
+                test <@ balance = 10m @>
         }
 
     /// <remarks>
