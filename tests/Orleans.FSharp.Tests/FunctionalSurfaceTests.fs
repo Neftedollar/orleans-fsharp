@@ -570,6 +570,29 @@ let ``the definition builder declares exactly the specified custom operations`` 
 
     test <@ customOperations typeof<FunctionalGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
 
+/// <remarks>
+/// Spec 004 item 3. The journaled builder's operation set is a deliberate SUBSET of the ordinary
+/// one plus two of its own, and every absence is a ruling with a mechanism behind it — a journal
+/// cannot honour a whole-state-replacement hook, cannot be a transaction participant, and cannot
+/// be shared by the many activations of a stateless worker. An operation appearing here without
+/// that decision being made is exactly what this pin exists to catch.
+/// </remarks>
+[<Fact>]
+let ``the journaled definition builder declares exactly the specified custom operations`` () =
+    let expected =
+        [| "apply"
+           "collectionAge"
+           "handle"
+           "initialEventState"
+           "journalStorage"
+           "logProvider"
+           "onActivate"
+           "onDeactivate"
+           "placement" |]
+
+    test
+        <@ customOperations typeof<FunctionalJournaledGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
+
 [<Fact>]
 let ``the invocation context declares exactly the specified public members`` () =
     let expected =
@@ -578,9 +601,14 @@ let ``the invocation context declares exactly the specified public members`` () 
            "delayDeactivation"
            "grainFactory"
            "grainId"
+           // Spec 004 item 3: the two journaled members. Both are on the ONE context type rather
+           // than on a journaled variant of it, so an ordinary grainFor definition can reach them
+           // too — and both refuse with a definition-stage diagnostic when it does.
+           "journalVersion"
            "key"
            "logger"
            "persistentState"
+           "raiseConditional"
            "removeRequestContext"
            "services"
            "setRequestContext"
