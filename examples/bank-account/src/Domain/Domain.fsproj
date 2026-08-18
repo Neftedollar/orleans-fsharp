@@ -4,6 +4,7 @@
     <Compile Include="Events.fs" />
     <Compile Include="Commands.fs" />
     <Compile Include="AccountGrain.fs" />
+    <Compile Include="AccountGrainFunctional.fs" />
   </ItemGroup>
 
   <ItemGroup>
