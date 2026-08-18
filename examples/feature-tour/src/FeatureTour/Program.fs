@@ -34,6 +34,7 @@ open FeatureTour.Transactions
 open FeatureTour.Interop
 open FeatureTour.Placement
 open FeatureTour.Heterogeneous
+open FeatureTour.EventSourcing
 
 // ── Silo ─────────────────────────────────────────────────────────────────────
 
@@ -881,6 +882,84 @@ let private runInterleaving (factory: IGrainFactory) =
             verdict "UNEXPECTED — an interleaving observation above did not hold"
     }
 
+
+let private runEventSourcing (factory: IGrainFactory) =
+    task {
+        section 15 "Event sourcing — journaledGrainFor over Orleans' log-consistency providers"
+
+        let run = Guid.NewGuid().ToString "N"
+
+        let providers =
+            [ "LogStorage (stores the whole event log)", BalanceApi.logRef factory $"log-{run}"
+              "StateStorage (stores the folded view)", BalanceApi.stateRef factory $"state-{run}" ]
+
+        let mutable allHold = true
+
+        for label, api in providers do
+            say $"provider: {label}"
+
+            let! afterFirst = api.deposit 100m
+            let! afterSecond = api.deposit 40m
+            let! withdrew = api.withdraw 30m
+            let! refused = api.withdraw 5000m
+
+            detail $"deposit 100 -> {afterFirst}; deposit 40 -> {afterSecond} (the handler saw the state its own event produced)"
+            detail $"withdraw 30 -> {withdrew}; withdraw 5000 -> {refused} (refused, and so raises no event at all)"
+
+            let! (before, versionBefore) = api.snapshot ()
+            detail $"state {before.amount} from journal version {versionBefore} — three events, and the refusal is not one of them"
+
+            // ── The replay: the activation is dropped and the state is rebuilt ──
+            do! api.goIdle ()
+
+            let! recycled =
+                waitUntil (TimeSpan.FromSeconds 30.0) (fun () ->
+                    task {
+                        let! _ = api.snapshot ()
+                        return true
+                    })
+
+            do! Task.Delay 1500
+            let! (after, versionAfter) = api.snapshot ()
+
+            detail $"after the activation ended: state {after.amount} from version {versionAfter}, entries {after.entries}"
+            detail "nothing wrote the state anywhere — it is the fold of the journal, rebuilt"
+
+            // ── The negative control ────────────────────────────────────────────
+            let! readOnlyOutcome =
+                task {
+                    try
+                        return! api.readOnlyRaise ()
+                    with error ->
+                        return describe error
+                }
+
+            detail $"a readOnly operation that raises an event: {readOnlyOutcome}"
+
+            let holds =
+                before.amount = 110m
+                && versionBefore = 3
+                && after.amount = 110m
+                && versionAfter = 3
+                && after.entries = before.entries
+                && recycled
+                && readOnlyOutcome.Contains "readOnly"
+
+            allHold <- allHold && holds
+
+        detail "confirmation is per turn: the runtime appends a handler's events and waits for the"
+        detail "log-consistency provider to confirm them BEFORE the reply leaves the activation, so a"
+        detail "caller that got a reply is looking at durable state."
+        detail "neither built-in provider truncates or snapshots a journal: LogStorage grows the log"
+        detail "forever and replays all of it, StateStorage keeps only the latest view."
+
+        if allHold then
+            verdict
+                "SUPPORTED — a journaled definition replays its state from the journal on both built-in providers, confirms per turn, raises no event for a refused command, and refuses an append from a readOnly operation"
+        else
+            verdict "UNEXPECTED — event sourcing did not hold; see the observation lines above"
+    }
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 let private runTour (host: IHost) =
@@ -904,6 +983,7 @@ let private runTour (host: IHost) =
         do! runImplicit factory
         do! runInterleaving factory
         do! runTransactions factory
+        do! runEventSourcing factory
 
         printfn ""
         printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
@@ -936,6 +1016,13 @@ let main _argv =
         silo.UseTransactions() |> ignore
         silo.AddMemoryGrainStorage AccountApi.Storage |> ignore
 
+        // Feature 15 / status-matrix row 14: functional event sourcing (spec 004 item 3). Both
+        // built-in log-consistency providers, over one ordinary memory storage — the providers
+        // decide WHAT is stored under the journal's key, not where.
+        silo.AddMemoryGrainStorage JournalProviders.Store |> ignore
+        silo.AddLogStorageBasedLogConsistencyProvider JournalProviders.LogStorage |> ignore
+        silo.AddStateStorageBasedLogConsistencyProvider JournalProviders.StateStorage |> ignore
+
         silo.AddFunctionalGrain LedgerDefinition.definition |> ignore
         silo.AddFunctionalGrain SchedulerDefinition.definition |> ignore
         silo.AddFunctionalGrain GatewayDefinition.definition |> ignore
@@ -966,6 +1053,9 @@ let main _argv =
         // Feature 6, second half / status-matrix row 6: version tolerance (spec 004 item 7).
         // Deliberately ONLY version 3 of tour.rolling.
         silo.AddFunctionalGrain RollingDefinition.definition |> ignore
+        // Feature 15 / status-matrix row 14: event sourcing (spec 004 item 3).
+        silo.AddFunctionalJournaledGrain BalanceDefinition.log |> ignore
+        silo.AddFunctionalJournaledGrain BalanceDefinition.state |> ignore
 
         // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
         // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the
