@@ -116,6 +116,9 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// Thrown if the handler's result value cannot be cast to <typeparamref name="'State"/>.
+    /// </exception>
     [<Obsolete("FSharpGrain.send (grain{} universal message-passing) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, get a typed API record with FunctionalGrain.ref contract factory key, and call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let send<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainHandle<'State, 'Command>) : Task<'State> =
         task {
@@ -151,6 +154,9 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// Thrown if the handler's result value cannot be cast to <typeparamref name="'State"/>.
+    /// </exception>
     [<Obsolete("FSharpGrain.sendGuid (grain{} universal GUID-keyed message-passing) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, get a typed API record with FunctionalGrain.ref contract factory key, and call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let sendGuid<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainGuidHandle<'State, 'Command>) : Task<'State> =
         task {
@@ -181,6 +187,9 @@ module FSharpGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// Thrown if the handler's result value cannot be cast to <typeparamref name="'State"/>.
+    /// </exception>
     [<Obsolete("FSharpGrain.sendInt (grain{} universal integer-keyed message-passing) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor, get a typed API record with FunctionalGrain.ref contract factory key, and call the operation directly (e.g. api.increment ()). See docs/functional-grains.md for the before/after mapping.", false)>]
     let sendInt<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainIntHandle<'State, 'Command>) : Task<'State> =
         task {
@@ -236,6 +245,9 @@ module FSharpGrain =
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <typeparam name="'Result">The expected result type returned by the handler.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// Thrown if the handler's result value cannot be cast to <typeparamref name="'Result"/>.
+    /// </exception>
     [<Obsolete("FSharpGrain.askGuid (grain{} universal GUID-keyed request/response) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and call the typed API record operation returned by FunctionalGrain.ref, which already returns Task<'Reply> without boxing. See docs/functional-grains.md for the before/after mapping.", false)>]
     let askGuid<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainGuidHandle<'State, 'Command>) : Task<'Result> =
         task {
@@ -253,6 +265,9 @@ module FSharpGrain =
     /// <typeparam name="'Command">The grain's command/message type.</typeparam>
     /// <typeparam name="'Result">The expected result type returned by the handler.</typeparam>
     /// <returns>A Task containing the typed result.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// Thrown if the handler's result value cannot be cast to <typeparamref name="'Result"/>.
+    /// </exception>
     [<Obsolete("FSharpGrain.askInt (grain{} universal integer-keyed request/response) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and call the typed API record operation returned by FunctionalGrain.ref, which already returns Task<'Reply> without boxing. See docs/functional-grains.md for the before/after mapping.", false)>]
     let askInt<'State, 'Command, 'Result> (cmd: 'Command) (handle: FSharpGrainIntHandle<'State, 'Command>) : Task<'Result> =
         task {
@@ -322,6 +337,9 @@ module FSharpEventSourcedGrain =
     /// <typeparam name="'State">The grain's state type.</typeparam>
     /// <typeparam name="'Command">The grain's command type.</typeparam>
     /// <returns>A Task containing the new typed state after the command is applied.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// Thrown if the handler's result value cannot be cast to <typeparamref name="'State"/>.
+    /// </exception>
     let send<'State, 'Command> (cmd: 'Command) (handle: FSharpEventSourcedGrainHandle<'State, 'Command>) : Task<'State> =
         task {
             let! result = handle.Grain.HandleCommand(box cmd)

@@ -44,9 +44,11 @@
     <Compile Include="TemplateTests.fs" />
     <Compile Include="RedisIntegrationTests.fs" />
     <Compile Include="GrainResilienceIntegrationTests.fs" />
+    <Compile Include="FunctionalPlacementIntegrationTests.fs" />
     <Compile Include="FunctionalClusterFixture.fs" />
     <Compile Include="FunctionalManifestIntegrationTests.fs" />
     <Compile Include="FunctionalRuntimeIntegrationTests.fs" />
+    <Compile Include="FunctionalInteropIntegrationTests.fs" />
     <Compile Include="FunctionalHostingIntegrationTests.fs" />
     <Compile Include="FunctionalStateFixture.fs" />
     <Compile Include="FunctionalStateIntegrationTests.fs" />
@@ -56,6 +58,19 @@
     <Compile Include="ChatRoomSampleIntegrationTests.fs" />
     <Compile Include="FunctionalObserverIntegrationTests.fs" />
     <Compile Include="FunctionalPushIntegrationTests.fs" />
+    <Compile Include="FunctionalStreamFixture.fs" />
+    <Compile Include="FunctionalStreamIntegrationTests.fs" />
+    <Compile Include="FunctionalPhaseCFixture.fs" />
+    <Compile Include="FunctionalPhaseCIntegrationTests.fs" />
+    <Compile Include="FunctionalPhaseDFixture.fs" />
+    <Compile Include="FunctionalPhaseDIntegrationTests.fs" />
+    <Compile Include="FunctionalJournalSeamProbe.fs" />
+    <Compile Include="FunctionalPhaseEFixture.fs" />
+    <Compile Include="FunctionalPhaseEIntegrationTests.fs" />
+    <Compile Include="FunctionalJournalHostingTests.fs" />
+    <Compile Include="FunctionalPhaseFFixture.fs" />
+    <Compile Include="FunctionalPhaseFIntegrationTests.fs" />
+    <Compile Include="FunctionalPhaseFExpiryFixture.fs" />
   </ItemGroup>
 
   <ItemGroup>

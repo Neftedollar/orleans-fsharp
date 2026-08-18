@@ -37,10 +37,12 @@ Each item is grounded in a verified finding; pointers name the evidence.
 6. **Analyzer hint for derived grain types** — an Orleans.FSharp.Analyzers
    rule suggesting an explicit `grainType` on contracts whose definitions are
    likely to become durable (complements the sealing-time enforcement).
-7. **Functional transactions** — out of 003 scope by spec; the classic
-   `AddFSharpTransactionalGrain` path is KEEP-listed and demonstrated in
-   `examples/bank-transactions`. A functional-first design would need its own
-   spec (transactional state facets, `ITransactionalState` shaping).
+7. **Functional transactions** — was out of 003 scope by spec; **delivered by
+   spec 004 item 2** (`transactional` contract operations + `transactionalStateFrom`
+   facets over Orleans' own `TransactionRequest` invokable base). The classic
+   `AddFSharpTransactionalGrain` path stays KEEP-listed;
+   `examples/bank-transactions` now leads with the functional twin and keeps
+   the classic definition compiled, registered, and tested beside it.
 8. **samples/ code rewrite depth** — the three pattern READMEs now teach the
    functional model with compiled fences; turning them into buildable projects
    (like examples/) is future work, noted in their deprecation banners.
@@ -55,3 +57,24 @@ Each item is grounded in a verified finding; pointers name the evidence.
     Dashboard's grain-type keying, not run in-session; first live Dashboard
     look should confirm the per-actor rows and the flat DispatchAsync method
     column.
+11. **Two load-sensitive wall-clock tests flake under machine load** (found
+    during spec-004 Phase C re-verification, 2026-08-18, proven pre-existing
+    by 6 interleaved A/B full-suite runs on base vs the C1 tree — 0 failures
+    on either side; failures cluster by run duration, not by tree):
+    `GrainResilienceTests.withTimeout …` (a 50 ms Polly budget) and
+    `FunctionalPhase5IntegrationTests … KeepAlive=false does not extend
+    collection lifetime` (an Orleans collection-age window). Both assert pure
+    wall-clock budgets; hardening candidates (wider budgets, virtual time, or
+    quarantine-with-retry), on their own ticket. Same family (added during
+    Phase D, outcome-agnostic but wall-clock-shaped): the transactional
+    contention test `concurrent transactions on one state each run once and
+    apply once` (a 3 s hold against a 2 s LockAcquireTimeout), and the
+    pre-existing `TemplateTests.template generated tests all pass` (shells
+    out to `dotnet new`; failed once under full-suite load, passes alone).
+    Phase E observation (2026-08-18): one full-suite run at Orleans 10.2.2
+    reported a single failure whose name was NOT captured (only the tail was
+    read), and it did not reproduce in 6 subsequent full-suite runs (4 at
+    10.2.2, 2 at the floor) nor in 4 runs of the Phase E suites alone. It is
+    recorded unattributed rather than pinned on this family: without the name
+    that would be a guess. It does raise the priority of the hardening ticket —
+    and of always capturing full test output on a verification run.

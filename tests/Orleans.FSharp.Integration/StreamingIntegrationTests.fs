@@ -82,30 +82,56 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
             let eventCount = 20
             let received = ConcurrentBag<int>()
 
-            // Start consuming in background via TaskSeq — take only eventCount items
+            let distinctPayload () =
+                received |> Seq.filter (fun i -> i > 0) |> Seq.distinct |> Seq.length
+
+            // The consumer drains through the plain enumerator (the exact `await foreach`
+            // desugaring) rather than TaskSeq combinators, and stops once every payload value
+            // has been observed. It cannot use a fixed item count: the readiness sentinel below
+            // may be delivered any number of times before the payload starts.
             let consumerTask =
                 task {
-                    let seq = Stream.asTaskSeq streamRef
+                    let source = Stream.asTaskSeq streamRef
+                    use enumerator = source.GetAsyncEnumerator()
+                    let mutable go = true
 
-                    do!
-                        seq
-                        |> TaskSeq.take eventCount
-                        |> TaskSeq.iter (fun item -> received.Add(item))
+                    while go do
+                        let! moved = enumerator.MoveNextAsync()
+
+                        if moved then
+                            received.Add enumerator.Current
+
+                            if distinctPayload () >= eventCount then
+                                go <- false
+                        else
+                            go <- false
                 }
 
-            // Give subscription time to set up
-            do! Task.Delay(500)
+            // Prove the subscription is live before publishing the payload: memory streams do
+            // not replay for a subscriber that attaches late, so anything published before the
+            // subscription completes is silently lost. Re-publishing the 0 sentinel until one
+            // copy is observed replaces the guessed 500 ms setup delay this test used to rely
+            // on -- the delay is exactly what a slower CI runner turned into lost first events
+            // and a hung take (main red since 2026-08-12).
+            let probeDeadline = DateTime.UtcNow.AddSeconds 30.0
 
-            // Publish events
+            while received.IsEmpty && DateTime.UtcNow < probeDeadline do
+                do! Stream.publish streamRef 0
+                do! Task.Delay 100
+
+            test <@ not received.IsEmpty @>
+
             for i in 1..eventCount do
                 do! Stream.publish streamRef i
 
-            // Wait for consumption with timeout
-            let! completed = Task.WhenAny(consumerTask, Task.Delay(TimeSpan.FromSeconds(10.0)))
+            // Wait for consumption with a generous bound; the passing path exits as soon as the
+            // last distinct payload value arrives.
+            let! completed = Task.WhenAny(consumerTask, Task.Delay(TimeSpan.FromSeconds(30.0)))
             test <@ Object.ReferenceEquals(completed, consumerTask) @>
 
-            let items = received |> Seq.toList |> List.sort
-            test <@ items.Length = eventCount @>
+            let items =
+                received |> Seq.filter (fun i -> i > 0) |> Seq.distinct |> Seq.sort |> List.ofSeq
+
             test <@ items = [ 1..eventCount ] @>
         }
 

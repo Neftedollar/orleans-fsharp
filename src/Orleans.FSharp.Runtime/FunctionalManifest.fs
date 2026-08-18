@@ -4,6 +4,8 @@ open System
 open System.Collections.Generic
 open System.Globalization
 open Microsoft.Extensions.Options
+open Orleans
+open Orleans.Concurrency
 open Orleans.Configuration
 open Orleans.Metadata
 open Orleans.Runtime
@@ -15,6 +17,7 @@ open Orleans.FSharp.FunctionalSiloDiagnostics
 type internal FunctionalGrainTypeProvider(registry: FunctionalGrainRegistry) =
 
     interface IGrainTypeProvider with
+        /// <inheritdoc/>
         member _.TryGetGrainType(candidate: Type, grainType: byref<GrainType>) =
             match registry.TryByMarker candidate with
             | Some entry ->
@@ -27,6 +30,7 @@ type internal FunctionalGrainTypeProvider(registry: FunctionalGrainRegistry) =
 type internal FunctionalGrainInterfaceTypeProvider(registry: FunctionalGrainRegistry) =
 
     interface IGrainInterfaceTypeProvider with
+        /// <inheritdoc/>
         member _.TryGetGrainInterfaceType(candidate: Type, interfaceType: byref<GrainInterfaceType>) =
             match registry.TryByInterface candidate with
             | Some entry ->
@@ -42,6 +46,7 @@ type internal FunctionalGrainInterfaceTypeProvider(registry: FunctionalGrainRegi
 type internal FunctionalGrainInterfacePropertiesProvider(registry: FunctionalGrainRegistry) =
 
     interface IGrainInterfacePropertiesProvider with
+        /// <inheritdoc/>
         member _.Populate(candidate: Type, _id: GrainInterfaceType, properties: Dictionary<string, string>) =
             match registry.TryByInterface candidate with
             | Some entry ->
@@ -65,7 +70,58 @@ type internal FunctionalGrainInterfacePropertiesProvider(registry: FunctionalGra
 /// transport interface's name.
 /// </remarks>
 [<Sealed>]
-type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistry) =
+type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, registry: FunctionalGrainRegistry) =
+
+    /// <summary>
+    /// The binding-group prefix Orleans' own <c>AttributeGrainBindingsProvider</c> writes:
+    /// <c>WellKnownGrainTypeProperties.BindingPrefix</c> ("binding"), a dot, then the literal
+    /// group token "attr-" and a 1-based index. The token itself is a private constant of that
+    /// provider with no public counterpart, so it is spelled out here — and pinned by the
+    /// exactness test against a live attribute-decorated reference class. Only the grouping
+    /// matters to <c>GrainBindingsResolver</c> (it splits on the first dot after the prefix), but
+    /// "the same keys Orleans publishes" means the same token too.
+    /// </summary>
+    static member val BindingGroupPrefix = WellKnownGrainTypeProperties.BindingPrefix + ".attr-"
+
+    /// <summary>
+    /// The Orleans attribute which produces the manifest binding of one declared implicit
+    /// subscription. Constructing the real attribute and calling its own <c>GetBindings</c> is
+    /// what makes the published properties Orleans' output rather than a transcription of it:
+    /// the namespace-predicate pattern format, the stream/channel id-mapper key, and the two
+    /// legacy-key-type branches all come from Orleans code, evaluated against this definition's
+    /// own marker CLR type.
+    /// </summary>
+    /// <param name="binding">The declared implicit subscription (stream or channel) to build the attribute for.</param>
+    static member BindingAttribute(binding: FunctionalStreamDeclaration) : IGrainBindingsProviderAttribute =
+        if binding.IsStream then
+            ImplicitStreamSubscriptionAttribute binding.Namespace
+        else
+            ImplicitChannelSubscriptionAttribute binding.Namespace
+
+    /// <summary>
+    /// The manifest bindings of one definition, in declaration order, de-duplicated by
+    /// (transport, namespace). Orleans' binding names a namespace and not a provider, so two
+    /// declarations of the same namespace on two different providers — legal, and distinguished
+    /// at delivery time — would otherwise publish two byte-identical binding groups.
+    /// </summary>
+    /// <param name="services">The silo's DI service provider, forwarded to each binding attribute's <c>GetBindings</c>.</param>
+    /// <param name="definition">The hosted definition whose <c>StreamBindings</c> to translate.</param>
+    /// <param name="grainClass">The definition's closed marker CLR type.</param>
+    /// <param name="grainType">The definition's Orleans <c>GrainType</c>.</param>
+    static member BindingsOf
+        (services: IServiceProvider, definition: FunctionalHostedDefinition, grainClass: Type, grainType: GrainType)
+        =
+        let seen = HashSet<struct (bool * string)>(HashIdentity.Structural)
+        let produced = ResizeArray<Dictionary<string, string>>()
+
+        for binding in definition.StreamBindings do
+            if seen.Add(struct (binding.IsStream, binding.Namespace)) then
+                let attribute = FunctionalGrainPropertiesProvider.BindingAttribute binding
+
+                for entry in attribute.GetBindings(services, grainClass, grainType) do
+                    produced.Add entry
+
+        produced
 
     /// <summary>The open generic functional target-interface definition.</summary>
     static member val OpenInterfaceDefinition: Type = typedefof<IFunctionalGrainTarget<_>>
@@ -74,6 +130,7 @@ type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistr
     /// The exact values an implemented-interface property can hold for the functional target
     /// interface before this provider has replaced it.
     /// </summary>
+    /// <param name="entry">The registry entry whose functional target interface values to compute.</param>
     static member NormalizedValues(entry: FunctionalRegistryEntry) =
         [| FunctionalGrainPropertiesProvider.OpenInterfaceDefinition.FullName
            GrainInterfaceType
@@ -82,13 +139,17 @@ type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistr
            entry.InterfaceId |]
 
     /// <summary>True when a property value names the functional target interface exactly.</summary>
+    /// <param name="entry">The registry entry to compare against.</param>
+    /// <param name="value">The candidate implemented-interface property value.</param>
     static member IsFunctionalInterfaceValue (entry: FunctionalRegistryEntry) (value: string) =
         not (isNull value)
         && FunctionalGrainPropertiesProvider.NormalizedValues entry
            |> Array.exists (fun candidate -> String.Equals(candidate, value, StringComparison.Ordinal))
 
     interface IGrainPropertiesProvider with
-        member _.Populate(grainClass: Type, _grainType: GrainType, properties: Dictionary<string, string>) =
+        /// <inheritdoc/>
+        /// <exception cref="System.InvalidOperationException">A registered grain type's implemented-interface properties do not contain exactly one entry naming the functional target interface.</exception>
+        member _.Populate(grainClass: Type, grainType: GrainType, properties: Dictionary<string, string>) =
             match registry.TryByMarker grainClass with
             | None -> ()
             | Some entry ->
@@ -122,6 +183,92 @@ type internal FunctionalGrainPropertiesProvider(registry: FunctionalGrainRegistr
                 | Some age -> properties.[WellKnownGrainTypeProperties.IdleDeactivationPeriod] <- age.ToString()
                 | None -> ()
 
+                // "The registry properties provider publishes the same property keys Orleans' own
+                // attributes produce." Verified against a live IGrainPropertiesProviderAttribute.
+                // Populate() call on Orleans 10.1.0 and 10.2.2 (identical on both):
+                //   RandomPlacementAttribute()               -> placement-strategy=RandomPlacement
+                //   PreferLocalPlacementAttribute()           -> placement-strategy=PreferLocalPlacement
+                //   ActivationCountBasedPlacementAttribute()  -> placement-strategy=ActivationCountBasedPlacement
+                //   ResourceOptimizedPlacementAttribute()     -> placement-strategy=ResourceOptimizedPlacement
+                //   StatelessWorkerAttribute(n)                -> placement-strategy=StatelessWorkerPlacement,
+                //                                                  max-local-instances=n (exact string, no
+                //                                                  culture formatting), remove-idle-workers=True
+                //                                                  (bool.ToString() casing), unordered=true
+                //                                                  (lowercase literal -- NOT bool.ToString(),
+                //                                                  and NOT tied to the removeIdleWorkers ctor
+                //                                                  argument, which this runtime does not expose).
+                // "max-local-instances" and "remove-idle-workers" are StatelessWorkerAttribute-internal key
+                // names with no WellKnownGrainTypeProperties constant, so they are literals here too, exactly
+                // as examples/feature-tour/src/FeatureTour/Placement.fs already documents them.
+                // Spec 004 item 5. Both keys are written by constructing the REAL Orleans
+                // attribute and taking its own Populate output, exactly as the implicit-
+                // subscription bindings below take GetBindings': the property names and values
+                // are then Orleans' own, not a transcription of them.
+                //
+                // [Reentrant] contributes nothing but a property, so this is complete. Orleans'
+                // ReentrantSharedComponentsConfigurator (an IConfigureGrainTypeComponents
+                // registered by DefaultSiloServices) reads it back and installs the
+                // GrainCanInterleave component holding ReentrantPredicate.Instance, which
+                // ActivationData.MayInvokeRequest consults.
+                //
+                // [MayInterleave] additionally NAMES a method that Orleans reflects off the grain
+                // class, and a property cannot supply that -- which is why the grain class of a
+                // definition declaring 'mayInterleave' is FunctionalInterleavingGrainMarker,
+                // carrying the real attribute. That means Orleans' own AttributeGrainPropertiesProvider
+                // ALREADY publishes this key for such a definition, and a mutation test confirms
+                // it: removing the write below leaves every may-interleave test green. It is kept
+                // as a second, same-valued writer so the publication does not silently depend on
+                // Orleans continuing to walk grain-class attributes with inherit:true, which is
+                // the one behaviour of that provider we do not control. The equality of the two
+                // values is pinned by FunctionalInterleaveMarkerTests.
+                if entry.Definition.IsReentrant then
+                    ReentrantAttribute().Populate(services, grainClass, grainType, properties)
+
+                if entry.Definition.MayInterleave.IsSome then
+                    MayInterleaveAttribute(FunctionalInterleave.CallbackName)
+                        .Populate(services, grainClass, grainType, properties)
+
+                match entry.Definition.Placement with
+                | Some(Strategy strategy) ->
+                    let value =
+                        match strategy with
+                        | Random -> "RandomPlacement"
+                        | PreferLocal -> "PreferLocalPlacement"
+                        | ActivationCountBased -> "ActivationCountBasedPlacement"
+                        | ResourceOptimized -> "ResourceOptimizedPlacement"
+
+                    properties.[WellKnownGrainTypeProperties.PlacementStrategy] <- value
+                | Some(StatelessWorker maxLocalWorkers) ->
+                    properties.[WellKnownGrainTypeProperties.PlacementStrategy] <- "StatelessWorkerPlacement"
+                    properties.["max-local-instances"] <- maxLocalWorkers.ToString CultureInfo.InvariantCulture
+                    properties.["remove-idle-workers"] <- true.ToString()
+                    properties.[WellKnownGrainTypeProperties.Unordered] <- "true"
+                | None -> ()
+
+                // Spec 004 item 1: the implicit-subscription bindings of every declared
+                // 'onStream' and 'onBroadcast'. Orleans collects these only from
+                // IGrainBindingsProviderAttribute attributes on the grain class, and the grain
+                // class here is the library's own marker -- so this provider takes the same
+                // attributes' own GetBindings output and writes it under the same
+                // "binding.attr-<n>.<key>" keys AttributeGrainBindingsProvider would have used.
+                // The marker carries no such attribute itself, so nothing collides: this is the
+                // only writer of a binding property for a functional grain type.
+                let bindings =
+                    FunctionalGrainPropertiesProvider.BindingsOf(services, entry.Definition, grainClass, grainType)
+
+                let mutable index = 1
+
+                for binding in bindings do
+                    for pair in binding do
+                        properties.[
+                            FunctionalGrainPropertiesProvider.BindingGroupPrefix
+                            + index.ToString CultureInfo.InvariantCulture
+                            + "."
+                            + pair.Key
+                        ] <- pair.Value
+
+                    index <- index + 1
+
 /// <summary>
 /// Atomically freezes the registry, removes the open functional marker and target-interface
 /// definitions Orleans discovered by default, and adds only the registered closed types.
@@ -136,15 +283,19 @@ type internal FunctionalGrainTypeOptionsPostConfigure(registry: FunctionalGrainR
             && candidate.GetGenericTypeDefinition() = definition)
 
     interface IPostConfigureOptions<GrainTypeOptions> with
+        /// <inheritdoc/>
         member _.PostConfigure(name: string, options: GrainTypeOptions) =
             if String.Equals(name, Options.DefaultName, StringComparison.Ordinal) then
                 let snapshot = registry.Freeze()
 
-                let openMarker = typedefof<FunctionalGrainMarker<_>>
                 let openInterface = typedefof<IFunctionalGrainTarget<_>>
 
+                let openMarkers =
+                    [| typedefof<FunctionalGrainMarker<_>>
+                       typedefof<FunctionalInterleavingGrainMarker<_>> |]
+
                 options.Classes
-                |> Seq.filter (isOpenFunctional openMarker)
+                |> Seq.filter (fun candidate -> openMarkers |> Array.exists (fun open' -> isOpenFunctional open' candidate))
                 |> Seq.toArray
                 |> Array.iter (fun candidate -> options.Classes.Remove candidate |> ignore)
 

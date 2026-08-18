@@ -393,7 +393,10 @@ let ``a read-only scope permits getters and rejects the complete mutation surfac
     for name, mutate in mutations do
         let error = throws (fun () -> mutate facade)
         test <@ error.Message.Contains name @>
-        test <@ error.Message.Contains "readOnly or alwaysInterleave" @>
+        // Reason-agnostic wording: the same scope (allowsMutation=false) also guards an
+        // onLifecycle hook's persistent-state facade, which is not "declared readOnly or
+        // alwaysInterleave" at all -- see FunctionalStateScope.EnsureMutable.
+        test <@ error.Message.Contains "state-neutral for this holder" @>
 
     // Nothing reached the real facet.
     test <@ inner.Current = { count = 1 } @>

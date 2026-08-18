@@ -42,14 +42,17 @@
     <Compile Include="FunctionalApiShape.fs" />
     <Compile Include="FunctionalProtocol.fs" />
     <Compile Include="FunctionalPersistentState.fs" />
+    <Compile Include="FunctionalTransactionalState.fs" />
     <Compile Include="FunctionalKeyCodec.fs" />
     <Compile Include="FunctionalContext.fs" />
     <Compile Include="FunctionalTransport.fs" />
     <Compile Include="FunctionalReference.fs" />
     <Compile Include="FunctionalContract.fs" />
     <Compile Include="FunctionalDefinition.fs" />
+    <Compile Include="FunctionalJournaledDefinition.fs" />
     <Compile Include="FunctionalHosted.fs" />
     <Compile Include="FunctionalBinding.fs" />
+    <Compile Include="FunctionalInterop.fs" />
     <Compile Include="FunctionalObserver.fs" />
     <Compile Include="FunctionalBuilders.fs" />
     <Compile Include="FunctionalHosting.fs" />

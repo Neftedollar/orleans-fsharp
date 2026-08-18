@@ -27,6 +27,11 @@ module GrainDirectory =
     /// Invokes an extension method on ISiloBuilder by name, searching loaded assemblies.
     /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
     /// </summary>
+    /// <param name="methodName">The static extension method name to search for.</param>
+    /// <param name="args">The extra arguments to pass after the silo builder.</param>
+    /// <param name="packageHint">The NuGet package to name in the diagnostic if the method is not found.</param>
+    /// <param name="siloBuilder">The silo builder passed as the extension method's first argument.</param>
+    /// <exception cref="System.InvalidOperationException">No matching extension method is found in any loaded assembly.</exception>
     let private invokeExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (siloBuilder: ISiloBuilder) =
         let siloBuilderType = typeof<ISiloBuilder>
 
@@ -57,6 +62,8 @@ module GrainDirectory =
     /// Creates a typed Action delegate that sets a named property on the options object via reflection.
     /// Used to configure provider-specific options without hard compile-time dependencies.
     /// </summary>
+    /// <param name="propertyName">The name of the property to set on the options object.</param>
+    /// <param name="value">The value to assign to the property.</param>
     let private makeOptionsAction (propertyName: string) (value: obj) : System.Action<obj> =
         System.Action<obj>(fun options ->
             let prop = options.GetType().GetProperty(propertyName)
@@ -69,6 +76,10 @@ module GrainDirectory =
     /// </summary>
     /// <param name="provider">The grain directory provider to configure.</param>
     /// <returns>A function that configures the ISiloBuilder with the specified grain directory.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// The returned function throws this if invoked with a <c>Redis</c> or <c>AzureStorage</c>
+    /// provider whose extension method cannot be found by reflection.
+    /// </exception>
     let configure (provider: GrainDirectoryProvider) : (ISiloBuilder -> ISiloBuilder) =
         match provider with
         | Default ->

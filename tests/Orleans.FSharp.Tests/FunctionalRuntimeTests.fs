@@ -16,11 +16,14 @@ open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Options
 open Orleans
+open Orleans.Concurrency
 open Orleans.Configuration
 open Orleans.Metadata
+open Orleans.Placement
 open Orleans.Runtime
 open Orleans.Serialization
 open Orleans.FSharp
+open Orleans.FSharp.Tests
 open Swensen.Unquote
 open Xunit
 
@@ -117,6 +120,26 @@ let private collectionAgeDefinition =
     grainFor collectionAgeContract {
         defaultState (fun () -> { touched = false })
         collectionAge (TimeSpan.FromMinutes 5.0)
+        handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+    }
+
+// Minimal, independent contracts used only to prove that 'statelessWorker' / 'placement' are
+// frozen into the well-known Orleans placement manifest properties, EXACTLY matching what the
+// corresponding stock Orleans attribute publishes (verified live against Orleans 10.1.0 and
+// 10.2.2 -- see FunctionalManifest.fs's Populate comment).
+type StatelessWorkerActor = private StatelessWorkerActor of unit
+type PreferLocalActor = private PreferLocalActor of unit
+
+let private statelessWorkerContract =
+    grainContract<StatelessWorkerActor, string, TinyApi> () {
+        grainType "runtime.statelessworker"
+        stringKey
+    }
+
+let private statelessWorkerDefinition =
+    grainFor statelessWorkerContract {
+        defaultState (fun () -> { touched = false })
+        statelessWorker 4
         handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
     }
 
@@ -411,6 +434,14 @@ let ``the silo-registration guard accepts an explicit grain type with a durable 
 // Manifest providers
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// <summary>
+/// The service provider the properties provider is constructed with. Orleans' own
+/// implicit-subscription attributes ignore it entirely (their <c>GetBindings</c> never touches
+/// the argument), so an empty container is the honest stand-in for a silo's.
+/// </summary>
+let private manifestServices =
+    ServiceCollection().BuildServiceProvider() :> IServiceProvider
+
 let private frozenRegistry () =
     let registry = FunctionalGrainRegistry()
     registry.Add(hosted runtimeDefinition)
@@ -461,7 +492,7 @@ let ``the post-configure ignores named options`` () =
 [<Fact>]
 let ``the properties provider replaces exactly the normalized functional entry`` () =
     let registry = frozenRegistry ()
-    let provider = FunctionalGrainPropertiesProvider registry :> IGrainPropertiesProvider
+    let provider = FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
     let markerType = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<RuntimeActor>
     let grainType = GrainType.Create "runtime.probe"
 
@@ -497,7 +528,7 @@ let ``the properties provider freezes collectionAge into the idle-duration manif
     registry.Add(FunctionalHosted.create collectionAgeDefinition) // collectionAge = 5 minutes
     registry.Freeze() |> ignore
 
-    let provider = FunctionalGrainPropertiesProvider registry :> IGrainPropertiesProvider
+    let provider = FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
 
     let noAgeMarker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<RuntimeActor>
     let noAgeProperties = Dictionary<string, string>()
@@ -516,10 +547,267 @@ let ``the properties provider freezes collectionAge into the idle-duration manif
     let parsed = TimeSpan.Parse ageProperties.[WellKnownGrainTypeProperties.IdleDeactivationPeriod]
     test <@ parsed = TimeSpan.FromMinutes 5.0 @>
 
+/// <summary>Populate a scratch dictionary through a live Orleans placement attribute, exactly
+/// the way <c>examples/feature-tour/src/FeatureTour/Placement.fs</c> already does, to get the
+/// real reference output rather than an assumed one.</summary>
+let private referencePropertiesOf (attribute: IGrainPropertiesProviderAttribute) =
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    attribute.Populate(null, typeof<obj>, GrainType.Create "reference-probe", properties)
+    properties
+
+/// <remarks>
+/// Spec item 4: "The registry properties provider publishes the same property keys Orleans' own
+/// attributes produce ... property keys must match EXACTLY, with a test comparing against an
+/// attribute-decorated reference class's published properties." This is that test, for
+/// <c>statelessWorker</c>: the reference is a real, live <c>StatelessWorkerAttribute(4)</c>
+/// (Orleans.Concurrency), not a transcribed assumption of what it publishes.
+/// </remarks>
+[<Fact>]
+let ``statelessWorker publishes exactly what a live StatelessWorkerAttribute(4) publishes`` () =
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create statelessWorkerDefinition)
+    registry.Freeze() |> ignore
+
+    let provider = FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
+    let marker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<StatelessWorkerActor>
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    properties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(marker, GrainType.Create "runtime.statelessworker", properties)
+
+    let reference = referencePropertiesOf (StatelessWorkerAttribute 4)
+
+    test <@ reference.Count = 4 @> // pins the reference itself: fails loudly if Orleans ever adds a 5th key
+    test <@ properties.[WellKnownGrainTypeProperties.PlacementStrategy] = reference.["placement-strategy"] @>
+    test <@ properties.["max-local-instances"] = reference.["max-local-instances"] @>
+    test <@ properties.["remove-idle-workers"] = reference.["remove-idle-workers"] @>
+    test <@ properties.[WellKnownGrainTypeProperties.Unordered] = reference.["unordered"] @>
+    test <@ properties.["max-local-instances"] = "4" @>
+    test <@ properties.["remove-idle-workers"] = "True" @> // bool.ToString() casing, NOT "true"
+    test <@ properties.[WellKnownGrainTypeProperties.Unordered] = "true" @> // literal, NOT bool.ToString()
+
+/// <remarks>
+/// The same exactness proof for every plain stock strategy the DU mirrors, each against its own
+/// live Orleans attribute. Random, PreferLocal, ActivationCountBased, and ResourceOptimized are
+/// all confirmed present with identical Populate() output on both Orleans 10.1.0 and 10.2.2.
+/// </remarks>
+[<Theory>]
+[<InlineData("Random", "runtime.placement.random")>]
+[<InlineData("PreferLocal", "runtime.placement.preferlocal")>]
+[<InlineData("ActivationCountBased", "runtime.placement.activationcountbased")>]
+[<InlineData("ResourceOptimized", "runtime.placement.resourceoptimized")>]
+let ``placement publishes exactly what the matching live Orleans placement attribute publishes``
+    (strategyName: string)
+    (grainTypeName: string)
+    =
+    let strategy =
+        match strategyName with
+        | "Random" -> Random
+        | "PreferLocal" -> PreferLocal
+        | "ActivationCountBased" -> ActivationCountBased
+        | "ResourceOptimized" -> ResourceOptimized
+        | other -> failwith $"unhandled strategy '{other}' in test data"
+
+    let referenceAttribute: IGrainPropertiesProviderAttribute =
+        match strategyName with
+        | "Random" -> RandomPlacementAttribute()
+        | "PreferLocal" -> PreferLocalPlacementAttribute()
+        | "ActivationCountBased" -> ActivationCountBasedPlacementAttribute()
+        | "ResourceOptimized" -> ResourceOptimizedPlacementAttribute()
+        | other -> failwith $"unhandled strategy '{other}' in test data"
+
+    let actor = typeof<PreferLocalActor> // a stand-in marker CLR type; only the grain-type match matters here
+
+    let contract =
+        grainContract<PreferLocalActor, string, TinyApi> () {
+            grainType grainTypeName
+            stringKey
+        }
+
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { touched = false })
+            placement strategy
+            handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+        }
+
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create definition)
+    registry.Freeze() |> ignore
+
+    let provider = FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
+    let marker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType actor
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    properties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(marker, GrainType.Create grainTypeName, properties)
+
+    let reference = referencePropertiesOf referenceAttribute
+
+    test <@ reference.Count = 1 @> // pins the reference: fails loudly if Orleans ever adds a key
+    test <@ properties.[WellKnownGrainTypeProperties.PlacementStrategy] = reference.["placement-strategy"] @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Implicit-subscription bindings (spec 004 item 1)
+// ──────────────────────────────────────────────────────────────────────────────
+
+type StreamBindingActor = private StreamBindingActor of unit
+type ChannelBindingActor = private ChannelBindingActor of unit
+type TwoProviderActor = private TwoProviderActor of unit
+
+let private streamBindingHook _ state (_: string) = task { return state }
+
+let private streamBindingDefinition =
+    let contract =
+        grainContract<StreamBindingActor, string, TinyApi> () {
+            grainType "runtime.binding.stream"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { touched = false })
+        onStream "Streams" Facades.ImplicitSubscriptionNamespaces.Stream streamBindingHook
+        handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+    }
+
+let private channelBindingDefinition =
+    let contract =
+        grainContract<ChannelBindingActor, string, TinyApi> () {
+            grainType "runtime.binding.channel"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { touched = false })
+        onBroadcast "Channels" Facades.ImplicitSubscriptionNamespaces.Channel streamBindingHook
+        handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+    }
+
+/// <summary>The same namespace declared on two providers: one binding group, not two.</summary>
+let private twoProviderDefinition =
+    let contract =
+        grainContract<TwoProviderActor, string, TinyApi> () {
+            grainType "runtime.binding.twoproviders"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { touched = false })
+        onStream "Streams" Facades.ImplicitSubscriptionNamespaces.Stream streamBindingHook
+        onStream "OtherStreams" Facades.ImplicitSubscriptionNamespaces.Stream streamBindingHook
+        handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+    }
+
+/// <summary>Only the binding properties of a populated dictionary, in key order.</summary>
+let private bindingPropertiesOf (properties: Dictionary<string, string>) =
+    properties
+    |> Seq.filter (fun pair -> pair.Key.StartsWith("binding.", StringComparison.Ordinal))
+    |> Seq.map (fun pair -> pair.Key, pair.Value)
+    |> Seq.sortBy fst
+    |> Seq.toList
+
+/// <summary>
+/// Populate a scratch dictionary through Orleans' own <c>AttributeGrainBindingsProvider</c> over
+/// an attribute-decorated reference class, exactly the way a code-generated grain class gets its
+/// bindings — the reference this runtime's own publication is compared against.
+/// </summary>
+let private referenceBindingsOf (referenceClass: Type) =
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+
+    AttributeGrainBindingsProvider(manifestServices)
+        .Populate(referenceClass, GrainType.Create "reference-probe", properties)
+
+    bindingPropertiesOf properties
+
+/// <summary>Populate a scratch dictionary through the functional registry's own provider.</summary>
+let private functionalBindingsOf (definition: FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>) grainTypeName =
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create definition)
+    registry.Freeze() |> ignore
+
+    let provider =
+        FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
+
+    let marker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<'Actor>
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    properties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(marker, GrainType.Create grainTypeName, properties)
+    bindingPropertiesOf properties
+
+/// <remarks>
+/// Spec 004 item 1: "the registry's properties provider publishes the same binding keys Orleans'
+/// codegen publishes for <c>[ImplicitStreamSubscription]</c>". This is that test: the reference is
+/// a real C# class carrying a real <c>[ImplicitStreamSubscription]</c>, run through Orleans' own
+/// <c>AttributeGrainBindingsProvider</c> — key for key and value for value, including the null
+/// <c>streamid-mapper</c> value an undecorated mapper name produces.
+/// </remarks>
+[<Fact>]
+let ``onStream publishes exactly what a live [ImplicitStreamSubscription] publishes`` () =
+    let reference = referenceBindingsOf typeof<Facades.ImplicitStreamReference>
+    let published = functionalBindingsOf streamBindingDefinition "runtime.binding.stream"
+
+    // Pins the reference itself: three keys, so a fourth added by a future Orleans fails loudly.
+    test <@ reference.Length = 3 @>
+    test <@ published = reference @>
+
+    test
+        <@
+            published = [ "binding.attr-1.pattern",
+                          $"namespace:{Facades.ImplicitSubscriptionNamespaces.Stream}"
+                          "binding.attr-1.streamid-mapper", null
+                          "binding.attr-1.type", "stream" ]
+        @>
+
+/// <remarks>The same exactness proof for <c>[ImplicitChannelSubscription]</c>.</remarks>
+[<Fact>]
+let ``onBroadcast publishes exactly what a live [ImplicitChannelSubscription] publishes`` () =
+    let reference = referenceBindingsOf typeof<Facades.ImplicitChannelReference>
+    let published = functionalBindingsOf channelBindingDefinition "runtime.binding.channel"
+
+    test <@ reference.Length = 3 @>
+    test <@ published = reference @>
+
+    test
+        <@
+            published = [ "binding.attr-1.channel-pattern",
+                          $"namespace:{Facades.ImplicitSubscriptionNamespaces.Channel}"
+                          "binding.attr-1.channelid-mapper", null
+                          "binding.attr-1.type", "broadcast-channel" ]
+        @>
+
+/// <remarks>
+/// Orleans' binding names a namespace and not a provider, so declaring one namespace on two
+/// providers is one binding, not two: publishing it twice would put two byte-identical groups in
+/// the manifest for no gain. The delivery path still distinguishes the two declarations.
+/// </remarks>
+[<Fact>]
+let ``two declarations of one namespace on two providers publish a single binding group`` () =
+    let published = functionalBindingsOf twoProviderDefinition "runtime.binding.twoproviders"
+    let reference = referenceBindingsOf typeof<Facades.ImplicitStreamReference>
+
+    test <@ published = reference @>
+
+/// <remarks>
+/// The negative control: a definition that declares no implicit subscription publishes no
+/// binding property at all, so a grain type without <c>onStream</c> is invisible to
+/// <c>ImplicitStreamSubscriberTable</c> exactly as before this feature existed.
+/// </remarks>
+[<Fact>]
+let ``a definition without implicit subscriptions publishes no binding property`` () =
+    let registry = frozenRegistry ()
+
+    let provider =
+        FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
+
+    let marker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<RuntimeActor>
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    properties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(marker, GrainType.Create "runtime.probe", properties)
+
+    test <@ bindingPropertiesOf properties = [] @>
+
 [<Fact>]
 let ``the properties provider fails startup on zero or multiple normalized entries`` () =
     let registry = frozenRegistry ()
-    let provider = FunctionalGrainPropertiesProvider registry :> IGrainPropertiesProvider
+    let provider = FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
     let markerType = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<RuntimeActor>
     let grainType = GrainType.Create "runtime.probe"
 
@@ -537,7 +825,7 @@ let ``the properties provider fails startup on zero or multiple normalized entri
 [<Fact>]
 let ``the properties provider leaves unregistered grain classes alone`` () =
     let registry = frozenRegistry ()
-    let provider = FunctionalGrainPropertiesProvider registry :> IGrainPropertiesProvider
+    let provider = FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
     let properties = Dictionary<string, string>()
     properties.["interface.0"] <- "Orleans.IRemindable"
 

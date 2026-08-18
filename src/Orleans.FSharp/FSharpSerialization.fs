@@ -16,6 +16,16 @@ module FSharpSerialization =
     /// Invokes an extension method on ISiloBuilder by name, searching loaded assemblies.
     /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
     /// </summary>
+    /// <param name="methodName">The static extension method name to find and invoke.</param>
+    /// <param name="args">The arguments to pass after the leading <c>ISiloBuilder</c> parameter.</param>
+    /// <param name="packageHint">The NuGet package named in the diagnostic if the method cannot be found.</param>
+    /// <param name="siloBuilder">The silo builder passed as the extension method's receiver.</param>
+    /// <returns><paramref name="siloBuilder"/>, for chaining.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when no loaded assembly declares a static method named <paramref name="methodName"/>
+    /// whose first parameter accepts <c>ISiloBuilder</c> and whose remaining parameter count
+    /// matches <paramref name="args"/>.
+    /// </exception>
     let private invokeExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (siloBuilder: ISiloBuilder) =
         let siloBuilderType = typeof<ISiloBuilder>
 
@@ -49,7 +59,12 @@ module FSharpSerialization =
     /// This complements <c>FSharp.SystemTextJson</c> by providing native Orleans serializer
     /// support for F# types in grain method arguments and state.
     /// </summary>
-    /// <returns>A function that configures the ISiloBuilder with F# serialization support.</returns>
+    /// <param name="builder">The silo builder to configure.</param>
+    /// <returns><paramref name="builder"/>, for chaining.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the <c>Microsoft.Orleans.Serialization.FSharp</c> package is not referenced, so
+    /// no loaded assembly declares <c>AddSerializationFSharpSupport</c>.
+    /// </exception>
     let addFSharpSerialization : (ISiloBuilder -> ISiloBuilder) =
         fun builder ->
             invokeExtensionMethod

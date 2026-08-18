@@ -8,11 +8,16 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.DependencyInjection.Extensions
 open Microsoft.Extensions.Options
 open Orleans
+open Orleans.BroadcastChannel
 open Orleans.Configuration
+open Orleans.EventSourcing
 open Orleans.Hosting
 open Orleans.Metadata
 open Orleans.Runtime
 open Orleans.Storage
+open Orleans.Streams
+open Orleans.Transactions
+open Orleans.Transactions.Abstractions
 open Orleans.FSharp.FunctionalDiagnostics
 open Orleans.FSharp.FunctionalSiloDiagnostics
 
@@ -24,14 +29,24 @@ open Orleans.FSharp.FunctionalSiloDiagnostics
 [<Sealed>]
 type internal FunctionalSiloStartupValidator(services: IServiceProvider, registry: FunctionalGrainRegistry) =
 
+    /// <summary>
+    /// Runs every startup check: registry/manifest agreement, serializer availability, reminder
+    /// period floors, and that every named storage, transactional, journal, stream, and
+    /// broadcast-channel provider a registered definition names is actually registered on this
+    /// silo.
+    /// </summary>
+    /// <exception cref="System.InvalidOperationException">Any of the checks above fails.</exception>
     let validate () =
         // Materializing the options runs the functional post-configure, which atomically freezes
         // the registry; every check below therefore reads the same immutable snapshot.
         let options = services.GetRequiredService<IOptions<GrainTypeOptions>>().Value
         let snapshot = registry.Snapshot
 
-        let openMarker = typedefof<FunctionalGrainMarker<_>>
         let openInterface = typedefof<IFunctionalGrainTarget<_>>
+
+        let openMarkers =
+            [| typedefof<FunctionalGrainMarker<_>>
+               typedefof<FunctionalInterleavingGrainMarker<_>> |]
 
         let isOpen (definition: Type) (candidate: Type) =
             candidate = definition
@@ -39,7 +54,10 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                 && not candidate.IsConstructedGenericType
                 && candidate.GetGenericTypeDefinition() = definition)
 
-        if options.Classes |> Seq.exists (isOpen openMarker) then
+        if
+            options.Classes
+            |> Seq.exists (fun candidate -> openMarkers |> Array.exists (fun open' -> isOpen open' candidate))
+        then
             fail
                 StartupStage
                 "the open generic functional marker is still registered as a grain class; the functional GrainTypeOptions post-configure did not run."
@@ -74,6 +92,21 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                 (definition.Facets
                  |> Array.map (fun facet -> facet.Descriptor.StateName, facet.Descriptor.StoredType))
 
+            SerializerPreflight.ensureTransactionalStoredTypes
+                provider
+                definition.GrainTypeName
+                (definition.TransactionalFacets
+                 |> Array.map (fun facet -> facet.Descriptor.StateName, facet.Descriptor.StoredType))
+
+            match definition.Journal with
+            | Some journal ->
+                SerializerPreflight.ensureJournalTypes
+                    provider
+                    definition.GrainTypeName
+                    journal.StateType
+                    journal.EventType
+            | None -> ()
+
         // "Silo startup validates every declared period against the configured
         // ReminderOptions.MinimumReminderPeriod." The real reminder service enforces the same
         // floor lazily, at first RegisterOrUpdateReminder call during activation (an
@@ -107,6 +140,128 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                     fail
                         StartupStage
                         $"the persistent state '{descriptor.StateName}' (stored type '{descriptor.StoredType.FullName}') of grain type '{definition.GrainTypeName}' names storage provider '{descriptor.ProviderName}', which is not registered on this silo. Add that named IGrainStorage (for example AddMemoryGrainStorage \"{descriptor.ProviderName}\") to every silo which hosts this definition."
+
+        // Spec 004 item 2. A definition that declares any transaction option, or attaches any
+        // transactional state, needs UseTransactions() on this silo; and every named transactional
+        // storage must resolve the way NamedTransactionalStateStorageFactory.Create resolves it —
+        // a keyed ITransactionalStateStorageFactory first, then a keyed IGrainStorage. Both are
+        // checked here rather than left to the first call: without UseTransactions the transaction
+        // agent is simply absent and the first transactional request fails with Orleans'
+        // OrleansTransactionsDisabledException, and an unresolvable storage name fails the
+        // activation.
+        let needsTransactions =
+            snapshot
+            |> Array.exists (fun entry ->
+                entry.Definition.TransactionalFacets.Length > 0
+                || entry.Definition.Operations
+                   |> Array.exists (fun operation -> operation.Transaction.IsSome))
+
+        if needsTransactions then
+            let declaringGrainTypes =
+                snapshot
+                |> Array.filter (fun entry ->
+                    entry.Definition.TransactionalFacets.Length > 0
+                    || entry.Definition.Operations
+                       |> Array.exists (fun operation -> operation.Transaction.IsSome))
+                |> Array.map (fun entry -> $"'{entry.GrainTypeName}'")
+                |> String.concat ", "
+
+            if isNull (box (services.GetService<ITransactionAgent>())) then
+                fail
+                    StartupStage
+                    $"grain type(s) {declaringGrainTypes} declare 'transactional' operations or attach transactional state, but this silo has no Orleans transaction agent. Call UseTransactions() on the silo builder (and on the client builder of every process which calls a transactional operation)."
+
+            if isNull (box (services.GetService<ITransactionalStateFactory>())) then
+                fail
+                    StartupStage
+                    $"grain type(s) {declaringGrainTypes} declare 'transactional' operations or attach transactional state, but this silo has no ITransactionalStateFactory. Call UseTransactions() on the silo builder."
+
+            for entry in snapshot do
+                let definition = entry.Definition
+
+                for blueprint in definition.TransactionalFacets do
+                    let descriptor = blueprint.Descriptor
+
+                    let resolved =
+                        not (
+                            isNull (
+                                box (
+                                    services.GetKeyedService<ITransactionalStateStorageFactory>
+                                        descriptor.StorageName
+                                )
+                            )
+                        )
+                        || not (isNull (box (services.GetKeyedService<IGrainStorage> descriptor.StorageName)))
+
+                    if not resolved then
+                        fail
+                            StartupStage
+                            $"the transactional state '{descriptor.StateName}' (stored type '{descriptor.StoredType.FullName}') of grain type '{definition.GrainTypeName}' names storage '{descriptor.StorageName}', which resolves to neither a named ITransactionalStateStorageFactory nor a named IGrainStorage on this silo. Add that named storage (for example AddMemoryGrainStorage \"{descriptor.StorageName}\") to every silo which hosts this definition."
+
+        // Spec 004 item 3. Every journaled definition's named log-consistency provider must be
+        // registered on this silo, and so must whatever that provider needs: the protocol-services
+        // factory (which every stock Add*BasedLogConsistencyProvider call registers, but a
+        // hand-registered ILogViewAdaptorFactory need not have) and, when the provider writes
+        // through storage, the named or default IGrainStorage. Left to activation time, the first
+        // of these surfaces as a failed activation on the first call and the last as a failed
+        // storage read; here they fail startup, before the silo admits traffic.
+        for entry in snapshot do
+            match entry.Definition.Journal with
+            | None -> ()
+            | Some journal ->
+                let factory =
+                    match services.GetKeyedService<ILogViewAdaptorFactory> journal.ProviderName with
+                    | null ->
+                        fail
+                            StartupStage
+                            $"grain type '{entry.GrainTypeName}' is a journaled definition naming log-consistency provider '{journal.ProviderName}', which is not registered on this silo. Add it (for example AddLogStorageBasedLogConsistencyProvider \"{journal.ProviderName}\" or AddStateStorageBasedLogConsistencyProvider \"{journal.ProviderName}\") to every silo which hosts this definition."
+                    | value -> value
+
+                if
+                    isNull (box (services.GetService<Factory<IGrainContext, ILogConsistencyProtocolServices>>()))
+                then
+                    fail
+                        StartupStage
+                        $"grain type '{entry.GrainTypeName}' names log-consistency provider '{journal.ProviderName}', but this silo has no Factory<IGrainContext, ILogConsistencyProtocolServices>. Every stock Add*BasedLogConsistencyProvider call registers one through AddLogConsistencyProtocolServicesFactory(); a hand-registered ILogViewAdaptorFactory has to call it too."
+
+                if factory.UsesStorageProvider then
+                    match journal.StorageName with
+                    | Some storageName ->
+                        if isNull (box (services.GetKeyedService<IGrainStorage> storageName)) then
+                            fail
+                                StartupStage
+                                $"grain type '{entry.GrainTypeName}' names journal storage '{storageName}', which is not registered on this silo. Add that named IGrainStorage (for example AddMemoryGrainStorage \"{storageName}\") to every silo which hosts this definition."
+                    | None ->
+                        if isNull (box (services.GetService<IGrainStorage>())) then
+                            fail
+                                StartupStage
+                                $"grain type '{entry.GrainTypeName}' declares no 'journalStorage' and this silo has no default IGrainStorage, but log-consistency provider '{journal.ProviderName}' writes through one. Declare 'journalStorage' on the definition, or register a default storage provider on every silo which hosts it."
+
+        // Every named stream or broadcast-channel provider of every declared implicit
+        // subscription must be registered on this silo, for the same reason the storage-provider
+        // check above exists: Orleans resolves both as keyed services, so an unregistered name
+        // would otherwise surface only when an item is published — as a dropped delivery on the
+        // stream side, which is silent from the application's point of view.
+        for entry in snapshot do
+            let definition = entry.Definition
+
+            for binding in definition.StreamBindings do
+                let registered =
+                    if binding.IsStream then
+                        not (isNull (box (services.GetKeyedService<IStreamProvider> binding.ProviderName)))
+                    else
+                        not (isNull (box (services.GetKeyedService<IBroadcastChannelProvider> binding.ProviderName)))
+
+                if not registered then
+                    let hint =
+                        if binding.IsStream then
+                            $"Add that named stream provider (for example AddMemoryStreams \"{binding.ProviderName}\")"
+                        else
+                            $"Add that named broadcast-channel provider (for example AddBroadcastChannel \"{binding.ProviderName}\")"
+
+                    fail
+                        StartupStage
+                        $"'{binding.OperationName}' of grain type '{definition.GrainTypeName}' names provider '{binding.ProviderName}' for namespace '{binding.Namespace}', which is not registered on this silo. {hint} to every silo which hosts this definition."
 
         // Manifest agreement: the published local grain manifest carries every registered
         // definition with its closed interface ID.
@@ -143,6 +298,8 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                     $"the functional interface ID '{entry.InterfaceId}' of grain type '{entry.GrainTypeName}' does not appear in this silo's grain manifest."
 
     interface ILifecycleParticipant<ISiloLifecycle> with
+        /// <summary>Subscribes <c>validate</c> to run at <c>ServiceLifecycleStage.RuntimeInitialize</c>, before the silo admits traffic.</summary>
+        /// <param name="lifecycle">The silo's observable lifecycle to subscribe on.</param>
         member _.Participate(lifecycle: ISiloLifecycle) =
             lifecycle.Subscribe(
                 "Orleans.FSharp.FunctionalGrainRuntime",
@@ -161,6 +318,7 @@ module internal FunctionalSiloServices =
     /// The registry instance of this service collection, registering the silo-side services on
     /// first use so repeated <c>AddFunctionalGrain</c> calls share one registry.
     /// </summary>
+    /// <param name="services">The silo's service collection.</param>
     let private registryOf (services: IServiceCollection) =
         let existing =
             services
@@ -207,8 +365,18 @@ module internal FunctionalSiloServices =
             registry
 
     /// <summary>Register one hosted definition together with the silo-side services.</summary>
+    /// <param name="services">The silo's service collection.</param>
+    /// <param name="definition">The hosted definition to register.</param>
     let addTo (services: IServiceCollection) (definition: FunctionalHostedDefinition) =
         FunctionalClientServices.addTo services |> ignore
+
+        // Spec 004 item 2: each attached transactional facet registers its own exact-type
+        // ITransactionDataCopier. Orleans' open-generic default would ask the serializer for a
+        // DeepCopier of the application's stored type, which the functional runtime deliberately
+        // does not register a generalized copier for.
+        for blueprint in definition.TransactionalFacets do
+            blueprint.RegisterServices services
+
         (registryOf services).Add definition
 
 /// <summary>
@@ -223,6 +391,11 @@ module internal FunctionalSiloServices =
 module internal FunctionalDurableIdentityGuard =
 
     /// <summary>Fail registration when a durable attachment meets a derived grain type.</summary>
+    /// <param name="actorType">The actor brand CLR type, named in the diagnostic if it fires.</param>
+    /// <param name="grainTypeName">The definition's grain type name.</param>
+    /// <param name="isGrainTypeExplicit">Whether the contract declared <c>grainType</c> explicitly rather than deriving it from the actor brand.</param>
+    /// <param name="hasDurableAttachment">Whether the definition attaches <c>stateFrom</c>, <c>usePersistentState</c>, or declares <c>onReminder</c>.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="hasDurableAttachment"/> is <c>true</c> and <paramref name="isGrainTypeExplicit"/> is <c>false</c>.</exception>
     let ensure
         (actorType: Type)
         (grainTypeName: string)
@@ -242,10 +415,46 @@ module internal FunctionalDurableIdentityGuard =
 type FunctionalGrainSiloHostingExtensions =
 
     /// <summary>
+    /// Register a hosted JOURNALED definition: the grain's state is the fold of an event journal
+    /// kept by the named Orleans log-consistency provider.
+    /// </summary>
+    /// <param name="builder">The silo builder to register the definition on.</param>
+    /// <param name="definition">The journaled grain definition to host.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="builder"/> is <c>null</c>.</exception>
+    [<Extension>]
+    static member AddFunctionalJournaledGrain<'Actor, 'Key, 'Api, 'State, 'Event>
+        (
+            builder: ISiloBuilder,
+            definition: FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>
+        ) : ISiloBuilder =
+        if isNull (box builder) then
+            fail SiloStage "AddFunctionalJournaledGrain requires a silo builder."
+
+        // A journal is unconditionally a durable attachment, so the explicit-grain-type rule
+        // applies to every journaled definition rather than to the ones with a facet. Sealing
+        // already enforces it; this is the same defence in depth the ordinary path has for a
+        // definition value that reached registration some other way.
+        FunctionalDurableIdentityGuard.ensure
+            typeof<'Actor>
+            definition.GrainTypeName
+            definition.Contract.IsGrainTypeExplicit
+            true
+
+        let hosted = FunctionalJournaledHosted.create definition
+
+        builder.ConfigureServices(fun services -> FunctionalSiloServices.addTo services hosted)
+        |> ignore
+
+        builder
+
+    /// <summary>
     /// Register a hosted definition together with the registry, manifest providers, activator,
     /// and silo startup validation. Repeated registration of the same definition value is
     /// idempotent; conflicting contracts or definitions are configuration errors.
     /// </summary>
+    /// <param name="builder">The silo builder to register the definition on.</param>
+    /// <param name="definition">The grain definition to host.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="builder"/> is <c>null</c>.</exception>
     [<Extension>]
     static member AddFunctionalGrain<'Actor, 'Key, 'Api, 'State>
         (builder: ISiloBuilder, definition: FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>)

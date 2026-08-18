@@ -44,7 +44,9 @@ module internal FSharpBinaryFormat =
 
     /// <summary>A matched pair of write/read functions for one concrete type.</summary>
     type internal TypeCodec = {
+        /// Serializes a boxed value of this codec's type to the writer.
         Write: BinaryWriter -> obj -> unit
+        /// Deserializes a boxed value of this codec's type from the reader.
         Read:  BinaryReader -> obj
     }
 
@@ -81,6 +83,7 @@ module internal FSharpBinaryFormat =
         static let buildTimeout = TimeSpan.FromSeconds 30.0
 
         /// <summary>Claims the build for this thread, or returns the codec to use.</summary>
+        /// <param name="t">The type being resolved to a codec.</param>
         member this.Claim(t: Type) : CodecClaim =
             lock gate (fun () ->
                 match real with
@@ -99,6 +102,7 @@ module internal FSharpBinaryFormat =
                         BuildIt)
 
         /// <summary>Publishes a finished build and wakes every waiter.</summary>
+        /// <param name="codec">The finished write/read pair to publish.</param>
         member _.Publish(codec: TypeCodec) =
             lock gate (fun () ->
                 real <- Some codec
@@ -117,6 +121,13 @@ module internal FSharpBinaryFormat =
                 Monitor.PulseAll gate)
 
         /// <summary>Resolves a forwarder at invocation time, waiting out an in-flight build.</summary>
+        /// <param name="t">The type whose codec build is being awaited.</param>
+        /// <exception cref="System.InvalidOperationException">
+        /// Thrown when invoked from the very thread that is building <paramref name="t"/> (a
+        /// self-referential wait), when waiting for another thread's build exceeds
+        /// <c>buildTimeout</c> (30 seconds), or when the build finished without publishing a codec
+        /// (a failed build).
+        /// </exception>
         member private _.Resolve(t: Type) : TypeCodec =
             match real with
             | Some c -> c
@@ -162,11 +173,14 @@ module internal FSharpBinaryFormat =
     let private allRepresentations =
         Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic
 
-    /// <summary>Raise a protocol-stage codec diagnostic.</summary>
+    /// <summary>Raise a protocol-stage codec diagnostic. Never returns.</summary>
+    /// <param name="message">The failure detail, appended after the "FSharpBinaryCodec: " prefix.</param>
+    /// <exception cref="System.InvalidOperationException">Always thrown, carrying <paramref name="message"/>.</exception>
     let private failProtocol<'T> (message: string) : 'T =
         invalidOp $"FSharpBinaryCodec: {message}"
 
     /// <summary>Bytes still unread in the reader's underlying stream.</summary>
+    /// <param name="br">The reader whose underlying stream to measure.</param>
     let private remainingBytes (br: BinaryReader) : int64 =
         let stream = br.BaseStream
 
@@ -180,6 +194,7 @@ module internal FSharpBinaryFormat =
     /// Only <c>unit</c> — and tuples built solely from it — occupies zero bytes; every other
     /// shape writes at least one byte, which is all an element-count bound needs.
     /// </summary>
+    /// <param name="t">The element type to bound.</param>
     let rec private minWireBytes (t: Type) : int =
         if t = typeof<unit> then 0
         elif FSharpType.IsTuple t then
@@ -197,6 +212,12 @@ module internal FSharpBinaryFormat =
     let private MaxZeroWidthElements = 1048576
 
     /// <summary>Read a length prefix, rejecting one that cannot fit in what is left.</summary>
+    /// <param name="br">The reader to read the length prefix from.</param>
+    /// <param name="what">A noun phrase naming what the length prefixes, for the diagnostic.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the declared length is negative, or exceeds the bytes remaining in the reader's
+    /// stream.
+    /// </exception>
     let private readLength (br: BinaryReader) (what: string) : int =
         let length = br.ReadInt32()
 
@@ -211,6 +232,18 @@ module internal FSharpBinaryFormat =
         length
 
     /// <summary>Read an element count, rejecting one that cannot fit in what is left.</summary>
+    /// <param name="br">The reader to read the element count from.</param>
+    /// <param name="minBytesPerElement">
+    /// The minimum wire size of one element, from <c>minWireBytes</c>; <c>0</c> for a zero-width
+    /// element type, which is bounded absolutely instead (see <c>MaxZeroWidthElements</c>).
+    /// </param>
+    /// <param name="what">A noun phrase naming what is being counted, for the diagnostic.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the declared count is negative, when <paramref name="minBytesPerElement"/> is
+    /// positive and the count times it exceeds the bytes remaining in the reader's stream, or when
+    /// <paramref name="minBytesPerElement"/> is zero and the count exceeds the zero-width element
+    /// cap.
+    /// </exception>
     let private readCount (br: BinaryReader) (minBytesPerElement: int) (what: string) : int =
         let count = br.ReadInt32()
 
@@ -247,6 +280,7 @@ module internal FSharpBinaryFormat =
     /// reader returns it correctly, so rejecting it would reject every <c>None</c> ever written.
     /// </para>
     /// </remarks>
+    /// <param name="t">The declared field or value type to check.</param>
     let private allowsNull (t: Type) =
         let usesNullAsTrueValue () =
             match t.GetCustomAttributes(typeof<CompilationRepresentationAttribute>, false) with
@@ -281,11 +315,21 @@ module internal FSharpBinaryFormat =
     /// later and far from the cause, as an <c>ArgumentNullException</c> raised deep inside
     /// whichever element loop first touched the field.
     /// </remarks>
+    /// <param name="recordName">The record's <c>FullName</c>, for the diagnostic.</param>
+    /// <param name="fieldName">The null field's name, for the diagnostic.</param>
+    /// <param name="fieldType">The field's declared type, for the diagnostic.</param>
+    /// <exception cref="System.InvalidOperationException">Always thrown.</exception>
     let private failNullField<'T> (recordName: string) (fieldName: string) (fieldType: Type) : 'T =
         invalidOp
             $"FSharpBinaryCodec: field '{fieldName}' of the record '{recordName}' is null, but its declared type '{fieldType.FullName}' has no null value. The usual cause is a persistent state that was cleared and not re-initialized: after ClearStateAsync the holder's State is a fresh uninitialized instance, so assign a freshly initialized state before the next write."
 
     /// <summary>Read a field count, rejecting one that does not match the type's real arity.</summary>
+    /// <param name="br">The reader to read the field count from.</param>
+    /// <param name="arity">The expected field count.</param>
+    /// <param name="what">A noun phrase naming the type being read, for the diagnostic.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the declared field count does not equal <paramref name="arity"/>.
+    /// </exception>
     let private readArity (br: BinaryReader) (arity: int) (what: string) : unit =
         let count = br.ReadInt32()
 
@@ -325,10 +369,14 @@ module internal FSharpBinaryFormat =
             definition.MakeGenericMethod typeArguments
 
     /// <summary>Close the array-to-collection constructor for one element type, once.</summary>
+    /// <param name="name">The <c>CollectionShims</c> method to close: <c>"ListOfArray"</c>, <c>"SetOfArray"</c>, or <c>"MapOfArray"</c>.</param>
+    /// <param name="typeArguments">The generic type arguments to close the method over.</param>
     let private closeCollectionBuilder (name: string) (typeArguments: Type[]) : Array -> obj =
         (shimMethod name typeArguments).CreateDelegate<Func<Array, obj>>().Invoke
 
     /// <summary>Close the map-entry reader for one key/value pair of types, once.</summary>
+    /// <param name="keyType">The map's key type.</param>
+    /// <param name="valueType">The map's value type.</param>
     let private closeMapEntryReader (keyType: Type) (valueType: Type) : obj -> (obj * obj)[] =
         (shimMethod "MapEntries" [| keyType; valueType |])
             .CreateDelegate<Func<obj, (obj * obj)[]>>()
@@ -339,6 +387,7 @@ module internal FSharpBinaryFormat =
     /// declaring type is an F# union). This handles cases like BankAccountCommand+Deposit
     /// where Orleans sees the concrete runtime type rather than the parent union.
     /// </summary>
+    /// <param name="t">The type to check.</param>
     let isUnionCaseType (t: Type) : bool =
         t.IsNested && FSharpType.IsUnion(t.DeclaringType, true)
 
@@ -349,6 +398,7 @@ module internal FSharpBinaryFormat =
     /// For F# DU case types (e.g. BankAccountCommand+Deposit), delegates to the
     /// parent union's codec since the case type is a subtype of the union.
     /// </summary>
+    /// <param name="t">The type to resolve a codec for.</param>
     let rec getCodec (t: Type) : TypeCodec =
         // Fast path: fully built
         match builtCodecs.TryGetValue(t) with
@@ -784,6 +834,7 @@ module internal FSharpBinaryFormat =
     /// Note: TypeShape.Shape.Poco also matches some system classes like string, so we
     /// explicitly exclude those first.
     /// </summary>
+    /// <param name="t">The type to check.</param>
     let isSupportedType (t: Type) : bool =
         if isNull t then false
         else
@@ -813,6 +864,8 @@ module internal FSharpBinaryFormat =
                 | _ -> false
 
     /// <summary>Serializes a value to a byte array using the F# binary format.</summary>
+    /// <param name="value">The boxed value to serialize.</param>
+    /// <param name="valueType">The value's exact CLR type, used to select its codec.</param>
     let serialize (value: obj) (valueType: Type) : byte array =
         use ms = new MemoryStream()
         use bw = new BinaryWriter(ms, Text.Encoding.UTF8, true)
@@ -822,6 +875,8 @@ module internal FSharpBinaryFormat =
         ms.ToArray()
 
     /// <summary>Deserializes a value from a byte array using the F# binary format.</summary>
+    /// <param name="data">The bytes previously produced by <see cref="serialize"/>.</param>
+    /// <param name="expectedType">The exact CLR type to decode, used to select its codec.</param>
     let deserialize (data: byte array) (expectedType: Type) : obj =
         use ms = new MemoryStream(data)
         use br = new BinaryReader(ms, Text.Encoding.UTF8, true)
@@ -866,6 +921,9 @@ module internal FSharpBinaryFormat =
         static member Current = ExpectedPayloadType.expected
 
         /// <summary>Publish <paramref name="expected"/> for the duration of <paramref name="read"/>.</summary>
+        /// <param name="expected">The expected payload type to publish for the scope's duration.</param>
+        /// <param name="read">The deserialization to run under the published expected type.</param>
+        /// <returns>Whatever <paramref name="read"/> returns.</returns>
         static member Scoped(expected: Type, read: unit -> 'T) : 'T =
             let previous = ExpectedPayloadType.expected
             ExpectedPayloadType.expected <- expected
@@ -895,6 +953,7 @@ module internal FSharpBinaryFormat =
     /// <c>Orleans.FSharpHostile</c> on the strength of <c>Orleans.FSharp</c>, which lets an
     /// attacker name any assembly they can get onto the probing path.
     /// </summary>
+    /// <param name="asmName">The assembly simple name to check.</param>
     let private isAssemblyAllowed (asmName: string) : bool =
         not (String.IsNullOrEmpty asmName)
         && allowedAssemblyPrefixes
@@ -921,6 +980,7 @@ module internal FSharpBinaryFormat =
     /// afterwards is already too late, and a generic argument's assembly never shows up there
     /// at all.
     /// </remarks>
+    /// <param name="typeName">The assembly-qualified type name to scan.</param>
     let rec private assemblyNamesIn (typeName: string) : string list =
         let arguments = ResizeArray<string>()
         let mutable index = 0
@@ -983,6 +1043,14 @@ module internal FSharpBinaryFormat =
     let internal wireResolvedTypeCount () = wireResolvedTypes.Count
 
     /// <summary>Resolve a wire-supplied type name, allow-listing before any assembly loads.</summary>
+    /// <param name="typeName">The assembly-qualified type name read from the payload.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="typeName"/> exceeds <c>MaxTypeNameLength</c>, when it or any of
+    /// its generic arguments names an assembly outside <c>allowedAssemblyPrefixes</c>, when this
+    /// process has already resolved <c>MaxWireResolvedTypes</c> distinct names, when
+    /// <see cref="Type.GetType(string, bool)"/> does not find the type, or when the resolved
+    /// type's own assembly is outside the allow-list.
+    /// </exception>
     let private resolveWireType (typeName: string) : Type =
         match wireResolvedTypes.TryGetValue typeName with
         | true, cached -> cached
@@ -1019,6 +1087,7 @@ module internal FSharpBinaryFormat =
     /// A declared payload type together with every type Orleans' own codecs decompose it into:
     /// its generic arguments and array element type, transitively.
     /// </summary>
+    /// <param name="root">The payload type whose constituents to enumerate.</param>
     /// <remarks>
     /// A generalized codec is only reached for what no built-in codec claims, and Orleans DOES
     /// claim <c>System.Tuple</c> and arrays. Its codecs for those hand each ELEMENT to the F#
@@ -1063,6 +1132,11 @@ module internal FSharpBinaryFormat =
                         seen.ToArray())
 
     /// <summary>Record one closed type in the declaration table. Idempotent.</summary>
+    /// <param name="declared">The closed type to record.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="declared"/>'s <c>FullName</c> is already declared by a
+    /// different CLR type.
+    /// </exception>
     let private declareOne (declared: Type) =
         if
             not declared.ContainsGenericParameters
@@ -1079,6 +1153,11 @@ module internal FSharpBinaryFormat =
     /// Declare one closed type as a top-level payload type so an elided field type can be
     /// resolved by name. Idempotent.
     /// </summary>
+    /// <param name="declared">The closed type to declare, together with its constituents.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="declared"/>, or one of its constituents, has a <c>FullName</c>
+    /// already declared by a different CLR type.
+    /// </exception>
     /// <remarks>
     /// A second declaration of the same <c>FullName</c> with a DIFFERENT CLR type is rejected
     /// rather than silently overwritten: the table is the authority for resolving an elided
@@ -1098,6 +1177,8 @@ module internal FSharpBinaryFormat =
     /// Whether a wire-resolved type is inside the shape the caller declared: the expected type
     /// itself (or a subtype of it), or one of the constituents Orleans decomposes it into.
     /// </summary>
+    /// <param name="expected">The caller's declared expected type.</param>
+    /// <param name="resolved">The type resolved from the wire, to check against it.</param>
     let private admitsResolved (expected: Type) (resolved: Type) =
         constituentsOf expected
         |> Array.exists (fun candidate -> candidate.IsAssignableFrom resolved)
@@ -1108,6 +1189,8 @@ module internal FSharpBinaryFormat =
     /// Orleans omits the field-type header (SchemaType.Expected optimization).
     /// Format: [length-prefixed UTF8 FullName][raw value bytes from serialize].
     /// </summary>
+    /// <param name="value">The boxed value to serialize.</param>
+    /// <param name="valueType">The value's exact CLR type, embedded so <see cref="deserializeWithType"/> can recover it.</param>
     let serializeWithType (value: obj) (valueType: Type) : byte array =
         use ms = new MemoryStream()
         use bw = new BinaryWriter(ms, Text.Encoding.UTF8, true)
@@ -1124,6 +1207,18 @@ module internal FSharpBinaryFormat =
     /// embedded in the bytes is resolved via <see cref="Type.GetType"/> with an assembly
     /// allow-list for defense-in-depth.
     /// </summary>
+    /// <param name="data">The bytes previously produced by <see cref="serializeWithType"/>.</param>
+    /// <param name="hintType">
+    /// The type to decode as, bypassing wire-name resolution; pass <c>null</c> to resolve the
+    /// embedded name instead.
+    /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the length-prefixed payload declares more value bytes than remain (see
+    /// <c>readLength</c>); when <paramref name="hintType"/> is null and the embedded type name
+    /// cannot be resolved (see <c>resolveWireType</c>); or when the resolved type is not
+    /// assignable to the ambient <c>ExpectedPayloadType.Current</c>, when one is published, nor to
+    /// any of its constituents.
+    /// </exception>
     let deserializeWithType (data: byte array) (hintType: Type) : obj =
         use ms = new MemoryStream(data)
         use br = new BinaryReader(ms, Text.Encoding.UTF8, true)
@@ -1245,6 +1340,7 @@ module FSharpBinaryCodecRegistration =
     /// The codec, its singleton, and the type filter — registered at most once per service
     /// collection, whichever entry point asks for them first.
     /// </summary>
+    /// <param name="services">The service collection to register into.</param>
     let private ensureCodec (services: IServiceCollection) =
         let registered =
             services
@@ -1263,6 +1359,7 @@ module FSharpBinaryCodecRegistration =
             |> ignore
 
     /// <summary>The generalized copier — registered at most once per service collection.</summary>
+    /// <param name="services">The service collection to register into.</param>
     let private ensureCopier (services: IServiceCollection) =
         let registered =
             services
@@ -1279,6 +1376,8 @@ module FSharpBinaryCodecRegistration =
     /// Registers the FSharpBinaryCodec as a generalized codec, copier, and type filter
     /// with the Orleans serializer builder.
     /// </summary>
+    /// <param name="builder">The Orleans serializer builder to register into.</param>
+    /// <returns><paramref name="builder"/>, for chaining.</returns>
     let addToSerializerBuilder (builder: ISerializerBuilder) : ISerializerBuilder =
         ensureCodec builder.Services
         ensureCopier builder.Services
@@ -1290,6 +1389,8 @@ module FSharpBinaryCodecRegistration =
     /// argument and reply across an explicit byte boundary, which already gives a local call
     /// the same object-graph isolation as a remote one.
     /// </summary>
+    /// <param name="builder">The Orleans serializer builder to register into.</param>
+    /// <returns><paramref name="builder"/>, for chaining.</returns>
     /// <remarks>
     /// Codec registration is shared with <see cref="addToSerializerBuilder"/>: using both entry
     /// points on one builder keeps a single codec registration and still adds the compatibility

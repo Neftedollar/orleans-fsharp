@@ -23,6 +23,7 @@ License: MIT
 - Resilience: https://neftedollar.com/orleans-fsharp/resilience/
 - Advanced: https://neftedollar.com/orleans-fsharp/advanced/
 - Analyzers: https://neftedollar.com/orleans-fsharp/analyzers/
+- Calling from C#: https://neftedollar.com/orleans-fsharp/calling-from-csharp/
 
 ## Packages
 - Orleans.FSharp

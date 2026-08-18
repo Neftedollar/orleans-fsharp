@@ -66,11 +66,101 @@ internal static class FunctionalAdmissionFlags
     /// <summary>Bit 2 — always-interleave admission.</summary>
     public const byte AlwaysInterleave = 0x04;
 
-    /// <summary>Bits 3-7 — reserved; a set reserved bit invalidates the request.</summary>
-    public const byte Reserved = 0xF8;
+    /// <summary>
+    /// Bits 3-5 — the transaction field: <c>0</c> for a non-transactional operation, otherwise
+    /// the <see cref="Orleans.TransactionOption"/> value plus one. Code <c>7</c> is unassigned.
+    /// </summary>
+    public const byte TransactionMask = 0x38;
+
+    /// <summary>The bit position of the low bit of <see cref="TransactionMask"/>.</summary>
+    public const int TransactionShift = 3;
+
+    /// <summary>The one code in <see cref="TransactionMask"/> that no transaction option uses.</summary>
+    public const byte UnassignedTransactionCode = 7;
+
+    /// <summary>Bits 6-7 — reserved; a set reserved bit invalidates the request.</summary>
+    public const byte Reserved = 0xC0;
 
     /// <summary>True when the value sets at least one reserved bit.</summary>
+    /// <param name="flags">The admission-flag byte to test.</param>
     public static bool HasReservedBits(byte flags) => (flags & Reserved) != 0;
+
+    /// <summary>The raw transaction code carried in bits 3-5.</summary>
+    /// <param name="flags">The admission-flag byte to read.</param>
+    public static byte TransactionCode(byte flags) => (byte)((flags & TransactionMask) >> TransactionShift);
+
+    /// <summary>True when the operation declares a transaction option.</summary>
+    /// <param name="flags">The admission-flag byte to test.</param>
+    public static bool IsTransactional(byte flags) => (flags & TransactionMask) != 0;
+
+    /// <summary>True unless bits 3-5 carry the one unassigned code.</summary>
+    /// <param name="flags">The admission-flag byte to test.</param>
+    public static bool IsTransactionFieldValid(byte flags) => TransactionCode(flags) != UnassignedTransactionCode;
+
+    /// <summary>Encode one transaction option into the transaction field.</summary>
+    /// <param name="option">The Orleans transaction option to encode.</param>
+    public static byte EncodeTransaction(TransactionOption option) =>
+        (byte)((((byte)option) + 1) << TransactionShift);
+
+    /// <summary>Decode the transaction field; <c>false</c> for a non-transactional operation.</summary>
+    /// <param name="flags">The admission-flag byte to decode.</param>
+    /// <param name="option">The decoded transaction option, when this returns true.</param>
+    public static bool TryGetTransactionOption(byte flags, out TransactionOption option)
+    {
+        var code = TransactionCode(flags);
+
+        if (code is 0 or UnassignedTransactionCode)
+        {
+            option = default;
+            return false;
+        }
+
+        option = (TransactionOption)(code - 1);
+        return true;
+    }
+}
+
+/// <summary>
+/// The runtime-owned mutable cell that holds one functional transactional state.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Orleans' <c>ITransactionalState&lt;TState&gt;</c> requires <c>TState : class, new()</c> and
+/// applies an update by <b>mutating</b> the stored instance in place —
+/// <c>TransactionalState&lt;TState&gt;.PerformUpdate</c> hands the update function
+/// <c>record.State</c> and keeps whatever that object looks like when the function returns. An
+/// ordinary F# state type is an immutable record, a union, or a tuple: it has neither a
+/// parameterless constructor nor a way to be mutated.
+/// </para>
+/// <para>
+/// This box is the adapter. It is the only thing Orleans ever stores, copies, or serializes for a
+/// functional transactional facet; the application's value rides in <see cref="Value"/> and is
+/// replaced by a single reference assignment the runtime performs. The application function is
+/// <c>'State -&gt; 'State</c> and never sees the box, so it cannot mutate transactional state in
+/// place even by accident.
+/// </para>
+/// </remarks>
+/// <typeparam name="TValue">The application's transactional state type.</typeparam>
+[GenerateSerializer]
+public sealed class FunctionalTransactionalBox<TValue>
+{
+    /// <summary>The application value currently held by this transactional state.</summary>
+    [Id(0)]
+    public TValue Value { get; set; } = default!;
+
+    /// <summary>
+    /// False until an update has stored a value into <see cref="Value"/>.
+    /// </summary>
+    /// <remarks>
+    /// A transactional state has no "record exists" flag: Orleans materializes a state that was
+    /// never written by calling <c>new TState()</c>, which is exactly why it constrains
+    /// <c>TState : class, new()</c>. For an F# state type <c>default</c> is a null reference or a
+    /// zeroed struct, neither of which is necessarily the value the definition declared, so the
+    /// runtime distinguishes "never written" from "written" explicitly and substitutes the
+    /// declared initial value on a read of an unwritten state.
+    /// </remarks>
+    [Id(1)]
+    public bool HasValue { get; set; }
 }
 
 /// <summary>Shared diagnostic vocabulary of the fixed transport.</summary>
@@ -83,6 +173,7 @@ internal static class FunctionalTransportDiagnostics
     public const int ProtocolTokenLength = 32;
 
     /// <summary>Raise a transport-stage diagnostic.</summary>
+    /// <param name="message">The diagnostic detail, appended after the stage prefix.</param>
     public static InvalidOperationException Fail(string message) =>
         new(Stage + ": " + message);
 
@@ -104,6 +195,12 @@ internal static class FunctionalTransportDiagnostics
     /// lines, and an unbounded one could bloat every exception it appears in. NUL is one of the
     /// characters this rejects.
     /// </remarks>
+    /// <param name="value">The field value to validate.</param>
+    /// <param name="fieldName">The field name to name in the diagnostic.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <paramref name="value"/> is null or empty, exceeds <see cref="MaxWireTextLength"/>,
+    /// or contains a control character.
+    /// </exception>
     public static void EnsureWireText(string? value, string fieldName)
     {
         if (string.IsNullOrEmpty(value))
@@ -128,6 +225,11 @@ internal static class FunctionalTransportDiagnostics
     }
 
     /// <summary>Validate a protocol token: non-null and exactly 32 bytes.</summary>
+    /// <param name="value">The field value to validate.</param>
+    /// <param name="fieldName">The field name to name in the diagnostic.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <paramref name="value"/> is null or its length is not <see cref="ProtocolTokenLength"/>.
+    /// </exception>
     public static void EnsureProtocolToken(byte[]? value, string fieldName)
     {
         if (value is null)
@@ -164,6 +266,18 @@ internal sealed class FunctionalRequestEnvelope : IFunctionalRequestMetadata
     }
 
     /// <summary>Create a complete, validated envelope.</summary>
+    /// <param name="grainType">The explicit Orleans grain type of the addressed contract.</param>
+    /// <param name="contractVersion">The application contract version.</param>
+    /// <param name="operationId">The stable ordinal wire ID of the invoked operation.</param>
+    /// <param name="protocolToken">The raw SHA-256 request protocol token.</param>
+    /// <param name="admissionFlags">The admission-flag byte.</param>
+    /// <param name="payload">The serialized argument payload.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <paramref name="grainType"/> or <paramref name="operationId"/> is empty, too
+    /// long, or carries a control character; when <paramref name="contractVersion"/> is not
+    /// positive; when <paramref name="protocolToken"/> is not exactly 32 bytes; or when
+    /// <paramref name="payload"/> is null.
+    /// </exception>
     internal FunctionalRequestEnvelope(
         string grainType,
         int contractVersion,
@@ -207,6 +321,18 @@ internal sealed class FunctionalRequestEnvelope : IFunctionalRequestMetadata
     /// Populate and validate every field exactly once. The deserializing codec calls this
     /// after it has read all six fields; a second call is a programming error.
     /// </summary>
+    /// <param name="grainType">The explicit Orleans grain type of the addressed contract.</param>
+    /// <param name="contractVersion">The application contract version.</param>
+    /// <param name="operationId">The stable ordinal wire ID of the invoked operation.</param>
+    /// <param name="protocolToken">The raw SHA-256 request protocol token.</param>
+    /// <param name="admissionFlags">The admission-flag byte.</param>
+    /// <param name="payload">The serialized argument payload.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when this envelope was already initialized; when <paramref name="grainType"/> or
+    /// <paramref name="operationId"/> is empty, too long, or carries a control character; when
+    /// <paramref name="contractVersion"/> is not positive; when <paramref name="protocolToken"/> is
+    /// not exactly 32 bytes; or when <paramref name="payload"/> is null.
+    /// </exception>
     internal void Initialize(
         string grainType,
         int contractVersion,
@@ -268,6 +394,11 @@ internal sealed class FunctionalReply
     }
 
     /// <summary>Create a complete, validated reply.</summary>
+    /// <param name="protocolToken">The raw SHA-256 reply protocol token.</param>
+    /// <param name="payload">The serialized reply payload.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <paramref name="protocolToken"/> is not exactly 32 bytes or <paramref name="payload"/> is null.
+    /// </exception>
     internal FunctionalReply(byte[] protocolToken, byte[] payload) => Initialize(protocolToken, payload);
 
     /// <summary>Field 0 — the raw SHA-256 reply protocol token.</summary>
@@ -277,6 +408,12 @@ internal sealed class FunctionalReply
     public byte[] Payload => _payload;
 
     /// <summary>Populate and validate both fields exactly once.</summary>
+    /// <param name="protocolToken">The raw SHA-256 reply protocol token.</param>
+    /// <param name="payload">The serialized reply payload.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when this reply was already initialized; when <paramref name="protocolToken"/> is
+    /// not exactly 32 bytes; or when <paramref name="payload"/> is null.
+    /// </exception>
     internal void Initialize(byte[] protocolToken, byte[] payload)
     {
         if (_initialized)
@@ -308,7 +445,35 @@ internal sealed class FunctionalReply
 internal interface IFunctionalDispatchTarget
 {
     /// <summary>Dispatch one fixed request on the activation.</summary>
+    /// <param name="envelope">The fixed request data to dispatch.</param>
+    /// <param name="cancellationToken">The token that cancels the call.</param>
     ValueTask<FunctionalReply> DispatchAsync(
+        FunctionalRequestEnvelope envelope,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Open one server-streaming operation on the activation. Spec 004 item 6.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An enumerator rather than an enumerable, because Orleans hands the enumeration's own
+    /// cancellation token to <c>GetAsyncEnumerator</c> and there is exactly one enumeration per
+    /// call of this method: <c>AsyncEnumerableGrainExtension.StartEnumeration</c> calls
+    /// <c>request.InvokeImplementation().GetAsyncEnumerator(linkedToken)</c> once, and that
+    /// <paramref name="cancellationToken"/> is the one it cancels when the caller disposes.
+    /// </para>
+    /// <para>
+    /// The returned enumerator must be <b>lazy</b>: every protocol check belongs in its first
+    /// <c>MoveNextAsync</c>, not in this method. <c>StartEnumeration</c> calls
+    /// <c>InvokeImplementation</c> and <c>GetAsyncEnumerator</c> outside its <c>try</c> but calls
+    /// <c>MoveNextAsync</c> inside it, so a rejection raised from the first pull is turned into a
+    /// clean <c>EnumerationResult.Error</c> with the enumerator removed from the extension's table,
+    /// while one raised earlier would leave a half-built entry behind.
+    /// </para>
+    /// </remarks>
+    /// <param name="envelope">The fixed request data describing the stream to open.</param>
+    /// <param name="cancellationToken">The token that cancels the enumeration.</param>
+    IAsyncEnumerator<FunctionalReply> DispatchStream(
         FunctionalRequestEnvelope envelope,
         CancellationToken cancellationToken);
 }
@@ -322,6 +487,8 @@ internal interface IFunctionalDispatchTarget
 internal interface IFunctionalGrainTarget<TActor> : IGrain
 {
     /// <summary>Dispatch one fixed request on the activation.</summary>
+    /// <param name="envelope">The fixed request data to dispatch.</param>
+    /// <param name="cancellationToken">The token that cancels the call.</param>
     ValueTask<FunctionalReply> DispatchAsync(
         FunctionalRequestEnvelope envelope,
         CancellationToken cancellationToken);
@@ -336,9 +503,11 @@ internal interface IFunctionalGrainTarget<TActor> : IGrain
 internal interface IFunctionalPayloadCodec
 {
     /// <summary>Serialize one value as its exact declared type into a fresh byte array.</summary>
+    /// <param name="value">The value to serialize.</param>
     byte[] Serialize<T>(T value);
 
     /// <summary>Deserialize one value as its exact declared type.</summary>
+    /// <param name="payload">The serialized bytes to decode.</param>
     T Deserialize<T>(byte[] payload);
 
     /// <summary>

@@ -142,6 +142,24 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+      # spec 004 item 9: the chat-room example's C# consumer is the only example that proves the
+      # C#-callable facade, and building it proves nothing about it — every binding rule runs at
+      # FunctionalGrainInterop.For, i.e. at run time. So run it, like the sample process in
+      # build-and-test, and require the transcript lines that can only come from a facade call
+      # that reached the F# grain and read its F# Result reply. ~5s.
+      - name: Run the C# interop example end to end
+        timeout-minutes: 5 # a silo that fails to shut down must not burn the whole job budget
+        run: |
+          set -o pipefail   # without this, `tee` would mask a crashed process
+          dotnet run --project examples/chat-room/src/Interop -c Release --no-build | tee interop.out
+          grep -q -- "--- Chat Room, called from C# through FunctionalGrainInterop ---" interop.out
+          grep -q -x "Members: 2" interop.out
+          # The Result reply, both arms: an Ok carrying the message count and the grain's own
+          # ChatError cases, read through FSharpResult from C#.
+          grep -q "Alice says 'Hey everyone!' -> Ok (message #1)" interop.out
+          grep -q "Charlie (not a member) -> Error (NotAMember)" interop.out
+          grep -q "Alice posts whitespace -> Error (EmptyMessage)" interop.out
+          grep -q -x "C# interop demo complete." interop.out
       # The testbed is the same shape of out-of-root-solution code as the examples (its own
       # Testbed.slnx, ProjectReferences into src/) and rots the same way, so it is built in this
       # job rather than a new one. Build only: running it needs Redis and a multi-silo Docker

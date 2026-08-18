@@ -41,10 +41,19 @@ handle, and the handle is an ordinary operation argument. `history` stays in the
 always should have been -- an ordinary `readOnly` paged query, not a substitute for push. The old
 grain (classic observer push, fully intact) remains the reference for the deprecated model.
 
+**The same room is also called from C#**, by `src/Interop` -- a C# console project that hosts the
+silo with the ordinary Orleans builder plus `AddFunctionalGrain(RoomFunctionalDef.room)`, declares
+its own `IChatRoom` interface, and binds it with
+`FunctionalGrainInterop.For<IChatRoom>(RoomApiModule.contract, factory, "general")`. No grain, no
+code generation and no wrapper is written on the C# side; the F# `Result` reply and the F# list of
+tuples arrive as `FSharpResult` and `FSharpList` and are read directly. See
+[docs/calling-from-csharp.md](../../docs/calling-from-csharp.md).
+
 ## How to run
 
 ```bash
-dotnet run --project src/Silo
+dotnet run --project src/Silo      # F#: the full room, including live observer push
+dotnet run --project src/Interop   # C#: the same room through the facade
 ```
 
 ## Expected output
@@ -74,6 +83,24 @@ Done. Shutting down...
 
 (Timestamps will differ per run.)
 
+`dotnet run --project src/Interop` drives the same room from C#:
+
+```
+--- Chat Room, called from C# through FunctionalGrainInterop ---
+
+Members: 2
+Alice says 'Hey everyone!' -> Ok (message #1)
+Charlie (not a member) -> Error (NotAMember)
+Alice posts whitespace -> Error (EmptyMessage)
+Bob left. Members: 1
+
+--- History (an F# list of F# tuples, read from C#) ---
+  [17:13:07] Bob: Hi Alice!
+  [17:13:07] Alice: Hey everyone!
+
+C# interop demo complete.
+```
+
 ## Key concepts
 
 - **`grainContract` / `grainFor`** the functional grain runtime's contract + definition pair (this
@@ -99,6 +126,9 @@ Done. Shutting down...
   manager, kept as the reference implementation for the deprecated model -- see the note above for
   why it cannot run in this project and what replaces it
 - **`useJsonFallbackSerialization`** enables clean F# types without serialization attributes
+- **`FunctionalGrainInterop.For<IChatRoom>` + `[FunctionalOperation]`** (`src/Interop`) the
+  C#-callable facade: a hand-written C# interface bound to this contract, with every mapping rule
+  checked when the facade is created
 
 ## Documentation
 

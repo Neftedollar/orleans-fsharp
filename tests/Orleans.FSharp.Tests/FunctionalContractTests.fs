@@ -503,10 +503,15 @@ let ``oneWay on a non-unit reply is rejected defensively`` () =
         { Shape = shape
           GrainTypeName = Some "chat.room"
           Version = None
+          AcceptedVersions = None
+          IsReentrant = false
+          MayInterleave = None
           KeyCodec = Some KeyCodecs.stringKey
           ReadOnly = Set.empty
           OneWay = Set.ofList [ 1 ]
           AlwaysInterleave = Set.empty
+          Transactions = Map.empty
+          SinceVersions = Map.empty
           OperationIds = Map.empty }
 
     let draft = ContractDraft.withState<ChatActor, string, ChatApi> state
@@ -568,3 +573,463 @@ let ``contract identity is independent of CLR and module names`` () =
         }
 
     test <@ first.GrainIdOf "general" = second.GrainIdOf "general" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 5 -- reentrancy variants
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``a contract is not reentrant and declares no interleave predicate by default`` () =
+    let contract = baseContract ()
+
+    test <@ not contract.IsReentrant @>
+    test <@ contract.MayInterleave.IsNone @>
+
+[<Fact>]
+let ``reentrant marks the whole contract`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            reentrant
+        }
+
+    test <@ contract.IsReentrant @>
+
+[<Fact>]
+let ``mayInterleave stores the declared predicate`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            mayInterleave (fun metadata -> metadata.OperationId = "history")
+        }
+
+    test <@ contract.MayInterleave.IsSome @>
+
+[<Fact>]
+let ``reentrant is rejected twice`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                reentrant
+                reentrant
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'reentrant' is declared more than once" @>
+
+[<Fact>]
+let ``mayInterleave is rejected twice`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                mayInterleave (fun _ -> true)
+                mayInterleave (fun _ -> false)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'mayInterleave' is declared more than once" @>
+
+[<Fact>]
+let ``mayInterleave rejects a null predicate`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                mayInterleave (Unchecked.defaultof<IFunctionalRequestMetadata -> bool>)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'mayInterleave' requires a predicate" @>
+
+[<Fact>]
+let ``reentrant and mayInterleave are mutually exclusive`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                reentrant
+                mayInterleave (fun _ -> true)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "declares both 'reentrant' and 'mayInterleave'" @>
+
+[<Fact>]
+let ``reentrant rejects alwaysInterleave on an operation`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                reentrant
+                readOnly (_.history)
+                alwaysInterleave (_.history)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "uses 'alwaysInterleave' on a contract declared 'reentrant'" @>
+
+[<Fact>]
+let ``mayInterleave rejects alwaysInterleave on an operation`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                mayInterleave (fun _ -> true)
+                readOnly (_.history)
+                alwaysInterleave (_.history)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "uses 'alwaysInterleave' on a contract declared 'mayInterleave'" @>
+
+/// <remarks>
+/// The ruling that 'readOnly' and 'oneWay' survive 'reentrant': neither is only a scheduling
+/// flag in this runtime, so neither is made redundant by whole-grain reentrancy.
+/// </remarks>
+[<Fact>]
+let ``reentrant keeps readOnly and oneWay legal`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            reentrant
+            readOnly (_.history)
+            oneWay (_.typing)
+        }
+
+    test <@ contract.IsReentrant @>
+    test <@ contract.Operations |> Array.exists (fun op -> op.FieldName = "history" && op.IsReadOnly) @>
+    test <@ contract.Operations |> Array.exists (fun op -> op.FieldName = "typing" && op.IsOneWay) @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 7 -- version-tolerant contracts
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``a contract accepts its own version exactly by default`` () =
+    let contract = baseContract ()
+
+    test <@ contract.AcceptedVersions = Exact @>
+    test <@ contract.MinAcceptedVersion = 1 @>
+    test <@ contract.Operations |> Array.forall (fun op -> op.SinceVersion = 1) @>
+
+[<Fact>]
+let ``acceptsVersions BackwardCompatible lowers the admitted floor`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            version 4
+            stringKey
+            acceptsVersions (BackwardCompatible 2)
+        }
+
+    test <@ contract.AcceptedVersions = BackwardCompatible 2 @>
+    test <@ contract.MinAcceptedVersion = 2 @>
+
+[<Fact>]
+let ``acceptsVersions is rejected twice`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 4
+                stringKey
+                acceptsVersions (BackwardCompatible 2)
+                acceptsVersions Exact
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'acceptsVersions' is already set" @>
+
+[<Fact>]
+let ``a non-positive backward-compatible floor is rejected`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 4
+                stringKey
+                acceptsVersions (BackwardCompatible 0)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "requires a positive minimum version" @>
+
+[<Fact>]
+let ``a backward-compatible floor above the contract version is rejected`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 2
+                stringKey
+                acceptsVersions (BackwardCompatible 3)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "would admit no request at all" @>
+
+[<Fact>]
+let ``sinceVersion is recorded on the selected operation only`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            version 4
+            stringKey
+            acceptsVersions (BackwardCompatible 2)
+            sinceVersion 4 (_.typing)
+        }
+
+    let sinceOf name =
+        contract.Operations |> Array.find (fun op -> op.FieldName = name) |> fun op -> op.SinceVersion
+
+    test <@ sinceOf "typing" = 4 @>
+    test <@ sinceOf "join" = 1 @>
+
+[<Fact>]
+let ``sinceVersion is rejected twice on one operation`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 4
+                stringKey
+                acceptsVersions (BackwardCompatible 2)
+                sinceVersion 3 (_.typing)
+                sinceVersion 4 (_.typing)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'sinceVersion' is applied more than once" @>
+
+[<Fact>]
+let ``a non-positive sinceVersion is rejected`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 4
+                stringKey
+                acceptsVersions (BackwardCompatible 2)
+                sinceVersion 0 (_.typing)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "must be a positive integer" @>
+
+[<Fact>]
+let ``a sinceVersion above the contract version is rejected`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 4
+                stringKey
+                acceptsVersions (BackwardCompatible 2)
+                sinceVersion 5 (_.typing)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "is above the contract version 4" @>
+
+/// <remarks>
+/// The uniform "dead declaration" rule: a sinceVersion at or below the lowest admitted version
+/// can never reject anything. Under the default Exact policy that is every legal value, which is
+/// exactly the mistake of declaring sinceVersion and forgetting acceptsVersions.
+/// </remarks>
+[<Fact>]
+let ``a sinceVersion that can never reject is refused under the default policy`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 4
+                stringKey
+                sinceVersion 4 (_.typing)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "can never reject a call" @>
+    test <@ error.Message.Contains "'acceptsVersions Exact' policy admits version 4 only" @>
+
+[<Fact>]
+let ``a sinceVersion at the backward-compatible floor is refused`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                version 4
+                stringKey
+                acceptsVersions (BackwardCompatible 3)
+                sinceVersion 3 (_.typing)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "can never reject a call" @>
+    test <@ error.Message.Contains "admits versions 3 through 4" @>
+
+/// <remarks>
+/// Admission-only, at the contract layer: a wider policy changes neither the stable operation
+/// IDs nor the grain identity, so nothing about storage or routing moves when it is declared.
+/// </remarks>
+[<Fact>]
+let ``a version policy changes neither operation IDs nor grain identity`` () =
+    let strict =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            version 4
+            stringKey
+        }
+
+    let tolerant =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            version 4
+            stringKey
+            acceptsVersions (BackwardCompatible 1)
+        }
+
+    let idsOf (contract: GrainContract<ChatActor, string, ChatApi>) =
+        contract.Operations |> Array.map (fun op -> op.OperationId)
+
+    let flagsOf (contract: GrainContract<ChatActor, string, ChatApi>) =
+        contract.Operations |> Array.map (fun op -> op.AdmissionFlags)
+
+    test <@ idsOf strict = idsOf tolerant @>
+    test <@ strict.GrainIdOf "general" = tolerant.GrainIdOf "general" @>
+    test <@ flagsOf strict = flagsOf tolerant @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 2 — transactional operations
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``transactional stores the declared option and encodes it in the admission byte`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            transactional Orleans.TransactionOption.CreateOrJoin (_.join)
+            transactional Orleans.TransactionOption.Supported (_.say)
+        }
+
+    let join = (contract.TryFindField "join").Value
+    let say = (contract.TryFindField "say").Value
+    let history = (contract.TryFindField "history").Value
+
+    test <@ join.Transaction = Some Orleans.TransactionOption.CreateOrJoin @>
+    test <@ say.Transaction = Some Orleans.TransactionOption.Supported @>
+    test <@ history.Transaction = None @>
+
+    test <@ AdmissionFlags.tryTransactionOption join.AdmissionFlags = Some Orleans.TransactionOption.CreateOrJoin @>
+    test <@ AdmissionFlags.tryTransactionOption say.AdmissionFlags = Some Orleans.TransactionOption.Supported @>
+    test <@ not (AdmissionFlags.isTransactional history.AdmissionFlags) @>
+
+[<Fact>]
+let ``transaction-scoped is exactly Create, CreateOrJoin, and Join`` () =
+    // The same three options for which Orleans' own TransactionRequestBase.IsTransactionRequired
+    // is true. Supported forwards a caller's context but starts none, so it is not scoped.
+    let scopedFor (option: Orleans.TransactionOption) =
+        let contract =
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                transactional option (_.join)
+            }
+
+        let join = (contract.TryFindField "join").Value
+        join.IsTransactionScoped, join.CanCarryTransaction
+
+    test <@ scopedFor Orleans.TransactionOption.Create = (true, true) @>
+    test <@ scopedFor Orleans.TransactionOption.CreateOrJoin = (true, true) @>
+    test <@ scopedFor Orleans.TransactionOption.Join = (true, true) @>
+    test <@ scopedFor Orleans.TransactionOption.Supported = (false, true) @>
+    test <@ scopedFor Orleans.TransactionOption.Suppress = (false, false) @>
+    test <@ scopedFor Orleans.TransactionOption.NotAllowed = (false, false) @>
+
+[<Fact>]
+let ``transactional is rejected twice on one operation`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                transactional Orleans.TransactionOption.Create (_.join)
+                transactional Orleans.TransactionOption.Join (_.join)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'transactional' is applied more than once" @>
+
+[<Fact>]
+let ``transactional rejects an undefined option value`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                transactional (enum<Orleans.TransactionOption> 99) (_.join)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "undefined Orleans.TransactionOption value 99" @>
+
+[<Fact>]
+let ``transactional rejects oneWay`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                oneWay (_.typing)
+                transactional Orleans.TransactionOption.CreateOrJoin (_.typing)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "combines 'transactional' with 'oneWay'" @>
+
+[<Fact>]
+let ``transactional rejects alwaysInterleave`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> () {
+                grainType "chat.room"
+                stringKey
+                readOnly (_.history)
+                alwaysInterleave (_.history)
+                transactional Orleans.TransactionOption.CreateOrJoin (_.history)
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "combines 'transactional' with 'alwaysInterleave'" @>
+
+[<Fact>]
+let ``transactional composes with readOnly`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> () {
+            grainType "chat.room"
+            stringKey
+            readOnly (_.history)
+            transactional Orleans.TransactionOption.CreateOrJoin (_.history)
+        }
+
+    let history = (contract.TryFindField "history").Value
+
+    test <@ history.IsReadOnly @>
+    test <@ history.IsTransactionScoped @>
+
+    let expected =
+        AdmissionFlags.ReadOnly
+        ||| AdmissionFlags.encodeTransaction Orleans.TransactionOption.CreateOrJoin
+
+    test <@ history.AdmissionFlags = expected @>

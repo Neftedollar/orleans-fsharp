@@ -20,13 +20,49 @@ module internal FunctionalSiloDiagnostics =
 [<Sealed>]
 type internal FunctionalRegistryEntry(definition: FunctionalHostedDefinition) =
 
+    // A definition declaring 'mayInterleave' is published under the interleaving marker, which
+    // is the only functional grain class carrying Orleans' [MayInterleave] attribute and the
+    // static callback it names. Every other definition keeps the plain marker, so no grain type
+    // gets an interleave predicate it did not ask for.
     let markerType =
-        typedefof<FunctionalGrainMarker<_>>.MakeGenericType [| definition.ActorType |]
+        let openMarker =
+            if definition.MayInterleave.IsSome then
+                typedefof<FunctionalInterleavingGrainMarker<_>>
+            else
+                typedefof<FunctionalGrainMarker<_>>
+
+        openMarker.MakeGenericType [| definition.ActorType |]
+
+    do
+        // The callback Orleans reflects off the marker is static, so it cannot carry the
+        // definition; it finds it by its own closed marker type. Binding happens here, while the
+        // silo is still being configured, so it is in place long before any activation exists.
+        //
+        // That table is keyed by the closed marker type, which comes from the actor brand alone,
+        // so it is process-wide rather than per-silo. Within one silo the registry below already
+        // rejects two grain type names on one actor brand; across two silos in ONE process --
+        // a TestCluster, or any host running more than one silo -- nothing did, and a silent
+        // overwrite would leave the first grain type consulting the second's predicate while both
+        // are live. Rejected here instead, at configuration time, which is the earliest stage that
+        // can see both registrations at all.
+        match definition.MayInterleave with
+        | Some predicate ->
+            match FunctionalInterleave.register markerType definition.GrainTypeName predicate with
+            | None -> ()
+            | Some existingGrainTypeName ->
+                fail
+                    FunctionalSiloDiagnostics.SiloStage
+                    $"grain type '{definition.GrainTypeName}' cannot declare 'mayInterleave': actor brand '{definition.ActorType.FullName}' is already bound to grain type '{existingGrainTypeName}', which declares it too. Orleans reflects the per-message predicate off a grain class derived from the actor brand alone ('{markerType.FullName}'), and that binding is process-wide, so the two grain types would share one predicate and the second registration would silently decide admission for the first. Give each grain type its own actor brand."
+        | None -> ()
 
     /// <summary>The non-generic hosted view of the registered definition.</summary>
     member _.Definition = definition
 
-    /// <summary>The closed <c>FunctionalGrainMarker&lt;'Actor&gt;</c> of this definition.</summary>
+    /// <summary>
+    /// The closed marker CLR type Orleans publishes as this definition's grain class:
+    /// <c>FunctionalInterleavingGrainMarker&lt;'Actor&gt;</c> when the contract declares
+    /// <c>mayInterleave</c>, <c>FunctionalGrainMarker&lt;'Actor&gt;</c> otherwise.
+    /// </summary>
     member _.MarkerType = markerType
 
     /// <summary>The explicit Orleans grain type name.</summary>
@@ -63,6 +99,8 @@ type internal FunctionalGrainRegistry() =
     /// that name was declared explicitly or derived from the actor brand — is a configuration
     /// error.
     /// </summary>
+    /// <param name="definition">The hosted definition to register.</param>
+    /// <exception cref="System.InvalidOperationException">The registry is already frozen, or <paramref name="definition"/>'s grain type name or actor brand conflicts with an already-registered definition.</exception>
     member _.Add(definition: FunctionalHostedDefinition) =
         lock gate (fun () ->
             match frozen with
@@ -114,14 +152,17 @@ type internal FunctionalGrainRegistry() =
     member _.IsFrozen = frozen.IsSome
 
     /// <summary>The registered definition whose closed marker is this CLR type.</summary>
+    /// <param name="markerType">The closed marker CLR type to look up.</param>
     member this.TryByMarker(markerType: Type) =
         this.Snapshot |> Array.tryFind (fun entry -> entry.MarkerType = markerType)
 
     /// <summary>The registered definition whose closed target interface is this CLR type.</summary>
+    /// <param name="interfaceType">The closed target interface CLR type to look up.</param>
     member this.TryByInterface(interfaceType: Type) =
         this.Snapshot |> Array.tryFind (fun entry -> entry.InterfaceType = interfaceType)
 
     /// <summary>The registered definition of one explicit grain type name.</summary>
+    /// <param name="grainTypeName">The explicit Orleans grain type name to look up.</param>
     member this.TryByGrainType(grainTypeName: string) =
         this.Snapshot
         |> Array.tryFind (fun entry -> String.Equals(entry.GrainTypeName, grainTypeName, StringComparison.Ordinal))

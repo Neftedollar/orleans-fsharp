@@ -11,39 +11,58 @@ open System
 open System.Threading.Tasks
 open Orleans.FSharp
 
+/// <summary>A chat room member's mapped domain key.</summary>
 [<Struct>]
 type UserId = private UserId of string
 
 [<RequireQualifiedAccess>]
 module UserId =
+    /// <summary>Wraps a raw string as a <see cref="UserId"/>.</summary>
+    /// <param name="value">The raw user identifier.</param>
     let create value = UserId value
+    /// <summary>Unwraps a <see cref="UserId"/> to its raw string.</summary>
+    /// <param name="value">The user id to unwrap.</param>
     let value (UserId value) = value
 
+/// <summary>A chat room's mapped domain key.</summary>
 [<Struct>]
 type RoomId = private RoomId of string
 
 [<RequireQualifiedAccess>]
 module RoomId =
+    /// <summary>Wraps a raw string as a <see cref="RoomId"/>.</summary>
+    /// <param name="value">The raw room identifier.</param>
     let create value = RoomId value
+    /// <summary>Unwraps a <see cref="RoomId"/> to its raw string.</summary>
+    /// <param name="value">The room id to unwrap.</param>
     let value (RoomId value) = value
 
+/// <summary>The <c>say</c> command: post one message as its author.</summary>
 type PostMessage = { author: UserId; text: string }
 
+/// <summary>One posted message as stored in room history.</summary>
 type ChatMessage =
     { author: UserId
       text: string
       sentAt: DateTimeOffset }
 
+/// <summary>The <c>history</c> query: how many recent messages to return.</summary>
 type HistoryRequest = { take: int }
 
+/// <summary>The <c>typing</c> notification: one user's typing-indicator state.</summary>
 type Typing = { user: UserId; isTyping: bool }
 
+/// <summary>Why <c>say</c> rejected a post.</summary>
 type PostError =
+    /// <summary>The author has not joined the room.</summary>
     | NotAMember
+    /// <summary>The message text is empty or white-space.</summary>
     | EmptyText
 
+/// <summary>Phantom actor brand for the room contract; never constructed.</summary>
 type RoomActor = private RoomActor of unit
 
+/// <summary>The room's typed API shape: one function per grain operation.</summary>
 [<NoEquality; NoComparison>]
 type RoomApi =
     { join: UserId -> Task<unit>
@@ -53,6 +72,7 @@ type RoomApi =
 
 [<RequireQualifiedAccess>]
 module RoomApi =
+    /// <summary>The room's functional grain contract: type, version, key mapping, and call policies.</summary>
     let contract =
         grainContract<RoomActor, RoomId, RoomApi> () {
             grainType "chat.room"
@@ -67,6 +87,7 @@ module RoomApi =
     /// The point-free binding the spec's "Public authoring model" section shows: no type
     /// annotation anywhere, yet `ref` infers `IGrainFactory -> RoomId -> RoomApi`.
     let ref = FunctionalGrain.ref contract
+    /// <summary>The untyped counterpart to <see cref="ref"/>: a grain reference without the inferred typed API shape.</summary>
     let rawRef = FunctionalGrain.rawRef contract
 
 namespace Chat.Server
@@ -76,6 +97,7 @@ open Chat.Contracts
 open Microsoft.Extensions.Logging
 open Orleans.FSharp
 
+/// <summary>The room grain's persisted state: message sequence counter, membership, and history.</summary>
 type RoomState =
     { nextMessageId: int64
       members: Set<UserId>
@@ -83,8 +105,10 @@ type RoomState =
 
 module Definition =
 
+    /// <summary>The persistent-state handle for <see cref="RoomState"/>, stored as <c>"state"</c> under the <c>"Default"</c> provider.</summary>
     let roomState = PersistentState.create<RoomState> "state" "Default"
 
+    /// <summary>The room grain's behavior: handlers for <c>join</c>, <c>say</c>, <c>history</c>, and <c>typing</c>.</summary>
     let roomDefinition =
         grainFor RoomApi.contract {
             defaultState (fun () ->

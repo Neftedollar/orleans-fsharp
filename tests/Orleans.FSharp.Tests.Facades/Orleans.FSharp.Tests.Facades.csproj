@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <!-- Fixtures, not a shipped surface: no XML doc file, so CS1591 never applies and the
+         interfaces below stay as short as the C# a consumer would actually write. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exactly what a C# consumer of a functional grain references: the library (for
+         FunctionalGrainInterop and [FunctionalOperation]) and FSharp.Core (for FSharpResult,
+         FSharpList, and Unit, which appear in reply types). See docs/calling-from-csharp.md. -->
+    <PackageReference Include="FSharp.Core" />
+    <ProjectReference Include="..\..\src\Orleans.FSharp\Orleans.FSharp.fsproj" />
+  </ItemGroup>
+
+</Project>

@@ -191,6 +191,80 @@ type TooFastReminderSiloConfigurator() =
 
             siloBuilder.AddFunctionalGrain tooFastReminderDefinition |> ignore
 
+// ──────────────────────────────────────────────────────────────────────────────
+// A definition whose implicit subscriptions name providers the silo may not have
+// (spec 004 item 1)
+// ──────────────────────────────────────────────────────────────────────────────
+
+type SubscriberActor = private SubscriberActor of unit
+
+[<NoEquality; NoComparison>]
+type SubscriberApi = { touch: unit -> Task<unit> }
+
+type SubscriberState = { seen: int }
+
+[<Literal>]
+let private SubscriberStreamProvider = "SubscriberStreams"
+
+[<Literal>]
+let private SubscriberChannelProvider = "SubscriberChannels"
+
+let private streamSubscriberDefinition =
+    let contract =
+        grainContract<SubscriberActor, string, SubscriberApi> () {
+            grainType "functional.streamsubscriber"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { seen = 0 })
+
+        onStream SubscriberStreamProvider "hosting.items" (fun _ state (_: string) ->
+            task { return { seen = state.seen + 1 } })
+
+        handle (_.touch) (fun _ state () -> task { return state, () })
+    }
+
+type ChannelSubscriberActor = private ChannelSubscriberActor of unit
+
+let private channelSubscriberDefinition =
+    let contract =
+        grainContract<ChannelSubscriberActor, string, SubscriberApi> () {
+            grainType "functional.channelsubscriber"
+            stringKey
+        }
+
+    grainFor contract {
+        defaultState (fun () -> { seen = 0 })
+
+        onBroadcast SubscriberChannelProvider "hosting.control" (fun _ state (_: string) ->
+            task { return { seen = state.seen + 1 } })
+
+        handle (_.touch) (fun _ state () -> task { return state, () })
+    }
+
+/// <summary>The stream provider the declaration names is registered: the silo must start.</summary>
+type StreamProviderPresentSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage "PubSubStore" |> ignore
+            siloBuilder.AddMemoryStreams SubscriberStreamProvider |> ignore
+            siloBuilder.AddBroadcastChannel SubscriberChannelProvider |> ignore
+            siloBuilder.AddFunctionalGrain streamSubscriberDefinition |> ignore
+            siloBuilder.AddFunctionalGrain channelSubscriberDefinition |> ignore
+
+/// <summary>The named stream provider is absent: startup validation has to reject it.</summary>
+type MissingStreamProviderSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddFunctionalGrain streamSubscriberDefinition |> ignore
+
+/// <summary>The named broadcast-channel provider is absent.</summary>
+type MissingChannelProviderSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddFunctionalGrain channelSubscriberDefinition |> ignore
+
 let private deploy<'Configurator when 'Configurator :> ISiloConfigurator and 'Configurator: (new: unit -> 'Configurator)>
     ()
     =
@@ -380,6 +454,56 @@ let ``a non-positive payload limit fails silo startup`` () =
     Assert.Contains(reported, (fun message -> message.Contains "MaxPayloadBytes must be positive"))
 
 /// <remarks>
+/// Spec 004 item 1: "a definition with stream hooks requires the silo to have the named
+/// provider (startup validation, like storage providers)". Without this check an unregistered
+/// stream provider is SILENT — the binding is still published, Orleans still activates the grain
+/// on a publish, and the delivery is simply dropped with a warning nobody is watching for.
+/// </remarks>
+[<Fact>]
+let ``a definition naming an unregistered stream provider fails silo startup`` () =
+    let reported = deployExpectingFailure<MissingStreamProviderSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "Orleans.FSharp functional silo startup"))
+    Assert.Contains(reported, (fun message -> message.Contains "'onStream'"))
+    Assert.Contains(reported, (fun message -> message.Contains SubscriberStreamProvider))
+    Assert.Contains(reported, (fun message -> message.Contains "which is not registered on this silo"))
+    Assert.Contains(reported, (fun message -> message.Contains "AddMemoryStreams"))
+
+[<Fact>]
+let ``a definition naming an unregistered broadcast-channel provider fails silo startup`` () =
+    let reported = deployExpectingFailure<MissingChannelProviderSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "'onBroadcast'"))
+    Assert.Contains(reported, (fun message -> message.Contains SubscriberChannelProvider))
+    Assert.Contains(reported, (fun message -> message.Contains "AddBroadcastChannel"))
+
+/// <remarks>
+/// The non-vacuity control for the two rejections above: the same two definitions, on a silo
+/// where both named providers ARE registered, start cleanly and publish their bindings.
+/// </remarks>
+[<Fact>]
+let ``a definition whose named stream and channel providers are registered starts cleanly`` () =
+    let cluster = deploy<StreamProviderPresentSiloConfigurator> ()
+
+    try
+        let manifest =
+            (siloServices cluster)
+                .GetRequiredService<IClusterManifestProvider>()
+                .LocalGrainManifest
+
+        let bindingCount (grainTypeName: string) =
+            manifest.Grains.[GrainType.Create grainTypeName].Properties.Keys
+            |> Seq.filter (fun key -> key.StartsWith("binding.", StringComparison.Ordinal))
+            |> Seq.length
+
+        // Three keys per binding group, one group per declaration.
+        Assert.Equal(3, bindingCount "functional.streamsubscriber")
+        Assert.Equal(3, bindingCount "functional.channelsubscriber")
+    finally
+        cluster.StopAllSilos()
+        cluster.Dispose()
+
+/// <remarks>
 /// Spec "Lifecycle hooks, timers, and reminders": "Silo startup validates every declared period
 /// against its configured ReminderOptions.MinimumReminderPeriod." The real reminder service also
 /// enforces this floor, but only lazily at the first RegisterOrUpdateReminder call during
@@ -394,3 +518,102 @@ let ``a reminder period below the configured MinimumReminderPeriod fails silo st
     Assert.Contains(reported, (fun message -> message.Contains "functional.toofastreminder"))
     Assert.Contains(reported, (fun message -> message.Contains "00:00:01"))
     Assert.Contains(reported, (fun message -> message.Contains "00:00:02"))
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 2 — transactional startup validation
+// ──────────────────────────────────────────────────────────────────────────────
+
+type TxHostActor = private TxHostActor of unit
+
+[<NoEquality; NoComparison>]
+type TxHostApi = { bump: int -> Task<unit> }
+
+type TxHostState = { total: int }
+
+[<Literal>]
+let private TxHostGrainType = "hosting.tx"
+
+[<Literal>]
+let private TxHostStorage = "HostingTransactionStore"
+
+let private txHostState =
+    TransactionalState.create<TxHostState> "ledger" TxHostStorage
+
+let private txHostContract =
+    grainContract<TxHostActor, string, TxHostApi> () {
+        grainType TxHostGrainType
+        stringKey
+        transactional Orleans.TransactionOption.CreateOrJoin (_.bump)
+    }
+
+let private txHostDefinition =
+    grainFor txHostContract {
+        defaultState (fun () -> ())
+        transactionalStateFrom txHostState (fun _ -> { total = 0 })
+
+        handle (_.bump) (fun context state (by: int) ->
+            task {
+                do! (context.transactionalState txHostState).update (fun value -> { total = value.total + by })
+                return state, ()
+            })
+    }
+
+/// <summary>Transactions enabled and the named transactional storage present: the silo starts.</summary>
+type TransactionsPresentSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.UseTransactions() |> ignore
+            siloBuilder.AddMemoryGrainStorage TxHostStorage |> ignore
+            siloBuilder.AddFunctionalGrain txHostDefinition |> ignore
+
+/// <summary>UseTransactions is absent: startup validation has to reject it.</summary>
+type MissingTransactionsSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage TxHostStorage |> ignore
+            siloBuilder.AddFunctionalGrain txHostDefinition |> ignore
+
+/// <summary>The named transactional storage is absent.</summary>
+type MissingTransactionalStorageSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.UseTransactions() |> ignore
+            siloBuilder.AddFunctionalGrain txHostDefinition |> ignore
+
+[<Fact>]
+let ``a silo without UseTransactions refuses to host a transactional definition`` () =
+    let reported = deployExpectingFailure<MissingTransactionsSiloConfigurator> ()
+
+    Assert.Contains(reported, (fun message -> message.Contains "no Orleans transaction agent"))
+    Assert.Contains(reported, (fun message -> message.Contains "UseTransactions()"))
+    Assert.Contains(reported, (fun message -> message.Contains TxHostGrainType))
+
+[<Fact>]
+let ``a silo without the named transactional storage refuses to host the definition`` () =
+    let reported = deployExpectingFailure<MissingTransactionalStorageSiloConfigurator> ()
+
+    Assert.Contains(
+        reported,
+        (fun message ->
+            message.Contains "resolves to neither a named ITransactionalStateStorageFactory nor a named IGrainStorage")
+    )
+
+    Assert.Contains(reported, (fun message -> message.Contains TxHostStorage))
+
+/// <remarks>
+/// The non-vacuity control for both refusals above: the same definition on a silo that HAS
+/// transactions and the named storage starts and serves a transactional call.
+/// </remarks>
+[<Fact>]
+let ``a silo with transactions and the named storage hosts the definition`` () =
+    let cluster = deploy<TransactionsPresentSiloConfigurator> ()
+
+    try
+        // Bound through the silo's own grain factory: this test cluster's client builder is not
+        // configured for functional grains, and the point here is the silo, not the client.
+        let factory = (siloServices cluster).GetRequiredService<IGrainFactory>()
+        let grain = FunctionalGrain.ref txHostContract factory (Guid.NewGuid().ToString "N")
+        grain.bump(4).GetAwaiter().GetResult()
+    finally
+        cluster.StopAllSilos()
+        cluster.Dispose()

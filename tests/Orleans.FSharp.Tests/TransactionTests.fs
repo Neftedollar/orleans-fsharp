@@ -99,7 +99,14 @@ let ``TransactionalState module exists in the assembly`` () =
 let ``TransactionalState.read method exists`` () =
     let stateModule =
         typeof<TransactionOption>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "TransactionalState" && t.IsAbstract && t.IsSealed)
+        |> Array.find (fun t ->
+            // Full name, not simple name: spec 004 item 2 added a SECOND module called
+            // 'TransactionalState' (Orleans.FSharp.TransactionalState, the functional runtime's
+            // descriptor factory) to the same assembly. These tests pin the classic KEEP-path
+            // module, which is the one in the Orleans.FSharp.Transactions namespace.
+            t.FullName = "Orleans.FSharp.Transactions.TransactionalState"
+            && t.IsAbstract
+            && t.IsSealed)
 
     let readMethod =
         stateModule.GetMethods()
@@ -111,7 +118,14 @@ let ``TransactionalState.read method exists`` () =
 let ``TransactionalState.update method exists`` () =
     let stateModule =
         typeof<TransactionOption>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "TransactionalState" && t.IsAbstract && t.IsSealed)
+        |> Array.find (fun t ->
+            // Full name, not simple name: spec 004 item 2 added a SECOND module called
+            // 'TransactionalState' (Orleans.FSharp.TransactionalState, the functional runtime's
+            // descriptor factory) to the same assembly. These tests pin the classic KEEP-path
+            // module, which is the one in the Orleans.FSharp.Transactions namespace.
+            t.FullName = "Orleans.FSharp.Transactions.TransactionalState"
+            && t.IsAbstract
+            && t.IsSealed)
 
     let updateMethod =
         stateModule.GetMethods()
@@ -123,7 +137,14 @@ let ``TransactionalState.update method exists`` () =
 let ``TransactionalState.performRead method exists`` () =
     let stateModule =
         typeof<TransactionOption>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "TransactionalState" && t.IsAbstract && t.IsSealed)
+        |> Array.find (fun t ->
+            // Full name, not simple name: spec 004 item 2 added a SECOND module called
+            // 'TransactionalState' (Orleans.FSharp.TransactionalState, the functional runtime's
+            // descriptor factory) to the same assembly. These tests pin the classic KEEP-path
+            // module, which is the one in the Orleans.FSharp.Transactions namespace.
+            t.FullName = "Orleans.FSharp.Transactions.TransactionalState"
+            && t.IsAbstract
+            && t.IsSealed)
 
     let performReadMethod =
         stateModule.GetMethods()
@@ -137,7 +158,14 @@ let ``TransactionalState.performRead method exists`` () =
 let ``TransactionalState.read returns Task<'T>`` () =
     let stateModule =
         typeof<TransactionOption>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "TransactionalState" && t.IsAbstract && t.IsSealed)
+        |> Array.find (fun t ->
+            // Full name, not simple name: spec 004 item 2 added a SECOND module called
+            // 'TransactionalState' (Orleans.FSharp.TransactionalState, the functional runtime's
+            // descriptor factory) to the same assembly. These tests pin the classic KEEP-path
+            // module, which is the one in the Orleans.FSharp.Transactions namespace.
+            t.FullName = "Orleans.FSharp.Transactions.TransactionalState"
+            && t.IsAbstract
+            && t.IsSealed)
 
     let readMethod =
         stateModule.GetMethods()
@@ -178,6 +206,13 @@ let ``TransactionOption DU has exactly 6 cases`` () =
 let ``TransactionalState module has at least 3 public methods`` () =
     let stateModule =
         typeof<TransactionOption>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "TransactionalState" && t.IsAbstract && t.IsSealed)
+        |> Array.find (fun t ->
+            // Full name, not simple name: spec 004 item 2 added a SECOND module called
+            // 'TransactionalState' (Orleans.FSharp.TransactionalState, the functional runtime's
+            // descriptor factory) to the same assembly. These tests pin the classic KEEP-path
+            // module, which is the one in the Orleans.FSharp.Transactions namespace.
+            t.FullName = "Orleans.FSharp.Transactions.TransactionalState"
+            && t.IsAbstract
+            && t.IsSealed)
 
     stateModule.GetMethods().Length >= 3

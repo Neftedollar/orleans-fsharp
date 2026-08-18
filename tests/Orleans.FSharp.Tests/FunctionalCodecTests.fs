@@ -9,6 +9,7 @@ module Orleans.FSharp.Tests.FunctionalCodecTests
 
 open System
 open System.Buffers
+open System.Collections.Generic
 open System.Reflection
 open System.Threading
 open System.Threading.Tasks
@@ -284,13 +285,42 @@ let ``every valid admission-flag combination round-trips`` () =
 
 [<Fact>]
 let ``a set reserved bit invalidates the request on read`` () =
-    for bit in 3 .. 7 do
+    // Bits 3-5 became the transaction field in spec 004 item 2; bits 6-7 are still reserved.
+    for bit in 6 .. 7 do
         let flags = 1uy <<< bit
         let bytes = handWriteEnvelope "chat.room" 1 "join" flags
 
         let error = Assert.Throws<InvalidOperationException>(fun () -> readEnvelope bytes |> ignore)
 
         test <@ error.Message.Contains "reserved bit" @>
+
+[<Fact>]
+let ``a transaction-field bit is accepted on read`` () =
+    // The complement of the reserved-bit test above: a byte whose only set bits are in the
+    // transaction field is a valid envelope, and the declared option round-trips through the wire.
+    let roundTrip (declared: Orleans.TransactionOption) =
+        let flags = AdmissionFlags.compose false false false (Some declared)
+        let restored = readEnvelope (handWriteEnvelope "chat.room" 1 "join" flags)
+
+        test <@ restored.AdmissionFlags = flags @>
+        test <@ AdmissionFlags.tryTransactionOption restored.AdmissionFlags = Some declared @>
+
+    roundTrip Orleans.TransactionOption.Suppress
+    roundTrip Orleans.TransactionOption.CreateOrJoin
+    roundTrip Orleans.TransactionOption.Create
+    roundTrip Orleans.TransactionOption.Join
+    roundTrip Orleans.TransactionOption.Supported
+    roundTrip Orleans.TransactionOption.NotAllowed
+
+[<Fact>]
+let ``the unassigned transaction code is refused when Orleans request options are restored`` () =
+    let flags =
+        AdmissionFlags.UnassignedTransactionCode <<< AdmissionFlags.TransactionShift
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () -> FunctionalRequest.OptionsFor flags |> ignore)
+
+    test <@ error.Message.Contains "unassigned transaction code" @>
 
 [<Fact>]
 let ``reserved flags are refused when Orleans request options are restored`` () =
@@ -403,6 +433,22 @@ type private FakeTarget() =
     interface IFunctionalDispatchTarget with
         member _.DispatchAsync(_envelope, _cancellationToken) =
             ValueTask<FunctionalReply>(FunctionalReply(replyToken, payload))
+
+        member _.DispatchStream(_envelope, _cancellationToken) =
+            let mutable pending = true
+
+            { new IAsyncEnumerator<FunctionalReply> with
+                member _.Current = FunctionalReply(replyToken, payload)
+
+                member _.MoveNextAsync() =
+                    if pending then
+                        pending <- false
+                        ValueTask<bool> true
+                    else
+                        ValueTask<bool> false
+
+              interface IAsyncDisposable with
+                  member _.DisposeAsync() = ValueTask() }
 
     interface IFunctionalGrainTarget<CodecActor> with
         member _.DispatchAsync(_envelope, _cancellationToken) =
@@ -737,3 +783,205 @@ let ``the fixed request survives the dynamic type path Orleans uses for an invok
         test <@ restored.Envelope.GrainType = "chat.room" @>
         test <@ restored.Options = InvokeMethodOptions.ReadOnly @>
     | other -> failwith $"the request round-tripped as '{other.GetType().FullName}'."
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 2 — the transactional invokable shell
+// ──────────────────────────────────────────────────────────────────────────────
+
+let private transactionalEnvelope (option: Orleans.TransactionOption) =
+    FunctionalRequestEnvelope(
+        "chat.room",
+        1,
+        "join",
+        token,
+        AdmissionFlags.compose false false false (Some option),
+        payload
+    )
+
+let private exceptionSerializer () =
+    services.Value.GetRequiredService<Serializer<Orleans.Transactions.OrleansTransactionAbortedException>>()
+
+let private newTransactionalRequest (option: Orleans.TransactionOption) (cancellation: CancellationToken) =
+    let request =
+        new FunctionalTransactionRequest(
+            exceptionSerializer (),
+            services.Value,
+            transactionalEnvelope option,
+            cancellation
+        )
+
+    request.SetCallerMetadata(closedInterface, dispatchMethod)
+    request.ApplyAdmissionOptions()
+    request
+
+/// <remarks>
+/// The transactional request's WIRE form is not exercised here, and cannot be: its base segment is
+/// written by Orleans' generated <c>IBaseCodec&lt;TransactionRequestBase&gt;</c>, whose
+/// <c>TransactionInfo</c> field reaches <c>ParticipantId</c> and therefore <c>GrainReference</c> —
+/// a type whose codec is internal to Orleans and registered only by a real silo or client
+/// container, not by this file's minimal serializer harness. The wire form is proven where it
+/// actually matters instead: the cross-silo transaction in
+/// <c>FunctionalPhaseDIntegrationTests</c> commits with participants on two different silos, which
+/// can only happen if the transactional request serialized and deserialized between them. What
+/// this file pins is everything that does NOT need a cluster.
+/// </remarks>
+[<Fact>]
+let ``the transactional request derives its option from the admission byte`` () =
+    // The receiving side never trusts the copy Orleans' base codec carries: it re-derives the
+    // option from the same admission byte dispatch compares against the hosted descriptor.
+    let derived (declared: Orleans.TransactionOption) =
+        use source = new CancellationTokenSource()
+        use request = newTransactionalRequest declared source.Token
+        test <@ request.TransactionOption = declared @>
+        test <@ AdmissionFlags.tryTransactionOption request.Envelope.AdmissionFlags = Some declared @>
+
+    derived Orleans.TransactionOption.Suppress
+    derived Orleans.TransactionOption.CreateOrJoin
+    derived Orleans.TransactionOption.Create
+    derived Orleans.TransactionOption.Join
+    derived Orleans.TransactionOption.Supported
+    derived Orleans.TransactionOption.NotAllowed
+
+[<Fact>]
+let ``the transactional local copier preserves the envelope, options, caller token, and metadata`` () =
+    // The same-silo path never serializes the request, so without a copier that carries the base
+    // fields a local participant would join no transaction at all.
+    use source = new CancellationTokenSource()
+    use original = newTransactionalRequest Orleans.TransactionOption.CreateOrJoin source.Token
+    let copy = (copier ()).Copy original
+
+    test <@ obj.ReferenceEquals(copy.Envelope, original.Envelope) @>
+    test <@ copy.TransactionOption = Orleans.TransactionOption.CreateOrJoin @>
+    let callerTokenPreserved = copy.CallerToken.Equals source.Token
+    test <@ callerTokenPreserved @>
+    test <@ obj.ReferenceEquals(copy.GetInterfaceType(), closedInterface) @>
+    test <@ copy.GetMethod() = dispatchMethod @>
+    test <@ not (obj.ReferenceEquals(copy, original)) @>
+
+[<Fact>]
+let ``the transactional request is an outgoing call filter, which is what makes it transactional`` () =
+    // GrainReferenceRuntime routes a request through OutgoingCallInvoker whenever it implements
+    // IOutgoingGrainCallFilter, even with no application filters registered, and
+    // OutgoingCallInvoker runs the request itself as the last stage. That is the entire
+    // caller-side half of the transaction protocol, so it is pinned here rather than assumed.
+    use source = new CancellationTokenSource()
+    use transactional = newTransactionalRequest Orleans.TransactionOption.Create source.Token
+    use ordinary = new FunctionalRequest(envelope (), source.Token)
+
+    test <@ (transactional :> obj) :? Orleans.IOutgoingGrainCallFilter @>
+    test <@ not ((ordinary :> obj) :? Orleans.IOutgoingGrainCallFilter) @>
+
+[<Fact>]
+let ``an envelope with no transaction option cannot build a transactional request`` () =
+    use source = new CancellationTokenSource()
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            let request =
+                new FunctionalTransactionRequest(exceptionSerializer (), services.Value, envelope (), source.Token)
+
+            request.ApplyAdmissionOptions())
+
+    test <@ error.Message.Contains "declare no transaction option" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 6 — the streaming invokable shell
+// ──────────────────────────────────────────────────────────────────────────────
+
+let private streamEnvelope () =
+    FunctionalRequestEnvelope("chat.room", 1, "watch", token, AdmissionFlags.None, payload)
+
+let private streamCopier () = copier ()
+
+/// <remarks>
+/// The streaming request IS the caller's <c>IAsyncEnumerable</c>: Orleans' own
+/// <c>AsyncEnumerableRequest&lt;T&gt;</c> implements it, and <c>InitializeRequest</c> — which the
+/// reference calls in place of the <c>[ReturnValueProxy]</c> code generation Orleans would do —
+/// binds it to the reference it enumerates against.
+/// </remarks>
+[<Fact>]
+let ``the streaming request is an IAsyncEnumerable of the fixed reply`` () =
+    use request = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+
+    test <@ (request :> obj) :? IAsyncEnumerable<FunctionalReply> @>
+    test <@ (request :> obj) :? Orleans.Runtime.IAsyncEnumerableRequest<FunctionalReply> @>
+
+    // Orleans' default, which FunctionalStream.withBatchSize reaches through the typed wrapper.
+    test <@ request.MaxBatchSize = 100 @>
+
+/// <remarks>
+/// The unary and transactional requests both call <c>ApplyAdmissionOptions</c>, which turns the
+/// admission byte into <c>RequestBase.Options</c>. A streaming request deliberately does not: the
+/// message that crosses the network is Orleans' own extension invokable, whose scheduling is fixed
+/// by <c>[AlwaysInterleave]</c>, so an option set here would never be read. What it does instead is
+/// refuse a byte that is not clear — every admission policy is rejected at contract sealing, so a
+/// non-zero byte on a streaming envelope can only have come from a peer that disagrees.
+/// </remarks>
+[<Fact>]
+let ``a streaming request refuses an envelope carrying admission flags`` () =
+    use clean = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+    clean.ValidateAdmissionFlags()
+    test <@ clean.Options = InvokeMethodOptions.None @>
+
+    let flagged =
+        FunctionalRequestEnvelope("chat.room", 1, "watch", token, AdmissionFlags.ReadOnly, payload)
+
+    use request = new FunctionalStreamRequest(flagged, CancellationToken.None)
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () -> request.ValidateAdmissionFlags())
+
+    test <@ error.Message.Contains "composes with no admission policy" @>
+
+[<Fact>]
+let ``a streaming request round-trips through its explicit codec`` () =
+    use original = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+    original.SetCallerMetadata(closedInterface, dispatchMethod)
+    original.MaxBatchSize <- 7
+
+    let bytes = (serializer ()).SerializeToArray<obj> original
+
+    match (serializer ()).Deserialize<obj> bytes with
+    | :? FunctionalStreamRequest as restored ->
+        test <@ restored.Envelope.OperationId = "watch" @>
+        test <@ restored.Envelope.GrainType = "chat.room" @>
+        // The batch size is Orleans' field, written by Orleans' own base codec.
+        test <@ restored.MaxBatchSize = 7 @>
+        // A token is process-local and is never wire data.
+        test <@ restored.GetCancellationToken() = CancellationToken.None @>
+    | other -> failwith $"the streaming request round-tripped as '{other.GetType().FullName}'."
+
+[<Fact>]
+let ``the streaming local copier preserves the envelope, the batch size, and caller metadata`` () =
+    use source = new CancellationTokenSource()
+    use original = new FunctionalStreamRequest(streamEnvelope (), source.Token)
+    original.SetCallerMetadata(closedInterface, dispatchMethod)
+    original.MaxBatchSize <- 5
+
+    let copy = (streamCopier ()).Copy<FunctionalStreamRequest> original
+
+    test <@ obj.ReferenceEquals(copy.Envelope, original.Envelope) @>
+    test <@ copy.MaxBatchSize = 5 @>
+    let callerTokenPreserved = copy.CallerToken.Equals source.Token
+    test <@ callerTokenPreserved @>
+    test <@ obj.ReferenceEquals(copy.GetInterfaceType(), closedInterface) @>
+    test <@ copy.GetMethod() = dispatchMethod @>
+    test <@ not (obj.ReferenceEquals(copy, original)) @>
+
+/// <remarks>
+/// Target-side resolution deliberately creates no target-local cancellation source (see
+/// <c>FunctionalRequestBody.SetStreamTarget</c>): an enumeration outlives the message that started
+/// it, so a source with the message's lifetime would either leak or be disposed underneath the
+/// producer. Cancellation comes from the linked source <c>StartEnumeration</c> builds instead.
+/// </remarks>
+[<Fact>]
+let ``setting a streaming target resolves the seam without creating cancellation state`` () =
+    use request = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+    test <@ not request.HasTarget @>
+
+    request.SetTarget(FakeHolder(FakeTarget()))
+
+    test <@ request.HasTarget @>
+    test <@ request.GetCancellationToken() = CancellationToken.None @>
+    test <@ obj.ReferenceEquals(request.GetInterfaceType(), typeof<IFunctionalGrainTarget<CodecActor>>) @>
+    test <@ request.GetMethodName() = "DispatchStream" @>

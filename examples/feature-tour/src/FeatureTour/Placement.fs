@@ -1,7 +1,10 @@
 /// <summary>
 /// Status-matrix row 12 (tour section 10) — stateless workers and flexible placement for a
-/// functional grain, composed from stock Orleans parts because the contract has no
-/// <c>placement</c> operation of its own.
+/// functional grain, now through the first-class <c>statelessWorker</c> / <c>placement</c>
+/// definition operations (spec 004 item 4). <see cref="T:FeatureTour.Placement.FunctionalPlacementProvider"/>
+/// is kept below as a one-line note that composition via an application-level
+/// <c>IGrainPropertiesProvider</c> remains possible for cases the closed operation set does not
+/// cover — it is no longer what <c>WorkerDefinition</c> uses.
 /// </summary>
 namespace FeatureTour.Placement
 
@@ -88,6 +91,14 @@ module WorkerDefinition =
             // One id per activation. Distinct ids across concurrent calls to ONE grain id is the
             // observable signature of stateless-worker placement.
             defaultState (fun () -> Guid.NewGuid().ToString().Substring(0, 8))
+
+            // The first-class operation (spec 004 item 4): publishes the exact same manifest
+            // properties FunctionalPlacementProvider below applied by name — verified identical
+            // by a property-key exactness test against a live StatelessWorkerAttribute, not
+            // assumed. Composition through an application IGrainPropertiesProvider (as this file
+            // used to do for the whole feature) remains possible for cases this closed operation
+            // set does not cover.
+            statelessWorker WorkerApi.MaxLocalWorkers
 
             handle
                 (_.work)

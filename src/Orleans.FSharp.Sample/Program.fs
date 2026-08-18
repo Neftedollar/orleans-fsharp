@@ -8,6 +8,7 @@ open Orleans.FSharp.Sample
 open Chat.Contracts
 open Counter.Contracts
 
+/// The sample silo's configuration: localhost clustering with in-memory grain storage.
 let config =
     siloConfig {
         useLocalhostClustering

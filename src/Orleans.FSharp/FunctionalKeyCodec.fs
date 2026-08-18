@@ -46,9 +46,15 @@ type internal KeyCodec<'Key> =
 /// </summary>
 module internal KeyCodecs =
 
-    /// <summary>The grain type used when a decode diagnostic has to be produced without one.</summary>
+    /// <summary>The string form of a grain's key, used to build decode diagnostics.</summary>
+    /// <param name="grainId">The grain identity whose key is rendered.</param>
     let private describeKey (grainId: GrainId) = grainId.Key.ToString()
 
+    /// <summary>Raise the standard decode-diagnostic exception shared by every native key codec.</summary>
+    /// <param name="kind">The native key shape decoding was attempted against.</param>
+    /// <param name="grainId">The grain identity whose key failed to decode.</param>
+    /// <param name="reason">The specific reason the key does not match the expected shape.</param>
+    /// <exception cref="System.InvalidOperationException">Always: this function's entire body is the diagnostic raise.</exception>
     let private failDecode<'T> (kind: KeyKind) (grainId: GrainId) (reason: string) : 'T =
         fail
             ContractStage
@@ -66,6 +72,7 @@ module internal KeyCodecs =
     /// which unpaired surrogate they carry therefore encode to identical bytes and collapse onto
     /// one grain identity, and decoding either one returns neither.
     /// </remarks>
+    /// <param name="value">The candidate string grain key.</param>
     let private roundTripsUtf8 (value: string) =
         String.Equals(
             Text.Encoding.UTF8.GetString(Text.Encoding.UTF8.GetBytes value),
@@ -78,6 +85,10 @@ module internal KeyCodecs =
     /// white-space string key, so the string codec follows the same validation rule, and adds
     /// the well-formedness rule the specification's injectivity law needs on top of it.
     /// </summary>
+    /// <param name="value">The candidate string grain key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="value"/> is null, empty, white-space, or not well-formed UTF-8.
+    /// </exception>
     let private encodeStringKey (value: string) =
         if isNull value then
             fail ContractStage "a string grain key must not be null."
@@ -94,6 +105,11 @@ module internal KeyCodecs =
 
         IdSpan.Create value
 
+    /// <summary>Decode a grain identity's key as a native string key, rejecting a non-canonical encoding.</summary>
+    /// <param name="grainId">The grain identity whose key is decoded.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The key is empty, white-space, or not the canonical Orleans encoding of its string value.
+    /// </exception>
     let private decodeStringKey (grainId: GrainId) =
         let value = grainId.Key.ToString()
 
@@ -112,8 +128,15 @@ module internal KeyCodecs =
 
     // ── native Guid ──────────────────────────────────────────────────────────
 
+    /// <summary>Encode a Guid into its native Orleans key representation.</summary>
+    /// <param name="value">The Guid grain key.</param>
     let private encodeGuidKey (value: Guid) = GrainIdKeyExtensions.CreateGuidKey value
 
+    /// <summary>Decode a grain identity's key as a native Guid key, rejecting an extension or non-canonical encoding.</summary>
+    /// <param name="grainId">The grain identity whose key is decoded.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The key is not a Guid key, carries a key extension, or is not the canonical Orleans encoding of its Guid value.
+    /// </exception>
     let private decodeGuidKey (grainId: GrainId) =
         let mutable value = Guid.Empty
         let mutable extension: string = null
@@ -131,8 +154,15 @@ module internal KeyCodecs =
 
     // ── native int64 ─────────────────────────────────────────────────────────
 
+    /// <summary>Encode an int64 into its native Orleans key representation.</summary>
+    /// <param name="value">The int64 grain key.</param>
     let private encodeInt64Key (value: int64) = GrainIdKeyExtensions.CreateIntegerKey value
 
+    /// <summary>Decode a grain identity's key as a native int64 key, rejecting an extension or non-canonical encoding.</summary>
+    /// <param name="grainId">The grain identity whose key is decoded.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The key is not an integer key, carries a key extension, or is not the canonical Orleans encoding of its integer value.
+    /// </exception>
     let private decodeInt64Key (grainId: GrainId) =
         let mutable value = 0L
         let mutable extension: string = null
@@ -154,6 +184,11 @@ module internal KeyCodecs =
     /// Orleans drops a null, empty, or white-space key extension, which would break the
     /// compound round-trip law, so a compound key requires a significant extension.
     /// </summary>
+    /// <param name="kind">The compound key shape the extension belongs to.</param>
+    /// <param name="extension">The candidate key extension.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="extension"/> is null, empty, white-space, or contains a NUL character.
+    /// </exception>
     let private checkExtension (kind: KeyKind) (extension: string) =
         if isNull extension then
             fail ContractStage $"a {kind.OperationName} key extension must not be null."
@@ -166,10 +201,21 @@ module internal KeyCodecs =
         if containsNul extension then
             fail ContractStage $"a {kind.OperationName} key extension must not contain a NUL character."
 
+    /// <summary>Encode a Guid and extension into their native Orleans compound key representation.</summary>
+    /// <param name="value">The Guid part of the compound key.</param>
+    /// <param name="extension">The string extension part of the compound key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="extension"/> is null, empty, white-space, or contains a NUL character.
+    /// </exception>
     let private encodeGuidCompoundKey (value: Guid, extension: string) =
         checkExtension GuidCompoundKeyKind extension
         GrainIdKeyExtensions.CreateGuidKey(value, extension)
 
+    /// <summary>Decode a grain identity's key as a native Guid compound key, rejecting a non-canonical encoding.</summary>
+    /// <param name="grainId">The grain identity whose key is decoded.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The key is not a Guid key, carries no extension, or is not the canonical Orleans encoding of its Guid and extension.
+    /// </exception>
     let private decodeGuidCompoundKey (grainId: GrainId) =
         let mutable value = Guid.Empty
         let mutable extension: string = null
@@ -188,10 +234,21 @@ module internal KeyCodecs =
 
         (value, extension)
 
+    /// <summary>Encode an int64 and extension into their native Orleans compound key representation.</summary>
+    /// <param name="value">The int64 part of the compound key.</param>
+    /// <param name="extension">The string extension part of the compound key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="extension"/> is null, empty, white-space, or contains a NUL character.
+    /// </exception>
     let private encodeInt64CompoundKey (value: int64, extension: string) =
         checkExtension Int64CompoundKeyKind extension
         GrainIdKeyExtensions.CreateIntegerKey(value, extension)
 
+    /// <summary>Decode a grain identity's key as a native int64 compound key, rejecting a non-canonical encoding.</summary>
+    /// <param name="grainId">The grain identity whose key is decoded.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The key is not an integer key, carries no extension, or is not the canonical Orleans encoding of its integer and extension.
+    /// </exception>
     let private decodeInt64CompoundKey (grainId: GrainId) =
         let mutable value = 0L
         let mutable extension: string = null
@@ -254,10 +311,18 @@ module internal KeyCodecs =
 
     // ── mapped codecs ────────────────────────────────────────────────────────
 
+    /// <summary>Reject a null domain conversion function supplied to a mapped-codec custom operation.</summary>
+    /// <param name="operationName">The custom-operation name the conversion was supplied to.</param>
+    /// <param name="name">Which conversion role this is, "encode" or "decode".</param>
+    /// <param name="value">The conversion function, boxed for the null check.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="value"/> is null.</exception>
     let private checkConversion (operationName: string) (name: string) (value: obj) =
         if isNull value then
             fail ContractStage $"the {name} function supplied to '{operationName}' must not be null."
 
+    /// <summary>Reject an open (still-generic) domain key type supplied to a mapped-codec custom operation.</summary>
+    /// <param name="operationName">The custom-operation name the key type was supplied to.</param>
+    /// <exception cref="System.InvalidOperationException">'Key is not a closed type.</exception>
     let private checkClosedKey<'Key> (operationName: string) =
         if typeof<'Key>.ContainsGenericParameters then
             fail
@@ -265,6 +330,13 @@ module internal KeyCodecs =
                 $"the domain key type '{typeof<'Key>.FullName}' supplied to '{operationName}' must be a closed type."
 
     /// <summary>Compose a domain conversion pair with a native codec.</summary>
+    /// <param name="operationName">The custom-operation name that configures the resulting codec.</param>
+    /// <param name="native">The native codec the conversion pair is composed with.</param>
+    /// <param name="encode">Converts the domain key into the native codec's key type.</param>
+    /// <param name="decode">Converts the native codec's key type back into the domain key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// 'Key is not a closed type, or <paramref name="encode"/> or <paramref name="decode"/> is null.
+    /// </exception>
     let private mapped<'Key, 'Native>
         (operationName: string)
         (native: KeyCodec<'Native>)
@@ -282,21 +354,46 @@ module internal KeyCodecs =
           DecodeKey = native.DecodeKey >> decode }
 
     /// <summary>A mapped string key codec.</summary>
+    /// <param name="encode">Converts the domain key into its native string key.</param>
+    /// <param name="decode">Converts the native string key back into the domain key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// 'Key is not a closed type, or <paramref name="encode"/> or <paramref name="decode"/> is null.
+    /// </exception>
     let stringKeyMapped (encode: 'Key -> string) (decode: string -> 'Key) : KeyCodec<'Key> =
         mapped "stringKeyMapped" stringKey encode decode
 
     /// <summary>A mapped Guid key codec.</summary>
+    /// <param name="encode">Converts the domain key into its native Guid key.</param>
+    /// <param name="decode">Converts the native Guid key back into the domain key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// 'Key is not a closed type, or <paramref name="encode"/> or <paramref name="decode"/> is null.
+    /// </exception>
     let guidKeyMapped (encode: 'Key -> Guid) (decode: Guid -> 'Key) : KeyCodec<'Key> =
         mapped "guidKeyMapped" guidKey encode decode
 
     /// <summary>A mapped int64 key codec.</summary>
+    /// <param name="encode">Converts the domain key into its native int64 key.</param>
+    /// <param name="decode">Converts the native int64 key back into the domain key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// 'Key is not a closed type, or <paramref name="encode"/> or <paramref name="decode"/> is null.
+    /// </exception>
     let int64KeyMapped (encode: 'Key -> int64) (decode: int64 -> 'Key) : KeyCodec<'Key> =
         mapped "int64KeyMapped" int64Key encode decode
 
     /// <summary>A mapped Guid compound key codec with a curried decoder.</summary>
+    /// <param name="encode">Converts the domain key into its native Guid and extension.</param>
+    /// <param name="decode">Converts the native Guid and extension, curried, back into the domain key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// 'Key is not a closed type, or <paramref name="encode"/> or <paramref name="decode"/> is null.
+    /// </exception>
     let guidCompoundKeyMapped (encode: 'Key -> Guid * string) (decode: Guid -> string -> 'Key) : KeyCodec<'Key> =
         mapped "guidCompoundKeyMapped" guidCompoundKey encode (fun (value, extension) -> decode value extension)
 
     /// <summary>A mapped int64 compound key codec with a curried decoder.</summary>
+    /// <param name="encode">Converts the domain key into its native int64 and extension.</param>
+    /// <param name="decode">Converts the native int64 and extension, curried, back into the domain key.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// 'Key is not a closed type, or <paramref name="encode"/> or <paramref name="decode"/> is null.
+    /// </exception>
     let int64CompoundKeyMapped (encode: 'Key -> int64 * string) (decode: int64 -> string -> 'Key) : KeyCodec<'Key> =
         mapped "int64CompoundKeyMapped" int64CompoundKey encode (fun (value, extension) -> decode value extension)

@@ -4,10 +4,13 @@
 
 ## What you'll learn
 
-- Why the actor brand type exists, and why it is never constructed
+- Why the actor brand type exists, why it is never constructed, and the short form that reuses the API record as the brand
 - Key-codec identity rules: what changes a grain's routing/storage identity, what does not
-- Operation rename via `operationId`, and the exact contract-version matching rule
+- Operation rename via `operationId`, contract-version matching, and opting into version tolerance
+- Reentrancy variants: whole-grain `reentrant` and the per-request `mayInterleave` predicate
 - The persistence model: explicit writes only, unique state names, and multi-provider non-atomicity
+- Distributed ACID transactions: `transactionalStateFrom`, per-operation `transactional`, and the normative re-execution semantics
+- Event sourcing: `journaledGrainFor`, a second definition kind whose state is the fold of an event journal
 - Lifecycle hooks, timers, reminders, and collection age
 - Delivery semantics: acknowledged vs. one-way, what a successful call does *not* imply, and cancellation without rollback
 - Immutable-state guidance -- deep mutation is unguarded by design
@@ -83,11 +86,34 @@ handle (_.typing) (fun context state (user, isTyping) ->
 ```
 
 A field spelled curried (`UserId -> bool -> Task<unit>`) is **not** an operation and fails
-contract construction: every API field must have the shape `'Argument -> Task<'Reply>`. Neither
-is a field that returns a function, or one whose range is `Async<'Reply>`, `ValueTask<'Reply>`,
-or a non-generic `Task`. `unit` means "no domain input" (`unit -> Task<'Reply>`).
+contract construction: every API field must have the shape `'Argument -> Task<'Reply>` or
+`'Argument -> IAsyncEnumerable<'Item>`. Neither is a field that returns a function, or one whose
+range is `Async<'Reply>`, `ValueTask<'Reply>`, a non-generic `Task`, or a synchronous `seq<_>`.
+`unit` means "no domain input" (`unit -> Task<'Reply>`).
 
 `FunctionalGrainRef.call` and `callCancellable` take the same one-argument shape.
+
+### The second field kind: a streaming reply
+
+`'Argument -> IAsyncEnumerable<'Item>` makes the operation **server-streaming** — the handler
+produces items over time and the caller receives each one as it is produced. It is bound with
+`handleStream` instead of `handle`, and the handler returns items only, with no replacement state:
+
+```fsharp
+{ tail: int -> IAsyncEnumerable<Entry> }
+
+handleStream (_.tail) (fun context state (count: int) ->
+    taskSeq {
+        for entry in state |> List.truncate count do
+            yield entry
+    })
+```
+
+It rides Orleans' own async-enumerable grain extension, so an open enumeration never blocks an
+ordinary call to the same activation, disposing the enumerator cancels the producer, and an
+abandoned enumerator is collected by Orleans. A streaming handler is state-neutral, and none of the
+four admission policies compose with it. The full rules are in
+[Server-Streaming Replies](streaming-replies.md).
 
 ## Why the actor brand
 
@@ -116,6 +142,49 @@ What the brand is **not**: it plays no part in wire or storage identity. `GrainI
 explicit `grainType` string and the encoded key alone (see
 [Key-codec identity rules](#key-codec-identity-rules) below) -- renaming the brand type, like
 renaming the module or the API record type, changes nothing about routing or stored state.
+
+### The short form: the API record as its own brand
+
+Nothing requires the brand to be a dedicated type. The contract's `'Actor` parameter is
+unconstrained, and any CLR type identity works -- including the API record's own:
+
+```fsharp
+let counterContract =
+    contract<string, CounterApi> () {
+        grainType "counter"
+        version 1
+        stringKey
+    }
+```
+
+`contract<'Key, 'Api>` is the dedicated entry point for this form -- it is exactly
+`grainContract<'Api, 'Key, 'Api>`, so the two spellings seal the same contract type and everything
+said below applies to either.
+
+No phantom type is declared at all, and everything downstream is unchanged: the runtime closes the
+marker over the record type (`FunctionalGrainMarker<CounterApi>`), so the grain class Orleans'
+manifest and Dashboard display carries the record's name -- if anything, more readable than a
+phantom's. This is the right default for the common case, where one API record belongs to exactly
+one grain type.
+
+A **separate** brand type is load-bearing in exactly two situations:
+
+- **Several grain types over one API record.** Two contracts can share an API shape and differ
+  only in policy -- the feature tour's reentrancy section hosts `tour.reentrant` and `tour.serial`
+  over one `GateApi` with two brands. With the record as the brand, both would close the same
+  marker CLR type, and the silo registry rejects a second definition per brand -- so the record
+  would have to be duplicated just to tell them apart.
+- **Replacing the record type while keeping the grain's identity.** Under
+  [version tolerance](#version-tolerance-acceptsversions-and-sinceversion), a newer client may declare a *new* record type with a
+  wire-compatible shape. The brand participates in the closed transport-interface identity, so a
+  stable brand lets the record type change underneath it; with the record as the brand, changing
+  the record moves that identity too.
+
+One interaction to know: with a derived `grainType` (see
+[Optional grainType](#optional-graintype-when-the-derived-default-is-safe) below), the default
+grain type becomes the *record's* simple name, and renaming the record then changes wire and
+storage identity -- the same trade-off as renaming a phantom brand under a derived name, with the
+same fix: declare `grainType` explicitly.
 
 ## Key-codec identity rules
 
@@ -222,21 +291,89 @@ grainContract<RoomActor, RoomId, RoomApi> () {
 
 Final operation IDs must be unique, non-blank, NUL-free ordinal strings within a contract.
 
-**Contract version matching is exact, with no rolling-upgrade tolerance.** Every request carries
-the caller's contract version; the target compares it against its own hosted version with `=`,
-not `>=` or a compatibility range. A version mismatch fails the call before any handler runs, with
-no negotiation and no automatic fallback. This means:
+**Contract version matching is exact by default.** Every request carries the caller's contract
+version; the target compares it against its own hosted version with `=`, not `>=`. A version
+mismatch fails the call before any handler runs, with no negotiation and no automatic fallback:
 
-- a version bump is a **breaking wire change** for every caller still on the old version -- there
-  is no in-place, mixed-version rolling deployment for a single contract version bump;
-- if you need callers on two versions to coexist during a rollout, host **two contracts** (one
-  per version, e.g. two different `grainType` strings, or two definitions selected by
-  deployment), migrate traffic explicitly, then retire the old one -- the runtime gives you no
-  automatic compatibility bridge to lean on instead.
+```text
+Orleans.FSharp functional transport: grain type 'chat.room' hosts contract version 2
+but received version 1.
+```
 
 Contract version is independent of `GrainId`, storage identity, and the fixed Orleans interface
 version (which this transport family pins to `1` internally, regardless of your contract's
 `version`).
+
+### Version tolerance: `acceptsVersions` and `sinceVersion`
+
+A host can opt out of the exact rule and admit older callers as well, which is what makes a
+mixed-version rolling deployment of one contract possible:
+
+```fsharp
+grainContract<LedgerActor, string, LedgerApi> () {
+    grainType "billing.ledger"
+    version 3
+    stringKey
+
+    // Admit 2 and 3. The default is Exact, which admits 3 only.
+    acceptsVersions (BackwardCompatible 2)
+
+    // 'refund' did not exist at version 2, so a call admitted at 2 is refused for it by name.
+    sinceVersion 3 (_.refund)
+}
+```
+
+`VersionPolicy` is a **closed set**, not a predicate, and that is not stylistic: a protocol token
+is the digest of grain type, **version**, operation ID, and direction, so a caller at an older
+admitted version sends a different request token and checks the reply against a different reply
+token. A version-tolerant host has to answer in the caller's own version, which means precomputing
+every admitted version's token pair when the definition is sealed — possible for a bounded range,
+impossible for `fun v -> v >= 3`.
+
+**Accepting a version asserts wire compatibility. There is no magic.** The argument payload is
+deserialized as the hosted definition's exact declared CLR type whatever version admitted it, and
+the reply is serialized the same way. Nothing converts between shapes and nothing inspects an
+older one. Declaring `BackwardCompatible n` is the application stating that every version from
+`n` upwards still sends and reads the same argument and reply types for every operation it can
+invoke. An operation whose *shape* changed needs a **new operation** — a new `operationId` — not a
+wider policy; `sinceVersion` then keeps the old callers off it.
+
+One consequence is easy to miss: the **admission-flag byte** (`readOnly` / `oneWay` /
+`alwaysInterleave`) travels in the envelope and is compared against the hosted descriptor, so an
+operation whose flags changed between two versions inside the accepted range still fails — with
+the spec-003 admission-flags diagnostic, not a version one. Wire compatibility means the flags
+too, not only the argument and reply types.
+
+What the policy changes is **admission, and nothing else**. The wire format, the stable operation
+IDs, the admission flags, the grain identity, and the storage identity are all untouched: a v2
+call and a v3 call to the same key reach the same activation, the same state, and the same
+handler. Nothing is published to the grain manifest for it either — it is a host-side rule, so a
+silo that has gossiped the grain type sees exactly what it saw before.
+
+Two rejection diagnostics come out of this, at the same stage and in the same taxonomy as the
+exact-mode one above:
+
+```text
+Orleans.FSharp functional transport: grain type 'billing.ledger' hosts contract version 3
+and accepts versions 2 through 3, but received version 1.
+
+Orleans.FSharp functional transport: operation 'refund' on grain type 'billing.ledger'
+was introduced at contract version 3, but the request declares version 2.
+```
+
+Sealing rejects a policy that cannot do anything:
+
+| Declaration | Rejected when |
+|---|---|
+| `acceptsVersions (BackwardCompatible n)` | `n <= 0`, or `n` is above the contract version (the contract would admit nothing at all) |
+| `sinceVersion n (_.op)` | `n <= 0`; `n` is above the contract version; or `n` is at or below the lowest admitted version, so it could never reject a call |
+
+That last rule is what catches the common mistake: `sinceVersion` **without** `acceptsVersions` is
+always dead, because the default policy admits the hosted version only.
+
+If you would rather not widen the policy at all, the spec-003 answer still works: host **two
+contracts** (one per version, e.g. two different `grainType` strings), migrate traffic explicitly,
+then retire the old one.
 
 ## Persistence model
 
@@ -421,6 +558,78 @@ it. Process or silo failure cannot guarantee the hook runs at all, and neither h
 exceptions get a library-level retry -- a failure surfaces to the Orleans stop lifecycle, which logs
 it and continues the remaining stop stages.
 
+### Lifecycle-stage hooks: onLifecycle
+
+`onLifecycle stage hook` hooks one of the four documented Orleans grain-lifecycle stages --
+`First`, `SetupState`, `Activate`, or `Last` -- not an arbitrary int. Each stage accepts at most
+one hook, and the hook is state-free:
+
+```fsharp
+type LifecycleStage = First | SetupState | Activate | Last
+type LifecycleHook<'Actor, 'Key> = FunctionalGrainContext<'Actor, 'Key> -> Task<unit>
+```
+
+```fsharp
+grainFor contract {
+    defaultState (fun () -> initial)
+
+    onLifecycle First (fun _context ->
+        task {
+            // earliest possible hook -- before persistent-state facets load
+            return ()
+        })
+
+    onLifecycle SetupState (fun _context ->
+        task {
+            // Orleans loads persistent-state facets around here too
+            return ()
+        })
+
+    onLifecycle Last (fun _context ->
+        task {
+            // last of the four numbered stages -- still runs BEFORE onActivate, not after
+            return ()
+        })
+
+    // onActivate stays the one hook whose 'State parameter is meaningful.
+    onActivate (fun _context state -> task { return state })
+
+    handle (_.op) handler
+}
+```
+
+**Where the four stages fall, verified by an integration probe that subscribes directly at the
+raw Orleans stage number** (not assumed from the stage names -- the obvious-looking guess,
+"`Last` is the final stage so it must run after `onActivate`", is wrong):
+
+```
+CreateInstance: facets created (not yet loaded)
+  │
+  ├─ First        (GrainLifecycleStage.First,      int.MinValue)
+  ├─ SetupState   (GrainLifecycleStage.SetupState, 1000)  -- persistent-state facets load here
+  ├─ Activate     (GrainLifecycleStage.Activate,   2000)  -- onLifecycle rejects this stage
+  ├─ Last         (GrainLifecycleStage.Last,       int.MaxValue)
+  │    (all four run, in ascending numeric order, to completion, BEFORE anything below --
+  │     this is one Orleans-internal sequence, not four independent points)
+  └─ OnActivateAsync (a separate step Orleans runs only after the whole sequence above
+       completes -- not gated by the numbered Activate stage):
+         1. state initializes (env.State.Initialize)
+         2. onActivate hook runs, if declared
+         3. reminders reconcile
+         4. timers are created
+```
+
+Because every one of the four numbered stages runs before `OnActivateAsync`, `'State` cannot be
+meaningful at any of them -- not even `Last`, the final one. That is why `onLifecycle`'s hook
+carries no state at all, uniformly, rather than giving `Last` a second, state-carrying shape: there
+is no "post-state" stage among the four to give one to. A hook that genuinely needs to read a
+stored value can still do so explicitly through `context.persistentState`.
+
+`onLifecycle Activate` is **rejected** at sealing with a diagnostic pointing at `onActivate` --
+not because the two coincide in time (per the ordering above, they do not), but because "the
+operation for activation-time behavior" should have exactly one name, and aiming at the stage
+literally named "Activate" while state is not yet initialized there would be a footgun.
+
 ### Resolving services from a handler
 
 Every callback -- handler, hook, timer, or reminder -- receives the same
@@ -483,6 +692,94 @@ subscription (`Stream.subscribe`), and the same `GetRequiredKeyedService` shape 
 - that a retry, reload, or rollback occurred on failure -- there are none, by design (see
   [Immutable-state guidance](#immutable-state-guidance-deep-mutation-is-unguarded-by-design)
   below).
+
+### Reentrancy: `reentrant` and `mayInterleave`
+
+By default an activation runs one request at a time: a second call waits for the first to return.
+Two contract operations widen that, and both reach Orleans' own machinery rather than a scheduler
+of ours.
+
+**`reentrant` — the whole grain.** Every request may enter an activation that is already executing
+one:
+
+```fsharp
+grainContract<GatewayActor, string, GatewayApi> () {
+    grainType "api.gateway"
+    stringKey
+    reentrant
+}
+```
+
+This publishes the same `reentrant` grain-type property Orleans' own `[Reentrant]` attribute
+publishes, so the activation is reentrant in exactly the sense a `[Reentrant]` grain class is.
+
+**It does not make whole-state replacement concurrency-safe, and this is the part to read
+twice.** A handler receives the state as it was when it started and publishes its replacement when
+it returns, so two interleaved handlers that both write are last-writer-wins — the second one's
+replacement silently overwrites the first's:
+
+```text
+slowAppend "slow"  reads []           parks                     returns [ "slow" ]
+fastAppend "fast"           reads [], returns [ "fast" ]
+                                                                state is [ "slow" ]
+```
+
+Reentrancy is for activations whose overlapping operations do not both write — a long call
+awaiting an external service while short reads continue. Declare the non-mutating ones `readOnly`
+so their replacement is discarded rather than published. (`examples/feature-tour` §13 prints this
+lost update as part of its transcript, so it is evidence and not a warning.)
+
+**`mayInterleave` — per request.** A predicate decides, from the request's own protocol metadata:
+
+```fsharp
+grainContract<GatewayActor, string, GatewayApi> () {
+    grainType "api.gateway"
+    stringKey
+    mayInterleave (fun metadata -> metadata.OperationId = "cancel" || metadata.IsReadOnly)
+}
+```
+
+The predicate receives `IFunctionalRequestMetadata` — grain type, contract version, operation ID,
+the three admission flags, and the payload **length**. **Metadata only:** the argument payload is
+never deserialized to decide admission, which is what keeps spec 003's protocol-before-payload
+invariant intact on a path Orleans runs *before* dispatch is reached at all. The predicate runs on
+the activation's scheduling path, so it must be cheap, pure, and non-blocking.
+
+Three behaviours are worth knowing before writing one:
+
+- **Orleans consults it for the running request too.** `ActivationData.MayInvokeRequest` admits an
+  incoming request when `predicate(incoming) || predicate(blocking)`. So an operation the predicate
+  accepts also lets *anything* interleave with it while it is the one executing. Write the
+  predicate as a statement about which operations are safe to overlap, not as a one-sided
+  allow-list.
+- **A throwing predicate rejects the call it was deciding.** Orleans logs the failure and rethrows,
+  and the message is rejected to its caller as transient — the call fails, the activation is
+  unharmed, and nothing retries in a loop. The runtime wraps the fault so the rejection names the
+  grain type and the operation:
+  `the 'mayInterleave' predicate of grain type 'api.gateway' failed while deciding whether
+  operation 'cancel' may interleave.`
+- **It is a process-wide registration keyed by the contract's actor brand.** The callback Orleans
+  reflects off the grain class is static by necessity (Orleans discards the grain instance for a
+  static `[MayInterleave]` callback), so it identifies its definition by its closed marker type
+  rather than by a field — and that type comes from the actor brand alone. Two silos in one process
+  hosting the **same** definition therefore register the same predicate, harmlessly; the later
+  registration wins, which is what an in-process silo restart needs. Two **different** grain types
+  sharing one actor brand and both declaring `mayInterleave` is rejected at configuration time,
+  naming both grain types and the brand, because they would otherwise share one predicate and the
+  second registration would silently decide admission for the first. Give each grain type its own
+  actor brand — which is already required within a single silo.
+
+Sealing rejects the combinations that could not mean anything:
+
+| Declaration | Rejected when |
+|---|---|
+| `reentrant` / `mayInterleave` | both are declared — a reentrant activation interleaves everything, so a predicate could only be ignored |
+| `alwaysInterleave (_.op)` | the contract declares `reentrant` or `mayInterleave` — Orleans admits an always-interleave request *before* it consults any predicate, so the flag is either redundant or unrefusable |
+
+`readOnly` and `oneWay` stay legal under `reentrant`, deliberately: neither is only a scheduling
+flag here. `readOnly` also makes the invocation state-neutral (its replacement is discarded and its
+persistent-state facade rejects the setter), and `oneWay` is a delivery mode with no reply. Both
+keep their full meaning on a reentrant grain.
 
 **Cancellation is cooperative and never rolls anything back.** `callCancellable` on an
 acknowledged call propagates a target-local `CancellationToken` that a long-running handler may
@@ -717,6 +1014,386 @@ activation itself may be collected. Omitting it leaves the host's stock Orleans 
 effect, and any state change the application did not explicitly write is lost when that activation
 ends.
 
+## Implicit subscriptions: onStream and onBroadcast
+
+`onStream provider ns hook` subscribes the grain **type** to one Orleans stream namespace.
+Publishing to `StreamId.Create(ns, key)` then activates the grain whose identity encodes `key` --
+creating it if it does not exist -- and delivers the item to the hook. `onBroadcast provider ns
+hook` is the same thing over a broadcast-channel provider.
+
+```fsharp
+grainFor InboxApi.contract {
+    defaultState (fun () -> { mail = [] })
+
+    onStream "StreamProvider" "chat.messages" (fun context state (item: Message) ->
+        task { return { state with mail = state.mail @ [ item ] } })
+
+    onBroadcast "BroadcastProvider" "chat.control" (fun context state (item: Control) ->
+        task { return state })
+
+    handle (_.read) (fun _ state () -> task { return state, state.mail })
+}
+```
+
+Nothing else is needed: no attribute, no class grain, no code generation. The item type is inferred
+from the hook, so it usually wants an annotation (`(item: Message)`). Several declarations are
+allowed, one per `(provider, namespace)` pair.
+
+**Publishing to one of these grains needs the contract's key encoding.** Orleans routes an
+implicit delivery to `GrainId.Create(grainType, streamId.Key)` -- the stream key bytes verbatim --
+so the stream key must be the grain key as this contract encodes it. `stringKey` and `guidKey`
+agree with `StreamId.Create(ns, key)`; `int64Key` does **not** (`StreamId.Create(ns, 42L)` writes
+decimal `"42"`, the codec writes hexadecimal `"2A"`, and the naive publish silently reaches the
+grain whose key reads as `0x42` = 66), and the compound codecs have no overload at all. Ask the
+contract instead:
+
+```fsharp
+let streamId  = FunctionalGrain.streamId  InboxApi.contract "chat.messages" inboxKey
+let channelId = FunctionalGrain.channelId InboxApi.contract "chat.control"  inboxKey
+```
+
+**Delivery follows the `onTimer` rules exactly.** A delivery is an ordinary non-reentrant grain
+call; the hook receives the whole current state and returns the replacement, which is published in
+memory **only on a successful return**; the runtime performs no storage write of its own; and
+`context.cancellationToken` is `CancellationToken.None`, because the Orleans delivery path supplies
+none.
+
+`context.streamSequenceToken` carries the Orleans cursor of the item being delivered -- `Some` for
+an `onStream` delivery on a rewindable provider (Orleans' memory streams are), `None` otherwise,
+and always `None` for `onBroadcast` (a channel has no cursor). **The runtime never rewinds with
+it**: a fresh activation resumes at the subscription's current position. It is exposed so an
+application can checkpoint or de-duplicate, which matters because delivery is at-least-once: an
+`onStream` hook that throws makes Orleans **redeliver the same item** with backoff for up to
+`StreamPullingAgentOptions.MaxEventDeliveryTime` (30 seconds by default), after which the item is
+dropped and the stream continues. An implicit subscription is never faulted by a delivery failure.
+
+`onBroadcast` is not retried at all -- a publish is a direct fan-out grain call. A throwing hook is
+logged at `Error` by `BroadcastChannelWriter` under Orleans' default
+`BroadcastChannelOptions.FireAndForgetDelivery = true`, and faults the publisher's `Publish` when
+that option is `false`. **An item of the wrong type takes the same path rather than vanishing**:
+Orleans routes a runtime-type mismatch into the subscription's error callback as an
+`InvalidCastException`, and this runtime faults that callback so the mismatch is logged or thrown
+instead of being reported as delivered. The hook is not entered and the subscription stays
+healthy.
+
+Rejections, all at the earliest stage that can see them:
+
+| Rule | Stage |
+|---|---|
+| Blank provider or namespace | definition sealing |
+| A repeated `(provider, namespace)` pair on one transport | definition sealing |
+| `statelessWorker` combined with `onStream` / `onBroadcast` | definition sealing |
+| A provider name no registered provider answers to | silo startup |
+
+The `statelessWorker` rejection is Orleans': `SiloStreamProviderRuntime.BindExtension` throws
+"The extension ... cannot be bound to a Stateless Worker", and implicit delivery addresses one
+activation identity derived from the stream key, which multiplexed local activations cannot honor.
+
+One caveat: Orleans' implicit-subscription binding names a *namespace*, not a provider. If the silo
+runs a second stream provider and an item reaches a declared namespace through it, Orleans still
+routes it to this grain type; the runtime matches on `(provider, namespace)`, logs a warning, and
+leaves that item undelivered. Batch delivery (`IAsyncBatchObserver`) is not exposed -- a hook
+receives one item at a time.
+
+`examples/feature-tour` status-matrix row 11 demonstrates all of this end to end, including the
+`activations: 1` line proving the publish itself created the activation.
+
+## Placement: statelessWorker and placement
+
+`statelessWorker maxLocalWorkers` multiplexes a grain type across up to `maxLocalWorkers` local
+activations per silo (Orleans' `StatelessWorkerPlacement`) -- useful for stateless, CPU-bound work
+where one activation per grain id would otherwise serialize concurrent calls:
+
+```fsharp
+grainFor contract {
+    defaultState (fun () -> Guid.NewGuid().ToString())  // one id per activation
+    statelessWorker 4
+    handle (_.work) handler
+}
+```
+
+`placement strategy` selects one stock Orleans placement strategy instead:
+
+```fsharp
+type PlacementStrategy = Random | PreferLocal | ActivationCountBased | ResourceOptimized
+
+placement PreferLocal
+```
+
+`Random` is Orleans' own default and needs no explicit configuration; it is included so an
+application can still name it. Both operations publish the exact manifest properties the
+corresponding Orleans attribute would (`placement-strategy`, plus `max-local-instances` /
+`remove-idle-workers` / `unordered` for `statelessWorker`) through the registry's own properties
+provider -- the same mechanism `examples/feature-tour`'s status-matrix row 12 demonstrates end to
+end, including the measured 8-concurrent-calls-to-4-activations signature.
+
+`statelessWorker` and `placement` are mutually exclusive (in either declaration order), and
+`statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
+`collectionAge` -- durable identity and idle collection age are both meaningless for activations
+Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
+
+## Distributed ACID transactions
+
+A functional grain participates in a real Orleans distributed transaction. There is no separate
+transaction runtime: a call whose operation declares a policy is carried on Orleans' own
+transactional invokable base, so the ambient transaction is joined on the way out, created or
+joined on the way in, and reported back to the caller exactly as it is for a
+`[Transaction]`-attributed CodeGen grain method.
+
+Two declarations are involved.
+
+**On the contract** — the per-operation policy:
+
+```fsharp
+let account =
+    grainContract<AccountActor, string, AccountApi> () {
+        grainType "bank.account"
+        stringKey
+        transactional Orleans.TransactionOption.CreateOrJoin (_.deposit)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.withdraw)
+        transactional Orleans.TransactionOption.CreateOrJoin (_.balance)
+    }
+```
+
+`transactional` takes **Orleans' own `Orleans.TransactionOption`** — the six members are identical
+on Orleans 10.1.0 and 10.2.2, and the admission byte encodes the value directly, so there is no
+mapping to drift. (The legacy `Orleans.FSharp.Transactions.TransactionOption` union belongs to the
+classic `grain { }` / CodeGen path; the two share a simple name, so open only the namespace you
+mean.)
+
+**On the definition** — the transactional state:
+
+```fsharp
+type Ledger = { balance: decimal; entries: string list }
+
+let ledger = TransactionalState.create<Ledger> "ledger" "TransactionStore"
+
+grainFor account {
+    defaultState (fun () -> ())
+    transactionalStateFrom ledger (fun _ -> { balance = 0m; entries = [] })
+
+    handle (_.deposit) (fun context state (amount: decimal) ->
+        task {
+            do!
+                (context.transactionalState ledger)
+                    .update (fun value -> { value with balance = value.balance + amount })
+
+            return state, ()
+        })
+
+    handle (_.balance) (fun context state () ->
+        task {
+            let! value = (context.transactionalState ledger).readWith (fun l -> l.balance)
+            return state, value
+        })
+}
+```
+
+`Ledger` is an ordinary immutable F# record. Orleans' own `ITransactionalState<'T>` requires
+`'T : class, new()` and applies an update by **mutating** the instance it stores, which no F#
+record can satisfy; the runtime therefore stores its own mutable box and application code only
+ever sees `'State -> 'State`. That is the whole reason the box exists, and it is also what makes
+in-place mutation of transactional state impossible from application code.
+
+### The facade
+
+`context.transactionalState descriptor` returns a facade bound to the invocation, exactly like
+`context.persistentState`:
+
+| Member | Shape | Notes |
+|---|---|---|
+| `read()` | `unit -> Task<'State>` | The only member whose result is the stored value, so it is the only one Orleans deep-copies before returning. |
+| `readWith project` | `('State -> 'R) -> Task<'R>` | `project` runs inside Orleans' read lock; its result is the application's own value and is returned uncopied. |
+| `update next` | `('State -> 'State) -> Task<unit>` | `next` runs inside Orleans' write lock. |
+| `updateWith next` | `('State -> 'State * 'R) -> Task<'R>` | Same, returning a result alongside the replacement. |
+
+All four take **synchronous** functions, which is deliberate rather than an omission. Orleans runs
+them inside the transactional state's reader-writer lock and throws `LockRecursionException` if
+the same state is re-entered from inside one; a function that cannot be awaited cannot call
+another grain, another transactional state, or any I/O from inside that lock.
+
+A transactional state has no "record exists" flag — Orleans materializes an unwritten state with
+`new TState()` — so `transactionalStateFrom` takes the initial value the first read observes. It
+is stored only when an update actually writes.
+
+### Which operations are transaction-scoped
+
+Three of the six options make Orleans create or join a transaction before the handler runs, and
+they are exactly the three for which Orleans' own `TransactionRequestBase.IsTransactionRequired`
+is true:
+
+| Option | Transaction-scoped | Meaning |
+|---|---|---|
+| `Create` | yes | Always starts a new transaction, even inside one. |
+| `CreateOrJoin` | yes | Joins the caller's transaction, or starts one. |
+| `Join` | yes | Requires the caller to be inside a transaction. |
+| `Supported` | no | Not transactional, but the caller's context is forwarded onward. |
+| `Suppress` | no | Not transactional; a caller's context is hidden from it. |
+| `NotAllowed` | no | Refuses to be called from inside a transaction. |
+
+**Inside a transaction-scoped operation the only durable effect available is a
+`transactionalStateFrom` facet.** The handler's replacement primary state is discarded exactly as a
+`readOnly` handler's is, and its persistent-state facades reject the `State` setter and every
+storage call, with a diagnostic naming the reason. Neither an in-memory publication nor a storage
+write has any participant that could undo it, so allowing either would let one aborted transaction
+leave the activation half-updated.
+
+`readOnly` composes: a transaction started by a `readOnly` transactional operation is started
+read-only, and the transactional facade refuses every update.
+
+### Re-execution semantics (normative)
+
+**Orleans does not re-execute a handler when a transaction aborts.** There is no retry loop in
+`TransactionRequestBase.Invoke`, and `ReaderWriterLock.EnterLock` invokes the read or update
+callback exactly once. When a participant throws, when a lock cannot be acquired in time, or when
+the commit protocol fails, the transaction is aborted and the caller receives an
+`OrleansTransactionException` (usually `OrleansTransactionAbortedException`).
+
+The consequences, in order of how often they surprise people:
+
+1. **A retry is the caller's decision, not the runtime's.** Nothing in this library retries an
+   aborted transaction. If a transaction should be attempted again, the application must call it
+   again — and every participant handler will then run again, from the beginning.
+2. **A handler runs at most once per attempt**, so "exactly once" holds per successful attempt and
+   not across retries. An attempt either commits everything or leaves nothing behind, but two
+   attempts are two runs of your code.
+3. **Effects outside transactional state are not covered.** Sending a message, writing a log,
+   calling a non-transactional grain, or mutating a captured variable happens whether or not the
+   transaction commits, and happens again on every retry. The state-neutrality rule above removes
+   the two the runtime *can* see (primary state and persistent facets); it cannot see the rest.
+4. **The read and update functions must be pure over the value they are handed.** They run inside
+   Orleans' lock and their result is what gets stored. The API makes the common failure impossible
+   — `'State -> 'State` has no access to the stored object — but a function that mutates something
+   it captured from outside is still your own hazard.
+
+`examples/feature-tour` §14 prints the measurement rather than asserting the claim: an aborted
+transfer enters the `withdraw` handler exactly once, and the counter is shown to be live by an
+application-driven retry moving it to two.
+
+**Catching a participant's exception does not un-abort the transaction.** A participant that
+faulted has already recorded the fault on the shared `TransactionInfo`, and the caller's outgoing
+filter joins that info when the call returns — so `try ... with` around a transactional grain call
+changes what your handler returns and nothing else: the transaction is still doomed and the
+outermost caller still sees `OrleansTransactionAbortedException`. Handle the failure at the
+boundary that owns the retry, not inside a participant.
+
+### Sealing and startup rules
+
+Contract sealing rejects:
+
+- `transactional` applied twice to one operation, and an undefined `TransactionOption` value;
+- `transactional` with `oneWay` — a one-way call has no reply, so the participants it enlists
+  could never be reported back to the transaction;
+- `transactional` with `alwaysInterleave` — Orleans admits an always-interleave request before any
+  interleaving policy is consulted, so two turns of one activation could hold transactional locks
+  on the same states at once.
+
+Definition sealing rejects:
+
+- two transactional facets under one state name (the name is part of the `ParticipantId` Orleans
+  addresses during the commit protocol, and of the storage key);
+- a transactional facet no operation can reach — every callback other than an operation declared
+  `Create`, `CreateOrJoin`, `Join`, or `Supported` runs without a `TransactionContext`, which
+  Orleans requires for both `PerformRead` and `PerformUpdate`;
+- `transactionalStateFrom` on a contract whose `grainType` is derived from the actor brand, and
+  `transactionalStateFrom` with `statelessWorker`, for the same durable-identity reasons
+  `stateFrom` rejects them.
+
+A `transactional` operation on a definition with **no** transactional facet is accepted: a
+state-free participant is a supported Orleans shape, and it is what every orchestrator ("unit of
+work") grain looks like.
+
+Silo startup rejects a definition that declares any transaction option or attaches any
+transactional state when the silo has no `UseTransactions()`, and rejects a transactional storage
+name that resolves to neither a keyed `ITransactionalStateStorageFactory` nor a keyed
+`IGrainStorage` — the exact resolution order `NamedTransactionalStateStorageFactory.Create`
+performs.
+
+### Wire compatibility
+
+The transaction option travels in bits 3-5 of the admission byte, which earlier versions of this
+library treat as reserved and reject. A transactional call therefore requires **both ends on a
+version that has this feature**; a non-transactional call is unaffected, because those bits are
+zero for it and the byte is unchanged. During a rolling upgrade, deploy before declaring
+`transactional` on an operation callers already use — an old silo answers such a call with the
+reserved-bit diagnostic, and an old client sending to a new silo is refused by the ordinary
+admission-flag comparison.
+
+### Hosting
+
+```fsharp
+silo.UseTransactions()
+silo.AddMemoryGrainStorage "TransactionStore"
+silo.AddFunctionalGrain accountDefinition
+```
+
+A client that only *calls* a transactional operation needs nothing beyond
+`AddFunctionalGrainClient()`: a `Create` or `CreateOrJoin` call from outside a transaction starts
+the transaction on the silo that receives it. `UseTransactions()` on the client builder is needed
+only when the client itself drives `ITransactionClient.RunTransaction`.
+
+### What this does not give you
+
+- **No automatic retry**, as above.
+- **No transactional primary state.** `stateFrom` and `usePersistentState` are not participants; a
+  transaction-scoped operation cannot write them at all.
+- **No transactional streams, timers, reminders, or observer pushes.** None of them carries a
+  transaction context, so the facade refuses the facet inside them.
+- **No cross-cluster transactions.** Orleans' transaction manager is per-cluster.
+- **The snapshot copy is a serializer round trip.** Before the first write of each transaction the
+  runtime copies the stored value through the exact-type payload codec — the same byte boundary
+  the transport puts between an argument and its handler. That is one serialize plus one
+  deserialize per transaction per written state; in exchange, an application that mutates its own
+  state object in place cannot corrupt the version an abort has to restore.
+
+## Event sourcing: `journaledGrainFor`
+
+A **journaled** definition is the second definition kind over the same contract layer. The
+contract, the transport, the client binding, the C# facade, and every contract-level operation
+are unchanged; three things differ:
+
+| | `grainFor` | `journaledGrainFor` |
+|---|---|---|
+| initial state | `defaultState` / `initialState` | `initialEventState` |
+| what a handler returns | `state', reply` | `events, reply` |
+| where the state comes from | memory, or a `stateFrom` holder | the fold of the journal |
+
+```fsharp
+let accountDefinition =
+    journaledGrainFor accountContract {
+        initialEventState (fun key -> { balance = 0m })
+        apply (fun state event -> match event with Deposited amount -> { state with balance = state.balance + amount })
+
+        logProvider "LogStorage"
+        journalStorage "Journals"
+
+        handle (_.deposit) (fun _ state amount ->
+            task { return [ Deposited amount ], state.balance + amount })
+    }
+```
+
+```fsharp
+silo.AddMemoryGrainStorage "Journals" |> ignore
+silo.AddLogStorageBasedLogConsistencyProvider "LogStorage" |> ignore
+silo.AddFunctionalJournaledGrain accountDefinition |> ignore
+```
+
+The state lives in an Orleans log-consistency provider — the same machinery `JournaledGrain`
+uses, driven directly rather than by deriving from it. The runtime appends a handler's returned
+events as one atomic batch and waits for the provider to confirm them **after the handler returns
+and before the reply leaves the activation**, so a caller that got a reply is looking at
+confirmed state. A handler that returns an empty event list performs no storage write at all.
+
+`apply` is `'State -> 'Event -> 'State` and must be pure: it runs when an event is raised **and
+again on every later activation that replays the journal**, so a fold that read the clock or
+called a service would produce a different state on replay than the one the application saw.
+
+The definition kind is invisible to callers, to the C# facade, and to every contract-level
+operation. What it changes on the definition side — which `grainFor` operations carry over,
+which are refused and why, what each built-in provider actually stores, why there is no
+`snapshotEvery`, and what the model does not give you — is in
+**[event-sourcing.md](event-sourcing.md)**.
+
 ## Reminder rename and removal: the explicit unregister migration
 
 Reminder reconciliation (`RegisterOrUpdateReminder`, run per declared reminder on every successful
@@ -881,6 +1558,36 @@ needs no per-project C# bridge assembly at all. The legacy per-grain-interface d
 referenced back from it; the sample prints an explicit note and skips them, and they are exercised
 by `tests/Orleans.FSharp.Integration`, which does load that bridge assembly.
 
+### A quick script, not a host builder: `FunctionalScripting.startOnPorts`
+
+`Scripting.startOnPorts` (the fixed-recipe `.fsx` silo helper) has no configuration hook of its
+own, so it could not host a functional grain definition -- `AddFunctionalGrain` needs a silo
+builder to call, and `Scripting.startOnPorts` builds and starts its host internally. Spec 004
+item 8b closes this: `Orleans.FSharp.Runtime.FunctionalScripting.startOnPorts` takes the same
+`siloPort`/`gatewayPort` pair plus the functional grain definitions to host, boxed with
+`FunctionalGrainRegistration.of'` (erasing their four type parameters into one list), applies
+each through `AddFunctionalGrain` inside the same builder callback `Scripting.startOnPorts`
+itself uses, and performs the manifest pre-load above automatically:
+
+```fsharp
+#r "nuget: Orleans.FSharp"
+#r "nuget: Orleans.FSharp.Runtime"
+
+open Orleans.FSharp
+
+let! handle =
+    FunctionalScripting.startOnPorts 11511 30001 [ FunctionalGrainRegistration.of' myDefinition ]
+
+let api = MyApi.ref handle.GrainFactory someKey
+```
+
+It returns the same `Scripting.SiloHandle`, so `Scripting.getGrain` and `Scripting.shutdown` work
+unchanged against it. It is a separate module from `Scripting` rather than an overload of
+`startOnPorts` itself: `AddFunctionalGrain` and `FunctionalGrainDefinition` live one assembly
+layer above `Orleans.FSharp` (in `Orleans.FSharp.Runtime`), which cannot depend back on it, so
+`Scripting.startOnPorts` cannot take a functional-definition parameter no matter how it is
+shaped. See `samples/quickstart-functional.fsx` for the full runnable script.
+
 ## Wire validation diagnostics (stricter since the fix-wave hardening pass)
 
 The F# binary codec now validates every wire-supplied length, element count, union case tag, and
@@ -967,14 +1674,19 @@ Before/after mapping:
 | one-way `FSharpGrain.post` | `oneWay (_.op)` in the contract |
 | `handleWithContext` / `GrainContext.getService` etc. | the `context` parameter passed to every `handle` callback (`context.services`, `context.grainFactory`, ...) |
 | `FSharpObserverManager<'Obs>` held in `grain { }` state, `Subscribe`/`Unsubscribe`/`Notify` message cases | the same `FSharpObserverManager<'Obs>` held in `grainFor` state, with `subscribe: 'Obs -> Task<_>` / `unsubscribe` / a notifying operation on the contract -- unchanged, observers are not part of this deprecation (see below) |
+| `onLifecycleStage n hook` (`grain { }`, arbitrary int, `CancellationToken -> Task<unit>`) | `onLifecycle stage hook` (`grainFor { }`, closed `First`/`SetupState`/`Last` set -- `Activate` is rejected, use `onActivate`; hook is `FunctionalGrainContext<'Actor,'Key> -> Task<unit>`) |
 
-**Capability gap -- no migration path today:** `grain { }`'s `onLifecycleStage` operation let a
-grain hook an *arbitrary* `GrainLifecycleStage` (`First`/`SetupState`/`Activate`/`Last`/any other
-int) with a `CancellationToken -> Task<unit>` callback. `grainFor { }` has `onActivate` /
-`onDeactivate` (fixed points in the lifecycle) but no equivalent for hooking an arbitrary
-numbered stage. A grain that genuinely needs a specific lifecycle stage (not just "on
-activate"/"on deactivate") has no functional-runtime equivalent yet and must stay on the
-`grain { }` CE, or hook the stage on a class grain directly via `ILifecycleParticipant<IGrainLifecycle>`.
+`grain { }`'s `onLifecycleStage` operation let a grain hook an *arbitrary* `GrainLifecycleStage`
+(`First`/`SetupState`/`Activate`/`Last`/any other int) with a `CancellationToken -> Task<unit>`
+callback. `grainFor { }` now has `onLifecycle` (spec 004 item 8a) for the closed set of
+documented Orleans stages -- see [Lifecycle-stage hooks](#lifecycle-stage-hooks-onlifecycle)
+below for the resolved design, including why the hook carries no state at any stage and the
+verified activation ordering. A grain that genuinely needs an *undocumented* numbered stage
+(outside `First`/`SetupState`/`Activate`/`Last`) still has no functional-runtime equivalent and
+must stay on the `grain { }` CE, or hook the stage on a class grain directly via
+`ILifecycleParticipant<IGrainLifecycle>` -- that residual gap is deliberately narrow: Orleans
+itself documents only these four stages as stable, and `onLifecycle` already covers three of
+them (`Activate` is redundant with `onActivate`).
 `InterleaveMessage` has no separate capability gap: it dies with the builder, since the
 functional runtime's `alwaysInterleave (_.op)` contract operation covers the same need per
 operation rather than per message type.
@@ -1057,6 +1769,8 @@ carries `[<Obsolete>]`.
   there
 - `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the complete runnable sample this guide's
   examples are drawn from
+- [Event Sourcing](event-sourcing.md) -- `journaledGrainFor`, the journaled definition kind
+- [Server-Streaming Replies](streaming-replies.md) -- the `IAsyncEnumerable<'Item>` field kind
 - `specs/003-functional-grain-runtime/spec.md` -- the full normative specification
 
 ## A build note for contributors: codegen and cold caches

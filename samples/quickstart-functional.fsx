@@ -1,20 +1,17 @@
 // Orleans.FSharp Quick Start Script -- functional grain runtime
 // Run with: dotnet fsi quickstart-functional.fsx
 //
-// quickstart.fsx (beside this file) hosts its silo through Scripting.startOnPorts, a fixed
-// helper with no configuration hook -- there is no way to hand it a functional grain definition
-// to register (AddFunctionalGrain needs a silo builder). This script hosts its own silo instead,
-// with the same siloConfig { } / SiloConfig.applyToHost recipe
-// src/Orleans.FSharp.Sample/Program.fs uses, so AddFunctionalGrain has a builder to call. See
-// docs/functional-grains.md for the full authoring model this contract/definition pair uses.
+// quickstart.fsx (beside this file) hosts its silo through Scripting.startOnPorts, which has no
+// hook to hand it a functional grain definition (AddFunctionalGrain needs a silo builder).
+// Orleans.FSharp.Runtime's FunctionalScripting.startOnPorts closes that gap (spec 004 item 8b):
+// it reuses Scripting's own host-building core plus the standalone-host manifest pre-load, and
+// takes the functional grain definitions to host, boxed with FunctionalGrainRegistration.of'.
+// See docs/functional-grains.md for the full authoring model this contract/definition pair uses.
 #r "nuget: Orleans.FSharp"
 #r "nuget: Orleans.FSharp.Runtime"
 
 open System.Threading.Tasks
-open Microsoft.Extensions.Hosting
-open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
-open Orleans.FSharp.Runtime
 
 // The API record: a plain F# record of functions -- no interface to write, no CodeGen bridge
 // assembly needed (unlike quickstart.fsx's IHelloGrain; see docs/functional-grains.md, "Running
@@ -45,24 +42,14 @@ let helloDefinition =
             (fun _context callCount name -> task { return callCount + 1, $"Hello, {name}! (call #{callCount + 1})" })
     }
 
-let config =
-    siloConfig {
-        useLocalhostClustering
-        addMemoryStorage "Default"
-    }
-
-let builder = Host.CreateApplicationBuilder()
-SiloConfig.applyToHost config builder
-builder.UseOrleans(fun siloBuilder -> siloBuilder.AddFunctionalGrain(helloDefinition) |> ignore) |> ignore
-let host = builder.Build()
-
 let run () =
     task {
-        do! host.StartAsync()
+        let! handle =
+            FunctionalScripting.startOnPorts 11511 30001 [ FunctionalGrainRegistration.of' helloDefinition ]
+
         printfn "Silo started! GrainFactory ready."
 
-        let factory = host.Services.GetRequiredService<Orleans.IGrainFactory>()
-        let hello = HelloApi.ref factory 0L
+        let hello = HelloApi.ref handle.GrainFactory 0L
 
         // Unlike quickstart.fsx's IHelloGrain, this reference is fully callable: the functional
         // transport's proxies ship pre-generated in the C# Orleans.FSharp.Abstractions package,
@@ -73,7 +60,7 @@ let run () =
         let! greeting2 = hello.sayHello "World"
         printfn "%s" greeting2
 
-        do! host.StopAsync()
+        do! Scripting.shutdown handle
         printfn "Silo stopped."
     }
 

@@ -24,6 +24,8 @@ type internal FunctionalGrainReferenceActivator
     (shared: GrainReferenceShared, payloadCodec: IFunctionalPayloadCodec, services: IServiceProvider) =
 
     interface IGrainReferenceActivator with
+        /// <summary>Create a functional grain reference for one grain identity's key.</summary>
+        /// <param name="grainId">The grain identity to create a reference for.</param>
         member _.CreateReference(grainId: GrainId) =
             FunctionalGrainReference(shared, grainId.Key, payloadCodec, services) :> GrainReference
 
@@ -44,6 +46,14 @@ type internal FunctionalGrainReferenceActivatorProvider(services: IServiceProvid
         lazy (services.GetRequiredService<FunctionalPayloadCodec>() :> IFunctionalPayloadCodec)
 
     interface IGrainReferenceActivatorProvider with
+        /// <summary>
+        /// Claim interface IDs under the reserved functional prefix whose suffix exactly matches
+        /// the grain type; decline every other ID so the stock providers keep serving generated
+        /// references.
+        /// </summary>
+        /// <param name="grainType">The grain type of the identity being activated.</param>
+        /// <param name="interfaceType">The candidate grain interface type.</param>
+        /// <param name="activator">Receives the functional activator when this provider claims the ID.</param>
         member _.TryGet
             (grainType: GrainType, interfaceType: GrainInterfaceType, activator: byref<IGrainReferenceActivator>)
             =
@@ -83,11 +93,33 @@ type internal FunctionalGrainReferenceActivatorProvider(services: IServiceProvid
 type internal FunctionalReferenceSender(reference: FunctionalGrainReference, metadata: FunctionalTargetMetadata) =
 
     interface IFunctionalRequestSender with
+        /// <summary>Send a two-way request through the underlying reference and await its reply.</summary>
+        /// <param name="envelope">The fixed request envelope to send.</param>
+        /// <param name="cancellationToken">Propagated to the underlying reference send.</param>
         member _.SendAsync(envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
             reference.SendAsync(envelope, metadata.InterfaceType, metadata.DispatchMethod, cancellationToken)
 
+        /// <summary>Send a two-way transactional request through the underlying reference and await its reply.</summary>
+        /// <param name="envelope">The fixed request envelope to send.</param>
+        /// <param name="cancellationToken">Propagated to the underlying reference send.</param>
+        member _.SendTransactionalAsync(envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
+            reference.SendTransactionalAsync(
+                envelope,
+                metadata.InterfaceType,
+                metadata.DispatchMethod,
+                cancellationToken
+            )
+
+        /// <summary>Send a one-way request through the underlying reference without waiting for a reply.</summary>
+        /// <param name="envelope">The fixed request envelope to send.</param>
         member _.SendOneWay(envelope: FunctionalRequestEnvelope) =
             reference.SendOneWay(envelope, metadata.InterfaceType, metadata.DispatchMethod)
+
+        /// <summary>Open a server-streaming request through the underlying reference and return its reply stream.</summary>
+        /// <param name="envelope">The fixed request envelope to send.</param>
+        /// <param name="cancellationToken">Propagated to the underlying reference send.</param>
+        member _.OpenStream(envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
+            reference.OpenStream(envelope, metadata.InterfaceType, metadata.DispatchMethod, cancellationToken)
 
 /// <summary>Presence marker making the client-service registration idempotent.</summary>
 [<Sealed>]
@@ -102,9 +134,17 @@ type internal FunctionalClientServicesMarker() =
 [<RequireQualifiedAccess>]
 module internal FunctionalTransportTypes =
 
-    /// <summary>The three fixed transport types, in wire-nesting order.</summary>
+    /// <summary>The four fixed transport types, in wire-nesting order.</summary>
+    /// <remarks>
+    /// <c>FunctionalTransactionRequest</c> is deliberately absent: a process which never calls a
+    /// transactional operation never resolves the transaction machinery, and preflighting it would
+    /// make every client pay for it. <c>FunctionalStreamRequest</c> is present because it costs
+    /// nothing extra — its base codec lives in <c>Orleans.Core.Abstractions</c>, which every
+    /// functional process already loads.
+    /// </remarks>
     let all: Type[] =
         [| typeof<FunctionalRequest>
+           typeof<FunctionalStreamRequest>
            typeof<FunctionalRequestEnvelope>
            typeof<FunctionalReply> |]
 
@@ -113,6 +153,11 @@ module internal FunctionalTransportTypes =
     /// cannot serialize them can never send or receive a functional call, so this runs at
     /// startup rather than at the first call.
     /// </summary>
+    /// <param name="services">The process's service provider.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// No <see cref="ICodecProvider"/> is registered, or a fixed transport type has no registered
+    /// Orleans serializer.
+    /// </exception>
     let preflight (services: IServiceProvider) =
         match services.GetService typeof<ICodecProvider> with
         | :? ICodecProvider as provider ->
@@ -140,6 +185,8 @@ module internal FunctionalTransportTypes =
 type internal FunctionalClientStartupValidator(services: IServiceProvider) =
 
     interface ILifecycleParticipant<IClusterClientLifecycle> with
+        /// <summary>Subscribe the fixed-transport preflight to the cluster client's RuntimeInitialize stage.</summary>
+        /// <param name="lifecycle">The cluster client lifecycle to subscribe to.</param>
         member _.Participate(lifecycle: IClusterClientLifecycle) =
             lifecycle.Subscribe(
                 "Orleans.FSharp.FunctionalGrainClient",
@@ -162,6 +209,10 @@ module internal FunctionalClientServices =
     /// one. Orleans installs its default providers before a builder extension runs, so their
     /// absence means the extension was applied to something which is not an Orleans builder.
     /// </summary>
+    /// <param name="services">The service collection to insert the provider into.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// No existing <see cref="IGrainReferenceActivatorProvider"/> registration is found.
+    /// </exception>
     let private insertReferenceActivatorProvider (services: IServiceCollection) =
         let index =
             services
@@ -180,11 +231,17 @@ module internal FunctionalClientServices =
             services.Insert(position, descriptor)
 
     /// <summary>True once this service collection carries the functional client services.</summary>
+    /// <param name="services">The service collection to inspect.</param>
     let isRegistered (services: IServiceCollection) =
         services
         |> Seq.exists (fun descriptor -> descriptor.ServiceType = typeof<FunctionalClientServicesMarker>)
 
     /// <summary>Register the fixed functional transport on a service collection. Idempotent.</summary>
+    /// <param name="services">The service collection to register the functional transport on.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="services"/> is null, or no existing
+    /// <see cref="IGrainReferenceActivatorProvider"/> registration is found to order ahead of.
+    /// </exception>
     let addTo (services: IServiceCollection) : IServiceCollection =
         if isNull (box services) then
             fail BindingStage "the functional client transport requires a service collection."

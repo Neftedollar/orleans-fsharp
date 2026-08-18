@@ -100,3 +100,71 @@ module Properties =
         let directState = applyCommands commands
 
         replayedState.Balance = directState.Balance
+
+/// <summary>
+/// Parity pins for the functional-runtime twin (<c>AccountGrainFunctional.fs</c>). The twin
+/// delegates its fold and its command decision to <c>AccountGrainDef</c>, so those need no
+/// separate tests -- the properties above already cover both paths. The one thing the twin adds
+/// on its own is <c>refusalFor</c>, which RE-DERIVES why the classic handler returned an empty
+/// event list, and that is exactly where the two could drift apart.
+/// </summary>
+module FunctionalTwin =
+
+    let private stateWith (balance: decimal) =
+        let state = AccountState()
+        state.Balance <- balance
+        state
+
+    /// <summary>
+    /// The invariant, derived from the classic handler rather than restated: whenever
+    /// <c>handleCommand</c> refuses a withdrawal, the named refusal the twin reports has to be
+    /// the true reason. A refusal that named the wrong cause -- or a case the classic handler
+    /// would have accepted -- fails here.
+    /// </summary>
+    [<Property>]
+    let ``a refused withdrawal is named by the guard that actually refused it``
+        (NonNegativeInt balance)
+        (amount: decimal)
+        =
+        let state = stateWith (decimal balance)
+        let events = AccountGrainDef.handleCommand state (Withdraw amount)
+
+        if events.IsEmpty then
+            match AccountFunctionalDef.refusalFor state amount with
+            | NonPositiveAmount refused -> refused = amount && amount <= 0m
+            | InsufficientFunds(seen, requested) ->
+                seen = state.Balance && requested = amount && amount > 0m && state.Balance < amount
+        else
+            // Accepted by the classic handler, so the twin answers Ok and never consults refusalFor.
+            amount > 0m && state.Balance >= amount
+
+    /// <summary>The same invariant for deposits, whose only refusal is a non-positive amount.</summary>
+    [<Property>]
+    let ``a refused deposit is always a non-positive amount`` (NonNegativeInt balance) (amount: decimal) =
+        let state = stateWith (decimal balance)
+        let events = AccountGrainDef.handleCommand state (Deposit amount)
+
+        if events.IsEmpty then
+            AccountFunctionalDef.refusalFor state amount = NonPositiveAmount amount && amount <= 0m
+        else
+            amount > 0m
+
+    /// <summary>
+    /// The contract and the journaled definition are built at module initialisation, and both
+    /// stages validate: the API record's shape, every selector, the required
+    /// <c>initialEventState</c>/<c>apply</c> ordering, and the presence of <c>logProvider</c>.
+    /// Touching them here turns a definition-stage error into a failing test rather than into a
+    /// silo that refuses to start.
+    /// </summary>
+    [<Fact>]
+    let ``the functional contract and journaled definition are well-formed`` () =
+        let contract = string AccountApi.contract
+        let definition = string AccountFunctionalDef.account
+
+        Assert.Contains("grainType = 'bank-account.account.functional'", contract)
+        Assert.Contains("version = 1", contract)
+        // Five operations: deposit, withdraw, balance, journalVersion, recycle.
+        Assert.Contains("operations = 5", contract)
+        // The journal is keyed on the SAME event type the classic definition raises.
+        Assert.Contains($"event = '{typeof<AccountEvent>.FullName}'", definition)
+        Assert.Contains($"state = '{typeof<AccountState>.FullName}'", definition)

@@ -10,8 +10,10 @@ namespace Counter.Contracts
 open System.Threading.Tasks
 open Orleans.FSharp
 
+/// <summary>Phantom actor brand for the counter contract; never constructed.</summary>
 type CounterActor = private CounterActor of unit
 
+/// <summary>The counter's typed API shape: one function per grain operation.</summary>
 [<NoEquality; NoComparison>]
 type CounterApi =
     { increment: unit -> Task<int>
@@ -20,6 +22,7 @@ type CounterApi =
 
 [<RequireQualifiedAccess>]
 module CounterApi =
+    /// <summary>The counter's functional grain contract: type, version, and int64 key mapping.</summary>
     let contract =
         grainContract<CounterActor, int64, CounterApi> () {
             grainType "counter.functional"
@@ -27,6 +30,7 @@ module CounterApi =
             int64Key
         }
 
+    /// <summary>Point-free grain reference constructor: <c>IGrainFactory -&gt; int64 -&gt; CounterApi</c>.</summary>
     let ref = FunctionalGrain.ref contract
 
 namespace Counter.Server
@@ -35,6 +39,7 @@ open Counter.Contracts
 open Orleans.FSharp
 
 module Definition =
+    /// <summary>The counter grain's behavior: handlers for <c>increment</c>, <c>decrement</c>, and <c>value</c>.</summary>
     let counterDefinition =
         grainFor CounterApi.contract {
             defaultState (fun () -> 0)

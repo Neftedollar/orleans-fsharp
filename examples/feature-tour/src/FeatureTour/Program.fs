@@ -28,9 +28,14 @@ open FeatureTour.VersioningTour
 open FeatureTour.Streams
 open FeatureTour.ObserverTour
 open FeatureTour.Broadcast
+open FeatureTour.Implicit
+open FeatureTour.Interleaving
+open FeatureTour.Transactions
 open FeatureTour.Interop
 open FeatureTour.Placement
 open FeatureTour.Heterogeneous
+open FeatureTour.EventSourcing
+open FeatureTour.StreamingReplies
 
 // ── Silo ─────────────────────────────────────────────────────────────────────
 
@@ -301,7 +306,7 @@ let private runCancellation (factory: IGrainFactory) =
 
 let private runVersioning (factory: IGrainFactory) =
     task {
-        section 6 "Contract versioning — exact match, no rolling-upgrade tolerance"
+        section 6 "Contract versioning — exact by default, opt-in tolerance with acceptsVersions"
 
         let matching = VersioningTour.VersionedApi.refV1 factory "doc-1"
         let! reply = matching.hosted ()
@@ -321,14 +326,57 @@ let private runVersioning (factory: IGrainFactory) =
         say $"caller on version 2, same grainType '{VersioningTour.VersionedApi.GrainType}' ->"
         detail mismatch
 
+        // ── The opt-in: spec 004 item 7 ──────────────────────────────────────
+        // A version-3 host that accepts 2 as well, with one operation introduced at 3.
+        let current = RollingApi.refV3 factory "order-1"
+        let previous = RollingApi.refV2 factory "order-1"
+        let ancient = RollingApi.refV1 factory "order-1"
+
+        let attempt (call: unit -> Task<string>) =
+            task {
+                try
+                    let! reply = call ()
+                    return $"ADMITTED — {reply}"
+                with error ->
+                    return describe error
+            }
+
+        let! currentSettle = attempt (fun () -> current.settle "A")
+        let! previousSettle = attempt (fun () -> previous.settle "A")
+        let! ancientSettle = attempt (fun () -> ancient.settle "A")
+        let! currentRefund = attempt (fun () -> current.refund "A")
+        let! previousRefund = attempt (fun () -> previous.refund "A")
+
+        say $"host '{RollingApi.GrainType}' hosts version 3 and declares acceptsVersions (BackwardCompatible 2)"
+        detail $"caller v3, 'settle'  -> {currentSettle}"
+        detail $"caller v2, 'settle'  -> {previousSettle}"
+        detail $"caller v1, 'settle'  -> {ancientSettle}"
+        detail $"caller v3, 'refund'  -> {currentRefund}"
+        detail $"caller v2, 'refund' (sinceVersion 3) -> {previousRefund}"
+
+        // Admission only: the older caller reached the SAME activation and the same state, so
+        // nothing about routing or storage identity moved with the wider policy.
+        let! sameActivation = attempt (fun () -> previous.settle "B")
+        let! readBack = attempt (fun () -> current.refund "ignored")
+
+        detail $"caller v2 wrote state, caller v3 read the same activation -> {readBack}"
+
         let versioningHolds =
             reply.Contains "version-1 handler"
             && mismatch.Contains "hosts contract version 1 but received version 2"
+            && currentSettle.StartsWith "ADMITTED"
+            && previousSettle.StartsWith "ADMITTED"
+            && ancientSettle.Contains "accepts versions 2 through 3, but received version 1"
+            && currentRefund.StartsWith "ADMITTED"
+            && previousRefund.Contains "was introduced at contract version 3, but the request declares version 2"
+            && sameActivation.StartsWith "ADMITTED"
+            && readBack.StartsWith "ADMITTED"
 
         if versioningHolds then
-            verdict "SUPPORTED — the mismatch is refused before any handler runs, naming both versions"
+            verdict
+                "SUPPORTED — exact by default; acceptsVersions admits an older caller, sinceVersion still refuses a newer operation"
         else
-            verdict "FAILED — the matching call or the version rejection did not behave as documented"
+            verdict "FAILED — the matching call, the version rejection, or the tolerance opt-in did not behave as documented"
     }
 
 let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider) =
@@ -537,7 +585,7 @@ let private runBroadcast (factory: IGrainFactory) =
 
 let private runHeterogeneous () =
     task {
-        section 11 "Heterogeneous cluster — one grain type advertised by only one silo"
+        section 12 "Heterogeneous cluster — one grain type advertised by only one silo"
 
         say "deploying a two-silo cluster (Microsoft.Orleans.TestingHost, in-process silos)..."
         let! observation = HeterogeneousRun.run ()
@@ -571,7 +619,7 @@ let private runHeterogeneous () =
 
 let private runPlacement (factory: IGrainFactory) =
     task {
-        section 10 "Stateless workers and flexible placement — composed, not built in"
+        section 10 "Stateless workers and flexible placement — first-class operation"
 
         let worker = WorkerApi.ref factory "batch-1"
         let! reports, elapsed = WorkerRun.concurrentBatch worker 8 400
@@ -582,16 +630,434 @@ let private runPlacement (factory: IGrainFactory) =
         let rendered = String.Join(", ", activations)
         say $"distinct activations that served them: {activations.Length} -> [{rendered}]"
 
-        detail $"the contract has no 'placement' operation, so this is composed: an application"
-        detail $"IGrainPropertiesProvider applies StatelessWorkerAttribute {WorkerApi.MaxLocalWorkers} to grain type"
-        detail $"'{WorkerApi.GrainType}' by NAME, because a functional grain's class is the library's own"
-        detail "FunctionalGrainMarker<'Actor> and cannot carry the attribute itself."
-        detail "properties written: placement-strategy, max-local-instances, remove-idle-workers, unordered."
+        detail $"WorkerDefinition declares 'statelessWorker {WorkerApi.MaxLocalWorkers}' directly (Placement.fs) —"
+        detail "the registry's own properties provider publishes the manifest properties, no"
+        detail "application-level IGrainPropertiesProvider registration needed any more."
+        detail "properties written: placement-strategy, max-local-instances, remove-idle-workers, unordered"
+        detail "(verified identical to a live StatelessWorkerAttribute by a property-key exactness test)."
+        detail "Composition via an app-level IGrainPropertiesProvider (FunctionalPlacementProvider,"
+        detail "still in this file) remains possible for placement needs the closed operation set"
+        detail "does not cover."
 
         if activations.Length > 1 then
-            verdict $"COMPOSED — stateless-worker placement works today; a first-class contract operation is still backlog"
+            verdict $"SUPPORTED — stateless-worker placement through the first-class 'statelessWorker' operation"
         else
             verdict "WALL — the placement properties did not take effect; see the README"
+    }
+
+let private runImplicit (factory: IGrainFactory) =
+    task {
+        section 11 "Implicit subscriptions — onStream / onBroadcast activate the grain on publish"
+
+        let mailer = MailerApi.ref factory "mailer"
+        let inboxKey = $"inbox-{Guid.NewGuid():N}"
+
+        // Nothing has ever touched this grain id. The publish below is the ONLY interaction.
+        let! _ = mailer.post (TourImplicit.StreamNamespace, inboxKey, "first")
+
+        let streamPrefix = $"stream {inboxKey}"
+        let broadcastPrefix = $"broadcast {inboxKey}"
+
+        let! delivered =
+            waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf streamPrefix = 1 })
+
+        if delivered then
+            say $"published to stream namespace '{TourImplicit.StreamNamespace}' key '{inboxKey}' — nothing called the grain"
+            let observed = ImplicitLog.countOf streamPrefix
+            say $"the onStream hook ran on a grain that did not exist: {observed} delivery"
+        else
+            say $"no implicit stream delivery observed within 30s for key '{inboxKey}'"
+
+        // A second item, so the transcript shows the hook seeing the state the first one left.
+        let! _ = mailer.post (TourImplicit.StreamNamespace, inboxKey, "second")
+
+        let! bothDelivered =
+            waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf streamPrefix = 2 })
+
+        // The broadcast arm of the same machinery, on the same grain id.
+        let! _ = mailer.broadcast (TourImplicit.ChannelNamespace, inboxKey, "all-hands")
+
+        let! broadcastDelivered =
+            waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf broadcastPrefix = 1 })
+
+        // The negative control: a namespace no definition declares publishes no binding, so
+        // Orleans resolves no implicit subscriber and nothing is activated at all.
+        let undeliveredKey = $"inbox-{Guid.NewGuid():N}"
+        let! _ = mailer.post (TourImplicit.UndeclaredNamespace, undeliveredKey, "into the void")
+        do! Task.Delay(TimeSpan.FromSeconds 2.0)
+        let undeclaredDeliveries = ImplicitLog.countOf $"stream {undeliveredKey}"
+
+
+        // Only now is the grain called, to read back the state the hooks published.
+        let inbox = InboxApi.ref factory inboxKey
+        let! snapshot = inbox.snapshot ()
+
+        say $"state after the deliveries: mail={snapshot.mail} announcements={snapshot.announcements}"
+        say $"activations of that grain: {snapshot.activations} (the FIRST one was caused by the publish)"
+        say $"stream cursor seen by the last delivery: {snapshot.cursor}"
+        say $"publish to undeclared namespace '{TourImplicit.UndeclaredNamespace}': {undeclaredDeliveries} deliveries"
+
+        detail "InboxDefinition (Implicit.fs) declares 'onStream TourStreams tour-implicit-mail' and"
+        detail "'onBroadcast TourBroadcast tour-implicit-announcements' — the registry's properties"
+        detail "provider publishes the same manifest binding an [ImplicitStreamSubscription] /"
+        detail "[ImplicitChannelSubscription] class publishes (binding.attr-N.type / .pattern /"
+        detail ".streamid-mapper), and the activation implements Orleans' IStreamSubscriptionObserver"
+        detail "and IOnBroadcastChannelSubscribed so the pending item is delivered rather than dropped."
+        detail "Delivery follows the timer-hook rules: whole-state replacement, published only on a"
+        detail "successful return, no implicit storage write. A throwing hook is retried by Orleans"
+        detail "for up to MaxEventDeliveryTime and never faults the implicit subscription."
+
+        let holds =
+            delivered
+            && bothDelivered
+            && broadcastDelivered
+            && undeclaredDeliveries = 0
+            && snapshot.mail = [ "first"; "second" ]
+            && snapshot.announcements = [ "all-hands" ]
+            && snapshot.activations = 1
+
+        if holds then
+            verdict
+                "SUPPORTED — a publish activates the functional grain the stream key names and the declared hook receives the item"
+        else
+            verdict "UNEXPECTED — implicit delivery did not hold; see the observation lines above"
+    }
+
+let private runTransactions (factory: IGrainFactory) =
+    task {
+        section 14 "Distributed ACID transactions — transactionalStateFrom and per-operation policy"
+
+        let run = Guid.NewGuid().ToString "N"
+        let source = $"acct-a-{run}"
+        let target = $"acct-b-{run}"
+        let teller = TellerApi.ref factory run
+
+        let sourceAccount = AccountApi.ref factory source
+        let targetAccount = AccountApi.ref factory target
+
+        // ── Commit: one transaction, two participants, both states move ──────
+        do! sourceAccount.deposit 100m
+        do! teller.transfer (source, target, 40m)
+        let! committed = teller.totals (source, target)
+
+        say $"one transaction created by '{TellerApi.GrainType}' moved 40 from A to B"
+        detail $"both balances read inside ONE transaction afterwards: {committed}"
+
+        // ── Abort: the second participant refuses, and the first is rolled back
+        let entriesBefore = Entries.count $"withdraw:{source}"
+
+        let! aborted =
+            task {
+                try
+                    do! teller.transfer (source, target, 500m)
+                    return "the transfer SUCCEEDED (unexpected)"
+                with error ->
+                    return describe error
+            }
+
+        let! afterAbort = teller.totals (source, target)
+        let entriesAfter = Entries.count $"withdraw:{source}"
+
+        say $"a transfer of 500 (A holds 60) failed with: {aborted}"
+        detail $"balances after the abort: {afterAbort} — unchanged, so the earlier deposit was rolled back too"
+
+        // ── Re-execution: measured, not assumed ──────────────────────────────
+        detail $"the withdraw handler was entered {entriesAfter - entriesBefore} time(s) for that aborted transaction"
+        detail "Orleans does NOT re-run a handler when a transaction aborts: it surfaces"
+        detail "OrleansTransactionAbortedException and leaves the retry to the caller. A handler is"
+        detail "therefore run at most once per attempt, and an attempt either commits or leaves"
+        detail "nothing behind."
+
+        // ── The two refusals the runtime adds ────────────────────────────────
+        let! readOnlyOutcome = sourceAccount.peekAndWrite ()
+        let! unguardedOutcome = sourceAccount.unguarded ()
+
+        say "the facade is bound to the operation's declared policy:"
+        detail $"'peekAndWrite' is readOnly + transactional: {readOnlyOutcome}"
+        detail $"'unguarded' declares no transaction at all: {unguardedOutcome}"
+
+        detail "Inside a transaction-scoped operation the ONLY durable effect is the transactional"
+        detail "facet: the handler's replacement primary state is discarded and its persistent-state"
+        detail "facades reject every write, because nothing could roll either of them back."
+
+        let committedHolds = committed = (60m, 40m)
+        let abortHolds = afterAbort = (60m, 40m) && aborted.Contains "Aborted"
+        let onceHolds = entriesAfter - entriesBefore = 1
+        let refusalsHold = readOnlyOutcome.Contains "refused" && unguardedOutcome.Contains "refused"
+
+        if committedHolds && abortHolds && onceHolds && refusalsHold then
+            verdict
+                "SUPPORTED — a transaction spanning two functional grains commits atomically, aborts atomically, runs each handler once, and refuses a write from a read-only or non-transactional operation"
+        else
+            verdict "UNEXPECTED — transactions did not hold; see the observation lines above"
+    }
+
+let private runInterleaving (factory: IGrainFactory) =
+    task {
+        section 13 "Reentrancy variants — 'reentrant' and 'mayInterleave' as contract operations"
+
+        // ── Whole-grain reentrancy, against an identical contract without it ──
+        let reentrantKey = $"gate-{Guid.NewGuid():N}"
+        let reentrant = GateApi.refReentrant factory reentrantKey
+        let parkedReentrant = reentrant.park 8000
+        let! reentrantParked = Gate.waitForEntry reentrantKey
+
+        // Reaching 'release' AT ALL is the observation: it is what unparks the first call, so it
+        // can only return while the first call is still inside the activation.
+        let! _ = reentrant.release ()
+        let! reentrantOutcome = parkedReentrant
+
+        let serialKey = $"gate-{Guid.NewGuid():N}"
+        let serial = GateApi.refSerial factory serialKey
+        let parkedSerial = serial.park 1500
+        let! serialParked = Gate.waitForEntry serialKey
+        let serialRelease = serial.release ()
+        let! serialOutcome = parkedSerial
+        let! _ = serialRelease
+
+        say $"'{GateApi.ReentrantGrainType}' (declares 'reentrant'): second call {reentrantOutcome}"
+        say $"'{GateApi.SerialGrainType}' (identical contract, no 'reentrant'): second call {serialOutcome}"
+
+        // ── The cost, shown rather than only documented ───────────────────────
+        let lostKey = $"lost-{Guid.NewGuid():N}"
+        let lost = GateApi.refReentrant factory lostKey
+        let slow = lost.slowAppend "slow"
+        let! lostParked = Gate.waitForEntry lostKey
+        do! lost.fastAppend "fast"
+        let! interim = lost.notes ()
+        let! _ = lost.release ()
+        do! slow
+        let! final = lost.notes ()
+
+        say $"two interleaved writers: after the fast one published, state was {interim}"
+        say $"after the slow one returned, state is {final} — its snapshot predated the fast write"
+
+        // ── A per-request predicate, with a negative control ──────────────────
+        let admitKey = $"sel-{Guid.NewGuid():N}"
+        let admit = SelectiveApi.ref factory admitKey
+        let parkedAdmit = admit.park 8000
+        let! admitParked = Gate.waitForEntry admitKey
+        let! _ = admit.release ()
+        let! admitOutcome = parkedAdmit
+
+        let refuseKey = $"sel-{Guid.NewGuid():N}"
+        let refuse = SelectiveApi.ref factory refuseKey
+        let parkedRefuse = refuse.park 1500
+        let! refuseParked = Gate.waitForEntry refuseKey
+        let audit = refuse.audit ()
+        let! refuseOutcome = parkedRefuse
+        let! _ = audit
+
+        say $"'{SelectiveApi.GrainType}' declares mayInterleave (operationId = \"release\")"
+        detail $"'release' (named by the predicate): {admitOutcome}"
+        detail $"'audit'   (not named):              {refuseOutcome}"
+        detail $"the predicate itself saw: {PredicateLog.all ()}"
+
+        detail "Both are contract operations, and both reach Orleans' own machinery: 'reentrant'"
+        detail "publishes the grain property [Reentrant] publishes, and 'mayInterleave' publishes the"
+        detail "property [MayInterleave] publishes plus the static callback it names, on a marker"
+        detail "class used only for definitions that declare it. The predicate is handed"
+        detail "IFunctionalRequestMetadata -- protocol fields only, never the argument payload."
+        detail "Orleans admits a request when the predicate accepts EITHER it or the request already"
+        detail "running, so write it as a statement about what is safe to overlap."
+
+        let interleavingHolds =
+            reentrantParked
+            && serialParked
+            && lostParked
+            && admitParked
+            && refuseParked
+            && reentrantOutcome.StartsWith "released"
+            && serialOutcome.StartsWith "timed out"
+            && interim = [ "fast" ]
+            && final = [ "slow" ]
+            && admitOutcome.StartsWith "released"
+            && refuseOutcome.StartsWith "timed out"
+            && PredicateLog.countOf "release -> True" >= 1
+            && PredicateLog.countOf "audit -> False" >= 1
+
+        if interleavingHolds then
+            verdict
+                "SUPPORTED — whole-grain reentrancy and a metadata-only per-request predicate, each with a control that does not interleave"
+        else
+            verdict "UNEXPECTED — an interleaving observation above did not hold"
+    }
+
+
+let private runEventSourcing (factory: IGrainFactory) =
+    task {
+        section 15 "Event sourcing — journaledGrainFor over Orleans' log-consistency providers"
+
+        let run = Guid.NewGuid().ToString "N"
+
+        let providers =
+            [ "LogStorage (stores the whole event log)", BalanceApi.logRef factory $"log-{run}"
+              "StateStorage (stores the folded view)", BalanceApi.stateRef factory $"state-{run}" ]
+
+        let mutable allHold = true
+
+        for label, api in providers do
+            say $"provider: {label}"
+
+            let! afterFirst = api.deposit 100m
+            let! afterSecond = api.deposit 40m
+            let! withdrew = api.withdraw 30m
+            let! refused = api.withdraw 5000m
+
+            detail $"deposit 100 -> {afterFirst}; deposit 40 -> {afterSecond} (the handler saw the state its own event produced)"
+            detail $"withdraw 30 -> {withdrew}; withdraw 5000 -> {refused} (refused, and so raises no event at all)"
+
+            let! (before, versionBefore) = api.snapshot ()
+            detail $"state {before.amount} from journal version {versionBefore} — three events, and the refusal is not one of them"
+
+            // ── The replay: the activation is dropped and the state is rebuilt ──
+            do! api.goIdle ()
+
+            let! recycled =
+                waitUntil (TimeSpan.FromSeconds 30.0) (fun () ->
+                    task {
+                        let! _ = api.snapshot ()
+                        return true
+                    })
+
+            do! Task.Delay 1500
+            let! (after, versionAfter) = api.snapshot ()
+
+            detail $"after the activation ended: state {after.amount} from version {versionAfter}, entries {after.entries}"
+            detail "nothing wrote the state anywhere — it is the fold of the journal, rebuilt"
+
+            // ── The negative control ────────────────────────────────────────────
+            let! readOnlyOutcome =
+                task {
+                    try
+                        return! api.readOnlyRaise ()
+                    with error ->
+                        return describe error
+                }
+
+            detail $"a readOnly operation that raises an event: {readOnlyOutcome}"
+
+            let holds =
+                before.amount = 110m
+                && versionBefore = 3
+                && after.amount = 110m
+                && versionAfter = 3
+                && after.entries = before.entries
+                && recycled
+                && readOnlyOutcome.Contains "readOnly"
+
+            allHold <- allHold && holds
+
+        detail "confirmation is per turn: the runtime appends a handler's events and waits for the"
+        detail "log-consistency provider to confirm them BEFORE the reply leaves the activation, so a"
+        detail "caller that got a reply is looking at durable state."
+        detail "neither built-in provider truncates or snapshots a journal: LogStorage grows the log"
+        detail "forever and replays all of it, StateStorage keeps only the latest view."
+
+        if allHold then
+            verdict
+                "SUPPORTED — a journaled definition replays its state from the journal on both built-in providers, confirms per turn, raises no event for a refused command, and refuses an append from a readOnly operation"
+        else
+            verdict "UNEXPECTED — event sourcing did not hold; see the observation lines above"
+    }
+
+
+let private runStreamingReplies (factory: IGrainFactory) =
+    task {
+        section 16 "Server-streaming replies — an API field returning IAsyncEnumerable<'Item>"
+
+        let run = Guid.NewGuid().ToString("N").Substring(0, 8)
+        let api = TickerApi.ref factory $"ticker-{run}"
+
+        // ── Incremental delivery ────────────────────────────────────────────────
+        let watchLabel = $"watch-{run}"
+        let stream = api.watch (watchLabel, 4)
+        let enumerator = stream.GetAsyncEnumerator CancellationToken.None
+        let received = ResizeArray<Tick>()
+        let mutable incremental = true
+
+        for index in 0..3 do
+            // Nothing may have been produced beyond what has already been consumed.
+            if Produced.count watchLabel <> index then
+                incremental <- false
+
+            Gates.release watchLabel index
+            let! moved = enumerator.MoveNextAsync()
+
+            if moved then
+                received.Add enumerator.Current
+            else
+                incremental <- false
+
+            // The producer is now parked at the NEXT gate, so it produced exactly one more.
+            if Produced.count watchLabel <> index + 1 then
+                incremental <- false
+
+        let! completed = enumerator.MoveNextAsync()
+        do! enumerator.DisposeAsync()
+
+        say $"await foreach over api.watch: {received.Count} items, the producer gated between each"
+        detail (String.Join(", ", received |> Seq.map _.note))
+        detail "after every item the producer had produced exactly that many and no more — this is"
+        detail "delivery as it is produced, not one batch handed over at the end."
+
+        // ── An ordinary call while a stream is open ─────────────────────────────
+        let openLabel = $"open-{run}"
+        let! _ = api.bump 7
+        let openStream = api.watch (openLabel, 3)
+        let openEnumerator = openStream.GetAsyncEnumerator CancellationToken.None
+        Gates.release openLabel 0
+        let! _ = openEnumerator.MoveNextAsync()
+
+        // The producer is parked at gate 1: a MoveNext is in flight and long-polling.
+        let clock = Diagnostics.Stopwatch.StartNew()
+        let! pinged = api.ping ()
+        clock.Stop()
+        Gates.releaseAll openLabel 3
+        do! openEnumerator.DisposeAsync()
+
+        say $"an ordinary call while that enumeration was open: ping -> {pinged} in {clock.ElapsedMilliseconds}ms"
+        detail "every message of an enumeration — StartEnumeration, MoveNext, DisposeAsync — carries"
+        detail "Orleans' own [AlwaysInterleave], so it never becomes the activation's blocking"
+        detail "request and an ordinary call is admitted straight away."
+
+        // ── Cancellation on disposal ────────────────────────────────────────────
+        let followLabel = $"follow-{run}"
+        let followEnumerator = (api.follow followLabel).GetAsyncEnumerator CancellationToken.None
+        let! firstFollow = followEnumerator.MoveNextAsync()
+        do! followEnumerator.DisposeAsync()
+
+        let! observed =
+            waitUntil (TimeSpan.FromSeconds 10.0) (fun () ->
+                task { return Produced.ending followLabel <> "(still running)" })
+
+        say $"disposing an open enumerator early: the producer reports '{Produced.ending followLabel}'"
+        detail "disposal sends DisposeAsync for the request id; the target cancels the token it gave"
+        detail "the producer and then disposes it, so a `finally` in the handler really runs."
+        detail "an abandoned enumerator that is never disposed is collected by Orleans after one to"
+        detail "two MessagingOptions.ResponseTimeout periods, and a caller that returns is told."
+
+        // ── The negative control ────────────────────────────────────────────────
+        let refusal = Refusals.statelessWorkerWithAStream ()
+        say "the negative control — 'statelessWorker' declared alongside a streaming field:"
+        detail refusal
+
+        let holds =
+            incremental
+            && received.Count = 4
+            && not completed
+            && pinged = 7
+            && clock.Elapsed < TimeSpan.FromSeconds 10.0
+            && firstFollow
+            && observed
+            && Produced.ending followLabel = "cancelled, finally ran"
+            && refusal.Contains "combines 'statelessWorker' with the streaming API field"
+
+        if holds then
+            verdict
+                "SUPPORTED — a streaming API field delivers items as they are produced, does not block ordinary calls on the same activation, and cancels its producer when the caller disposes"
+        else
+            verdict "UNEXPECTED — a streaming observation above did not hold"
     }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
@@ -614,6 +1080,11 @@ let private runTour (host: IHost) =
         do! runObservers factory
         do! runBroadcast factory
         do! runPlacement factory
+        do! runImplicit factory
+        do! runInterleaving factory
+        do! runTransactions factory
+        do! runEventSourcing factory
+        do! runStreamingReplies factory
 
         printfn ""
         printfn "Single-silo sections done. Shutting that silo down before the cluster section..."
@@ -639,6 +1110,20 @@ let main _argv =
     SiloConfig.applyToHost siloConfiguration builder
 
     builder.UseOrleans(fun silo ->
+        // Transactions are not part of siloConfig { }: UseTransactions is Orleans' own silo-builder
+        // extension, and the transactional store is an ordinary named memory storage that
+        // NamedTransactionalStateStorageFactory wraps when no ITransactionalStateStorageFactory is
+        // registered under the name.
+        silo.UseTransactions() |> ignore
+        silo.AddMemoryGrainStorage AccountApi.Storage |> ignore
+
+        // Feature 15 / status-matrix row 14: functional event sourcing (spec 004 item 3). Both
+        // built-in log-consistency providers, over one ordinary memory storage — the providers
+        // decide WHAT is stored under the journal's key, not where.
+        silo.AddMemoryGrainStorage JournalProviders.Store |> ignore
+        silo.AddLogStorageBasedLogConsistencyProvider JournalProviders.LogStorage |> ignore
+        silo.AddStateStorageBasedLogConsistencyProvider JournalProviders.StateStorage |> ignore
+
         silo.AddFunctionalGrain LedgerDefinition.definition |> ignore
         silo.AddFunctionalGrain SchedulerDefinition.definition |> ignore
         silo.AddFunctionalGrain GatewayDefinition.definition |> ignore
@@ -651,19 +1136,29 @@ let main _argv =
         silo.AddFunctionalGrain ConsumerDefinition.definition |> ignore
         silo.AddFunctionalGrain NotifierDefinition.definition |> ignore
         silo.AddFunctionalGrain AnnouncerDefinition.definition |> ignore
+        // Feature 11 / status-matrix row 12: statelessWorker is now a first-class definition
+        // operation (spec 004 item 4), declared on WorkerDefinition itself in Placement.fs — no
+        // separate IGrainPropertiesProvider registration needed here any more.
         silo.AddFunctionalGrain WorkerDefinition.definition |> ignore
-
-        // Feature 11: stateless-worker placement for a functional grain, applied by name through
-        // a stock IGrainPropertiesProvider because the library's closed marker class cannot
-        // carry [<StatelessWorker>] itself.
-        silo.Services.AddSingleton<Orleans.Metadata.IGrainPropertiesProvider>(fun services ->
-            FunctionalPlacementProvider(
-                services,
-                WorkerApi.GrainType,
-                StatelessWorkerAttribute WorkerApi.MaxLocalWorkers
-            )
-            :> Orleans.Metadata.IGrainPropertiesProvider)
-        |> ignore
+        // Feature 11 / status-matrix row 11: implicit subscriptions (spec 004 item 1). The
+        // inbox definition declares onStream/onBroadcast; nothing else is registered for it.
+        silo.AddFunctionalGrain InboxDefinition.definition |> ignore
+        silo.AddFunctionalGrain MailerDefinition.definition |> ignore
+        // Feature 13 / status-matrix row 15: reentrancy variants (spec 004 item 5).
+        silo.AddFunctionalGrain GateDefinition.reentrant |> ignore
+        silo.AddFunctionalGrain GateDefinition.serial |> ignore
+        silo.AddFunctionalGrain SelectiveDefinition.definition |> ignore
+        // Feature 14 / status-matrix row 13: distributed ACID transactions (spec 004 item 2).
+        silo.AddFunctionalGrain AccountDefinition.definition |> ignore
+        silo.AddFunctionalGrain TellerDefinition.definition |> ignore
+        // Feature 6, second half / status-matrix row 6: version tolerance (spec 004 item 7).
+        // Deliberately ONLY version 3 of tour.rolling.
+        silo.AddFunctionalGrain RollingDefinition.definition |> ignore
+        // Feature 15 / status-matrix row 14: event sourcing (spec 004 item 3).
+        silo.AddFunctionalJournaledGrain BalanceDefinition.log |> ignore
+        silo.AddFunctionalJournaledGrain BalanceDefinition.state |> ignore
+        // Feature 16 / status-matrix row 15: server-streaming replies (spec 004 item 6).
+        silo.AddFunctionalGrain TickerDefinition.definition |> ignore
 
         // Experiment 9's F#-only arm: hand-register the F# class grain that an F# assembly's
         // missing [ApplicationPart]/[TypeManifestProvider] pair would otherwise hide from the

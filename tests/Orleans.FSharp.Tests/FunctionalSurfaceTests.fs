@@ -16,6 +16,7 @@ open Orleans
 open Orleans.GrainReferences
 open Orleans.Hosting
 open Orleans.Runtime
+open Orleans.Streams
 open Orleans.FSharp
 
 type SurfaceActor = private SurfaceActor of unit
@@ -52,10 +53,11 @@ type private StrictlyIncreasingTimeProvider(start: DateTimeOffset) =
         current <- current.AddTicks 1L
         current
 
-let private makeContextWith
+let private makeContextWithToken
     (timeProvider: TimeProvider)
     (resolve: PersistentStateDescriptor -> obj)
     (token: CancellationToken)
+    (sequenceToken: StreamSequenceToken)
     =
     let mutable deactivated = 0
     let mutable delayed = TimeSpan.Zero
@@ -68,12 +70,22 @@ let private makeContextWith
           TimeProvider = timeProvider
           UtcNow = timeProvider.GetUtcNow()
           CancellationToken = token
+          StreamSequenceToken = sequenceToken
           DeactivateOnIdle = fun () -> deactivated <- deactivated + 1
           DelayDeactivation = fun span -> delayed <- span
-          ResolvePersistentState = resolve }
+          ResolvePersistentState = resolve
+          ResolveTransactionalState = fun _ -> null
+          Journal = null }
 
     let context = FunctionalGrainContext<SurfaceActor, string>("general", core)
     context, (fun () -> deactivated), (fun () -> delayed)
+
+let private makeContextWith
+    (timeProvider: TimeProvider)
+    (resolve: PersistentStateDescriptor -> obj)
+    (token: CancellationToken)
+    =
+    makeContextWithToken timeProvider resolve token null
 
 let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: CancellationToken) =
     makeContextWith TimeProvider.System resolve token
@@ -119,6 +131,25 @@ let ``the context carries the callback cancellation token`` () =
     test <@ not context.cancellationToken.IsCancellationRequested @>
     source.Cancel()
     test <@ context.cancellationToken.IsCancellationRequested @>
+
+/// <remarks>
+/// Spec 004 item 1: the stream cursor is exposed on the context and is <c>None</c> everywhere
+/// except an <c>onStream</c> delivery on a rewindable provider — which is exactly the difference
+/// between a null and a non-null <c>StreamSequenceToken</c> in the context core.
+/// </remarks>
+[<Fact>]
+let ``the context exposes the stream sequence token only when a delivery carries one`` () =
+    let withoutToken, _, _ = makeContext (fun _ -> null) CancellationToken.None
+
+    let sequenceToken =
+        Orleans.Providers.Streams.Common.EventSequenceTokenV2(7L, 3) :> StreamSequenceToken
+
+    let withToken, _, _ =
+        makeContextWithToken TimeProvider.System (fun _ -> null) CancellationToken.None sequenceToken
+
+    test <@ withoutToken.streamSequenceToken = None @>
+    test <@ withToken.streamSequenceToken = Some sequenceToken @>
+    test <@ withToken.streamSequenceToken |> Option.map (fun token -> token.SequenceNumber) = Some 7L @>
 
 [<Fact>]
 let ``the context wraps the Orleans deactivation methods`` () =
@@ -491,9 +522,48 @@ let private customOperations (builderType: Type) =
     |> Array.sort
 
 [<Fact>]
+let ``the builders module exposes exactly the specified entry points`` () =
+    // Module-level public bindings are pinned by name: an entry point appearing in (or vanishing
+    // from) the AutoOpen'd FunctionalGrainBuilders module is a public-surface change nothing else
+    // in the suite would notice -- a binding once appeared here unauthored and 2,566 tests stayed
+    // green, which is exactly the gap this pin closes.
+    let expected = [| "contract"; "grainContract"; "grainFor"; "journaledGrainFor" |]
+
+    let moduleType =
+        typeof<GrainContract<SurfaceActor, string, SurfaceApi>>.Assembly.GetType
+            "Orleans.FSharp.FunctionalGrainBuilders"
+
+    let actual =
+        moduleType.GetMethods(
+            Reflection.BindingFlags.Public
+            ||| Reflection.BindingFlags.Static
+            ||| Reflection.BindingFlags.DeclaredOnly
+        )
+        |> Array.map (fun method' -> method'.Name)
+        |> Array.sort
+
+    test <@ actual = expected @>
+
+[<Fact>]
+let ``the contract short form brands the contract with its own API record`` () =
+    // contract<'Key, 'Api> is grainContract<'Api, 'Key, 'Api>: the record IS the brand. Qualified
+    // access here because this file's own module-level `contract` binding shadows the AutoOpen'd
+    // function -- which is itself worth demonstrating: user code that names a local binding
+    // `contract` keeps working unchanged.
+    let shortForm =
+        FunctionalGrainBuilders.contract<string, SurfaceApi> () {
+            grainType "surface.short-form"
+            version 1
+            stringKey
+        }
+
+    test <@ shortForm.GetType() = typeof<GrainContract<SurfaceApi, string, SurfaceApi>> @>
+
+[<Fact>]
 let ``the contract builder declares exactly the specified custom operations`` () =
     let expected =
-        [| "alwaysInterleave"
+        [| "acceptsVersions"
+           "alwaysInterleave"
            "grainType"
            "guidCompoundKey"
            "guidCompoundKeyMapped"
@@ -503,11 +573,22 @@ let ``the contract builder declares exactly the specified custom operations`` ()
            "int64CompoundKeyMapped"
            "int64Key"
            "int64KeyMapped"
+           "mayInterleave"
            "oneWay"
+           // Spec 004 item 6: 'operationId' and 'sinceVersion' each have a second overload taking
+           // a StreamSelector, so a streaming API field can be renamed and version-gated exactly
+           // like a unary one. They are the ONLY two of the contract's per-operation declarations
+           // that compose with a streaming field; the four admission policies are refused at
+           // sealing, and their selectors would not type-check against one in the first place.
+           "operationId"
            "operationId"
            "readOnly"
+           "reentrant"
+           "sinceVersion"
+           "sinceVersion"
            "stringKey"
            "stringKeyMapped"
+           "transactional"
            "version" |]
 
     test <@ customOperations typeof<GrainContractBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
@@ -518,15 +599,52 @@ let ``the definition builder declares exactly the specified custom operations`` 
         [| "collectionAge"
            "defaultState"
            "handle"
+           // Spec 004 item 6: a SEPARATE operation rather than an overload of 'handle'. An
+           // overloaded 'handle' makes F# resolve the handler lambda before the selector, which
+           // breaks record-field inference inside existing handler bodies.
+           "handleStream"
            "initialState"
            "onActivate"
+           "onBroadcast"
            "onDeactivate"
+           "onLifecycle"
            "onReminder"
+           "onStream"
            "onTimer"
+           "placement"
            "stateFrom"
+           "statelessWorker"
+           "transactionalStateFrom"
            "usePersistentState" |]
 
     test <@ customOperations typeof<FunctionalGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
+
+/// <remarks>
+/// Spec 004 item 3. The journaled builder's operation set is a deliberate SUBSET of the ordinary
+/// one plus two of its own, and every absence is a ruling with a mechanism behind it — a journal
+/// cannot honour a whole-state-replacement hook, cannot be a transaction participant, and cannot
+/// be shared by the many activations of a stateless worker. An operation appearing here without
+/// that decision being made is exactly what this pin exists to catch.
+/// </remarks>
+[<Fact>]
+let ``the journaled definition builder declares exactly the specified custom operations`` () =
+    let expected =
+        [| "apply"
+           "collectionAge"
+           "handle"
+           // Spec 004 item 6: a journaled definition streams too. Its streaming handler has the
+           // ordinary StreamHandler shape and raises no events, for the same reason it publishes
+           // no replacement state.
+           "handleStream"
+           "initialEventState"
+           "journalStorage"
+           "logProvider"
+           "onActivate"
+           "onDeactivate"
+           "placement" |]
+
+    test
+        <@ customOperations typeof<FunctionalJournaledGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
 
 [<Fact>]
 let ``the invocation context declares exactly the specified public members`` () =
@@ -536,13 +654,20 @@ let ``the invocation context declares exactly the specified public members`` () 
            "delayDeactivation"
            "grainFactory"
            "grainId"
+           // Spec 004 item 3: the two journaled members. Both are on the ONE context type rather
+           // than on a journaled variant of it, so an ordinary grainFor definition can reach them
+           // too — and both refuse with a definition-stage diagnostic when it does.
+           "journalVersion"
            "key"
            "logger"
            "persistentState"
+           "raiseConditional"
            "removeRequestContext"
            "services"
            "setRequestContext"
+           "streamSequenceToken"
            "timeProvider"
+           "transactionalState"
            "tryGetRequestContext"
            "utcNow" |]
 
@@ -557,9 +682,64 @@ let ``the invocation context declares exactly the specified public members`` () 
 
     test <@ actual = expected @>
 
+/// <remarks>
+/// Spec 004 item 1: an implicit delivery is routed to <c>GrainId.Create(grainType,
+/// streamId.Key)</c> — the stream key bytes verbatim — so the stream key must be the grain key in
+/// the contract's OWN encoding. <c>FunctionalGrain.streamId</c> / <c>channelId</c> exist because
+/// <c>StreamId.Create</c>'s own overloads do not always produce it, and this test is the proof
+/// for both directions: byte equality with the grain key for the codec where they agree
+/// (<c>stringKey</c>), and a demonstrated DISAGREEMENT for <c>int64Key</c>, where
+/// <c>StreamId.Create(ns, 42L)</c> writes decimal "42" and the codec writes hexadecimal "2A".
+/// </remarks>
+[<Fact>]
+let ``FunctionalGrain.streamId and channelId carry the contract's own grain-key bytes`` () =
+    let streamNamespace = (FunctionalGrain.streamId contract "surface.ns" "general").GetNamespace()
+    let streamKey = (FunctionalGrain.streamId contract "surface.ns" "general").GetKeyAsString()
+    let channelNamespace = (FunctionalGrain.channelId contract "surface.ns" "general").GetNamespace()
+    let channelKey = (FunctionalGrain.channelId contract "surface.ns" "general").GetKeyAsString()
+    let grainKey = contract.GrainIdOf("general").Key.ToString()
+
+    test <@ streamNamespace = "surface.ns" @>
+    test <@ streamKey = grainKey @>
+    test <@ streamKey = "general" @>
+    test <@ channelNamespace = "surface.ns" @>
+    test <@ channelKey = grainKey @>
+
+    // The int64 codec is where the naive overload and the contract disagree.
+    let numeric =
+        grainContract<SurfaceActor, int64, SurfaceApi> () {
+            grainType "surface.numeric"
+            int64Key
+        }
+
+    let numericKey = (FunctionalGrain.streamId numeric "surface.ns" 42L).GetKeyAsString()
+    let naiveKey = StreamId.Create("surface.ns", 42L).GetKeyAsString()
+    let numericGrainKey = numeric.GrainIdOf(42L).Key.ToString()
+
+    test <@ numericKey = numericGrainKey @>
+    test <@ numericKey = "2A" @>
+    test <@ naiveKey = "42" @>
+    test <@ numericKey <> naiveKey @>
+
+[<Fact>]
+let ``FunctionalGrain.streamId and channelId reject a blank namespace`` () =
+    let blankStream =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalGrain.streamId contract "  " "general" |> ignore)
+
+    let blankChannel =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FunctionalGrain.channelId contract "" "general" |> ignore)
+
+    test <@ blankStream.Message.Contains "stream namespace" @>
+    test <@ blankChannel.Message.Contains "channel namespace" @>
+
 [<Fact>]
 let ``the bound reference declares exactly the specified public members`` () =
-    let expected = [| "api"; "call"; "callCancellable"; "key" |]
+    // Spec 004 item 6 adds the two streaming forms; 'stream' and 'streamCancellable' are to a
+    // streaming field exactly what 'call' and 'callCancellable' are to a unary one.
+    let expected =
+        [| "api"; "call"; "callCancellable"; "key"; "stream"; "streamCancellable" |]
 
     let actual =
         typeof<FunctionalGrainRef<SurfaceActor, string, SurfaceApi>>
@@ -571,3 +751,4 @@ let ``the bound reference declares exactly the specified public members`` () =
         |> Array.sort
 
     test <@ actual = expected @>
+

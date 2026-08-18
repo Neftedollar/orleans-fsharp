@@ -14,10 +14,21 @@ open Orleans.FSharp
 
 // ── Internal: ref-cell-based configurator for passing state into TestCluster ──
 
+/// <summary>
+/// Silo configurator that applies the config action and log factory most recently passed to
+/// <see cref="SetState"/>, since Orleans instantiates this type with no way to pass them directly.
+/// </summary>
 type private WebHarnessSiloConfigurator() =
     static let mutable _state: (ISiloBuilder -> unit) option * CapturingLoggerFactory option = (None, None)
+
+    /// <summary>Sets the config action and log factory the next-built silo will use.</summary>
+    /// <param name="cfg">The caller's silo configuration action, or None.</param>
+    /// <param name="lf">The shared capturing log factory, or None.</param>
     static member SetState(cfg, lf) = _state <- (cfg, lf)
+
     interface ISiloConfigurator with
+        /// <summary>Adds default in-memory storage and streams, then applies the captured config action and log factory.</summary>
+        /// <param name="siloBuilder">The silo builder to configure.</param>
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.AddMemoryGrainStorageAsDefault() |> ignore
             siloBuilder.AddMemoryGrainStorage("Default") |> ignore
@@ -67,6 +78,9 @@ module WebTestHarness =
     let private grainFactoryConflictMessage =
         "WebTestHarness: configureWeb already registered IGrainFactory. Remove that registration and pass the desired factory via WebTestHarness.createWithFactory/createWithMockFactory."
 
+    /// <summary>Rejects web-host service configuration that already registered <see cref="IGrainFactory"/>.</summary>
+    /// <param name="services">The web host's service collection to check.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <see cref="IGrainFactory"/> is already registered.</exception>
     let private ensureNoGrainFactoryRegistration (services: IServiceCollection) =
         let hasRegistration =
             services
@@ -81,6 +95,9 @@ module WebTestHarness =
     // exposes no non-obsolete way to build a TestServer from an IWebHostBuilder, so the two call
     // sites below are bracketed rather than file-wide suppressed.
 #nowarn "44"
+    /// <summary>Builds an ASP.NET Core <see cref="TestServer"/>, rejecting a caller-supplied <see cref="IGrainFactory"/> registration.</summary>
+    /// <param name="configureWeb">The caller's web host configuration action.</param>
+    /// <param name="configureRequiredServices">Registers the services this harness owns (grain factory, log factory, etc.).</param>
     let private buildTestServer
         (configureWeb: IWebHostBuilder -> unit)
         (configureRequiredServices: IServiceCollection -> unit)
@@ -206,6 +223,7 @@ module WebTestHarness =
     /// <summary>
     /// Gets all captured log entries from the lightweight web test harness.
     /// </summary>
+    /// <param name="harness">The lightweight web test harness to get logs from.</param>
     let captureUnitLogs (harness: WebUnitTestHarness) : CapturedLogEntry list =
         LogCapture.captureLogs harness.LogFactory
 
@@ -219,6 +237,7 @@ module WebTestHarness =
     /// <summary>
     /// Resets captured log entries for the lightweight web test harness.
     /// </summary>
+    /// <param name="harness">The lightweight web test harness to reset.</param>
     let resetUnit (harness: WebUnitTestHarness) : Task<unit> =
         task { harness.LogFactory.Clear() }
 
@@ -239,6 +258,7 @@ module WebTestHarness =
     /// <summary>
     /// Disposes the lightweight web test harness resources.
     /// </summary>
+    /// <param name="harness">The lightweight web test harness to dispose.</param>
     let disposeUnit (harness: WebUnitTestHarness) : Task<unit> =
         task {
             if not (isNull (box harness.HttpClient)) then

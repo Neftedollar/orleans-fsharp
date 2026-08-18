@@ -93,14 +93,18 @@
     <Compile Include="FunctionalContractTests.fs" />
     <Compile Include="FunctionalKeyCodecTests.fs" />
     <Compile Include="FunctionalDefinitionTests.fs" />
+    <Compile Include="FunctionalJournaledDefinitionTests.fs" />
+    <Compile Include="FunctionalStreamingContractTests.fs" />
     <Compile Include="FunctionalSurfaceTests.fs" />
     <Compile Include="FunctionalProtocolTests.fs" />
     <Compile Include="FunctionalCodecTests.fs" />
     <Compile Include="FunctionalBindingTests.fs" />
+    <Compile Include="FunctionalInteropTests.fs" />
     <Compile Include="FunctionalTupleCodecTests.fs" />
     <Compile Include="FunctionalObserverContractTests.fs" />
     <Compile Include="FunctionalPersistentStateTests.fs" />
     <Compile Include="FunctionalRuntimeTests.fs" />
+    <Compile Include="FunctionalInterleaveMarkerTests.fs" />
     <Compile Include="FunctionalCollisionPayload.fs" />
     <Compile Include="FunctionalSerializerRegistrationTests.fs" />
     <Compile Include="FunctionalCompileFailureTests.fs" />
@@ -128,6 +132,9 @@
     <ProjectReference Include="..\..\src\Orleans.FSharp.Testing\Orleans.FSharp.Testing.fsproj" />
     <ProjectReference Include="..\..\src\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
     <ProjectReference Include="..\..\src\Orleans.FSharp.Analyzers\Orleans.FSharp.Analyzers.fsproj" />
+    <!-- C#-declared facade interfaces for FunctionalInteropTests: two rejection rules (default
+         interface methods, events) cannot be written in F# at all. -->
+    <ProjectReference Include="..\Orleans.FSharp.Tests.Facades\Orleans.FSharp.Tests.Facades.csproj" />
   </ItemGroup>
 
 </Project>

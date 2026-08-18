@@ -34,9 +34,6 @@ SITE = ROOT / 'website' / 'src' / 'content' / 'docs'
 # Pre-existing content divergence, each pair carrying real differences beyond frontmatter.
 # Shrink this set by reconciling a pair; never grow it to make a new edit pass.
 KNOWN_DRIFT = {
-    'api-reference.md',    # website copy documents a different onActivate/onDeactivate/
-                           # EventSourcedGrainDefinition surface than docs/
-    'event-sourcing.md',
     'redis-example.md',
     'testing.md',          # website copy uses EventSourcedGrainDefinition.handleCommand
 }

@@ -15,6 +15,11 @@ module Kubernetes =
     /// Invokes an extension method on ISiloBuilder by name, searching loaded assemblies.
     /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
     /// </summary>
+    /// <param name="methodName">The static extension method name to search for.</param>
+    /// <param name="args">The extra arguments to pass after the silo builder.</param>
+    /// <param name="packageHint">The NuGet package to name in the diagnostic if the method is not found.</param>
+    /// <param name="siloBuilder">The silo builder passed as the extension method's first argument.</param>
+    /// <exception cref="System.InvalidOperationException">No matching extension method is found in any loaded assembly.</exception>
     let private invokeExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (siloBuilder: ISiloBuilder) =
         let siloBuilderType = typeof<ISiloBuilder>
 
@@ -47,6 +52,10 @@ module Kubernetes =
     /// Requires the <c>Microsoft.Orleans.Hosting.Kubernetes</c> NuGet package at runtime.
     /// </summary>
     /// <returns>A function that configures the ISiloBuilder with Kubernetes clustering.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// The returned function throws this if <c>UseKubernetesHosting</c> cannot be found by
+    /// reflection.
+    /// </exception>
     let useKubernetesClustering : (ISiloBuilder -> ISiloBuilder) =
         fun builder ->
             invokeExtensionMethod
@@ -63,6 +72,10 @@ module Kubernetes =
     /// </summary>
     /// <param name="ns">The Kubernetes namespace to use as the service identifier.</param>
     /// <returns>A function that configures the ISiloBuilder with Kubernetes clustering and custom namespace.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// The returned function throws this if <c>UseKubernetesHosting</c> cannot be found by
+    /// reflection.
+    /// </exception>
     let useKubernetesClusteringWithNamespace (ns: string) : (ISiloBuilder -> ISiloBuilder) =
         fun builder ->
             let builder =
