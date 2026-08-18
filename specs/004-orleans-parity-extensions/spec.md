@@ -443,38 +443,230 @@ over both `Orleans.Transactions.dll` assemblies, not from the baseline file.
 invokable-base mechanism was identified; the three registrations of ruling 4 and the re-execution
 question were the rest of it.
 
-## 3. Event sourcing
+## 3. Event sourcing — RESOLVED
 
-**Gap:** classic `FSharpEventSourcedGrain` (JournaledGrain) exists; no
-functional equivalent.
+**Status: implemented.** Delivered on `feat/004-parity-phase-e`; the design sketch below has been
+replaced by the resolved design it turned into, and every claim here is backed by a test or by
+named Orleans source at both supported versions (`v10.1.0`, `v10.2.2`).
 
-**Design sketch (least-machinery direction):**
+**Gap (for the record):** the classic KEEP-path (`eventSourcedGrain { }`,
+`FSharpEventSourcedGrainImpl : JournaledGrain<...>`) existed and still does; the functional model
+had no event-sourced definition kind.
 
-- A separate definition kind sharing the contract layer:
+**Provider story (owner ruling 2026-08-17, unchanged):** Orleans' own log-consistency providers
+(`LogStorage`/`StateStorage`) are the base; Marten would ship as a separate optional adapter
+package. See ruling 8 for what the existing `Orleans.FSharp.EventSourcing.Marten` package turned
+out to contain.
 
-  ```fsharp
-  journaledGrainFor RoomApi.contract {
-      initialEventState (fun key -> initial)
-      apply (fun state event -> state')          // pure fold
-      handle (_.op) (fun ctx state arg -> task {
-          return [ Event1; Event2 ], reply })    // handlers RAISE, never mutate
-      snapshotEvery 100
-  }
-  ```
+### The mechanism (normative)
 
-- The activation target hosts a `JournaledGrain`-equivalent log through
-  Orleans' log-consistency providers; `apply` is the replay fold; handler
-  returns events + reply; confirmation strategy (`confirmEvents` implicit per
-  turn) spelled normatively.
+All of it is Orleans' own, and **none of it is internal.** The step-0 probe
+(`tests/Orleans.FSharp.Integration/FunctionalJournalSeamProbe.fs`) drives it from an activation
+that derives from neither `JournaledGrain` nor `LogConsistentGrain`, on both providers and both
+Orleans versions.
 
-**Provider story (decided, owner ruling 2026-08-17):** reuse Orleans' own
-log-consistency providers (`LogStorage`/`StateStorage`) as the base — the
-functional journaled model stays inside the Orleans ecosystem. Marten support
-ships as a separate optional adapter package (precedent: the classic path's
-`Orleans.FSharp.EventSourcing.Marten` already follows exactly this shape).
-Remaining open question: upcasting hooks.
+**The adaptor is installed by the grain, not by Orleans.** `LogConsistentGrain<TView>.OnSetupState`
+(`src/Orleans.EventSourcing/LogConsistency/LogConsistentGrain.cs`) does exactly four things at
+`GrainLifecycleStage.SetupState`, and every one of them is reachable from anywhere:
 
-**Size:** L. **Depends on:** provider-story decision.
+1. resolve the log-consistency provider as a **keyed** `ILogViewAdaptorFactory`
+   (`GetKeyedService<ILogViewAdaptorFactory>(name)`);
+2. resolve `Factory<IGrainContext, ILogConsistencyProtocolServices>` from the service provider and
+   invoke it for this activation's grain context. The implementation behind that delegate
+   (`Orleans.Runtime.LogConsistency.ProtocolServices`) **is** internal, and is never named: it is
+   registered by `LogConsistencyProtocolSiloBuilderExtensions.AddLogConsistencyProtocolServicesFactory`,
+   which every stock `Add*BasedLogConsistencyProvider` call performs;
+3. resolve the `IGrainStorage` the provider writes through;
+4. call the public `ILogViewAdaptorFactory.MakeLogViewAdaptor<TView, TEntry>(host, initialState,
+   grainTypeName, storage, services)`.
+
+The grain then drives the adaptor through three lifecycle points — `PreOnActivate` at
+`Activate - 1`, `PostOnActivate` at `Activate + 1`, `PostOnDeactivate` on the stop side of
+`SetupState`. `ILogConsistencyProtocolParticipant` is **not** required: in Orleans 10 it is a
+purely local marker `LogConsistentGrain` uses to decide whether to subscribe those two stages, and
+a repository-wide search finds it referenced only by `LogConsistentGrain` and `JournaledGrain`.
+
+**Four mechanism facts no documentation states**, each pinned by the probe:
+
+- **The view is deep-copied through the Orleans serializer.**
+  `PrimaryBasedLogViewAdaptor`'s constructor does `Services.DeepCopy(initialstate)`, and
+  `CalculateTentativeState` copies the confirmed view again. The functional runtime registers the
+  F# generalized codec **without** its generalized copier, so an ordinary F# view type fails with
+  `CodecNotFoundException: Could not find a copier`.
+- **The two providers disagree about the seeded view.** `LogStorage`'s adaptor folds into the very
+  instance it was handed (`UpdateConfirmedView` calls `Host.UpdateView(ConfirmedViewInternal, …)`),
+  so a key-derived initial state survives. `StateStorage`'s `ReadAsync` reads into a fresh
+  `GrainStateWithMetaDataAndETag<TView>()`, whose constructor does `State = new TView()`, so the
+  seed is **discarded** on the first read of a grain with no record.
+- **`PostOnActivate` does not await the replay.** It only calls `worker.Notify()`; the initial read
+  runs on the adaptor's batch worker afterwards. A `JournaledGrain` can therefore serve a call
+  against a view that has not been read yet.
+- **A failing fold is swallowed.** Both adaptors call `Host.UpdateView` inside a `try/catch` that
+  logs through `CaughtUserCodeException` and continues with an unchanged view — and they call it
+  *after* the storage write that made the entry durable, so a fold that throws leaves a permanently
+  poisoned journal.
+
+### Resolved design
+
+```fsharp
+journaledGrainFor accountContract {
+    initialEventState (fun key -> { balance = 0m })
+    apply (fun state event -> …)              // pure; 'State -> 'Event -> 'State
+
+    logProvider "LogStorage"                  // required
+    journalStorage "Journals"                 // optional; silo default otherwise
+
+    handle (_.deposit) (fun context state amount ->
+        task { return [ Deposited amount ], state.balance + amount })
+}
+```
+
+- **A second definition kind, one contract layer.** `journaledGrainFor` produces a
+  `FunctionalJournaledGrainDefinition`, registered with `AddFunctionalJournaledGrain`, and hosted
+  through the **same** `FunctionalHostedDefinition`, registry, manifest, activator, transport and
+  dispatch as `grainFor`. The contract, the client binding and the C# facade are untouched, and the
+  definition kind is invisible to a caller.
+- **`initialEventState` then `apply`, in that order**, are the first two operations and both are
+  required: the first introduces `'State`, the second `'Event`, so every later operation is typed
+  against both.
+- **Handlers raise, never replace.** `JournaledHandler` is
+  `context -> 'State -> 'Argument -> Task<'Event list * 'Reply>`. Dispatch treats the adapter's
+  first result as the boxed event list rather than a replacement state
+  (`src/Orleans.FSharp.Runtime/FunctionalDispatch.fs`).
+- **The view and the entries are cells of exact-type payload bytes.**
+  `FunctionalJournalView { byte[] Payload; bool HasValue }` and
+  `FunctionalJournalEntry { byte[] Payload }` (`src/Orleans.FSharp.Abstractions/FunctionalJournal.cs`,
+  both `[GenerateSerializer]`). This is what answers the deep-copy fact — Orleans' own generated
+  copier handles `byte[]` plus `bool` with no registration at all — and it keeps CLR type names out
+  of durable storage, the same byte boundary the transport puts between a caller and a handler.
+  `HasValue` answers the seed fact: the runtime re-materializes the declared initial state for any
+  cell that was never written, so the two providers agree.
+- **The replay is forced.** The activation awaits `adaptor.Synchronize()` at `Activate + 1`, so a
+  handler is never handed a state read from an unreplayed view. This is a deliberate deviation from
+  `JournaledGrain`, which does not.
+- **The fold is dry-run before submission.** `RaiseAndConfirm` folds the events over the confirmed
+  state before anything is submitted, so a failing `apply` fails the call with **nothing appended**
+  instead of poisoning the journal. Sound because `apply` is required to be pure.
+- **Startup validates the whole chain**: the named provider resolves, the protocol-services factory
+  exists, the journal storage resolves, and the state and event types have codecs **and are declared
+  as top-level payload types** — without the declaration a journal serializes but cannot be replayed,
+  because the F# codec's fallback (`Type.GetType`) cannot see an application assembly.
+- **Context surface:** `context.journalVersion` (Orleans' `ConfirmedVersion`, the same number
+  `JournaledGrain.Version` reports) and `context.raiseConditional events : Task<bool>`
+  (`TryAppendRange`). Both raise a definition-stage diagnostic on a non-journaled definition.
+
+### Confirmation strategy (normative)
+
+- The runtime appends a handler's returned events as **one atomic batch** (`SubmitRange`) and awaits
+  `ConfirmSubmittedEntries` **after the handler returns and before the reply leaves the activation**.
+  A caller that received a reply is looking at state the provider has confirmed; a later replay can
+  never observe half of one handler's events.
+- A handler observes the journal **as it was when the turn started**: `context.journalVersion` is the
+  pre-turn version, and the `state` argument is the confirmed fold, never a tentative one.
+- **An empty event list performs no storage write at all** — a query, or a command the handler
+  refused, leaves no trace and does not move the version.
+- **A mid-confirm failure does not fail the call.** Orleans' adaptor records the issue and retries
+  forever with a delay ("be stubborn until we can read what is there"), so the turn *blocks*; what
+  the caller observes is its own request timeout while the activation is still retrying. If the
+  confirm later succeeds, the events are in the journal even though the caller saw a timeout — **a
+  timed-out call is not a rolled-back call.** The next call therefore observes a state that may
+  include a command the caller believes failed. Commands must be idempotent, or carry a
+  de-duplication key.
+
+### Rulings
+
+1. **`logProvider` is required, not defaulted.** `LogStorage` and `StateStorage` store completely
+   different things under the same storage key and cannot read each other's records, so a silent
+   default would make an irreversible storage decision invisible in the definition.
+2. **`snapshotEvery` is NOT shipped**, and the operation does not exist rather than existing and
+   failing. Evidence: `ILogViewAdaptor` (`ILogViewRead` + `ILogViewUpdate` +
+   `ILogConsistencyDiagnostics`) has no snapshot or truncate member at all; the only log-lifecycle
+   operation is the all-or-nothing `ClearLogAsync`. On `StateStorage` the view is written on every
+   confirm, which is what "snapshot every event" would mean; on `LogStorage` the log is rewritten
+   whole on every confirm and never truncated, so it grows without bound and every activation
+   replays all of it. Neither could honour a period. Measured rather than asserted: a fold counter
+   shows `LogStorage` re-folding all three stored entries after a re-activation and `StateStorage`
+   folding none.
+3. **Which `grainFor` operations carry over**, each by mechanism:
+   - `handle` (events-and-reply shape), `onActivate`/`onDeactivate` (returning `unit` — there is no
+     state to replace, and `onActivate` runs after the replay), `collectionAge`, `placement`: **yes**.
+   - `statelessWorker`: **no**. Many activations of one grain identity, each hosting its own
+     log-view adaptor over the same journal, racing the others' appends through the adaptor's e-tag
+     retry loop.
+   - `defaultState`/`initialState`: **no**, replaced by `initialEventState`.
+   - `stateFrom`, `usePersistentState`: **no**. A second durable holder on the same activation is a
+     second source of truth with no ordering against the journal.
+   - `transactionalStateFrom`, `transactional`: **no**. A log-view adaptor registers nothing with
+     the transaction manager and has no prepare or abort, so events confirmed inside a transaction
+     would survive its abort. Refused at sealing, naming the operations.
+   - `onStream`, `onBroadcast`, `onTimer`, `onReminder`: **no**. Every one is a whole-state-
+     replacement hook, which a journaled definition cannot honour. A journal-raising variant of each
+     is a follow-up, not a wall.
+4. **A `readOnly` or `alwaysInterleave` operation may not raise events**, refused at dispatch. Such
+   an operation may run while another turn is in flight, so its appends could not be ordered against
+   that turn's; dropping the events silently would be worse, because the handler believed it had
+   changed the grain.
+5. **An explicit contract `grainType` is always required.** The grain type name is part of the
+   storage key of the journal, so a brand rename would orphan every stored event rather than a single
+   record — the `grainFor` durable-attachment rule, applied unconditionally.
+6. **`raiseConditional` is shipped; version counters are shipped.** `context.journalVersion` is
+   cheap and matches `JournaledGrain.Version`. `raiseConditional` can only ever answer `false` when
+   something else can write the journal between the handler's read and its append, and with a
+   non-reentrant definition on a single cluster nothing can — the activation is the sole writer and
+   Orleans does not interleave its turns. It is shipped because a `reentrant`/`mayInterleave`
+   journaled contract is reachable and is exactly where it becomes meaningful; the test pins the
+   supported case rather than staging a conflict that cannot happen.
+7. **Upcasting: recorded as a follow-up, with the hook located.** There is no upcasting today and no
+   place a hook could go without a new decision. An entry is the definition's exact `'Event` type
+   serialized through the F# binary codec, whose union format is positional
+   (`[case-tag][field-count][fields…]`), so appending a case is safe and reordering or reshaping one
+   is not. The hook would have to sit in `FunctionalJournalHost.UpdateView`, between
+   `blueprint.DecodeEvent` and `blueprint.Apply` — but it needs something the entry does not carry:
+   a **version stamp**. Adding one is a durable-format change to `FunctionalJournalEntry`, so it
+   belongs in its own task with a migration story, not bolted onto this one.
+8. **Marten: the existing package contains no Marten adapter.**
+   `src/Orleans.FSharp.EventSourcing.Marten/MartenConfig.fs` is 50 lines whose three helpers all
+   forward to Orleans' own `AddLogStorageBasedLogConsistencyProvider*`; `addMartenEventStore`
+   ignores its connection string and carries a `TODO`. It is neither an `ILogViewAdaptorFactory` nor
+   a grain base class, so there is nothing Marten-shaped to compose with — the composition claim was
+   therefore proved in the general form instead: a hand-registered keyed `ILogViewAdaptorFactory` of
+   a *different* implementation serves a journaled definition alongside a stock one, with nothing
+   functional-specific on either side (`FunctionalJournalHostingTests.fs`). A real Marten adapter
+   remains a separate optional package, per the owner ruling. One constraint an adapter author must
+   know, and startup now checks: `AddLogConsistencyProtocolServicesFactory` is internal to Orleans,
+   so a hand-registered provider has to ride along with one stock `Add*BasedLogConsistencyProvider`
+   call.
+
+### What this does NOT give you
+
+- **No snapshotting or log truncation** (ruling 2). A `LogStorage` journal grows without bound and
+  is replayed in full on every activation; keep it short or bring a provider that snapshots.
+- **No event upcasting** (ruling 7). Add union cases at the end; do not reorder or reshape them.
+- **No cross-cluster replication.** Orleans 10 still declares `ILogConsistencyProtocolGateway`, but
+  a repository-wide search finds nothing that constructs or calls it, and
+  `ILogConsistencyProtocolServices` has no message-sending member at all. A journal is
+  single-cluster.
+- **No transactions** (ruling 3).
+- **No queryable event history.** The journal is exposed as the fold and the version.
+  `RetrieveLogSegment` works on `LogStorage` and throws `NotSupportedException` on `StateStorage`
+  (the base implementation), so a "read your own log" API would be provider-dependent and is not
+  offered; a projection can read the storage provider directly.
+- **No exactly-once command semantics.** See the confirmation section: a timed-out call cannot be
+  distinguished from a lost reply.
+- **No ordering across grains.** Each grain's journal is its own; there is no global sequence.
+- **The fold pays a codec round trip per event.** `UpdateView` decodes the state, decodes the event,
+  applies, and re-encodes — chosen over holding the live object because the alternative needs a
+  copier registration for every application state type and writes CLR type names into durable
+  storage. Replay of an N-event journal is O(N) either way; this is a constant factor on top.
+- **`ClearLogAsync` is not exposed.** Both built-in providers support it, but it is an
+  all-or-nothing delete of a durable journal and deserves its own decision about who may call it.
+- **Reentrancy is allowed but unguarded.** A `reentrant` journaled contract interleaves turns that
+  each read the confirmed state and append; the appends are ordered by the adaptor but the decisions
+  are not. `raiseConditional` is the tool for that, and using it is the application's call.
+
+**Size:** L — as estimated. The step-0 probe was the majority of the risk and most of the surprises;
+the definition kind, the runtime, and the dispatch change were mechanical once the four mechanism
+facts above were known.
 
 ## 4. First-class placement operations
 
@@ -998,7 +1190,8 @@ nothing about streaming is implemented here.
   work and share tests.
 - **Phase D:** 2 (transactions). **Landed:** item 2 is implemented and its section
   above is the resolved design.
-- **Phase E:** 3 (event sourcing) — after the provider-story decision.
+- **Phase E:** 3 (event sourcing) — after the provider-story decision. **Landed:** item 3 is
+  implemented and its section above is the resolved design.
 - **Phase F:** 6 (streaming replies) — largest; consider splitting into its
   own spec once A-C land.
 
