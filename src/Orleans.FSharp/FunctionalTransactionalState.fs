@@ -13,8 +13,11 @@ open Orleans.FSharp.FunctionalDiagnostics
 /// stored CLR type. Lookup and attachment validation compare this triple.
 /// </summary>
 type internal TransactionalStateDescriptor =
-    { StateName: string
+    { /// The Orleans transactional state name of this facet.
+      StateName: string
+      /// The Orleans transactional storage name of this facet.
       StorageName: string
+      /// The exact stored CLR type of this facet.
       StoredType: Type }
 
 /// <summary>
@@ -63,6 +66,10 @@ module TransactionalState =
     /// <c>IGrainStorage</c> registration on every hosting silo — that is the exact resolution
     /// order <c>NamedTransactionalStateStorageFactory.Create</c> performs.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="stateName"/> or <paramref name="storageName"/> is blank or contains a NUL
+    /// character, or 'State is an open generic type.
+    /// </exception>
     let create<'State> (stateName: string) (storageName: string) : TransactionalStateRef<'State> =
         if isBlank stateName then
             fail TransactionalStage "stateName must be a non-blank string."
@@ -132,6 +139,7 @@ type FunctionalTransactionalState<'State>
     /// <c>HasValue = false</c>. Substituting on read is deliberate: it stores nothing, so a pure
     /// read never turns into a write and never marks this participant as written.
     /// </remarks>
+    /// <param name="box">The current transactional box.</param>
     member private _.ValueOf(box: FunctionalTransactionalBox<'State>) =
         if box.HasValue then box.Value else initial ()
 
@@ -149,6 +157,8 @@ type FunctionalTransactionalState<'State>
     /// sets the result of one <c>TaskCompletionSource</c> or its exception, and the cell is only
     /// read after that task has completed successfully.
     /// </remarks>
+    /// <param name="run">The pure projection to run inside the Orleans callback and capture.</param>
+    /// <param name="invoke">The Orleans transactional entry point (<c>PerformRead</c> or <c>PerformUpdate</c>) to run it through.</param>
     member private _.Capture(run: FunctionalTransactionalBox<'State> -> 'Result, invoke) : Task<'Result> =
         let mutable captured = Unchecked.defaultof<'Result>
 
@@ -183,6 +193,9 @@ type FunctionalTransactionalState<'State>
     /// the object this read captured.
     /// </para>
     /// </remarks>
+    /// <exception cref="System.InvalidOperationException">
+    /// This facade has already expired, or this callback never runs inside an Orleans transaction.
+    /// </exception>
     member this.read() : Task<'State> =
         scope.EnsureTransactionalRead(description, "read()")
 
@@ -198,6 +211,10 @@ type FunctionalTransactionalState<'State>
     /// own value and is returned uncopied — use <c>read()</c> when the stored value itself is
     /// wanted.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="project"/> is null; this facade has already expired; or this callback never
+    /// runs inside an Orleans transaction.
+    /// </exception>
     member this.readWith(project: 'State -> 'Result) : Task<'Result> =
         if obj.ReferenceEquals(project, null) then
             fail TransactionalStage "'readWith' requires a projection function."
@@ -211,6 +228,10 @@ type FunctionalTransactionalState<'State>
     /// Runs inside Orleans' transactional write lock. It receives the current value and returns
     /// the replacement; the runtime performs the single assignment that stores it.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="next"/> is null; this facade has already expired; this callback never runs
+    /// inside an Orleans transaction; or the transaction is declared 'readOnly'.
+    /// </exception>
     member this.update(next: 'State -> 'State) : Task<unit> =
         if obj.ReferenceEquals(next, null) then
             fail TransactionalStage "'update' requires a replacement function."
@@ -234,6 +255,10 @@ type FunctionalTransactionalState<'State>
     /// Runs inside Orleans' transactional write lock. It receives the current value and returns
     /// the replacement paired with a result; the runtime performs the single assignment.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="next"/> is null; this facade has already expired; this callback never runs
+    /// inside an Orleans transaction; or the transaction is declared 'readOnly'.
+    /// </exception>
     member this.updateWith(next: 'State -> 'State * 'Result) : Task<'Result> =
         if obj.ReferenceEquals(next, null) then
             fail TransactionalStage "'updateWith' requires a replacement function."
@@ -280,6 +305,8 @@ type FunctionalTransactionalState<'State>
 type internal FunctionalTransactionDataCopier<'StoredState>(codec: IFunctionalPayloadCodec) =
 
     interface ITransactionDataCopier<FunctionalTransactionalBox<'StoredState>> with
+        /// <summary>Deep-copy a box by round-tripping its value through the exact-type payload codec.</summary>
+        /// <param name="original">The box to copy; <c>null</c> and a box with no value copy trivially.</param>
         member _.DeepCopy(original: FunctionalTransactionalBox<'StoredState>) =
             if obj.ReferenceEquals(original, null) then
                 null
@@ -296,7 +323,9 @@ type internal FunctionalTransactionDataCopier<'StoredState>(codec: IFunctionalPa
 [<Sealed>]
 type internal FunctionalTransactionalStateConfiguration(stateName: string, storageName: string) =
     interface ITransactionalStateConfiguration with
+        /// <summary>The Orleans transactional state name.</summary>
         member _.StateName = stateName
+        /// <summary>The Orleans transactional storage name.</summary>
         member _.StorageName = storageName
 
 /// <summary>
@@ -329,6 +358,8 @@ type internal FunctionalTransactionalBlueprint =
 module internal FunctionalTransactionalFacet =
 
     /// <summary>Close one transactional facet blueprint over its exact stored type.</summary>
+    /// <param name="reference">The descriptor identifying the facet to close over.</param>
+    /// <param name="initialize">The declared initializer, from the boxed domain key to the boxed initial value.</param>
     let blueprint<'StoredState> (reference: TransactionalStateRef<'StoredState>) (initialize: obj -> obj) =
         let descriptor = reference.Descriptor
 

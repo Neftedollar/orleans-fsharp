@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`contract<'Key, 'Api>` — the short contract form.** The API record now serves as its own
+  actor brand for the common one-record-one-grain case: `contract<RoomId, RoomApi> () { ... }`
+  is exactly `grainContract<RoomApi, RoomId, RoomApi> () { ... }`. A separate brand (and the
+  3-arity form) remains the tool when several grain types share one API record or when the
+  record type must be replaceable without moving the grain's transport identity — see
+  docs/functional-grains.md, "The short form: the API record as its own brand". The builders
+  module's public entry points are now pinned by a surface test.
+
+### Removed
+
+- **The `Orleans.FSharp.EventSourcing.Marten` package.** It never contained a Marten
+  integration: its three helpers forwarded to Orleans' own
+  `AddLogStorageBasedLogConsistencyProvider*`, `addMartenEventStore` ignored its connection
+  string, and the referenced Marten NuGet package was unused. Removed by owner decision —
+  external-store adapters, if ever wanted, are a new optional package registering a named
+  `ILogViewAdaptorFactory` (the shape `docs/event-sourcing.md` § "Bringing your own provider"
+  documents and a hosting test pins). `examples/bank-account` now calls the Orleans
+  extensions directly. The published `2.0.0-alpha.1` on nuget.org should be deprecated/unlisted
+  separately.
+
+### Fixed
+
+- `Stream.asTaskSeq` no longer fires its stream subscription and forgets it: the subscription
+  is awaited on the first pull, so a subscription failure surfaces to the consumer instead of
+  leaving it pulling forever from a stream it was never subscribed to. The integration test
+  that guessed a 500 ms subscription-setup delay (and hung on slower CI runners — main red
+  since 2026-08-12) now proves the subscription live with a re-published sentinel instead of
+  sleeping.
+
 ### Changed
 
 - **The declared Orleans dependency is now a floor of 10.1.0, not the newest release.**
@@ -21,6 +52,24 @@
   library floor.
 
 ### Added
+
+- **Server-streaming replies** (spec 004 item 6). An API record field may now be
+  `'Arg -> IAsyncEnumerable<'Item>` instead of `'Arg -> Task<'Reply>`, bound with `handleStream`
+  and consumed with `for … in` from F# or `await foreach` from C#. It is not a transport of ours:
+  it rides Orleans' own `IAsyncEnumerableGrainExtension` — the extension a codegen grain method
+  returning `IAsyncEnumerable<T>` uses, registered for every activation by `DefaultSiloServices`
+  and auto-installed by `ActivationData` — so batching, long-poll heartbeats, cancel-on-dispose
+  and abandoned-enumerator expiry are Orleans'. The functional side is a third request shape,
+  `FunctionalStreamRequest : AsyncEnumerableRequest<FunctionalReply>`, beside the unary and
+  transactional ones; because its element type is the same fixed reply, every item carries its own
+  protocol token (new `stream-request`/`stream-item` directions) and its own payload limit.
+  An open enumeration never blocks an ordinary call to the same activation, because every message
+  of one carries Orleans' `[AlwaysInterleave]`. A streaming handler is state-neutral — it reads the
+  snapshot taken when the enumeration started and publishes nothing — and the four admission
+  policies (`readOnly`, `oneWay`, `alwaysInterleave`, `transactional`) plus `statelessWorker` are
+  refused at sealing, each with the mechanism named. `operationId`, `sinceVersion`,
+  `acceptsVersions`, placement, persistence and `journaledGrainFor` all compose. See
+  [docs/streaming-replies.md](docs/streaming-replies.md).
 
 - **Functional event sourcing** (spec 004 item 3). `journaledGrainFor contract { ... }` is a
   second definition kind over the same contract layer: `initialEventState` seeds the fold,
@@ -58,6 +107,33 @@
   nothing could roll either back. Orleans does **not** re-execute a handler when a
   transaction aborts; the normative re-execution semantics are in
   `docs/functional-grains.md`.
+- **Functional twins for the two remaining classic-only examples.** `examples/bank-account`
+  gains a `journaledGrainFor` twin over the same `AccountEvent` journal and the same
+  `AccountState` view, and `examples/bank-transactions` gains a `grainFor` twin with a
+  `transactionalStateFrom` facet under the same `("state", "TransactionStore")` identity
+  plus a state-free orchestrator. Neither twin restates a business rule: `apply` *is*
+  `AccountGrainDef.applyEvent`, the write handlers run `AccountGrainDef.handleCommand`,
+  and the transactional updates are `AccountGrainDef.deposit` / `.withdraw` handed to
+  Orleans as `'State -> 'State` functions — so each example's existing property tests are
+  parity evidence for both paths at once. The functional twin is the live entry path in
+  both; the classic definitions stay compiled, registered and tested, and both classic
+  *demos* are kept as commented blocks because a bare `factory.GetGrain<IBankAccountGrain>`
+  cannot resolve without C# CodeGen (verified by running them, not inferred). The
+  bank-account demo prints its own replay proof from `onActivate`; the bank-transactions
+  demo shows both abort shapes — a participant refusing, and an orchestrator failing after
+  both accounts were written, which is the one that proves a rollback rather than a
+  short-circuit.
+- **`docs/api-reference.md` is functional-first.** The functional grain runtime now leads
+  the page — contract, definition and journaled-definition builders, the invocation
+  context, the bound reference, handler/hook types, persistent and transactional state,
+  streaming replies, observers, hosting, scripting and the C# facade — with the `grain { }`
+  cluster kept in full in a clearly deprecated section at the bottom. Every builder-keyword
+  and context-member table is the set `tests/Orleans.FSharp.Tests/FunctionalSurfaceTests.fs`
+  pins by reflection, and the classic tables were re-derived from the code rather than
+  carried over: the classic `onActivate` / `onDeactivate` / `onReminder` signatures were
+  wrong in `docs/`, and a `GrainMock.createMockContext` that does not exist has been
+  dropped. The page's docs/ and website copies are identical again, so `api-reference.md`
+  leaves `KNOWN_DRIFT` in `scripts/check-docs-mirror.py` (3 exemptions down to 2).
 - **CI matrix across the supported Orleans range.** `build-and-test` now runs twice:
   at the declared floor, and at Orleans 10.2.2 via `-p:OrleansVersion=10.2.2`. Breakage
   from Orleans moving forward is caught without raising the floor for consumers. Bump

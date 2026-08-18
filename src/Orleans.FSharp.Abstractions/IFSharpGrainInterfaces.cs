@@ -390,15 +390,21 @@ public sealed class FSharpGrainGuidImpl : Grain, IFSharpGrainWithGuidKey
 public interface IEventSourcedHandlerRegistry
 {
     /// <summary>Returns the boxed default state for the grain that handles the given command type.</summary>
+    /// <param name="commandType">The runtime type of the incoming command.</param>
     object GetDefaultStateByCommandType(Type commandType);
 
     /// <summary>Returns the boxed default state for the grain whose events are of the given type.</summary>
+    /// <param name="eventType">The runtime type of the event.</param>
     object GetDefaultStateByEventType(Type eventType);
 
     /// <summary>Dispatches a boxed command to the registered F# handler and returns the list of boxed events produced.</summary>
+    /// <param name="state">The current boxed grain state.</param>
+    /// <param name="command">The boxed command to handle.</param>
     IReadOnlyList<object> HandleCommand(object state, object command);
 
     /// <summary>Applies a boxed event to a boxed state and returns the resulting boxed state.</summary>
+    /// <param name="state">The boxed state to fold the event onto.</param>
+    /// <param name="event">The boxed event to apply.</param>
     object ApplyEvent(object state, object @event);
 }
 
@@ -451,6 +457,7 @@ public class FSharpEventSourcedGrainImpl
     private readonly IEventSourcedHandlerRegistry _registry;
 
     /// <summary>Initialises the grain with the event-sourced handler registry.</summary>
+    /// <param name="registry">The registry that dispatches commands and events to F# handlers.</param>
     public FSharpEventSourcedGrainImpl(IEventSourcedHandlerRegistry registry)
     {
         _registry = registry;
@@ -488,6 +495,10 @@ public class FSharpEventSourcedGrainImpl
     /// The default implementation throws <see cref="NotSupportedException"/> — override when
     /// the grain definition declares <c>customStorage</c>.
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// Thrown by the default implementation; a generated subclass overriding this for
+    /// <c>customStorage</c> replaces it and no longer throws.
+    /// </exception>
     protected virtual Task<KeyValuePair<int, WrappedEventSourcedState>> ReadStateFromStorageCore() =>
         throw new NotSupportedException(
             "This grain has no customStorage configured. " +
@@ -498,14 +509,24 @@ public class FSharpEventSourcedGrainImpl
     /// Called by <c>CustomStorageBasedLogConsistencyProvider</c> when confirming events.
     /// The default implementation throws <see cref="NotSupportedException"/>.
     /// </summary>
+    /// <param name="updates">The events to write since the expected version.</param>
+    /// <param name="expectedVersion">The log version the caller expects storage to currently be at.</param>
+    /// <exception cref="NotSupportedException">
+    /// Thrown by the default implementation; a generated subclass overriding this for
+    /// <c>customStorage</c> replaces it and no longer throws.
+    /// </exception>
     protected virtual Task<bool> ApplyUpdatesToStorageCore(
         IReadOnlyList<WrappedEventSourcedEvent> updates, int expectedVersion) =>
         throw new NotSupportedException("This grain has no customStorage configured.");
 
+    /// <summary>Explicit <see cref="ICustomStorageInterface{TState,TEvent}"/> seam; forwards to <see cref="ReadStateFromStorageCore"/>.</summary>
     Task<KeyValuePair<int, WrappedEventSourcedState>>
     ICustomStorageInterface<WrappedEventSourcedState, WrappedEventSourcedEvent>.ReadStateFromStorage() =>
         ReadStateFromStorageCore();
 
+    /// <summary>Explicit <see cref="ICustomStorageInterface{TState,TEvent}"/> seam; forwards to <see cref="ApplyUpdatesToStorageCore"/>.</summary>
+    /// <param name="updates">The events to write since the expected version.</param>
+    /// <param name="expectedVersion">The log version the caller expects storage to currently be at.</param>
     Task<bool>
     ICustomStorageInterface<WrappedEventSourcedState, WrappedEventSourcedEvent>.ApplyUpdatesToStorage(
         IReadOnlyList<WrappedEventSourcedEvent> updates, int expectedVersion) =>

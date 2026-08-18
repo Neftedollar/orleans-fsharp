@@ -94,6 +94,7 @@
     <Compile Include="FunctionalKeyCodecTests.fs" />
     <Compile Include="FunctionalDefinitionTests.fs" />
     <Compile Include="FunctionalJournaledDefinitionTests.fs" />
+    <Compile Include="FunctionalStreamingContractTests.fs" />
     <Compile Include="FunctionalSurfaceTests.fs" />
     <Compile Include="FunctionalProtocolTests.fs" />
     <Compile Include="FunctionalCodecTests.fs" />

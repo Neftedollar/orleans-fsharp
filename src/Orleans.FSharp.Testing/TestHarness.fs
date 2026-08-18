@@ -35,6 +35,8 @@ module TestHarness =
     /// </summary>
     type private TestSiloConfigurator() =
         interface ISiloConfigurator with
+            /// <summary>Adds memory grain storage, memory streams, and the PubSub store used by tests.</summary>
+            /// <param name="siloBuilder">The silo builder to configure.</param>
             member _.Configure(siloBuilder: ISiloBuilder) =
                 siloBuilder.AddMemoryGrainStorageAsDefault() |> ignore
                 siloBuilder.AddMemoryGrainStorage("Default") |> ignore
@@ -65,18 +67,26 @@ module TestHarness =
                 }
         }
 
-    /// <summary>
-    /// Internal configurator that reads state from a ref cell.
-    /// Required because TestClusterBuilder.AddSiloBuilderConfigurator<'T>
-    /// only accepts types with a parameterless constructor.
-    /// </summary>
+    /// <summary>The configuration captured for the next silo built by <see cref="CustomSiloConfigurator"/>.</summary>
     type private SiloConfiguratorRef =
         { Config: SiloConfig; LogFactory: CapturingLoggerFactory }
 
+    /// <summary>
+    /// Holds the <see cref="SiloConfiguratorRef"/> for the cluster currently being built, since
+    /// <see cref="CustomSiloConfigurator"/> is instantiated by Orleans with no way to pass it directly.
+    /// </summary>
     let private mutableConfigRef = ref None
 
+    /// <summary>
+    /// Silo configurator that applies the <see cref="SiloConfig"/> captured in
+    /// <see cref="mutableConfigRef"/>. State travels through the ref cell because
+    /// <c>TestClusterBuilder.AddSiloBuilderConfigurator&lt;'T&gt;</c> only accepts types with a
+    /// parameterless constructor, so nothing can be passed to this type directly.
+    /// </summary>
     type private CustomSiloConfigurator() =
         interface ISiloConfigurator with
+            /// <summary>Applies the captured <see cref="SiloConfig"/> and registers the shared log factory, if one was set.</summary>
+            /// <param name="siloBuilder">The silo builder to configure.</param>
             member _.Configure(siloBuilder: ISiloBuilder) =
                 match !mutableConfigRef with
                 | Some { Config = cfg; LogFactory = lf } ->

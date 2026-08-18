@@ -37,10 +37,12 @@ Each item is grounded in a verified finding; pointers name the evidence.
 6. **Analyzer hint for derived grain types** — an Orleans.FSharp.Analyzers
    rule suggesting an explicit `grainType` on contracts whose definitions are
    likely to become durable (complements the sealing-time enforcement).
-7. **Functional transactions** — out of 003 scope by spec; the classic
-   `AddFSharpTransactionalGrain` path is KEEP-listed and demonstrated in
-   `examples/bank-transactions`. A functional-first design would need its own
-   spec (transactional state facets, `ITransactionalState` shaping).
+7. **Functional transactions** — was out of 003 scope by spec; **delivered by
+   spec 004 item 2** (`transactional` contract operations + `transactionalStateFrom`
+   facets over Orleans' own `TransactionRequest` invokable base). The classic
+   `AddFSharpTransactionalGrain` path stays KEEP-listed;
+   `examples/bank-transactions` now leads with the functional twin and keeps
+   the classic definition compiled, registered, and tested beside it.
 8. **samples/ code rewrite depth** — the three pattern READMEs now teach the
    functional model with compiled fences; turning them into buildable projects
    (like examples/) is future work, noted in their deprecation banners.

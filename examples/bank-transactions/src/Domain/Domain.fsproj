@@ -3,6 +3,7 @@
   <ItemGroup>
     <Compile Include="AccountTypes.fs" />
     <Compile Include="AccountGrain.fs" />
+    <Compile Include="AccountGrainFunctional.fs" />
   </ItemGroup>
 
   <ItemGroup>

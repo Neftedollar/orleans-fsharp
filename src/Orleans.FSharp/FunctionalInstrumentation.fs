@@ -113,6 +113,7 @@ module internal FunctionalInstrumentation =
         | counters -> Interlocked.Increment &counters.PayloadDeserializations |> ignore
 
     /// <summary>Record that a serializer session was rented from the pool.</summary>
+    /// <param name="session">The rented session object, tracked by reference identity.</param>
     let trackSessionRented (session: obj) =
         match current.Value with
         | null -> ()
@@ -123,6 +124,7 @@ module internal FunctionalInstrumentation =
                 Interlocked.Increment &counters.SessionConflicts |> ignore
 
     /// <summary>Record that a serializer session was returned to the pool.</summary>
+    /// <param name="session">The returned session object, tracked by reference identity.</param>
     let trackSessionReturned (session: obj) =
         match current.Value with
         | null -> ()

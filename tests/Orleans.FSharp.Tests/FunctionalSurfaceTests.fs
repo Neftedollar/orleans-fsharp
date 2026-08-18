@@ -522,6 +522,44 @@ let private customOperations (builderType: Type) =
     |> Array.sort
 
 [<Fact>]
+let ``the builders module exposes exactly the specified entry points`` () =
+    // Module-level public bindings are pinned by name: an entry point appearing in (or vanishing
+    // from) the AutoOpen'd FunctionalGrainBuilders module is a public-surface change nothing else
+    // in the suite would notice -- a binding once appeared here unauthored and 2,566 tests stayed
+    // green, which is exactly the gap this pin closes.
+    let expected = [| "contract"; "grainContract"; "grainFor"; "journaledGrainFor" |]
+
+    let moduleType =
+        typeof<GrainContract<SurfaceActor, string, SurfaceApi>>.Assembly.GetType
+            "Orleans.FSharp.FunctionalGrainBuilders"
+
+    let actual =
+        moduleType.GetMethods(
+            Reflection.BindingFlags.Public
+            ||| Reflection.BindingFlags.Static
+            ||| Reflection.BindingFlags.DeclaredOnly
+        )
+        |> Array.map (fun method' -> method'.Name)
+        |> Array.sort
+
+    test <@ actual = expected @>
+
+[<Fact>]
+let ``the contract short form brands the contract with its own API record`` () =
+    // contract<'Key, 'Api> is grainContract<'Api, 'Key, 'Api>: the record IS the brand. Qualified
+    // access here because this file's own module-level `contract` binding shadows the AutoOpen'd
+    // function -- which is itself worth demonstrating: user code that names a local binding
+    // `contract` keeps working unchanged.
+    let shortForm =
+        FunctionalGrainBuilders.contract<string, SurfaceApi> () {
+            grainType "surface.short-form"
+            version 1
+            stringKey
+        }
+
+    test <@ shortForm.GetType() = typeof<GrainContract<SurfaceApi, string, SurfaceApi>> @>
+
+[<Fact>]
 let ``the contract builder declares exactly the specified custom operations`` () =
     let expected =
         [| "acceptsVersions"
@@ -537,9 +575,16 @@ let ``the contract builder declares exactly the specified custom operations`` ()
            "int64KeyMapped"
            "mayInterleave"
            "oneWay"
+           // Spec 004 item 6: 'operationId' and 'sinceVersion' each have a second overload taking
+           // a StreamSelector, so a streaming API field can be renamed and version-gated exactly
+           // like a unary one. They are the ONLY two of the contract's per-operation declarations
+           // that compose with a streaming field; the four admission policies are refused at
+           // sealing, and their selectors would not type-check against one in the first place.
+           "operationId"
            "operationId"
            "readOnly"
            "reentrant"
+           "sinceVersion"
            "sinceVersion"
            "stringKey"
            "stringKeyMapped"
@@ -554,6 +599,10 @@ let ``the definition builder declares exactly the specified custom operations`` 
         [| "collectionAge"
            "defaultState"
            "handle"
+           // Spec 004 item 6: a SEPARATE operation rather than an overload of 'handle'. An
+           // overloaded 'handle' makes F# resolve the handler lambda before the selector, which
+           // breaks record-field inference inside existing handler bodies.
+           "handleStream"
            "initialState"
            "onActivate"
            "onBroadcast"
@@ -583,6 +632,10 @@ let ``the journaled definition builder declares exactly the specified custom ope
         [| "apply"
            "collectionAge"
            "handle"
+           // Spec 004 item 6: a journaled definition streams too. Its streaming handler has the
+           // ordinary StreamHandler shape and raises no events, for the same reason it publishes
+           // no replacement state.
+           "handleStream"
            "initialEventState"
            "journalStorage"
            "logProvider"
@@ -683,7 +736,10 @@ let ``FunctionalGrain.streamId and channelId reject a blank namespace`` () =
 
 [<Fact>]
 let ``the bound reference declares exactly the specified public members`` () =
-    let expected = [| "api"; "call"; "callCancellable"; "key" |]
+    // Spec 004 item 6 adds the two streaming forms; 'stream' and 'streamCancellable' are to a
+    // streaming field exactly what 'call' and 'callCancellable' are to a unary one.
+    let expected =
+        [| "api"; "call"; "callCancellable"; "key"; "stream"; "streamCancellable" |]
 
     let actual =
         typeof<FunctionalGrainRef<SurfaceActor, string, SurfaceApi>>
@@ -695,3 +751,4 @@ let ``the bound reference declares exactly the specified public members`` () =
         |> Array.sort
 
     test <@ actual = expected @>
+

@@ -53,6 +53,7 @@ type FSharpTransactionalGrain< 'State when 'State: not struct and 'State: (new: 
     /// <summary>
     /// Called when the grain is activated. Logs activation.
     /// </summary>
+    /// <param name="_ct">Cancellation token for the activation; not observed by this override.</param>
     override this.OnActivateAsync(_ct: CancellationToken) =
         Log.logInfo
             logger
@@ -64,6 +65,7 @@ type FSharpTransactionalGrain< 'State when 'State: not struct and 'State: (new: 
     /// <summary>
     /// Deposit funds into the account within a transaction.
     /// </summary>
+    /// <param name="amount">The amount to deposit.</param>
     member _.Deposit(amount: decimal) : Task =
         transactionalState.PerformUpdate(fun state ->
             let newState = definition.Deposit state amount
@@ -73,6 +75,7 @@ type FSharpTransactionalGrain< 'State when 'State: not struct and 'State: (new: 
     /// Withdraw funds from the account within a transaction.
     /// Throws on overdraft, which aborts the entire transaction.
     /// </summary>
+    /// <param name="amount">The amount to withdraw.</param>
     member _.Withdraw(amount: decimal) : Task =
         transactionalState.PerformUpdate(fun state ->
             let newState = definition.Withdraw state amount
@@ -100,6 +103,9 @@ type FSharpAtmGrain<'TAccountGrain when 'TAccountGrain :> IGrainWithStringKey>
     /// Atomically transfers funds from one account to another.
     /// Both the withdrawal and deposit happen within a single Orleans transaction.
     /// </summary>
+    /// <param name="fromAccount">The key of the account grain to withdraw from.</param>
+    /// <param name="toAccount">The key of the account grain to deposit into.</param>
+    /// <param name="amount">The amount to transfer.</param>
     [<Transaction(TransactionOption.Create)>]
     member this.Transfer(fromAccount: string, toAccount: string, amount: decimal) : Task =
         // Capture protected member before task CE

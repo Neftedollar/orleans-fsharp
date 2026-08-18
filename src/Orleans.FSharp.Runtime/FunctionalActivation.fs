@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
@@ -27,23 +28,38 @@ type internal FunctionalGrainTarget<'Actor>
     (env: FunctionalTargetEnvironment, grainContext: IGrainContext, grainRuntime: IGrainRuntime) =
     inherit FunctionalGrainTargetBase(grainContext, grainRuntime)
 
+    /// <inheritdoc/>
     override _.OnDisposing() = ()
 
+    /// <inheritdoc/>
     override _.OnActivating(cancellationToken) =
         FunctionalLifecycle.activate env cancellationToken
 
+    /// <inheritdoc/>
     override _.OnDeactivating(reason, cancellationToken) =
         FunctionalLifecycle.deactivate env reason cancellationToken
 
     interface IFunctionalDispatchTarget with
+        /// <inheritdoc/>
         member _.DispatchAsync(envelope, cancellationToken) =
             FunctionalDispatch.dispatch env envelope cancellationToken
 
+        // Spec 004 item 6. The enumerator is lazy: nothing is validated, no context is built and
+        // no handler runs until Orleans pulls the first item. See FunctionalStreamEnumerator.
+        /// <inheritdoc/>
+        member _.DispatchStream(envelope, cancellationToken) =
+            new FunctionalStreamEnumerator(env, envelope, cancellationToken) :> IAsyncEnumerator<FunctionalReply>
+
     interface IFunctionalGrainTarget<'Actor> with
+        /// <inheritdoc/>
         member _.DispatchAsync(envelope, cancellationToken) =
             FunctionalDispatch.dispatch env envelope cancellationToken
 
     interface IRemindable with
+        /// <summary>Delivers a reminder tick to the hosted definition's registered handler by name.</summary>
+        /// <param name="reminderName">The name of the reminder that fired.</param>
+        /// <param name="status">Orleans' tick status for this reminder invocation.</param>
+        /// <exception cref="System.InvalidOperationException">Returned as a faulted <see cref="System.Threading.Tasks.Task"/> when <paramref name="reminderName"/> is not declared by the hosted definition.</exception>
         member _.ReceiveReminder(reminderName: string, status: TickStatus) : Task =
             match env.Definition.TryFindReminder reminderName with
             | Some hostedReminder ->
@@ -98,10 +114,12 @@ type internal FunctionalStreamingGrainTarget<'Actor>
     inherit FunctionalGrainTarget<'Actor>(env, grainContext, grainRuntime)
 
     interface IStreamSubscriptionObserver with
+        /// <inheritdoc/>
         member _.OnSubscribed(handleFactory: IStreamSubscriptionHandleFactory) =
             FunctionalStreams.onStreamSubscribed env handleFactory
 
     interface IOnBroadcastChannelSubscribed with
+        /// <inheritdoc/>
         member _.OnSubscribed(subscription: IBroadcastChannelSubscription) =
             FunctionalStreams.onChannelSubscribed env subscription
 
@@ -118,6 +136,15 @@ type internal FunctionalStreamingGrainTarget<'Actor>
 type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefinition) =
 
     interface IGrainActivator with
+        /// <summary>
+        /// Creates one activation's functional target: builds every attached persistent and
+        /// transactional facet, installs the journal for a journaled definition, assembles the
+        /// <c>FunctionalTargetEnvironment</c>, and constructs the plain or streaming target
+        /// depending on whether the definition declares an implicit subscription.
+        /// </summary>
+        /// <param name="grainContext">The Orleans-supplied context for the activation being created.</param>
+        /// <returns>The boxed functional grain target (<c>FunctionalGrainTarget&lt;'Actor&gt;</c> or <c>FunctionalStreamingGrainTarget&lt;'Actor&gt;</c>).</returns>
+        /// <exception cref="System.InvalidOperationException">The definition declares a transactional facet but Orleans' ambient grain context does not match <paramref name="grainContext"/>, or the constructed target did not receive it.</exception>
         member _.CreateInstance(grainContext: IGrainContext) : obj =
             let services = grainContext.ActivationServices
             let grainRuntime = services.GetRequiredService<IGrainRuntime>()
@@ -357,6 +384,9 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
 
             box target
 
+        /// <summary>Disposes the target instance created by <c>CreateInstance</c>, if it is <see cref="System.IDisposable"/>.</summary>
+        /// <param name="grainContext">The activation's grain context.</param>
+        /// <param name="instance">The instance previously returned by <c>CreateInstance</c>.</param>
         member _.DisposeInstance(grainContext: IGrainContext, instance: obj) =
             match instance with
             | :? IDisposable as disposable ->
@@ -386,6 +416,8 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
 type internal FunctionalConfigureGrainTypeComponents(registry: FunctionalGrainRegistry) =
 
     /// <summary>Close the functional activator over one definition's actor brand.</summary>
+    /// <param name="definition">The hosted definition to build a closed <c>FunctionalGrainActivator&lt;'Actor&gt;</c> for.</param>
+    /// <exception cref="System.InvalidOperationException">The closed activator type could not be constructed.</exception>
     static member CreateActivator(definition: FunctionalHostedDefinition) : IGrainActivator =
         let closed =
             typedefof<FunctionalGrainActivator<_>>.MakeGenericType [| definition.ActorType |]
@@ -398,6 +430,7 @@ type internal FunctionalConfigureGrainTypeComponents(registry: FunctionalGrainRe
                 $"the functional grain activator for grain type '{definition.GrainTypeName}' could not be created."
 
     interface IConfigureGrainTypeComponents with
+        /// <inheritdoc/>
         member _.Configure(grainType: GrainType, _properties: GrainProperties, shared: GrainTypeSharedContext) =
             match registry.TryByGrainType(grainType.ToString()) with
             | Some entry ->

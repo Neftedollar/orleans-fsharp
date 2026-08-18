@@ -17,6 +17,7 @@ open Orleans.FSharp.FunctionalSiloDiagnostics
 type internal FunctionalGrainTypeProvider(registry: FunctionalGrainRegistry) =
 
     interface IGrainTypeProvider with
+        /// <inheritdoc/>
         member _.TryGetGrainType(candidate: Type, grainType: byref<GrainType>) =
             match registry.TryByMarker candidate with
             | Some entry ->
@@ -29,6 +30,7 @@ type internal FunctionalGrainTypeProvider(registry: FunctionalGrainRegistry) =
 type internal FunctionalGrainInterfaceTypeProvider(registry: FunctionalGrainRegistry) =
 
     interface IGrainInterfaceTypeProvider with
+        /// <inheritdoc/>
         member _.TryGetGrainInterfaceType(candidate: Type, interfaceType: byref<GrainInterfaceType>) =
             match registry.TryByInterface candidate with
             | Some entry ->
@@ -44,6 +46,7 @@ type internal FunctionalGrainInterfaceTypeProvider(registry: FunctionalGrainRegi
 type internal FunctionalGrainInterfacePropertiesProvider(registry: FunctionalGrainRegistry) =
 
     interface IGrainInterfacePropertiesProvider with
+        /// <inheritdoc/>
         member _.Populate(candidate: Type, _id: GrainInterfaceType, properties: Dictionary<string, string>) =
             match registry.TryByInterface candidate with
             | Some entry ->
@@ -88,6 +91,7 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
     /// legacy-key-type branches all come from Orleans code, evaluated against this definition's
     /// own marker CLR type.
     /// </summary>
+    /// <param name="binding">The declared implicit subscription (stream or channel) to build the attribute for.</param>
     static member BindingAttribute(binding: FunctionalStreamDeclaration) : IGrainBindingsProviderAttribute =
         if binding.IsStream then
             ImplicitStreamSubscriptionAttribute binding.Namespace
@@ -100,6 +104,10 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
     /// declarations of the same namespace on two different providers — legal, and distinguished
     /// at delivery time — would otherwise publish two byte-identical binding groups.
     /// </summary>
+    /// <param name="services">The silo's DI service provider, forwarded to each binding attribute's <c>GetBindings</c>.</param>
+    /// <param name="definition">The hosted definition whose <c>StreamBindings</c> to translate.</param>
+    /// <param name="grainClass">The definition's closed marker CLR type.</param>
+    /// <param name="grainType">The definition's Orleans <c>GrainType</c>.</param>
     static member BindingsOf
         (services: IServiceProvider, definition: FunctionalHostedDefinition, grainClass: Type, grainType: GrainType)
         =
@@ -122,6 +130,7 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
     /// The exact values an implemented-interface property can hold for the functional target
     /// interface before this provider has replaced it.
     /// </summary>
+    /// <param name="entry">The registry entry whose functional target interface values to compute.</param>
     static member NormalizedValues(entry: FunctionalRegistryEntry) =
         [| FunctionalGrainPropertiesProvider.OpenInterfaceDefinition.FullName
            GrainInterfaceType
@@ -130,12 +139,16 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
            entry.InterfaceId |]
 
     /// <summary>True when a property value names the functional target interface exactly.</summary>
+    /// <param name="entry">The registry entry to compare against.</param>
+    /// <param name="value">The candidate implemented-interface property value.</param>
     static member IsFunctionalInterfaceValue (entry: FunctionalRegistryEntry) (value: string) =
         not (isNull value)
         && FunctionalGrainPropertiesProvider.NormalizedValues entry
            |> Array.exists (fun candidate -> String.Equals(candidate, value, StringComparison.Ordinal))
 
     interface IGrainPropertiesProvider with
+        /// <inheritdoc/>
+        /// <exception cref="System.InvalidOperationException">A registered grain type's implemented-interface properties do not contain exactly one entry naming the functional target interface.</exception>
         member _.Populate(grainClass: Type, grainType: GrainType, properties: Dictionary<string, string>) =
             match registry.TryByMarker grainClass with
             | None -> ()
@@ -270,6 +283,7 @@ type internal FunctionalGrainTypeOptionsPostConfigure(registry: FunctionalGrainR
             && candidate.GetGenericTypeDefinition() = definition)
 
     interface IPostConfigureOptions<GrainTypeOptions> with
+        /// <inheritdoc/>
         member _.PostConfigure(name: string, options: GrainTypeOptions) =
             if String.Equals(name, Options.DefaultName, StringComparison.Ordinal) then
                 let snapshot = registry.Freeze()

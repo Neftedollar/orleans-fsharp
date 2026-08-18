@@ -53,6 +53,7 @@ module CounterGrainDef =
     /// <summary>
     /// Extract the integer value from a CounterState.
     /// </summary>
+    /// <param name="state">The counter state to read.</param>
     let stateValue (state: CounterState) : int =
         match state with
         | Zero -> 0

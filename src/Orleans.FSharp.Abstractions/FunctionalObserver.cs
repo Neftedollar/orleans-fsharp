@@ -50,6 +50,17 @@ public sealed class FunctionalNotificationEnvelope
     }
 
     /// <summary>Create a complete, validated envelope.</summary>
+    /// <param name="observerType">The observer type, the observer-side analogue of the grain type.</param>
+    /// <param name="contractVersion">The application contract version.</param>
+    /// <param name="operationId">The stable ordinal operation ID of the push operation.</param>
+    /// <param name="protocolToken">The raw SHA-256 notify-direction protocol token.</param>
+    /// <param name="payload">The serialized message payload.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <paramref name="observerType"/> or <paramref name="operationId"/> is empty, too
+    /// long, or carries a control character; when <paramref name="contractVersion"/> is not
+    /// positive; when <paramref name="protocolToken"/> is not exactly 32 bytes; or when
+    /// <paramref name="payload"/> is null.
+    /// </exception>
     public FunctionalNotificationEnvelope(
         string observerType,
         int contractVersion,
@@ -80,6 +91,17 @@ public sealed class FunctionalNotificationEnvelope
     /// Populate and validate every field exactly once. The deserializing codec calls this after
     /// it has read all five fields; a second call is a programming error.
     /// </summary>
+    /// <param name="observerType">The observer type, the observer-side analogue of the grain type.</param>
+    /// <param name="contractVersion">The application contract version.</param>
+    /// <param name="operationId">The stable ordinal operation ID of the push operation.</param>
+    /// <param name="protocolToken">The raw SHA-256 notify-direction protocol token.</param>
+    /// <param name="payload">The serialized message payload.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when this envelope was already initialized; when <paramref name="observerType"/> or
+    /// <paramref name="operationId"/> is empty, too long, or carries a control character; when
+    /// <paramref name="contractVersion"/> is not positive; when <paramref name="protocolToken"/> is
+    /// not exactly 32 bytes; or when <paramref name="payload"/> is null.
+    /// </exception>
     internal void Initialize(
         string observerType,
         int contractVersion,
@@ -149,6 +171,7 @@ public interface IFunctionalObserverTarget : IGrainObserver
     /// completes as soon as the notification has entered the local send path, an observer that
     /// throws is reported only on its own side, and a dead reference costs nothing.
     /// </remarks>
+    /// <param name="envelope">The fixed notification data to deliver.</param>
     [OneWay]
     Task DispatchAsync(FunctionalNotificationEnvelope envelope);
 }
@@ -182,6 +205,13 @@ public sealed class FunctionalObserverHandle<TBrand, TApi>
     /// The locally hosted observed object, on the process that created the handle, and null on
     /// any process that received one over the wire.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <paramref name="observerType"/> is empty, too long, or carries a control
+    /// character, or when <paramref name="contractVersion"/> is not positive.
+    /// </exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="target"/> or <paramref name="codec"/> is null.
+    /// </exception>
     internal FunctionalObserverHandle(
         string observerType,
         int contractVersion,
@@ -252,6 +282,7 @@ internal sealed class FunctionalNotificationEnvelopeCodec : IFieldCodec<Function
     private readonly IActivator<FunctionalNotificationEnvelope> _activator;
 
     /// <summary>Create the codec with the activator Orleans resolves for the envelope.</summary>
+    /// <param name="activator">The activator that creates uninitialized envelopes for deserialization.</param>
     public FunctionalNotificationEnvelopeCodec(IActivator<FunctionalNotificationEnvelope> activator) =>
         _activator = activator;
 
@@ -278,6 +309,9 @@ internal sealed class FunctionalNotificationEnvelopeCodec : IFieldCodec<Function
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wire data carries an unknown field ID or omits a required field.
+    /// </exception>
     public FunctionalNotificationEnvelope ReadValue<TInput>(ref Reader<TInput> reader, Field field)
     {
         if (field.IsReference)
@@ -366,6 +400,8 @@ internal sealed class FunctionalObserverHandleCodec<TBrand, TApi> : IFieldCodec<
     private readonly IFunctionalPayloadCodec _payloadCodec;
 
     /// <summary>Create the handle codec over the Orleans codec of the observer reference.</summary>
+    /// <param name="targetCodec">Orleans' own field codec for the observer target object reference.</param>
+    /// <param name="payloadCodec">The exact-type payload codec to stamp onto handles read off the wire.</param>
     public FunctionalObserverHandleCodec(
         IFieldCodec<IFunctionalObserverTarget> targetCodec,
         IFunctionalPayloadCodec payloadCodec)
@@ -395,6 +431,10 @@ internal sealed class FunctionalObserverHandleCodec<TBrand, TApi> : IFieldCodec<
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wire data carries an unknown field ID, omits a required field, or arrives
+    /// without an object reference for the observed object.
+    /// </exception>
     public FunctionalObserverHandle<TBrand, TApi> ReadValue<TInput>(ref Reader<TInput> reader, Field field)
     {
         if (field.IsReference)
@@ -518,6 +558,7 @@ internal sealed class FunctionalObserverManifestProvider : TypeManifestProviderB
 internal static class FunctionalObserverSerialization
 {
     /// <summary>True for the notification envelope and for any closed observer handle.</summary>
+    /// <param name="type">The type to test.</param>
     public static bool IsObserverTransportType(Type type) =>
         type == typeof(FunctionalNotificationEnvelope)
         || (type.IsGenericType
@@ -528,6 +569,8 @@ internal static class FunctionalObserverSerialization
     /// Register the explicit observer-transport serialization on a service collection. Repeated
     /// registration is idempotent.
     /// </summary>
+    /// <param name="services">The service collection to register against.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
     public static IServiceCollection AddFunctionalObserverTransport(IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -538,6 +581,8 @@ internal static class FunctionalObserverSerialization
     }
 
     /// <summary>Add the explicit codecs, copiers, and activators to a type manifest.</summary>
+    /// <param name="config">The type manifest to add to.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="config"/> is null.</exception>
     public static void Configure(TypeManifestOptions config)
     {
         ArgumentNullException.ThrowIfNull(config);

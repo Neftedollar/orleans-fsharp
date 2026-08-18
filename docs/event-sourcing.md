@@ -463,12 +463,13 @@ do! handle |> FSharpEventSourcedGrain.clearLog
 > throws `NotSupportedException` for log-consistency providers that do not override
 > `ClearPrimaryLogAsync`. Both built-in providers do; a custom one need not.
 
-### Marten
+### Third-party event stores
 
-`Orleans.FSharp.EventSourcing.Marten` is a placeholder: its helpers register Orleans' **own**
-`LogStorage` provider, and no Marten-backed `ILogViewAdaptorFactory` exists yet. A real Marten
-adapter would be a separate optional package registering a named `ILogViewAdaptorFactory`, which
-both the classic and the journaled model would then name with no further work — see
+There is no first-party adapter for an external event store (Marten, EventStoreDB, …), and the
+placeholder `Orleans.FSharp.EventSourcing.Marten` package — whose helpers only forwarded to
+Orleans' own `LogStorage` provider — has been removed. An adapter for any store is a separate
+package registering a named `ILogViewAdaptorFactory`, which both the classic and the journaled
+model then name with no further work — see
 ["Bringing your own provider"](#bringing-your-own-provider).
 
 ---

@@ -86,15 +86,14 @@ module ClientConfig =
         ]
 
     /// <summary>
-    /// Applies the client configuration to an IClientBuilder.
-    /// Used when configuring a client via UseOrleansClient.
-    /// </summary>
-    /// <param name="config">The client configuration to apply.</param>
-    /// <param name="clientBuilder">The IClientBuilder to configure.</param>
-    /// <summary>
     /// Invokes an extension method on IClientBuilder by name, searching loaded assemblies.
     /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
     /// </summary>
+    /// <param name="methodName">The name of the static extension method to locate and invoke.</param>
+    /// <param name="args">The arguments to pass after the leading <see cref="IClientBuilder"/> parameter.</param>
+    /// <param name="packageHint">The NuGet package name to mention in the error message if the method cannot be found.</param>
+    /// <param name="clientBuilder">The IClientBuilder instance passed as the extension method's first argument.</param>
+    /// <exception cref="System.InvalidOperationException">No matching extension method is found in any loaded assembly.</exception>
     let private invokeClientExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (clientBuilder: IClientBuilder) =
         let clientBuilderType = typeof<IClientBuilder>
 
@@ -120,6 +119,13 @@ module ClientConfig =
             invalidOp
                 $"Extension method '{methodName}' not found. Install the NuGet package '{packageHint}' and ensure it is referenced in your project."
 
+    /// <summary>
+    /// Applies the client configuration to an IClientBuilder.
+    /// Used when configuring a client via UseOrleansClient.
+    /// </summary>
+    /// <param name="config">The client configuration to apply.</param>
+    /// <param name="clientBuilder">The IClientBuilder to configure.</param>
+    /// <exception cref="System.InvalidOperationException">A <c>StaticGateway</c> endpoint is not in "host:port" format.</exception>
     let applyToBuilder (config: ClientConfig) (clientBuilder: IClientBuilder) : unit =
         // Apply cluster identity (ClusterId, ServiceId)
         if config.ClusterId.IsSome || config.ServiceId.IsSome then
@@ -313,6 +319,7 @@ type ClientConfigBuilder() =
     /// <param name="config">The current client configuration being built.</param>
     /// <param name="name">The name of the stream provider.</param>
     /// <returns>The updated client configuration with the memory stream provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or whitespace.</exception>
     [<CustomOperation("addMemoryStreams")>]
     member _.AddMemoryStreams(config: ClientConfig, name: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -384,6 +391,7 @@ type ClientConfigBuilder() =
     /// <param name="config">The current client configuration being built.</param>
     /// <param name="id">The cluster identifier string.</param>
     /// <returns>The updated client configuration with the cluster ID set.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="id"/> is empty or whitespace.</exception>
     [<CustomOperation("clusterId")>]
     member _.ClusterId(config: ClientConfig, id: string) =
         if System.String.IsNullOrWhiteSpace(id) then
@@ -397,6 +405,7 @@ type ClientConfigBuilder() =
     /// <param name="config">The current client configuration being built.</param>
     /// <param name="id">The service identifier string.</param>
     /// <returns>The updated client configuration with the service ID set.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="id"/> is empty or whitespace.</exception>
     [<CustomOperation("serviceId")>]
     member _.ServiceId(config: ClientConfig, id: string) =
         if System.String.IsNullOrWhiteSpace(id) then
@@ -426,6 +435,7 @@ type ClientConfigBuilder() =
         { config with PreferredGatewayIndex = Some index }
 
     /// <summary>Returns the completed client configuration.</summary>
+    /// <param name="config">The fully built client configuration.</param>
     member _.Run(config: ClientConfig) = config
 
 /// <summary>

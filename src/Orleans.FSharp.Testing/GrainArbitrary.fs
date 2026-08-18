@@ -22,6 +22,7 @@ type internal GenHelpers private () =
         box (ArbMap.defaults |> ArbMap.generate<'T>)
 
     /// <summary>Map a typed Gen to Gen of obj for sequencing field generators.</summary>
+    /// <param name="gen">The boxed <c>Gen&lt;'T&gt;</c> to map.</param>
     static member MapToObj<'T>(gen: obj) : obj =
         let typedGen = gen :?> Gen<'T>
         box (typedGen |> Gen.map box)
@@ -30,6 +31,8 @@ type internal GenHelpers private () =
     /// Sequence an array of Gen of obj, construct the union case from the values,
     /// and return a typed Gen for the result.
     /// </summary>
+    /// <param name="objGens">The boxed <c>Gen&lt;obj&gt;</c> array, one per union-case field.</param>
+    /// <param name="construct">Builds the union case instance from the sequenced field values.</param>
     static member SequenceAndConstruct<'Result>(objGens: obj array, construct: Func<obj array, obj>) : obj =
         let typedGens = objGens |> Array.map (fun g -> g :?> Gen<obj>) |> Array.toList
 
@@ -52,6 +55,7 @@ type internal GenHelpers private () =
         box resultGen
 
     /// <summary>Choose uniformly from an array of generators.</summary>
+    /// <param name="gens">The boxed <c>Gen&lt;'T&gt;</c> array to choose among.</param>
     static member OneOf<'T>(gens: obj array) : obj =
         let typedGens = gens |> Array.map (fun g -> g :?> Gen<'T>) |> Array.toList
         box (Gen.oneof typedGens)
@@ -59,6 +63,8 @@ type internal GenHelpers private () =
     /// <summary>
     /// Map a single-field Gen to a result Gen via a constructor function.
     /// </summary>
+    /// <param name="fieldGen">The boxed <c>Gen&lt;'Field&gt;</c> for the union case's single field.</param>
+    /// <param name="construct">Builds the union case instance from the generated field value.</param>
     static member MapField<'Field, 'Result>(fieldGen: obj, construct: Func<obj, obj>) : obj =
         let typedFieldGen = fieldGen :?> Gen<'Field>
 
@@ -70,6 +76,7 @@ type internal GenHelpers private () =
     /// <summary>
     /// Wrap a constant value in a Gen.
     /// </summary>
+    /// <param name="value">The boxed constant value, unboxed to <c>'T</c>.</param>
     static member Constant<'T>(value: obj) : obj =
         box (Gen.constant (value :?> 'T))
 
@@ -85,10 +92,15 @@ module GrainArbitrary =
     let private genCache = ConcurrentDictionary<Type, obj>()
 
     // Pre-fetch MethodInfo for GenHelpers static methods using robust lookup
+    /// <summary>The <see cref="GenHelpers"/> type, resolved once for repeated reflection lookups.</summary>
     let private helpersType = typeof<GenHelpers>
+
+    /// <summary>Every static method of <see cref="GenHelpers"/>, resolved once for repeated reflection lookups.</summary>
     let private allMethods =
         helpersType.GetMethods(BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
 
+    /// <summary>Look up one <see cref="GenHelpers"/> static method by name.</summary>
+    /// <param name="name">The method name to find.</param>
     let private findMethod name =
         allMethods
         |> Array.find (fun m -> m.Name = name)
@@ -105,6 +117,7 @@ module GrainArbitrary =
     /// Uses FSharp.Reflection to detect DU structure and construct instances.
     /// Falls back to FsCheck default generators for primitives and non-DU types.
     /// </summary>
+    /// <param name="ty">The runtime type to build a generator for.</param>
     let rec private mkGenUntyped (ty: Type) : obj =
         match genCache.TryGetValue(ty) with
         | true, cached -> cached
@@ -122,6 +135,9 @@ module GrainArbitrary =
             genCache.[ty] <- result
             result
 
+    /// <summary>Builds a boxed generator for a discriminated-union type by generating each case's fields.</summary>
+    /// <param name="ty">The union runtime type to build a generator for.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="ty"/> has no union cases.</exception>
     and private mkUnionGenUntyped (ty: Type) : obj =
         let cases = FSharpType.GetUnionCases(ty, true)
 

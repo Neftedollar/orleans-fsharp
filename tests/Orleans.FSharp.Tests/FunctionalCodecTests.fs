@@ -9,6 +9,7 @@ module Orleans.FSharp.Tests.FunctionalCodecTests
 
 open System
 open System.Buffers
+open System.Collections.Generic
 open System.Reflection
 open System.Threading
 open System.Threading.Tasks
@@ -432,6 +433,22 @@ type private FakeTarget() =
     interface IFunctionalDispatchTarget with
         member _.DispatchAsync(_envelope, _cancellationToken) =
             ValueTask<FunctionalReply>(FunctionalReply(replyToken, payload))
+
+        member _.DispatchStream(_envelope, _cancellationToken) =
+            let mutable pending = true
+
+            { new IAsyncEnumerator<FunctionalReply> with
+                member _.Current = FunctionalReply(replyToken, payload)
+
+                member _.MoveNextAsync() =
+                    if pending then
+                        pending <- false
+                        ValueTask<bool> true
+                    else
+                        ValueTask<bool> false
+
+              interface IAsyncDisposable with
+                  member _.DisposeAsync() = ValueTask() }
 
     interface IFunctionalGrainTarget<CodecActor> with
         member _.DispatchAsync(_envelope, _cancellationToken) =
@@ -866,3 +883,105 @@ let ``an envelope with no transaction option cannot build a transactional reques
             request.ApplyAdmissionOptions())
 
     test <@ error.Message.Contains "declare no transaction option" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Spec 004 item 6 — the streaming invokable shell
+// ──────────────────────────────────────────────────────────────────────────────
+
+let private streamEnvelope () =
+    FunctionalRequestEnvelope("chat.room", 1, "watch", token, AdmissionFlags.None, payload)
+
+let private streamCopier () = copier ()
+
+/// <remarks>
+/// The streaming request IS the caller's <c>IAsyncEnumerable</c>: Orleans' own
+/// <c>AsyncEnumerableRequest&lt;T&gt;</c> implements it, and <c>InitializeRequest</c> — which the
+/// reference calls in place of the <c>[ReturnValueProxy]</c> code generation Orleans would do —
+/// binds it to the reference it enumerates against.
+/// </remarks>
+[<Fact>]
+let ``the streaming request is an IAsyncEnumerable of the fixed reply`` () =
+    use request = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+
+    test <@ (request :> obj) :? IAsyncEnumerable<FunctionalReply> @>
+    test <@ (request :> obj) :? Orleans.Runtime.IAsyncEnumerableRequest<FunctionalReply> @>
+
+    // Orleans' default, which FunctionalStream.withBatchSize reaches through the typed wrapper.
+    test <@ request.MaxBatchSize = 100 @>
+
+/// <remarks>
+/// The unary and transactional requests both call <c>ApplyAdmissionOptions</c>, which turns the
+/// admission byte into <c>RequestBase.Options</c>. A streaming request deliberately does not: the
+/// message that crosses the network is Orleans' own extension invokable, whose scheduling is fixed
+/// by <c>[AlwaysInterleave]</c>, so an option set here would never be read. What it does instead is
+/// refuse a byte that is not clear — every admission policy is rejected at contract sealing, so a
+/// non-zero byte on a streaming envelope can only have come from a peer that disagrees.
+/// </remarks>
+[<Fact>]
+let ``a streaming request refuses an envelope carrying admission flags`` () =
+    use clean = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+    clean.ValidateAdmissionFlags()
+    test <@ clean.Options = InvokeMethodOptions.None @>
+
+    let flagged =
+        FunctionalRequestEnvelope("chat.room", 1, "watch", token, AdmissionFlags.ReadOnly, payload)
+
+    use request = new FunctionalStreamRequest(flagged, CancellationToken.None)
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () -> request.ValidateAdmissionFlags())
+
+    test <@ error.Message.Contains "composes with no admission policy" @>
+
+[<Fact>]
+let ``a streaming request round-trips through its explicit codec`` () =
+    use original = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+    original.SetCallerMetadata(closedInterface, dispatchMethod)
+    original.MaxBatchSize <- 7
+
+    let bytes = (serializer ()).SerializeToArray<obj> original
+
+    match (serializer ()).Deserialize<obj> bytes with
+    | :? FunctionalStreamRequest as restored ->
+        test <@ restored.Envelope.OperationId = "watch" @>
+        test <@ restored.Envelope.GrainType = "chat.room" @>
+        // The batch size is Orleans' field, written by Orleans' own base codec.
+        test <@ restored.MaxBatchSize = 7 @>
+        // A token is process-local and is never wire data.
+        test <@ restored.GetCancellationToken() = CancellationToken.None @>
+    | other -> failwith $"the streaming request round-tripped as '{other.GetType().FullName}'."
+
+[<Fact>]
+let ``the streaming local copier preserves the envelope, the batch size, and caller metadata`` () =
+    use source = new CancellationTokenSource()
+    use original = new FunctionalStreamRequest(streamEnvelope (), source.Token)
+    original.SetCallerMetadata(closedInterface, dispatchMethod)
+    original.MaxBatchSize <- 5
+
+    let copy = (streamCopier ()).Copy<FunctionalStreamRequest> original
+
+    test <@ obj.ReferenceEquals(copy.Envelope, original.Envelope) @>
+    test <@ copy.MaxBatchSize = 5 @>
+    let callerTokenPreserved = copy.CallerToken.Equals source.Token
+    test <@ callerTokenPreserved @>
+    test <@ obj.ReferenceEquals(copy.GetInterfaceType(), closedInterface) @>
+    test <@ copy.GetMethod() = dispatchMethod @>
+    test <@ not (obj.ReferenceEquals(copy, original)) @>
+
+/// <remarks>
+/// Target-side resolution deliberately creates no target-local cancellation source (see
+/// <c>FunctionalRequestBody.SetStreamTarget</c>): an enumeration outlives the message that started
+/// it, so a source with the message's lifetime would either leak or be disposed underneath the
+/// producer. Cancellation comes from the linked source <c>StartEnumeration</c> builds instead.
+/// </remarks>
+[<Fact>]
+let ``setting a streaming target resolves the seam without creating cancellation state`` () =
+    use request = new FunctionalStreamRequest(streamEnvelope (), CancellationToken.None)
+    test <@ not request.HasTarget @>
+
+    request.SetTarget(FakeHolder(FakeTarget()))
+
+    test <@ request.HasTarget @>
+    test <@ request.GetCancellationToken() = CancellationToken.None @>
+    test <@ obj.ReferenceEquals(request.GetInterfaceType(), typeof<IFunctionalGrainTarget<CodecActor>>) @>
+    test <@ request.GetMethodName() = "DispatchStream" @>

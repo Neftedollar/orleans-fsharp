@@ -11,7 +11,7 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![Orleans 10](https://img.shields.io/badge/Orleans-10.1.0%20%E2%80%93%2010.2.2-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
-[![Tests](https://img.shields.io/badge/tests-1500%2B-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-2500%2B-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 
 ---
@@ -253,6 +253,7 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 | [Serialization](docs/serialization.md) | 3 modes: F# Binary, JSON, Orleans Native |
 | [Streaming](docs/streaming.md) | Publish, subscribe, TaskSeq, broadcast |
 | [Event Sourcing](docs/event-sourcing.md) | `journaledGrainFor { }` — a grain whose state is the fold of an event journal (and the deprecated `eventSourcedGrain { }` CE) |
+| [Server-Streaming Replies](docs/streaming-replies.md) | `'Arg -> IAsyncEnumerable<'Item>` — items delivered as they are produced, over Orleans' async-enumerable grain extension |
 | [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |
 | [Analyzers](docs/analyzers.md) | OF0001: async {} detection, AllowAsync opt-out |
 | [Security](docs/security.md) | TLS, mTLS, filters, secrets |

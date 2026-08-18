@@ -9,7 +9,7 @@ description: "A second, complete authoring model: user-authored API records inst
 
 ## What you'll learn
 
-- Why the actor brand type exists, and why it is never constructed
+- Why the actor brand type exists, why it is never constructed, and the short form that reuses the API record as the brand
 - Key-codec identity rules: what changes a grain's routing/storage identity, what does not
 - Operation rename via `operationId`, contract-version matching, and opting into version tolerance
 - Reentrancy variants: whole-grain `reentrant` and the per-request `mayInterleave` predicate
@@ -91,11 +91,34 @@ handle (_.typing) (fun context state (user, isTyping) ->
 ```
 
 A field spelled curried (`UserId -> bool -> Task<unit>`) is **not** an operation and fails
-contract construction: every API field must have the shape `'Argument -> Task<'Reply>`. Neither
-is a field that returns a function, or one whose range is `Async<'Reply>`, `ValueTask<'Reply>`,
-or a non-generic `Task`. `unit` means "no domain input" (`unit -> Task<'Reply>`).
+contract construction: every API field must have the shape `'Argument -> Task<'Reply>` or
+`'Argument -> IAsyncEnumerable<'Item>`. Neither is a field that returns a function, or one whose
+range is `Async<'Reply>`, `ValueTask<'Reply>`, a non-generic `Task`, or a synchronous `seq<_>`.
+`unit` means "no domain input" (`unit -> Task<'Reply>`).
 
 `FunctionalGrainRef.call` and `callCancellable` take the same one-argument shape.
+
+### The second field kind: a streaming reply
+
+`'Argument -> IAsyncEnumerable<'Item>` makes the operation **server-streaming** — the handler
+produces items over time and the caller receives each one as it is produced. It is bound with
+`handleStream` instead of `handle`, and the handler returns items only, with no replacement state:
+
+```fsharp
+{ tail: int -> IAsyncEnumerable<Entry> }
+
+handleStream (_.tail) (fun context state (count: int) ->
+    taskSeq {
+        for entry in state |> List.truncate count do
+            yield entry
+    })
+```
+
+It rides Orleans' own async-enumerable grain extension, so an open enumeration never blocks an
+ordinary call to the same activation, disposing the enumerator cancels the producer, and an
+abandoned enumerator is collected by Orleans. A streaming handler is state-neutral, and none of the
+four admission policies compose with it. The full rules are in
+[Server-Streaming Replies](/orleans-fsharp/streaming-replies/).
 
 ## Why the actor brand
 
@@ -124,6 +147,49 @@ What the brand is **not**: it plays no part in wire or storage identity. `GrainI
 explicit `grainType` string and the encoded key alone (see
 [Key-codec identity rules](#key-codec-identity-rules) below) -- renaming the brand type, like
 renaming the module or the API record type, changes nothing about routing or stored state.
+
+### The short form: the API record as its own brand
+
+Nothing requires the brand to be a dedicated type. The contract's `'Actor` parameter is
+unconstrained, and any CLR type identity works -- including the API record's own:
+
+```fsharp
+let counterContract =
+    contract<string, CounterApi> () {
+        grainType "counter"
+        version 1
+        stringKey
+    }
+```
+
+`contract<'Key, 'Api>` is the dedicated entry point for this form -- it is exactly
+`grainContract<'Api, 'Key, 'Api>`, so the two spellings seal the same contract type and everything
+said below applies to either.
+
+No phantom type is declared at all, and everything downstream is unchanged: the runtime closes the
+marker over the record type (`FunctionalGrainMarker<CounterApi>`), so the grain class Orleans'
+manifest and Dashboard display carries the record's name -- if anything, more readable than a
+phantom's. This is the right default for the common case, where one API record belongs to exactly
+one grain type.
+
+A **separate** brand type is load-bearing in exactly two situations:
+
+- **Several grain types over one API record.** Two contracts can share an API shape and differ
+  only in policy -- the feature tour's reentrancy section hosts `tour.reentrant` and `tour.serial`
+  over one `GateApi` with two brands. With the record as the brand, both would close the same
+  marker CLR type, and the silo registry rejects a second definition per brand -- so the record
+  would have to be duplicated just to tell them apart.
+- **Replacing the record type while keeping the grain's identity.** Under
+  [version tolerance](#version-tolerance-acceptsversions-and-sinceversion), a newer client may declare a *new* record type with a
+  wire-compatible shape. The brand participates in the closed transport-interface identity, so a
+  stable brand lets the record type change underneath it; with the record as the brand, changing
+  the record moves that identity too.
+
+One interaction to know: with a derived `grainType` (see
+[Optional grainType](#optional-graintype-when-the-derived-default-is-safe) below), the default
+grain type becomes the *record's* simple name, and renaming the record then changes wire and
+storage identity -- the same trade-off as renaming a phantom brand under a derived name, with the
+same fix: declare `grainType` explicitly.
 
 ## Key-codec identity rules
 
@@ -1709,6 +1775,7 @@ carries `[<Obsolete>]`.
 - `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the complete runnable sample this guide's
   examples are drawn from
 - [Event Sourcing](/orleans-fsharp/event-sourcing/) -- `journaledGrainFor`, the journaled definition kind
+- [Server-Streaming Replies](/orleans-fsharp/streaming-replies/) -- the `IAsyncEnumerable<'Item>` field kind
 - `specs/003-functional-grain-runtime/spec.md` -- the full normative specification
 
 ## A build note for contributors: codegen and cold caches

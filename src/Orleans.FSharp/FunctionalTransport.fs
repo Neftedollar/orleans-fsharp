@@ -3,6 +3,7 @@ namespace Orleans.FSharp
 open System
 open System.Buffers
 open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Reflection
 open System.Runtime.CompilerServices
 open System.Threading
@@ -42,6 +43,12 @@ module internal FunctionalTarget =
     /// Close <c>IFunctionalGrainTarget&lt;_&gt;</c> over the actor brand and resolve its
     /// dispatch method. Called once per contract, never per call.
     /// </summary>
+    /// <param name="actorBrand">The closed actor brand type to close the target interface over.</param>
+    /// <param name="grainTypeName">The contract's grain type name.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="actorBrand"/> is an open generic type, or the closed target interface does
+    /// not expose the dispatch method.
+    /// </exception>
     let metadataFor (actorBrand: Type) (grainTypeName: string) : FunctionalTargetMetadata =
         if actorBrand.ContainsGenericParameters then
             fail
@@ -76,6 +83,8 @@ module internal FunctionalTarget =
 type internal IFunctionalRequestSender =
 
     /// <summary>Send an acknowledged request and await the fixed reply.</summary>
+    /// <param name="envelope">The fixed request envelope to send.</param>
+    /// <param name="cancellationToken">Cancels waiting for the reply.</param>
     abstract SendAsync:
         envelope: FunctionalRequestEnvelope * cancellationToken: CancellationToken -> Task<FunctionalReply>
 
@@ -85,11 +94,30 @@ type internal IFunctionalRequestSender =
     /// in the invokable's base class, so which base class the request uses is decided here, at
     /// send time, from the operation's declared transaction option.
     /// </summary>
+    /// <param name="envelope">The fixed request envelope to send.</param>
+    /// <param name="cancellationToken">Cancels waiting for the reply.</param>
     abstract SendTransactionalAsync:
         envelope: FunctionalRequestEnvelope * cancellationToken: CancellationToken -> Task<FunctionalReply>
 
     /// <summary>Send a one-way request; completion means the local send path accepted it.</summary>
+    /// <param name="envelope">The fixed request envelope to send.</param>
     abstract SendOneWay: envelope: FunctionalRequestEnvelope -> unit
+
+    /// <summary>
+    /// Open a server-streaming operation and return the sequence of fixed item replies. Spec 004
+    /// item 6.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is sent yet: the returned value is Orleans' own <c>AsyncEnumerableRequest</c>, and
+    /// the first message leaves only when a consumer calls <c>GetAsyncEnumerator</c> and pulls.
+    /// Enumerating it twice runs two independent remote enumerations, which is Orleans' semantics
+    /// and is preserved unchanged.
+    /// </remarks>
+    /// <param name="envelope">The fixed request envelope to send.</param>
+    /// <param name="cancellationToken">Cancels the enumeration.</param>
+    abstract OpenStream:
+        envelope: FunctionalRequestEnvelope * cancellationToken: CancellationToken ->
+            IAsyncEnumerable<FunctionalReply>
 
 /// <summary>
 /// The single seam between reference binding and the Orleans transport. Phase 3 replaces the
@@ -103,6 +131,8 @@ type internal IFunctionalTransportSource =
     abstract Services: IServiceProvider
 
     /// <summary>Create the sender addressing one grain identity through one target interface.</summary>
+    /// <param name="grainId">The grain identity to address.</param>
+    /// <param name="metadata">The contract's closed target interface metadata.</param>
     abstract CreateSender: grainId: GrainId * metadata: FunctionalTargetMetadata -> IFunctionalRequestSender
 
 /// <summary>Resolution of the transport source from an application-supplied grain factory.</summary>
@@ -120,6 +150,9 @@ module internal FunctionalTransportSource =
     /// which also implements this interface (the in-memory unit-test transport) short-circuits
     /// that path while exercising the same binding and call code.
     /// </summary>
+    /// <param name="factory">The application-supplied grain factory to inspect.</param>
+    /// <param name="grainTypeName">The contract's grain type name.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="factory"/> is null.</exception>
     let tryResolve (factory: IGrainFactory) (grainTypeName: string) : IFunctionalTransportSource option =
         match box factory with
         | null ->
@@ -149,6 +182,7 @@ type internal FunctionalPayloadCodec
     member _.MaxPayloadBytes = maxPayloadBytes
 
     /// <summary>Serialize one value as its exact declared type into a fresh byte array.</summary>
+    /// <param name="value">The value to serialize.</param>
     member _.Serialize<'T>(value: 'T) : byte[] =
         let session = sessionPool.GetSession()
         FunctionalInstrumentation.trackSessionRented session
@@ -171,6 +205,7 @@ type internal FunctionalPayloadCodec
     /// nothing is published: the F# codec may then be entered for a nested field whose type is
     /// not <c>'T</c>, and an expectation would be wrong rather than protective.
     /// </remarks>
+    /// <param name="payload">The serialized payload bytes.</param>
     member _.Deserialize<'T>(payload: byte[]) : 'T =
         let session = sessionPool.GetSession()
         FunctionalInstrumentation.trackSessionRented session
@@ -206,10 +241,14 @@ type internal FunctionalPayloadCodec
 [<RequireQualifiedAccess>]
 module internal SerializerPreflight =
 
+    /// <summary>Per codec-provider cache of API shapes already validated.</summary>
     let private validated =
         ConditionalWeakTable<obj, ConcurrentDictionary<Type, bool>>()
 
     /// <summary>Resolve the codec provider of a client or activation.</summary>
+    /// <param name="services">The client or activation's service provider.</param>
+    /// <param name="grainTypeName">The contract's grain type name.</param>
+    /// <exception cref="System.InvalidOperationException">No <see cref="ICodecProvider"/> is registered.</exception>
     let providerOf (services: IServiceProvider) (grainTypeName: string) : ICodecProvider =
         match services.GetService typeof<ICodecProvider> with
         | :? ICodecProvider as provider -> provider
@@ -230,6 +269,15 @@ module internal SerializerPreflight =
     /// message that says what is actually wrong, so it is rethrown under its own diagnostic
     /// with the original message preserved verbatim.
     /// </remarks>
+    /// <param name="provider">The resolved Orleans codec provider.</param>
+    /// <param name="grainTypeName">The contract's grain type name, for diagnostics.</param>
+    /// <param name="role">What kind of type this is (for example "argument" or "reply"), for diagnostics.</param>
+    /// <param name="owner">The declaring operation or facet, for diagnostics.</param>
+    /// <param name="declaredType">The declared CLR type to resolve a codec for and declare as top-level.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// No Orleans codec is registered for <paramref name="declaredType"/>, resolving its codec
+    /// otherwise fails, or it cannot be declared as a top-level payload type.
+    /// </exception>
     let internal checkType (provider: ICodecProvider) (grainTypeName: string) (role: string) (owner: string) (declaredType: Type) =
         let codecs = provider :> IFieldCodecProvider
 
@@ -263,6 +311,14 @@ module internal SerializerPreflight =
     /// Validate that every declared argument and reply type has a codec, caching the outcome
     /// for this API shape and this serializer-service instance.
     /// </summary>
+    /// <param name="provider">The resolved Orleans codec provider.</param>
+    /// <param name="grainTypeName">The contract's grain type name, for diagnostics.</param>
+    /// <param name="apiType">The API record type this shape was reflected from; the cache key.</param>
+    /// <param name="declared">Every declared operation's ID, argument type, and reply type.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Any declared argument or reply type has no registered Orleans codec, or cannot be declared
+    /// as a top-level payload type. See <see cref="checkType"/>.
+    /// </exception>
     let ensure
         (provider: ICodecProvider)
         (grainTypeName: string)
@@ -284,6 +340,13 @@ module internal SerializerPreflight =
     /// definition. Silo startup runs this so a state type without a serializer fails startup
     /// instead of failing the first storage write.
     /// </summary>
+    /// <param name="provider">The resolved Orleans codec provider.</param>
+    /// <param name="grainTypeName">The contract's grain type name, for diagnostics.</param>
+    /// <param name="states">Every attached persistent state's name and stored CLR type.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Any stored type has no registered Orleans codec, or cannot be declared as a top-level
+    /// payload type. See <see cref="checkType"/>.
+    /// </exception>
     let ensureStoredTypes (provider: ICodecProvider) (grainTypeName: string) (states: (string * Type)[]) =
         for stateName, storedType in states do
             checkType provider grainTypeName "stored state" $"persistent state '{stateName}'" storedType
@@ -299,6 +362,13 @@ module internal SerializerPreflight =
     /// declaring it here arranges. Without the declaration a state type from an application
     /// assembly serializes and then fails to deserialize on the way back out of the snapshot.
     /// </remarks>
+    /// <param name="provider">The resolved Orleans codec provider.</param>
+    /// <param name="grainTypeName">The contract's grain type name, for diagnostics.</param>
+    /// <param name="states">Every attached transactional state's name and stored CLR type.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Any stored type has no registered Orleans codec, or cannot be declared as a top-level
+    /// payload type. See <see cref="checkType"/>.
+    /// </exception>
     let ensureTransactionalStoredTypes
         (provider: ICodecProvider)
         (grainTypeName: string)
@@ -318,6 +388,14 @@ module internal SerializerPreflight =
     /// <c>Orleans.FSharp</c> and the core library. Without the declaration a journal written by an
     /// application assembly serializes and then cannot be replayed.
     /// </remarks>
+    /// <param name="provider">The resolved Orleans codec provider.</param>
+    /// <param name="grainTypeName">The contract's grain type name, for diagnostics.</param>
+    /// <param name="stateType">The journaled definition's view/state CLR type.</param>
+    /// <param name="eventType">The journaled definition's event CLR type.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Either type has no registered Orleans codec, or cannot be declared as a top-level payload
+    /// type. See <see cref="checkType"/>.
+    /// </exception>
     let ensureJournalTypes (provider: ICodecProvider) (grainTypeName: string) (stateType: Type) (eventType: Type) =
         checkType provider grainTypeName "journal state" "the journal" stateType
         checkType provider grainTypeName "journal event" "the journal" eventType
@@ -334,6 +412,135 @@ type internal BoundCall =
         /// <c>'Argument -&gt; CancellationToken -&gt; Task&lt;'Reply&gt;</c>.
         Cancellable: obj
     }
+
+/// <summary>
+/// The caller-side view of one opened functional stream, used by
+/// <see cref="M:Orleans.FSharp.FunctionalStream.withBatchSize"/> to reach the batch-size knob of
+/// Orleans' underlying request through our typed wrapper.
+/// </summary>
+type internal IFunctionalCallerStream =
+
+    /// <summary>Ask Orleans to drain at most this many elements into one reply message.</summary>
+    /// <param name="maxBatchSize">The maximum number of elements to batch per reply message.</param>
+    abstract SetMaxBatchSize: maxBatchSize: int -> unit
+
+/// <summary>
+/// The caller-side enumerator of one server-streaming operation: it pulls fixed item replies from
+/// Orleans' own enumerator proxy and turns each one into the operation's exact item type, applying
+/// the same reply validation a unary call applies -- token length, token identity, non-null
+/// payload, local payload limit -- before any user payload is deserialized.
+/// </summary>
+[<Sealed>]
+type internal FunctionalStreamCallEnumerator<'Item>
+    (
+        source: IAsyncEnumerator<FunctionalReply>,
+        codec: FunctionalPayloadCodec,
+        grainType: string,
+        operationId: string,
+        itemToken: byte[],
+        maxPayloadBytes: int
+    ) =
+
+    let mutable current = Unchecked.defaultof<'Item>
+
+    /// <summary>
+    /// Validate one item reply's shape, protocol token, and the local payload limit before it is
+    /// deserialized, mirroring the checks a unary call's reply gets.
+    /// </summary>
+    /// <param name="reply">The item reply pulled from the underlying Orleans enumerator.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The reply is null; its protocol token is the wrong length or does not match the expected
+    /// item token; its payload is null; or its payload exceeds the local payload-size limit.
+    /// </exception>
+    member private _.Validate(reply: FunctionalReply) =
+        if obj.ReferenceEquals(reply, null) then
+            fail
+                TransportStage
+                $"streaming operation '{operationId}' on grain type '{grainType}' yielded an item with no reply."
+
+        if isNull reply.ProtocolToken || reply.ProtocolToken.Length <> ProtocolToken.Length then
+            fail
+                TransportStage
+                $"an item of streaming operation '{operationId}' on grain type '{grainType}' carries a protocol token of {(if isNull reply.ProtocolToken then 0 else reply.ProtocolToken.Length)} bytes; exactly {ProtocolToken.Length} bytes are required."
+
+        if not (ProtocolToken.equal reply.ProtocolToken itemToken) then
+            fail
+                TransportStage
+                $"an item of streaming operation '{operationId}' on grain type '{grainType}' carries protocol token {ProtocolToken.toHex reply.ProtocolToken}, but {ProtocolToken.toHex itemToken} was expected."
+
+        if isNull reply.Payload then
+            fail
+                TransportStage
+                $"an item of streaming operation '{operationId}' on grain type '{grainType}' carries no payload."
+
+        PayloadLimit.ensure CallerStreamItemReceive grainType operationId reply.Payload.Length maxPayloadBytes
+
+    interface IAsyncEnumerator<'Item> with
+        /// <summary>The most recently produced item.</summary>
+        member _.Current = current
+
+        /// <summary>Pull, validate, and deserialize the next item; false when the stream is exhausted.</summary>
+        /// <exception cref="System.InvalidOperationException">The pulled item reply fails validation. See <see cref="Validate"/>.</exception>
+        member this.MoveNextAsync() =
+            ValueTask<bool>(
+                task {
+                    match! source.MoveNextAsync() with
+                    | false -> return false
+                    | true ->
+                        let reply = source.Current
+                        this.Validate reply
+                        current <- codec.Deserialize<'Item> reply.Payload
+                        return true
+                }
+            )
+
+    interface IAsyncDisposable with
+        /// <summary>Dispose the underlying Orleans enumerator.</summary>
+        member _.DisposeAsync() = source.DisposeAsync()
+
+/// <summary>
+/// The caller-side <c>IAsyncEnumerable</c> one bound streaming operation returns. It is the value
+/// an F# caller pipes into <c>TaskSeq</c> and a C# caller writes <c>await foreach</c> over.
+/// </summary>
+[<Sealed>]
+type internal FunctionalStreamCall<'Item>
+    (
+        source: IAsyncEnumerable<FunctionalReply>,
+        codec: FunctionalPayloadCodec,
+        grainType: string,
+        operationId: string,
+        itemToken: byte[],
+        maxPayloadBytes: int
+    ) =
+
+    interface IAsyncEnumerable<'Item> with
+        /// <summary>Create the enumerator for one independent remote enumeration of this stream.</summary>
+        /// <param name="cancellationToken">Cancels the enumeration.</param>
+        member _.GetAsyncEnumerator(cancellationToken: CancellationToken) =
+            new FunctionalStreamCallEnumerator<'Item>(
+                source.GetAsyncEnumerator cancellationToken,
+                codec,
+                grainType,
+                operationId,
+                itemToken,
+                maxPayloadBytes
+            )
+            :> IAsyncEnumerator<'Item>
+
+    interface IFunctionalCallerStream with
+        /// <summary>
+        /// Set Orleans' per-reply batch size on the underlying request; a no-op on the in-memory
+        /// unit-test transport, which has no batching to configure.
+        /// </summary>
+        /// <param name="maxBatchSize">The maximum number of elements to batch per reply message.</param>
+        member _.SetMaxBatchSize(maxBatchSize: int) =
+            match box source with
+            | :? Orleans.Runtime.AsyncEnumerableRequest<FunctionalReply> as request ->
+                request.MaxBatchSize <- maxBatchSize
+            | _ ->
+                // The in-memory unit-test transport yields items one at a time and has no batching
+                // to configure; the knob is Orleans' and only exists on the Orleans path.
+                ()
 
 /// <summary>
 /// Everything one bound operation needs at call time: the sender, the payload codec, the
@@ -365,6 +572,11 @@ type internal FunctionalCallSite
     /// Validate the fixed reply shape, its protocol token, and the local reply-size limit
     /// before any user payload is deserialized.
     /// </summary>
+    /// <param name="reply">The reply received from the sender.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The reply is null; its protocol token is the wrong length or does not match the expected
+    /// reply token; its payload is null; or its payload exceeds the local payload-size limit.
+    /// </exception>
     member private _.ValidateReply(reply: FunctionalReply) =
         if obj.ReferenceEquals(reply, null) then
             fail
@@ -392,6 +604,12 @@ type internal FunctionalCallSite
     /// Serialize the exact argument, construct and send the fixed request, then validate and
     /// deserialize the exact reply.
     /// </summary>
+    /// <param name="argument">The exact operation argument.</param>
+    /// <param name="cancellationToken">Cancels waiting for the reply.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The serialized argument or the received reply exceeds the local payload-size limit, or the
+    /// reply fails validation. See <see cref="ValidateReply"/>.
+    /// </exception>
     member this.Invoke<'Argument, 'Reply>(argument: 'Argument, cancellationToken: CancellationToken) : Task<'Reply> =
         if isOneWay && cancellationToken.IsCancellationRequested then
             // A one-way call has no remote cancellation: an already-cancelled token is the only
@@ -426,6 +644,49 @@ type internal FunctionalCallSite
                     return codec.Deserialize<'Reply> reply.Payload
             }
 
+    /// <summary>
+    /// Serialize the exact argument, construct the fixed streaming request, and return the lazy
+    /// sequence of exact items. Spec 004 item 6.
+    /// </summary>
+    /// <remarks>
+    /// Argument serialization and the caller-side payload check happen <b>now</b>, when the API
+    /// field is applied, not on first pull: an argument that cannot be sent is a fault of the call,
+    /// and deferring it to the first <c>MoveNextAsync</c> would report it from a place the caller
+    /// did not write. Nothing is sent yet — the first message leaves on the first pull.
+    /// </remarks>
+    /// <param name="argument">The exact operation argument.</param>
+    /// <param name="cancellationToken">Cancels the enumeration.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The serialized argument exceeds the local payload-size limit.
+    /// </exception>
+    member _.InvokeStream<'Argument, 'Item>
+        (argument: 'Argument, cancellationToken: CancellationToken)
+        : IAsyncEnumerable<'Item> =
+        let payload = codec.Serialize<'Argument> argument
+        PayloadLimit.ensure CallerRequestSend grainType operationId payload.Length maxPayloadBytes
+
+        let envelope =
+            FunctionalRequestEnvelope(
+                grainType,
+                contractVersion,
+                operationId,
+                requestToken,
+                admissionFlags,
+                payload
+            )
+
+        // The reply token of a streaming descriptor is its stream-item token, so the same field
+        // carries the per-item expectation the unary path carries the per-reply one.
+        FunctionalStreamCall<'Item>(
+            sender.OpenStream(envelope, cancellationToken),
+            codec,
+            grainType,
+            operationId,
+            replyToken,
+            maxPayloadBytes
+        )
+        :> IAsyncEnumerable<'Item>
+
 /// <summary>
 /// The typed client-closure factory. Its generic method is closed once per operation
 /// descriptor while the contract is sealed, so binding and calling never close a generic.
@@ -434,16 +695,38 @@ type internal FunctionalCallSite
 type internal BoundCallFactory =
 
     /// <summary>Create both closures of one bound operation over its call site.</summary>
+    /// <param name="site">The bound operation's call site to close the client closures over.</param>
     static member Create<'Argument, 'Reply>(site: FunctionalCallSite) : BoundCall =
         { Field = box (fun (argument: 'Argument) -> site.Invoke<'Argument, 'Reply>(argument, CancellationToken.None))
           Cancellable =
             box (fun (argument: 'Argument) (cancellationToken: CancellationToken) ->
                 site.Invoke<'Argument, 'Reply>(argument, cancellationToken)) }
 
+    /// <summary>Create both closures of one bound <b>streaming</b> operation over its call site.</summary>
+    /// <remarks>
+    /// The caller's token is carried by the request rather than applied to the enumerator, because
+    /// that is where Orleans reads it: <c>AsyncEnumeratorProxy</c> links
+    /// <c>request.GetCancellationToken()</c> with whatever token <c>GetAsyncEnumerator</c> is given
+    /// and owns the linked source's disposal, so both tokens end up cancelling the enumeration and
+    /// neither of them is ours to manage.
+    /// </remarks>
+    /// <param name="site">The bound streaming operation's call site to close the client closures over.</param>
+    static member CreateStream<'Argument, 'Item>(site: FunctionalCallSite) : BoundCall =
+        { Field =
+            box (fun (argument: 'Argument) -> site.InvokeStream<'Argument, 'Item>(argument, CancellationToken.None))
+          Cancellable =
+            box (fun (argument: 'Argument) (cancellationToken: CancellationToken) ->
+                site.InvokeStream<'Argument, 'Item>(argument, cancellationToken)) }
+
 /// <summary>Preclosing of the typed client-closure factory.</summary>
 [<RequireQualifiedAccess>]
 module internal BoundClosure =
 
+    /// <summary>The reflected open generic method behind <see cref="BoundCallFactory.Create"/>.</summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// The <c>Create</c> method could not be found by reflection, meaning the factory shape and this
+    /// lookup have drifted apart.
+    /// </exception>
     let private createMethod =
         match
             typeof<BoundCallFactory>
@@ -452,14 +735,42 @@ module internal BoundClosure =
         | null -> fail ContractStage "the typed client-closure factory 'BoundCallFactory.Create' was not found."
         | method -> method
 
+    /// <summary>The reflected open generic method behind <see cref="BoundCallFactory.CreateStream"/>.</summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// The <c>CreateStream</c> method could not be found by reflection, meaning the factory shape
+    /// and this lookup have drifted apart.
+    /// </exception>
+    let private createStreamMethod =
+        match
+            typeof<BoundCallFactory>
+                .GetMethod("CreateStream", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+        with
+        | null -> fail ContractStage "the typed client-closure factory 'BoundCallFactory.CreateStream' was not found."
+        | method -> method
+
     /// <summary>
     /// Close the client-closure factory over one operation's exact argument and reply types.
     /// Called once per descriptor while the contract is sealed.
     /// </summary>
+    /// <param name="argumentType">The operation's exact argument type.</param>
+    /// <param name="replyType">The operation's exact reply type.</param>
     let precompute (argumentType: Type) (replyType: Type) : Func<FunctionalCallSite, BoundCall> =
         FunctionalInstrumentation.countGenericClosing ()
 
         let closed = createMethod.MakeGenericMethod [| argumentType; replyType |]
+
+        closed.CreateDelegate typeof<Func<FunctionalCallSite, BoundCall>> :?> Func<FunctionalCallSite, BoundCall>
+
+    /// <summary>
+    /// Close the streaming client-closure factory over one operation's exact argument and item
+    /// types. Called once per streaming descriptor while the contract is sealed.
+    /// </summary>
+    /// <param name="argumentType">The operation's exact argument type.</param>
+    /// <param name="itemType">The operation's exact stream item type.</param>
+    let precomputeStream (argumentType: Type) (itemType: Type) : Func<FunctionalCallSite, BoundCall> =
+        FunctionalInstrumentation.countGenericClosing ()
+
+        let closed = createStreamMethod.MakeGenericMethod [| argumentType; itemType |]
 
         closed.CreateDelegate typeof<Func<FunctionalCallSite, BoundCall>> :?> Func<FunctionalCallSite, BoundCall>
 
@@ -471,6 +782,8 @@ module internal FunctionalTransportConfiguration =
     /// The local payload limit of this process. An unconfigured process uses the documented
     /// 16 MiB default; a configured non-positive value is a configuration error.
     /// </summary>
+    /// <param name="services">The process's service provider.</param>
+    /// <exception cref="System.InvalidOperationException">A configured limit is not positive.</exception>
     let maxPayloadBytes (services: IServiceProvider) =
         match services.GetService typeof<IOptions<FunctionalGrainTransportOptions>> with
         | :? IOptions<FunctionalGrainTransportOptions> as options ->
@@ -478,6 +791,9 @@ module internal FunctionalTransportConfiguration =
         | _ -> FunctionalGrainTransportOptions.DefaultMaxPayloadBytes
 
     /// <summary>The exact-type payload codec of this process, carrying this process's own limit.</summary>
+    /// <param name="services">The process's service provider.</param>
+    /// <param name="grainTypeName">The contract's grain type name, for diagnostics.</param>
+    /// <exception cref="System.InvalidOperationException">No <see cref="Serializer"/> is registered.</exception>
     let payloadCodec (services: IServiceProvider) (grainTypeName: string) =
         match services.GetService typeof<Serializer> with
         | :? Serializer as serializer ->

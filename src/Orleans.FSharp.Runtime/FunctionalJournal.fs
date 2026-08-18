@@ -63,6 +63,7 @@ type internal FunctionalJournalHost
     /// Orleans materialized on a read that found no record — reports the declared initial state
     /// instead of a null payload.
     /// </summary>
+    /// <param name="view">The log-view cell to read, or <c>null</c> for a never-materialized view.</param>
     member private this.ValueOf(view: FunctionalJournalView) : obj =
         if isNull (box view) then this.InitialState
         elif view.HasValue && not (isNull view.Payload) then blueprint.DecodeState codec view.Payload
@@ -81,6 +82,8 @@ type internal FunctionalJournalHost
     /// poisoned journal into a failed call. It is sound precisely because <c>apply</c> is required
     /// to be pure: running it twice for the same event has no effect other than the cost.
     /// </remarks>
+    /// <param name="events">The boxed events about to be submitted, folded in order over the current confirmed state.</param>
+    /// <exception cref="System.InvalidOperationException">The <c>apply</c> fold threw for one of <paramref name="events"/>.</exception>
     member private this.EnsureFoldable(events: obj list) =
         let mutable state = (this :> IFunctionalJournalAccess).Current
 
@@ -94,6 +97,8 @@ type internal FunctionalJournalHost
                     cause
 
     /// <summary>Raise the fold failure this host recorded, if any, and forget it.</summary>
+    /// <param name="stage">What the caller was doing, folded into the exception message (e.g. "replaying the journal").</param>
+    /// <exception cref="System.InvalidOperationException">A previous <c>apply</c> fold failed and has not yet been rethrown.</exception>
     member private _.RethrowFoldFailure(stage: string) =
         match foldFailure with
         | null -> ()
@@ -106,6 +111,7 @@ type internal FunctionalJournalHost
                 cause
 
     /// <summary>The adaptor, once installed.</summary>
+    /// <exception cref="System.InvalidOperationException">The journal is read before <see cref="Install"/> has run.</exception>
     member private _.Adaptor =
         match box adaptor with
         | null ->
@@ -119,6 +125,7 @@ type internal FunctionalJournalHost
     /// <c>GrainLifecycleStage.SetupState</c>, the same stage Orleans' own
     /// <c>LogConsistentGrain</c> installs at.
     /// </summary>
+    /// <exception cref="System.InvalidOperationException">The definition's named log-consistency provider is not registered on this silo, this silo has no matching protocol-services factory, or the declared (or default) journal storage is not registered.</exception>
     member this.Install() =
         let services = grainContext.ActivationServices
 
@@ -202,6 +209,7 @@ type internal FunctionalJournalHost
         | _ -> adaptor.PostOnDeactivate()
 
     interface IConnectionIssueListener with
+        /// <inheritdoc/>
         member _.OnConnectionIssue(issue: ConnectionIssue) =
             logger.LogWarning(
                 "The journal of grain type {GrainType} on {GrainId} hit a storage issue and will retry: {Issue}",
@@ -210,6 +218,7 @@ type internal FunctionalJournalHost
                 issue
             )
 
+        /// <inheritdoc/>
         member _.OnConnectionIssueResolved(issue: ConnectionIssue) =
             logger.LogInformation(
                 "The journal of grain type {GrainType} on {GrainId} recovered from a storage issue: {Issue}",
@@ -223,6 +232,8 @@ type internal FunctionalJournalHost
         /// The replay fold. It runs when an event is raised and again for every event of the
         /// journal on every later activation, which is why <c>apply</c> has to be pure.
         /// </summary>
+        /// <param name="view">The log-view cell to fold the event into.</param>
+        /// <param name="entry">The journal entry carrying the encoded event to apply.</param>
         member this.UpdateView(view: FunctionalJournalView, entry: FunctionalJournalEntry) =
             try
                 let current = this.ValueOf view
@@ -237,6 +248,7 @@ type internal FunctionalJournalHost
 
                 reraise ()
 
+        /// <inheritdoc/>
         member _.OnViewChanged(_tentative: bool, _confirmed: bool) = ()
 
     interface IFunctionalJournalAccess with
@@ -250,10 +262,13 @@ type internal FunctionalJournalHost
             this.RethrowFoldFailure "reading the confirmed state"
             this.ValueOf this.Adaptor.ConfirmedView
 
+        /// <inheritdoc/>
         member this.ConfirmedVersion = this.Adaptor.ConfirmedVersion
 
+        /// <inheritdoc/>
         member _.EventType = blueprint.EventType
 
+        /// <inheritdoc/>
         member this.RaiseAndConfirm(events: obj list) : Task =
             match events with
             | [] ->
@@ -277,6 +292,7 @@ type internal FunctionalJournalHost
                 }
                 :> Task
 
+        /// <inheritdoc/>
         member this.RaiseConditional(events: obj list) : Task<bool> =
             match events with
             | [] -> Task.FromResult true

@@ -23,6 +23,7 @@
     <Compile Include="Transactions.fs" />
     <Compile Include="Placement.fs" />
     <Compile Include="EventSourcing.fs" />
+    <Compile Include="StreamingReplies.fs" />
     <Compile Include="Heterogeneous.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

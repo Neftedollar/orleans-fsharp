@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
@@ -191,9 +192,15 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     member _.deactivateOnIdle() = core.DeactivateOnIdle()
 
     /// <summary>Extend the activation's idle lifetime.</summary>
+    /// <param name="timeSpan">The duration to extend the idle deadline by.</param>
     member _.delayDeactivation(timeSpan: TimeSpan) = core.DelayDeactivation timeSpan
 
     /// <summary>Look up an attached persistent state facet by its logical descriptor.</summary>
+    /// <param name="state">The persistent-state reference to look up.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="state"/> is null, or when no persistent state matching its
+    /// descriptor (name, provider, and stored type) is attached to this definition.
+    /// </exception>
     member _.persistentState<'State>(state: PersistentStateRef<'State>) : IPersistentState<'State> =
         if obj.ReferenceEquals(state, null) then
             fail DefinitionStage "persistentState requires a PersistentStateRef value."
@@ -214,6 +221,11 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     /// callback that can never carry a transaction context, and rejects updates in a
     /// <c>readOnly</c> transactional operation.
     /// </remarks>
+    /// <param name="state">The transactional-state reference to look up.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="state"/> is null, or when no transactional state matching its
+    /// descriptor (name, storage, and stored type) is attached to this definition.
+    /// </exception>
     member _.transactionalState<'State>(state: TransactionalStateRef<'State>) : FunctionalTransactionalState<'State> =
         if obj.ReferenceEquals(state, null) then
             fail TransactionalStage "transactionalState requires a TransactionalStateRef value."
@@ -237,6 +249,9 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     /// turn's events after the handler returns: a handler that raises three events still observes
     /// the version it started from. Available only on a <c>journaledGrainFor</c> definition.
     /// </remarks>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when this definition was not built with 'journaledGrainFor'.
+    /// </exception>
     member _.journalVersion: int =
         match core.Journal with
         | null ->
@@ -265,6 +280,11 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     /// between this handler's read and its append.
     /// </para>
     /// </remarks>
+    /// <param name="events">The events to append conditionally.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when this definition was not built with 'journaledGrainFor', or when
+    /// <typeparamref name="'Event"/> does not match the definition's declared event type.
+    /// </exception>
     member _.raiseConditional<'Event>(events: 'Event list) : Task<bool> =
         match core.Journal with
         | null ->
@@ -280,6 +300,11 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
             journal.RaiseConditional(events |> List.map box)
 
     /// <summary>Read a typed value from the Orleans request context.</summary>
+    /// <param name="name">The request-context key to read.</param>
+    /// <returns>
+    /// <c>Some</c> the value when present and assignable to <typeparamref name="'Value"/>;
+    /// otherwise <c>None</c>.
+    /// </returns>
     member _.tryGetRequestContext<'Value>(name: string) : 'Value option =
         match RequestContext.Get name with
         | null -> None
@@ -287,9 +312,12 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
         | _ -> None
 
     /// <summary>Write a value into the Orleans request context.</summary>
+    /// <param name="name">The request-context key to write.</param>
+    /// <param name="value">The value to store.</param>
     member _.setRequestContext<'Value> (name: string) (value: 'Value) : unit = RequestContext.Set(name, box value)
 
     /// <summary>Remove a value from the Orleans request context.</summary>
+    /// <param name="name">The request-context key to remove.</param>
     member _.removeRequestContext(name: string) : unit = RequestContext.Remove name |> ignore
 
 /// <summary>
@@ -298,6 +326,33 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
 /// </summary>
 type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
     FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>
+
+/// <summary>
+/// A handler for one <b>server-streaming</b> API operation. Spec 004 item 6. It receives the
+/// invocation context, the current primary state, and the exact argument, and returns the sequence
+/// of exact items.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>The return type is the BCL interface.</b> No wrapper, no library type: the handler body is
+/// free to be a <c>taskSeq { … }</c> (the <c>FSharp.Control.TaskSeq</c> package this library
+/// already depends on, so nothing new is added to an application's closure), a C# async iterator,
+/// an <c>IAsyncEnumerable</c> obtained from somewhere else, or a hand-written enumerator. What the
+/// runtime needs is only that it can be enumerated once, with the enumeration's cancellation token.
+/// </para>
+/// <para>
+/// <b>There is no replacement state.</b> Unlike <see cref="T:Orleans.FSharp.Handler`5"/> the
+/// handler returns items only. A stream produces across many turns of the activation — Orleans
+/// pulls it with a separate, always-interleaving <c>MoveNext</c> call per batch — so a whole-state
+/// replacement published when the sequence ended would overwrite everything every other turn did
+/// while it ran. The state the handler receives is therefore the snapshot taken when the
+/// enumeration started, its persistent-state facades reject every mutation, and a journaled
+/// definition's streaming handler raises no events. Publish from an ordinary operation and read
+/// from the stream.
+/// </para>
+/// </remarks>
+type StreamHandler<'Actor, 'Key, 'State, 'Argument, 'Item> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> IAsyncEnumerable<'Item>
 
 /// <summary>
 /// A handler for one API operation of a journaled definition. It receives the invocation context,

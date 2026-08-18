@@ -40,9 +40,22 @@ type internal FacadeInvokerFactory =
     /// Close over one operation's exact argument and reply types and return the factory which,
     /// given that operation's bound API-record field closure, produces the per-call invoker.
     /// </summary>
+    /// <param name="pack">Turns the invocation's argument array into the operation's exact argument, boxed.</param>
     static member Create<'Argument, 'Reply>(pack: Func<obj[], obj>) : Func<obj, Func<obj[], obj>> =
         Func<obj, Func<obj[], obj>>(fun field ->
             let call = unbox<'Argument -> Task<'Reply>> field
+
+            Func<obj[], obj>(fun args -> box (call (unbox<'Argument> (pack.Invoke args)))))
+
+    /// <summary>
+    /// The same, for a <b>streaming</b> operation. Spec 004 item 6: the facade member returns the
+    /// BCL <c>IAsyncEnumerable&lt;TItem&gt;</c>, so a C# consumer writes <c>await foreach</c> over
+    /// it with no wrapper and no reference to this library's own types.
+    /// </summary>
+    /// <param name="pack">Turns the invocation's argument array into the operation's exact argument, boxed.</param>
+    static member CreateStream<'Argument, 'Item>(pack: Func<obj[], obj>) : Func<obj, Func<obj[], obj>> =
+        Func<obj, Func<obj[], obj>>(fun field ->
+            let call = unbox<'Argument -> IAsyncEnumerable<'Item>> field
 
             Func<obj[], obj>(fun args -> box (call (unbox<'Argument> (pack.Invoke args)))))
 
@@ -54,6 +67,9 @@ type internal FacadeInvokerFactory =
 type internal FacadeBinder =
 
     /// <summary>Bind the contract to a boxed domain key and return the preclosed closures.</summary>
+    /// <param name="contract">The sealed contract, expected to be a <c>GrainContract&lt;'Actor, 'Key, 'Api&gt;</c>.</param>
+    /// <param name="factory">The grain factory of the calling client or activation.</param>
+    /// <param name="key">The boxed domain key of the target grain.</param>
     static member Bind<'Actor, 'Key, 'Api>(contract: FunctionalContract, factory: IGrainFactory, key: obj) : BoundCall[] =
         let typed = contract :?> GrainContract<'Actor, 'Key, 'Api>
         (FunctionalBinding.bind typed factory (unbox<'Key> key)).BoundCalls
@@ -101,6 +117,14 @@ type internal FunctionalFacadeProxy() =
     /// <summary>The preclosed invoker of every member of the facade interface.</summary>
     member val Invokers: Dictionary<MethodInfo, Func<obj[], obj>> = null with get, set
 
+    /// <summary>Dispatch one proxy call through the preclosed invoker for the target method.</summary>
+    /// <param name="targetMethod">The facade interface method being invoked.</param>
+    /// <param name="args">The boxed call arguments.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="targetMethod"/> has no preclosed invoker. Unreachable through
+    /// <c>FunctionalGrainInterop.For</c>: every dispatchable member is resolved while the plan is
+    /// built, and a member that could not be resolved fails there instead.
+    /// </exception>
     override this.Invoke(targetMethod: MethodInfo, args: obj[]) : obj =
         match this.Invokers.TryGetValue targetMethod with
         | true, invoke -> invoke.Invoke args
@@ -124,6 +148,15 @@ module internal FacadeClosure =
         | null -> fail InteropStage "the typed facade invoker factory 'FacadeInvokerFactory.Create' was not found."
         | method -> method
 
+    let private streamInvokerMethod =
+        match
+            typeof<FacadeInvokerFactory>
+                .GetMethod("CreateStream", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+        with
+        | null ->
+            fail InteropStage "the typed facade invoker factory 'FacadeInvokerFactory.CreateStream' was not found."
+        | method -> method
+
     let private binderMethod =
         match
             typeof<FacadeBinder>
@@ -139,6 +172,9 @@ module internal FacadeClosure =
     /// Close the invoker factory over one operation's exact argument and reply types. Called
     /// once per facade member while the plan is built.
     /// </summary>
+    /// <param name="argumentType">The operation's exact argument type.</param>
+    /// <param name="replyType">The operation's exact reply type.</param>
+    /// <param name="pack">Turns the invocation's argument array into the operation's exact argument, boxed.</param>
     let invoker (argumentType: Type) (replyType: Type) (pack: Func<obj[], obj>) : Func<obj, Func<obj[], obj>> =
         FunctionalInstrumentation.countGenericClosing ()
 
@@ -151,9 +187,31 @@ module internal FacadeClosure =
         factory.Invoke pack
 
     /// <summary>
+    /// Close the streaming invoker factory over one operation's exact argument and item types.
+    /// Spec 004 item 6.
+    /// </summary>
+    /// <param name="argumentType">The operation's exact argument type.</param>
+    /// <param name="itemType">The operation's exact streamed item type.</param>
+    /// <param name="pack">Turns the invocation's argument array into the operation's exact argument, boxed.</param>
+    let streamInvoker (argumentType: Type) (itemType: Type) (pack: Func<obj[], obj>) : Func<obj, Func<obj[], obj>> =
+        FunctionalInstrumentation.countGenericClosing ()
+
+        let closed = streamInvokerMethod.MakeGenericMethod [| argumentType; itemType |]
+
+        let factory =
+            closed.CreateDelegate typeof<Func<Func<obj[], obj>, Func<obj, Func<obj[], obj>>>>
+            :?> Func<Func<obj[], obj>, Func<obj, Func<obj[], obj>>>
+
+        factory.Invoke pack
+
+    /// <summary>
     /// The typed binder of one contract CLR type, closed on first use and cached, so binding a
     /// second key through the same contract closes no generic.
     /// </summary>
+    /// <param name="contractType">The sealed contract's exact CLR type, expected to be a closed <c>GrainContract&lt;_,_,_&gt;</c>.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="contractType"/> is not a closed <c>GrainContract&lt;_,_,_&gt;</c>.
+    /// </exception>
     let binder (contractType: Type) : Func<FunctionalContract, IGrainFactory, obj, BoundCall[]> =
         match binders.TryGetValue contractType with
         | true, cached -> cached
@@ -197,10 +255,12 @@ module internal FacadePlanning =
         quoted (contract.Operations |> Seq.map (fun operation -> operation.OperationId))
 
     /// <summary>The facade interface itself plus every interface it extends, transitively.</summary>
+    /// <param name="facadeType">The facade interface type.</param>
     let private closure (facadeType: Type) =
         Array.append [| facadeType |] (facadeType.GetInterfaces())
 
     /// <summary>The declared parameter list of a member, as it reads in the diagnostic.</summary>
+    /// <param name="method">The facade member to describe.</param>
     let private actualParameters (method: MethodInfo) =
         match method.GetParameters() with
         | [||] -> "no parameters"
@@ -213,6 +273,7 @@ module internal FacadePlanning =
             $"({text})"
 
     /// <summary>The parameter lists an operation's argument type accepts.</summary>
+    /// <param name="argumentType">The operation's exact argument type.</param>
     let private expectedParameters (argumentType: Type) =
         if argumentType = typeof<unit> then
             "no parameters"
@@ -232,6 +293,13 @@ module internal FacadePlanning =
     /// and a static member are all rejected here rather than silently ignored or discovered on a
     /// call.
     /// </summary>
+    /// <param name="facadeType">The facade interface being planned, for the diagnostic.</param>
+    /// <param name="declaring">The interface that actually declares <paramref name="method"/> (the facade itself, or one it extends).</param>
+    /// <param name="method">The member to check.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="method"/> is static, carries a default implementation, is
+    /// generic, or declares a by-reference ('ref', 'out', or 'in') parameter.
+    /// </exception>
     let private rejectUnsupported (facadeType: Type) (declaring: Type) (method: MethodInfo) =
         let where =
             if declaring = facadeType then
@@ -264,6 +332,15 @@ module internal FacadePlanning =
                     $"parameter '{parameter.Name}' of member '{method.Name}' of {where} is {kind} parameter. A grain call carries one serialized argument, so a by-reference parameter cannot be passed or written back."
 
     /// <summary>Rules 1 and 2: resolve one member to exactly one operation.</summary>
+    /// <param name="facadeType">The facade interface being planned, for the diagnostic.</param>
+    /// <param name="contract">The sealed contract to resolve the member against.</param>
+    /// <param name="method">The member to resolve.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="method"/> carries a blank <c>[FunctionalOperation]</c> operation
+    /// ID, or when it names no operation of <paramref name="contract"/>; or, absent that attribute,
+    /// when no operation's ID matches <paramref name="method"/>'s name case-insensitively, or more
+    /// than one does.
+    /// </exception>
     let private resolveOperation (facadeType: Type) (contract: FunctionalContract) (method: MethodInfo) =
         // The attribute type is F#-declared, so it carries no null literal; the reflection call
         // still returns null when the member does not carry it.
@@ -309,6 +386,14 @@ module internal FacadePlanning =
     /// itself; two or more parameters are the canonical tuple's elements in order, and the
     /// returned packer builds that tuple.
     /// </summary>
+    /// <param name="facadeType">The facade interface being planned, for the diagnostic.</param>
+    /// <param name="contract">The sealed contract, for the diagnostic.</param>
+    /// <param name="method">The member whose parameter list to check.</param>
+    /// <param name="operation">The operation <paramref name="method"/> was resolved to.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="method"/>'s parameter list does not match
+    /// <paramref name="operation"/>'s single argument type exactly.
+    /// </exception>
     let private packerFor (facadeType: Type) (contract: FunctionalContract) (method: MethodInfo) (operation: FunctionalOperation) =
         let parameters = method.GetParameters()
         let argumentType = operation.ArgumentType
@@ -346,8 +431,33 @@ module internal FacadePlanning =
     /// Rule 4: the return type must be exactly <c>Task&lt;'Reply&gt;</c>. A unit-reply operation
     /// additionally accepts the non-generic <c>Task</c>, which is what a C# author writes.
     /// </summary>
+    /// <param name="facadeType">The facade interface being planned, for the diagnostic.</param>
+    /// <param name="contract">The sealed contract, for the diagnostic.</param>
+    /// <param name="method">The member whose return type to check.</param>
+    /// <param name="operation">The operation <paramref name="method"/> was resolved to.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="method"/>'s return type does not match
+    /// <paramref name="operation"/>'s required shape: <c>IAsyncEnumerable&lt;TItem&gt;</c> for a
+    /// streaming operation, or <c>Task&lt;'Reply&gt;</c> (or plain <c>Task</c> for a unit reply)
+    /// otherwise.
+    /// </exception>
     let private validateReturn (facadeType: Type) (contract: FunctionalContract) (method: MethodInfo) (operation: FunctionalOperation) =
         let replyType = operation.ReplyType
+
+        // Spec 004 item 6: a streaming operation's member returns the BCL
+        // IAsyncEnumerable<TItem> and nothing else -- no Task form exists for it, and the whole
+        // point of the item type being BCL is that 'await foreach' works with no wrapper.
+        if operation.IsStreaming then
+            let isEnumerableOfItem =
+                method.ReturnType.IsGenericType
+                && method.ReturnType.GetGenericTypeDefinition() = typedefof<IAsyncEnumerable<_>>
+                && method.ReturnType.GetGenericArguments().[0] = replyType
+
+            if not isEnumerableOfItem then
+                fail
+                    InteropStage
+                    $"member '{method.Name}' of facade interface '{describe facadeType}' returns '{describe method.ReturnType}', but operation '{operation.OperationId}' of grain type '{contract.GrainTypeName}' is a streaming operation and requires 'IAsyncEnumerable<{describe replyType}>'."
+        else
 
         let isTaskOfReply =
             method.ReturnType.IsGenericType
@@ -408,7 +518,11 @@ module internal FacadePlanning =
                         { Method = method
                           Operation = operation
                           Pack = pack
-                          InvokerFactory = FacadeClosure.invoker operation.ArgumentType operation.ReplyType pack }
+                          InvokerFactory =
+                            if operation.IsStreaming then
+                                FacadeClosure.streamInvoker operation.ArgumentType operation.ReplyType pack
+                            else
+                                FacadeClosure.invoker operation.ArgumentType operation.ReplyType pack }
 
         { FacadeType = facadeType
           Members = members.ToArray() }
@@ -429,6 +543,15 @@ module internal FacadePlanning =
     /// rejected facade is not cached: the diagnostic is raised by every attempt, from its own
     /// call site.
     /// </summary>
+    /// <param name="facadeType">The facade interface to plan.</param>
+    /// <param name="contract">The sealed contract to bind it against.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown, on the first call for this interface/contract pair, when the facade interface
+    /// declares a property, an event, or a method this runtime cannot dispatch (static, a default
+    /// implementation, generic, or a by-reference parameter); when a member cannot be resolved to
+    /// exactly one operation by name or <c>[FunctionalOperation]</c>; or when a member's parameter
+    /// list or return type does not match its resolved operation's shape.
+    /// </exception>
     let planFor (facadeType: Type) (contract: FunctionalContract) : FacadePlan =
         let byFacade =
             plans.GetValue(contract, fun _ -> ConcurrentDictionary<Type, FacadePlan>())
@@ -475,6 +598,13 @@ type FunctionalGrainInterop =
     /// here, because C# has no partial type-argument inference: naming the facade type explicitly
     /// would otherwise force the caller to name the contract's three type parameters too.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="contract"/> or <paramref name="factory"/> is null;
+    /// when <typeparamref name="TFacade"/> is not an interface; when <paramref name="key"/> is
+    /// null or not an instance of the contract's key type; when <paramref name="contract"/>'s CLR
+    /// type is not a closed <c>GrainContract&lt;_,_,_&gt;</c>; or when facade planning rejects the
+    /// interface (see <see cref="M:Orleans.FSharp.FacadePlanning.planFor"/>).
+    /// </exception>
     static member For<'TFacade when 'TFacade: not struct>
         (contract: FunctionalContract, factory: IGrainFactory, key: obj)
         : 'TFacade =

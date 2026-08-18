@@ -31,6 +31,7 @@ export default defineConfig({
 						{ label: 'Serialization', link: '/serialization' },
 						{ label: 'Streaming', link: '/streaming' },
 						{ label: 'Event Sourcing', link: '/event-sourcing' },
+						{ label: 'Server-Streaming Replies', link: '/streaming-replies' },
 						{ label: 'Testing', link: '/testing' },
 						{ label: 'Security', link: '/security' },
 						{ label: 'Resilience', link: '/resilience' },

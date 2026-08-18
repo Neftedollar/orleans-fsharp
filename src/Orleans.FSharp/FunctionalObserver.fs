@@ -42,6 +42,11 @@ type internal PushAdapterFactory =
 [<RequireQualifiedAccess>]
 module internal PushAdapter =
 
+    /// <summary>The reflected open generic method behind <see cref="PushAdapterFactory.Create"/>.</summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// The <c>Create</c> method could not be found by reflection, meaning the factory shape and this
+    /// lookup have drifted apart.
+    /// </exception>
     let private createMethod =
         match
             typeof<PushAdapterFactory>
@@ -56,6 +61,7 @@ module internal PushAdapter =
         | method -> method
 
     /// <summary>Close the adapter over one message type, once, at sealing time.</summary>
+    /// <param name="messageType">The push operation's message type to close the adapter over.</param>
     let precompute (messageType: Type) : Func<IFunctionalPayloadCodec, obj, byte[], Task> =
         FunctionalInstrumentation.countGenericClosing ()
 
@@ -89,7 +95,9 @@ type ObserverContract<'Brand, 'Api>
 /// <summary>The mutable draft of an observer contract under construction.</summary>
 [<Sealed>]
 type ObserverContractDraft<'Brand, 'Api> internal (observerTypeName: string option, version: int option) =
+    /// <summary>The observer type name set so far by the 'observerType' custom operation, if any.</summary>
     member internal _.ObserverTypeName = observerTypeName
+    /// <summary>The contract version set so far by the 'version' custom operation, if any.</summary>
     member internal _.Version = version
 
 /// <summary>
@@ -105,6 +113,12 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
     member _.Yield(_: unit) : ObserverContractDraft<'Brand, 'Api> = ObserverContractDraft<'Brand, 'Api>(None, None)
 
     /// <summary>Validate and seal the draft into an immutable observer contract.</summary>
+    /// <param name="draft">The draft accumulated by the computation expression's custom operations.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The observer brand is generic or nested and no explicit 'observerType' was set; the derived
+    /// or explicit observer type fails the fixed transport's wire-text bounds; a push field's reply
+    /// type is not <c>Task&lt;unit&gt;</c>; or a push field's name fails the wire-text bounds.
+    /// </exception>
     member _.Run(draft: ObserverContractDraft<'Brand, 'Api>) : ObserverContract<'Brand, 'Api> =
         let observerTypeName, isObserverTypeExplicit =
             match draft.ObserverTypeName with
@@ -167,6 +181,12 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
         ObserverContract<'Brand, 'Api>(observerTypeName, version, shape, operations)
 
     /// <summary>Set the explicit observer type; defaults to the brand's simple CLR name.</summary>
+    /// <param name="state">The draft accumulated so far.</param>
+    /// <param name="value">The explicit observer type name.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="value"/> is blank or fails the fixed transport's wire-text bounds, or
+    /// 'observerType' was already set on this draft.
+    /// </exception>
     [<CustomOperation("observerType")>]
     member _.ObserverType(state: ObserverContractDraft<'Brand, 'Api>, value: string) =
         if isBlank value then
@@ -180,6 +200,11 @@ type ObserverContractBuilder<'Brand, 'Api> internal () =
         | None -> ObserverContractDraft<'Brand, 'Api>(Some value, state.Version)
 
     /// <summary>Set the application contract version; defaults to <c>1</c>.</summary>
+    /// <param name="state">The draft accumulated so far.</param>
+    /// <param name="value">The application contract version.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="value"/> is not a positive integer, or 'version' was already set on this draft.
+    /// </exception>
     [<CustomOperation("version")>]
     member _.Version(state: ObserverContractDraft<'Brand, 'Api>, value: int) =
         if value <= 0 then
@@ -225,6 +250,15 @@ type internal FunctionalObserverObject<'Brand, 'Api>
     let handlerValues = fields |> Array.map handlerField
 
     interface IFunctionalObserverTarget with
+        /// <summary>
+        /// Revalidate and dispatch one incoming notification envelope to its matching handler field.
+        /// </summary>
+        /// <param name="envelope">The notification envelope delivered by the notifying grain.</param>
+        /// <exception cref="System.InvalidOperationException">
+        /// The envelope's observer type, contract version, operation ID, or protocol token does not
+        /// match this observer's contract, or its payload exceeds the local payload-size limit. A
+        /// handler that itself throws is reported to <c>onError</c> instead and does not propagate.
+        /// </exception>
         member _.DispatchAsync(envelope: FunctionalNotificationEnvelope) : Task =
             if envelope.ObserverType <> contract.ObserverTypeName then
                 fail
@@ -279,6 +313,11 @@ type internal FunctionalObserverObject<'Brand, 'Api>
 module FunctionalObserver =
 
     /// <summary>Resolve the payload codec of a subscribing process.</summary>
+    /// <param name="services">The subscribing process's service provider.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// No <see cref="IFunctionalPayloadCodec"/> is registered, meaning the functional transport was
+    /// not configured.
+    /// </exception>
     let private codecOf (services: IServiceProvider) =
         match services.GetService typeof<IFunctionalPayloadCodec> with
         | :? IFunctionalPayloadCodec as codec -> codec
@@ -288,6 +327,8 @@ module FunctionalObserver =
                 $"creating a functional observer requires the functional transport. {FunctionalTransportSource.Guidance}"
 
     /// <summary>Declare every message type of a contract as a top-level payload type.</summary>
+    /// <param name="services">The subscribing process's service provider.</param>
+    /// <param name="contract">The sealed observer contract whose message types are declared.</param>
     let private preflight (services: IServiceProvider) (contract: ObserverContract<'Brand, 'Api>) =
         let provider = SerializerPreflight.providerOf services contract.ObserverTypeName
 
@@ -303,6 +344,14 @@ module FunctionalObserver =
     /// Wrap a handler record in a client-hosted observer object and return a typed, serializable
     /// handle to it. The handle is an ordinary operation argument.
     /// </summary>
+    /// <param name="contract">The sealed observer contract the handler record implements.</param>
+    /// <param name="services">The subscribing process's service provider.</param>
+    /// <param name="handlers">The handler record; one field per push operation.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The contract's observer type fails the fixed transport's wire-text bounds;
+    /// <paramref name="handlers"/> is null; <paramref name="services"/> has no registered
+    /// <see cref="IGrainFactory"/>; or creating the underlying Orleans object reference fails.
+    /// </exception>
     let createFrom
         (contract: ObserverContract<'Brand, 'Api>)
         (services: IServiceProvider)
@@ -372,6 +421,12 @@ module FunctionalObserver =
         )
 
     /// <summary>Wrap a handler record and return a typed handle, from an Orleans cluster client.</summary>
+    /// <param name="contract">The sealed observer contract the handler record implements.</param>
+    /// <param name="client">The Orleans cluster client whose service provider resolves the transport.</param>
+    /// <param name="handlers">The handler record; one field per push operation.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="client"/> is null, or the checks <see cref="createFrom"/> performs fail.
+    /// </exception>
     let create (contract: ObserverContract<'Brand, 'Api>) (client: IClusterClient) (handlers: 'Api) =
         if isNull (box client) then
             fail
@@ -386,6 +441,12 @@ module FunctionalObserver =
     /// notify token (a hash, not a reflective operation), enforces the caller-side payload
     /// boundary, and sends. Used by <c>notifier</c> once resolution has happened.
     /// </summary>
+    /// <param name="field">The resolved push operation's reflected field shape.</param>
+    /// <param name="handle">The observer handle the push is sent through.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The returned closure throws this when the serialized message exceeds the handle's payload
+    /// codec limit.
+    /// </exception>
     let private pushVia<'Brand, 'Api, 'Msg>
         (field: ApiOperationShape)
         (handle: FunctionalObserverHandle<'Brand, 'Api>)
@@ -417,6 +478,9 @@ module FunctionalObserver =
     /// time, and captured in the returned closure — so a notifier-based push invokes no selector
     /// and closes no generic, however many times it is called.
     /// </summary>
+    /// <param name="handle">The observer handle the resolved push closure is bound to.</param>
+    /// <param name="selector">The record-field projection identifying the push operation.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="handle"/> is null.</exception>
     let notifier
         (handle: FunctionalObserverHandle<'Brand, 'Api>)
         (selector: OperationSelector<'Api, 'Msg, unit>)
@@ -444,6 +508,10 @@ module FunctionalObserver =
     /// volume matters, such as a per-message call inside a fan-out loop.
     /// </para>
     /// </remarks>
+    /// <param name="handle">The observer handle the notification is sent through.</param>
+    /// <param name="selector">The record-field projection identifying the push operation.</param>
+    /// <param name="message">The message to push.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="handle"/> is null.</exception>
     let notify
         (handle: FunctionalObserverHandle<'Brand, 'Api>)
         (selector: OperationSelector<'Api, 'Msg, unit>)
@@ -464,6 +532,9 @@ module FunctionalObserver =
     /// A cleanup call in a <c>finally</c> must not turn any of those into a failure — the
     /// post-condition ("nothing is delivered through this handle any more") already holds.
     /// </remarks>
+    /// <param name="factory">The Orleans grain factory the object reference was created through.</param>
+    /// <param name="handle">The observer handle to release; a null handle is a no-op.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="factory"/> is null.</exception>
     let unsubscribe (factory: IGrainFactory) (handle: FunctionalObserverHandle<'Brand, 'Api>) : unit =
         if isNull (box factory) then
             fail BindingStage "releasing a functional observer requires an Orleans grain factory."
@@ -495,6 +566,8 @@ module FunctionalObserver =
 /// handle whose observed object has gone away simply stops being refreshed.
 /// </para>
 /// </remarks>
+/// <param name="expiry">The liveness window a subscription must be refreshed within.</param>
+/// <exception cref="System.InvalidOperationException"><paramref name="expiry"/> is not positive.</exception>
 [<Sealed>]
 type FunctionalObserverManager<'Brand, 'Api>(expiry: TimeSpan) =
 
@@ -516,6 +589,8 @@ type FunctionalObserverManager<'Brand, 'Api>(expiry: TimeSpan) =
         entries.Count
 
     /// <summary>Add a handle, or refresh the one already present. Idempotent per observed object.</summary>
+    /// <param name="handle">The observer handle to subscribe.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="handle"/> is null.</exception>
     member _.Subscribe(handle: FunctionalObserverHandle<'Brand, 'Api>) =
         if isNull (box handle) then
             fail TransportStage "subscribing to a functional observer manager requires a handle."
@@ -532,6 +607,7 @@ type FunctionalObserverManager<'Brand, 'Api>(expiry: TimeSpan) =
         |> ignore
 
     /// <summary>Remove one handle. Returns true when it was present.</summary>
+    /// <param name="handle">The observer handle to remove; a null handle returns false.</param>
     member _.Unsubscribe(handle: FunctionalObserverHandle<'Brand, 'Api>) : bool =
         if isNull (box handle) then
             false
@@ -570,6 +646,11 @@ type FunctionalObserverManager<'Brand, 'Api>(expiry: TimeSpan) =
     /// loudly, with every subscription left untouched.
     /// </para>
     /// </remarks>
+    /// <param name="selector">The record-field projection identifying the push operation.</param>
+    /// <param name="message">The message to push to every live subscription.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The serialized message exceeds an arbitrary subscriber's payload codec limit.
+    /// </exception>
     member this.Notify (selector: OperationSelector<'Api, 'Msg, unit>) (message: 'Msg) : Task<unit> =
         this.RemoveExpired()
 
@@ -613,6 +694,7 @@ type FunctionalObserverManager<'Brand, 'Api>(expiry: TimeSpan) =
                         entries.TryRemove pair.Key |> ignore
         }
 
+/// <summary>Auto-opened entry point for the <c>observerContract</c> computation expression.</summary>
 [<AutoOpen>]
 module ObserverContractBuilders =
 

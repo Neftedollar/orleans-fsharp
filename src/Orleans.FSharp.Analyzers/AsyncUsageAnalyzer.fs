@@ -61,6 +61,7 @@ module internal AstWalker =
     /// Walk a <see cref="ParsedInput"/> and return the <see cref="range"/> of every
     /// <c>async { }</c> usage that is not suppressed by <c>[&lt;AllowAsync&gt;]</c>.
     /// </summary>
+    /// <param name="tree">The parsed syntax tree of one source file to scan.</param>
     let collectAsyncRanges (tree: ParsedInput) : range list =
         let acc = System.Collections.Generic.List<range>()
 
@@ -269,6 +270,7 @@ let private HelpUri =
 /// To suppress this warning for a specific binding, apply <c>[&lt;AllowAsync&gt;]</c>.
 /// </para>
 /// </summary>
+/// <param name="ctx">The analyzed file's context, supplying its parsed syntax tree.</param>
 // AllowAsync is required here: FSharp.Analyzers.SDK mandates Async<Message list> as the
 // return type of CliAnalyzer functions. This is exactly the SDK-interop scenario AllowAsync
 // was designed for — the async { } block cannot be replaced with task { } without breaking

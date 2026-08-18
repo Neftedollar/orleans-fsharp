@@ -119,11 +119,15 @@ module Stream =
                 channel.Writer.Complete()
                 Task.CompletedTask)
 
-        // Fire-and-forget subscription setup
-        let _subscriptionTask =
+        // The subscription starts eagerly but is AWAITED on the first pull: enumeration cannot
+        // observe an event before the subscription is live anyway, and a subscription failure
+        // must surface to the consumer -- the previous fire-and-forget left it on an unobserved
+        // task, so a caller could pull forever from a stream it was never subscribed to.
+        let subscriptionTask =
             asyncStream.SubscribeAsync(onNext, onError, onCompleted)
 
         taskSeq {
+            let! _subscription = subscriptionTask
             let reader = channel.Reader
 
             while! reader.WaitToReadAsync() do
@@ -162,13 +166,13 @@ module Stream =
         }
 
     /// <summary>
-    /// Gets the current sequence token for a subscription by querying the stream
-    /// for all subscription handles and finding the matching one.
-    /// Returns None if the token cannot be determined.
+    /// Always returns <c>None</c>: <c>StreamSubscriptionHandle</c> does not expose the sequence
+    /// token directly, so this is a permanent stub rather than a lookup. The token is delivered
+    /// with each event via the <c>onNext</c> callback and must be tracked by the consumer.
     /// </summary>
     /// <param name="sub">The stream subscription to query.</param>
     /// <typeparam name="'T">The type of events on the subscribed stream.</typeparam>
-    /// <returns>The sequence token if available, or None.</returns>
+    /// <returns>Always <c>None</c>.</returns>
     let getSequenceToken<'T> (sub: StreamSubscription<'T>) : StreamSequenceToken option =
         // StreamSubscriptionHandle does not directly expose the token;
         // the token is delivered with each event via the onNext callback.

@@ -502,7 +502,6 @@ Published packages:
 - `Orleans.FSharp.Runtime`
 - `Orleans.FSharp.Abstractions`
 - `Orleans.FSharp.EventSourcing`
-- `Orleans.FSharp.EventSourcing.Marten`
 - `Orleans.FSharp.Testing`
 - `Orleans.FSharp.Analyzers`
 - `Orleans.FSharp.Templates`

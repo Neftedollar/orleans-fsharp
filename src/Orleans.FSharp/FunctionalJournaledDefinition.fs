@@ -24,14 +24,23 @@ type internal JournalConfiguration =
 /// <summary>Accumulated, not yet sealed, journaled-definition configuration.</summary>
 [<ReferenceEquality>]
 type internal JournaledDraftState<'Actor, 'Key, 'Api, 'State, 'Event> =
-    { Contract: GrainContract<'Actor, 'Key, 'Api>
+    { /// The contract this definition is being built for.
+      Contract: GrainContract<'Actor, 'Key, 'Api>
+      /// The declared initial state, before any event has been folded in.
       Initial: 'Key -> 'State
+      /// The replay fold.
       Apply: 'State -> 'Event -> 'State
+      /// The named log-consistency provider and its storage, when 'logProvider' has been declared.
       Journal: JournalConfiguration option
+      /// The declared idle collection age, when 'collectionAge' has been declared.
       CollectionAge: TimeSpan option
+      /// The declared activation hook, when 'onActivate' has been declared.
       OnActivate: JournaledActivateHook<'Actor, 'Key, 'State> option
+      /// The declared deactivation hook, when 'onDeactivate' has been declared.
       OnDeactivate: JournaledDeactivateHook<'Actor, 'Key, 'State> option
+      /// The declared placement configuration, when 'placement' has been declared.
       Placement: PlacementConfiguration option
+      /// Boxed handlers keyed by API-record field index.
       Handlers: Map<int, obj> }
 
 /// <summary>
@@ -73,6 +82,7 @@ type FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>
     member internal _.Handlers = state.Handlers
 
     /// <summary>The boxed handler for one operation descriptor.</summary>
+    /// <param name="operation">The operation descriptor whose handler to look up.</param>
     member internal _.HandlerFor(operation: FunctionalOperation) = state.Handlers.[operation.Index]
 
     override _.ToString() =
@@ -113,10 +123,20 @@ type FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>
 /// <summary>Journaled-definition draft helpers shared by the computation-expression builder.</summary>
 module internal JournaledDefinitionDraft =
 
+    /// <summary>Wrap an accumulated draft state back into a draft value.</summary>
+    /// <param name="state">The accumulated state to wrap.</param>
     let withState (state: JournaledDraftState<'Actor, 'Key, 'Api, 'State, 'Event>) =
         FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>(state)
 
     /// <summary>Seal a journaled draft into an immutable definition.</summary>
+    /// <param name="draft">The accumulated draft to validate and seal.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the draft fails sealing validation: a derived (not explicit) 'grainType'; a
+    /// missing handler for an API field; no 'logProvider' declared, or a blank or NUL-containing
+    /// 'logProvider' or 'journalStorage' name; 'transactional' declared on any operation (a
+    /// log-view adaptor is not a transaction participant); 'placement' combined with a stateless
+    /// worker; or no 'apply' fold declared.
+    /// </exception>
     let run
         (draft: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>)
         : FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event> =
@@ -240,6 +260,11 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
         FunctionalJournaledSeed<'Actor, 'Key, 'Api>(contract)
 
     /// <summary>Validate and seal the draft into an immutable journaled definition.</summary>
+    /// <param name="draft">The accumulated draft to validate and seal.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when sealing validation fails; see
+    /// <see cref="M:Orleans.FSharp.JournaledDefinitionDraft.run"/> for the complete list of checks.
+    /// </exception>
     member _.Run<'State, 'Event>
         (draft: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>)
         : FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event> =
@@ -255,6 +280,8 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// whether a seeded view survives their first storage read, so the runtime re-materializes
     /// this value rather than trusting either of them.
     /// </remarks>
+    /// <param name="factory">Produces the initial (pre-fold) state from the activation's domain key.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="factory"/> is null.</exception>
     [<CustomOperation("initialEventState")>]
     member _.InitialEventState<'State>(seed: FunctionalJournaledSeed<'Actor, 'Key, 'Api>, factory: 'Key -> 'State) =
         if obj.ReferenceEquals(factory, null) then
@@ -286,6 +313,8 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// fails the turn instead of returning a view that skipped an event.
     /// </para>
     /// </remarks>
+    /// <param name="fold">The replay fold: how one event changes the state.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="fold"/> is null.</exception>
     [<CustomOperation("apply")>]
     member _.Apply<'State, 'Event>
         (draft: FunctionalJournaledStateDraft<'Actor, 'Key, 'Api, 'State>, fold: 'State -> 'Event -> 'State)
@@ -308,6 +337,13 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// Bind one handler to the operation identified by the selector. The handler returns the
     /// events to append and the reply; it never returns a replacement state.
     /// </summary>
+    /// <param name="selector">The API field to bind the handler to.</param>
+    /// <param name="handler">The handler to run for the operation.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; when that field already has a handler; or when
+    /// <paramref name="handler"/> is null.
+    /// </exception>
     [<CustomOperation("handle")>]
     member _.Handle<'State, 'Event, 'Argument, 'Reply>
         (
@@ -333,6 +369,48 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
                 Handlers = draft.Handlers.Add(operation.Index, box handler) }
 
     /// <summary>
+    /// Bind one <b>streaming</b> handler to the operation identified by the selector. Spec 004
+    /// item 6.
+    /// </summary>
+    /// <remarks>
+    /// The same <see cref="T:Orleans.FSharp.StreamHandler`5"/> shape an ordinary definition uses,
+    /// deliberately: a streaming handler of a journaled definition raises no events for exactly the
+    /// reason it publishes no replacement state — it produces across many turns of the activation,
+    /// so an append from it could not be ordered against the appends of the turns it overlaps. It
+    /// reads the confirmed state as it stood when the enumeration started.
+    /// </remarks>
+    /// <param name="selector">The streaming API field to bind the handler to.</param>
+    /// <param name="handler">The streaming handler to run for the operation.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; when that field already has a handler; or when
+    /// <paramref name="handler"/> is null.
+    /// </exception>
+    [<CustomOperation("handleStream")>]
+    member _.HandleStream<'State, 'Event, 'Argument, 'Item>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            selector: StreamSelector<'Api, 'Argument, 'Item>,
+            handler: StreamHandler<'Actor, 'Key, 'State, 'Argument, 'Item>
+        ) =
+        let draft = state.State
+        let operation = draft.Contract.ResolveStream("handleStream", selector)
+
+        if draft.Handlers.ContainsKey operation.Index then
+            fail
+                DefinitionStage
+                $"API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' already has a handler."
+
+        if obj.ReferenceEquals(handler, null) then
+            fail
+                DefinitionStage
+                $"'handleStream' for API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' requires a handler."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                Handlers = draft.Handlers.Add(operation.Index, box handler) }
+
+    /// <summary>
     /// Name the registered log-consistency provider this definition's journal lives in.
     /// </summary>
     /// <param name="providerName">
@@ -341,6 +419,7 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// <c>AddStateStorageBasedLogConsistencyProvider "StateStorage"</c>. Silo startup validation
     /// fails if the name does not resolve.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'logProvider' is already declared for this draft.</exception>
     [<CustomOperation("logProvider")>]
     member _.LogProvider<'State, 'Event>
         (state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>, providerName: string)
@@ -364,6 +443,11 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// it the silo's default <c>IGrainStorage</c> is used, exactly as an unattributed
     /// <c>JournaledGrain</c> would.
     /// </summary>
+    /// <param name="storageName">The registered <c>IGrainStorage</c> name the log-consistency provider writes through.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when 'journalStorage' is declared before 'logProvider', or when it is already
+    /// declared for this draft.
+    /// </exception>
     [<CustomOperation("journalStorage")>]
     member _.JournalStorage<'State, 'Event>
         (state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>, storageName: string)
@@ -387,6 +471,8 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
         JournaledDefinitionDraft.withState { draft with Journal = Some journal }
 
     /// <summary>Set the Orleans idle collection age for this grain type.</summary>
+    /// <param name="age">The idle duration after which Orleans may collect an inactive activation.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'collectionAge' is already declared for this draft.</exception>
     [<CustomOperation("collectionAge")>]
     member _.CollectionAge<'State, 'Event>
         (state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>, age: TimeSpan)
@@ -404,6 +490,8 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// strategy is orthogonal to the journal, which is addressed by grain identity rather than by
     /// activation.
     /// </remarks>
+    /// <param name="strategy">The stock Orleans placement strategy to use.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'placement' is already declared for this draft.</exception>
     [<CustomOperation("placement")>]
     member _.Placement<'State, 'Event>
         (state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>, strategy: PlacementStrategy)
@@ -423,6 +511,11 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// Run a hook once the journal has been replayed and before the activation serves its first
     /// call. It returns no replacement state: the state is the fold of the journal.
     /// </summary>
+    /// <param name="hook">The activation hook.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="hook"/> is null, or 'onActivate' is already declared for this
+    /// draft.
+    /// </exception>
     [<CustomOperation("onActivate")>]
     member _.OnActivate<'State, 'Event>
         (
@@ -439,6 +532,11 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
                 OnActivate = DefinitionDraft.single "onActivate" draft.Contract.GrainTypeName draft.OnActivate hook }
 
     /// <summary>Run a hook when the activation is deactivating.</summary>
+    /// <param name="hook">The deactivation hook.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="hook"/> is null, or 'onDeactivate' is already declared for this
+    /// draft.
+    /// </exception>
     [<CustomOperation("onDeactivate")>]
     member _.OnDeactivate<'State, 'Event>
         (

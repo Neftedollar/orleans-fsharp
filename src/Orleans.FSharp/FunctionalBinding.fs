@@ -1,5 +1,6 @@
 namespace Orleans.FSharp
 
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Orleans
@@ -22,6 +23,13 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
     ) =
 
     /// <summary>Resolve one explicit selector against the cached shape for a raw call.</summary>
+    /// <param name="entry">The calling member's own name, used to phrase the diagnostic.</param>
+    /// <param name="selector">The caller-supplied field projection to resolve.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when the resolved operation's argument or
+    /// reply type does not match <paramref name="selector"/>'s own type parameters.
+    /// </exception>
     member private _.Resolve<'Argument, 'Reply>
         (entry: string, selector: OperationSelector<'Api, 'Argument, 'Reply>)
         : BoundCall =
@@ -46,6 +54,7 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
     member internal _.Contract = contract
 
     /// <summary>The preclosed closure pair of one operation, by descriptor index.</summary>
+    /// <param name="index">The operation descriptor's zero-based index.</param>
     member internal _.BoundCall(index: int) = bound.[index]
 
     /// <summary>Every preclosed closure pair, in descriptor order.</summary>
@@ -55,11 +64,24 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
     member internal _.GrainId = grainId
 
     /// <summary>Call one operation identified by an explicit selector.</summary>
+    /// <param name="selector">The API field to call.</param>
+    /// <param name="argument">The call argument.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields.
+    /// </exception>
     member this.call (selector: OperationSelector<'Api, 'Argument, 'Reply>) (argument: 'Argument) : Task<'Reply> =
         let call = this.Resolve("call", selector)
         (unbox<'Argument -> Task<'Reply>> call.Field) argument
 
     /// <summary>Call one operation with cooperative remote cancellation.</summary>
+    /// <param name="selector">The API field to call.</param>
+    /// <param name="argument">The call argument.</param>
+    /// <param name="cancellationToken">The token Orleans links into the remote call for cooperative cancellation.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields.
+    /// </exception>
     member this.callCancellable
         (selector: OperationSelector<'Api, 'Argument, 'Reply>)
         (argument: 'Argument)
@@ -67,6 +89,59 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
         : Task<'Reply> =
         let call = this.Resolve("callCancellable", selector)
         (unbox<'Argument -> CancellationToken -> Task<'Reply>> call.Cancellable) argument cancellationToken
+
+    /// <summary>Resolve one explicit streaming selector against the cached shape. Spec 004 item 6.</summary>
+    /// <param name="entry">The calling member's own name, used to phrase the diagnostic.</param>
+    /// <param name="selector">The caller-supplied streaming field projection to resolve.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when the resolved operation's argument or item
+    /// type does not match <paramref name="selector"/>'s own type parameters.
+    /// </exception>
+    member private _.ResolveStream<'Argument, 'Item>
+        (entry: string, selector: StreamSelector<'Api, 'Argument, 'Item>)
+        : BoundCall =
+        let operation = contract.ResolveStream(entry, selector)
+
+        if operation.ArgumentType <> typeof<'Argument> || operation.ReplyType <> typeof<'Item> then
+            fail
+                BindingStage
+                $"the '{entry}' selector of grain type '{contract.GrainTypeName}' resolved to operation '{operation.OperationId}', whose argument and item types are '{operation.ArgumentType.FullName}' and '{operation.ReplyType.FullName}', but the call site supplied '{typeof<'Argument>.FullName}' and '{typeof<'Item>.FullName}'."
+
+        bound.[operation.Index]
+
+    /// <summary>Open one streaming operation identified by an explicit selector.</summary>
+    /// <param name="selector">The streaming API field to open.</param>
+    /// <param name="argument">The call argument.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields.
+    /// </exception>
+    member this.stream
+        (selector: StreamSelector<'Api, 'Argument, 'Item>)
+        (argument: 'Argument)
+        : IAsyncEnumerable<'Item> =
+        let call = this.ResolveStream("stream", selector)
+        (unbox<'Argument -> IAsyncEnumerable<'Item>> call.Field) argument
+
+    /// <summary>
+    /// Open one streaming operation with cooperative cancellation: the token is carried by the
+    /// request, so Orleans links it into every enumeration started from the returned sequence.
+    /// </summary>
+    /// <param name="selector">The streaming API field to open.</param>
+    /// <param name="argument">The call argument.</param>
+    /// <param name="cancellationToken">The token Orleans links into every enumeration started from the returned sequence.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields.
+    /// </exception>
+    member this.streamCancellable
+        (selector: StreamSelector<'Api, 'Argument, 'Item>)
+        (argument: 'Argument)
+        (cancellationToken: CancellationToken)
+        : IAsyncEnumerable<'Item> =
+        let call = this.ResolveStream("streamCancellable", selector)
+        (unbox<'Argument -> CancellationToken -> IAsyncEnumerable<'Item>> call.Cancellable) argument cancellationToken
 
 /// <summary>
 /// Reference binding: encode the key, resolve the transport, validate serializers, and create
@@ -81,6 +156,15 @@ module internal FunctionalBinding =
     /// encodes the key, resolves services, validates serializers, and instantiates the
     /// preclosed closures.
     /// </summary>
+    /// <param name="contract">The sealed contract to bind.</param>
+    /// <param name="factory">The grain factory of the calling client or activation.</param>
+    /// <param name="key">The domain key of the target grain.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="factory"/> cannot create a reference for this grain type
+    /// through the functional interface, or resolves to something other than a functional grain
+    /// reference; also thrown, indirectly, by serializer-preflight validation when an operation's
+    /// argument or reply type has no registered codec.
+    /// </exception>
     let bind
         (contract: GrainContract<'Actor, 'Key, 'Api>)
         (factory: IGrainFactory)
@@ -215,6 +299,11 @@ type FunctionalGrain =
     /// activation and then the domain key of the target grain.
     /// </summary>
     /// <param name="contract">The sealed contract.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the returned function is applied, if the grain factory cannot create a
+    /// reference for this contract's grain type through the functional interface, or resolves to
+    /// something other than a functional grain reference; see <c>FunctionalBinding.bind</c>.
+    /// </exception>
     static member ref(contract: GrainContract<'Actor, 'Key, 'Api>) : IGrainFactory -> 'Key -> 'Api =
         fun factory key -> (FunctionalBinding.bind contract factory key).api
 
@@ -225,6 +314,11 @@ type FunctionalGrain =
     /// the target grain.
     /// </summary>
     /// <param name="contract">The sealed contract.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the returned function is applied, if the grain factory cannot create a
+    /// reference for this contract's grain type through the functional interface, or resolves to
+    /// something other than a functional grain reference; see <c>FunctionalBinding.bind</c>.
+    /// </exception>
     static member rawRef
         (contract: GrainContract<'Actor, 'Key, 'Api>)
         : IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor, 'Key, 'Api> =
@@ -261,6 +355,10 @@ type FunctionalGrain =
     /// This member always agrees with the contract, because it asks the contract.
     /// </para>
     /// </remarks>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the returned function is applied: if <paramref name="contract"/> is null, or
+    /// the stream namespace supplied to it is blank or white-space.
+    /// </exception>
     static member streamId(contract: GrainContract<'Actor, 'Key, 'Api>) : string -> 'Key -> StreamId =
         fun streamNamespace key ->
             if obj.ReferenceEquals(contract, null) then
@@ -283,6 +381,10 @@ type FunctionalGrain =
     /// with the same reason for existing.
     /// </summary>
     /// <param name="contract">The sealed contract of the subscribing definition.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the returned function is applied: if <paramref name="contract"/> is null, or
+    /// the channel namespace supplied to it is blank or white-space.
+    /// </exception>
     static member channelId
         (contract: GrainContract<'Actor, 'Key, 'Api>)
         : string -> 'Key -> Orleans.BroadcastChannel.ChannelId =
@@ -299,3 +401,50 @@ type FunctionalGrain =
                 System.Text.Encoding.UTF8.GetBytes channelNamespace,
                 contract.GrainIdOf(key).Key.AsSpan()
             )
+
+/// <summary>
+/// Tuning of one opened functional stream. Spec 004 item 6.
+/// </summary>
+[<AbstractClass; Sealed>]
+type FunctionalStream =
+
+    /// <summary>
+    /// Ask the target to drain at most <paramref name="maxBatchSize"/> synchronously-available
+    /// items into each reply message, and return the same sequence.
+    /// </summary>
+    /// <param name="maxBatchSize">The maximum items per reply; must be positive. Orleans' own default is 100.</param>
+    /// <param name="stream">A sequence returned by a streaming API-record field of this runtime.</param>
+    /// <remarks>
+    /// <para>
+    /// This is Orleans' own <c>AsyncEnumerableRequest.MaxBatchSize</c> knob, reached through the
+    /// runtime's typed wrapper. Orleans' <c>AsyncEnumerableExtensions.WithBatchSize</c> cannot be
+    /// used directly here: it tests <c>self is AsyncEnumerableRequest&lt;T&gt;</c> at the element
+    /// type, and a functional stream's element type is the application's item type while the
+    /// underlying request's is the fixed transport reply — so that method would silently do
+    /// nothing. This one fails loudly instead when applied to something that is not a functional
+    /// stream.
+    /// </para>
+    /// <para>
+    /// Apply it to the value the API field returned, before enumerating: the batch size is read
+    /// when an enumeration starts, so setting it afterwards affects only later enumerations.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="maxBatchSize"/> is not positive, or when
+    /// <paramref name="stream"/> is null or was not returned by a functional streaming operation.
+    /// </exception>
+    static member withBatchSize (maxBatchSize: int) (stream: IAsyncEnumerable<'Item>) : IAsyncEnumerable<'Item> =
+        if maxBatchSize <= 0 then
+            fail
+                BindingStage
+                $"'withBatchSize' requires a positive maximum batch size, but {maxBatchSize} was supplied."
+
+        match box stream with
+        | :? IFunctionalCallerStream as callerStream ->
+            callerStream.SetMaxBatchSize maxBatchSize
+            stream
+        | null -> fail BindingStage "'withBatchSize' requires a stream returned by a functional streaming operation, but null was supplied."
+        | other ->
+            fail
+                BindingStage
+                $"'withBatchSize' requires a stream returned by a functional streaming operation, but '{other.GetType().FullName}' was supplied."

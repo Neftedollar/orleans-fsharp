@@ -12,8 +12,11 @@ open Orleans.FSharp.FunctionalDiagnostics
 /// and stored CLR type. Lookup and attachment validation compare this triple.
 /// </summary>
 type internal PersistentStateDescriptor =
-    { StateName: string
+    { /// The Orleans state name of this facet.
+      StateName: string
+      /// The Orleans storage provider name of this facet.
       ProviderName: string
+      /// The exact stored CLR type of this facet.
       StoredType: Type }
 
 /// <summary>
@@ -54,6 +57,10 @@ module PersistentState =
     /// </summary>
     /// <param name="stateName">Orleans state name; unique within a definition.</param>
     /// <param name="providerName">Name of an <c>IGrainStorage</c> registration on every hosting silo.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="stateName"/> or <paramref name="providerName"/> is blank or contains a NUL
+    /// character, or 'State is an open generic type.
+    /// </exception>
     let create<'State> (stateName: string) (providerName: string) : PersistentStateRef<'State> =
         if isBlank stateName then
             fail PersistentStage "stateName must be a non-blank string."
@@ -90,6 +97,7 @@ module PersistentState =
 [<RequireQualifiedAccess>]
 module internal StoredStateType =
 
+    /// <summary>The shared explanation of how Orleans activates a stored persistent-state instance.</summary>
     [<Literal>]
     let private Activator =
         "Orleans creates the in-memory instance of a persistent state with its serializer activator, which calls System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject"
@@ -97,6 +105,7 @@ module internal StoredStateType =
     /// <summary>
     /// The reason stock Orleans cannot activate this stored type, or <c>None</c> when it can.
     /// </summary>
+    /// <param name="stored">The candidate stored state type; <c>null</c> is reported as supported.</param>
     let unsupportedReason (stored: Type) : string option =
         if isNull stored then
             None
@@ -165,6 +174,9 @@ type internal FunctionalStateScope
     let mutable expired = 0
 
     /// <summary>The ordinary scope of a callback which can never carry a transaction context.</summary>
+    /// <param name="grainTypeName">The grain type name to name in facade diagnostics.</param>
+    /// <param name="callbackName">The callback name to name in facade diagnostics.</param>
+    /// <param name="allowsMutation">Whether the callback may mutate state or issue storage calls.</param>
     new(grainTypeName: string, callbackName: string, allowsMutation: bool) =
         FunctionalStateScope(grainTypeName, callbackName, allowsMutation, Unavailable)
 
@@ -175,10 +187,16 @@ type internal FunctionalStateScope
     member _.Expire() = Volatile.Write(&expired, 1)
 
     /// <summary>Describe one facet for a diagnostic; never includes the stored value.</summary>
+    /// <param name="descriptor">The facet identity to describe.</param>
     member private _.Describe(descriptor: PersistentStateDescriptor) =
         $"the persistent state '{descriptor.StateName}' (provider '{descriptor.ProviderName}', stored type '{descriptor.StoredType.FullName}') of grain type '{grainTypeName}'"
 
     /// <summary>Reject use of a facade whose callback has already completed.</summary>
+    /// <param name="descriptor">The facet identity to describe if rejected.</param>
+    /// <param name="memberName">The facade member being used.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The callback which resolved this facade has already completed.
+    /// </exception>
     member this.EnsureUsable(descriptor: PersistentStateDescriptor, memberName: string) =
         if this.IsExpired then
             fail
@@ -193,6 +211,10 @@ type internal FunctionalStateScope
     /// captured context is an ordinary F# value that outlives the turn, and an append made from one
     /// would land outside the per-turn confirmation the whole model rests on.
     /// </remarks>
+    /// <param name="memberName">The journal member being used.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The callback which resolved this journal has already completed.
+    /// </exception>
     member this.EnsureJournalUsable(memberName: string) =
         if this.IsExpired then
             fail
@@ -200,6 +222,11 @@ type internal FunctionalStateScope
                 $"the journal of grain type '{grainTypeName}' was used through '{memberName}' after the '{callbackName}' callback which resolved it had already completed. A journal facade is bound to its invocation."
 
     /// <summary>Reject a journal append from a callback which may run beside another turn.</summary>
+    /// <param name="memberName">The journal member being used.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The callback which resolved this journal has already completed, or this callback is
+    /// state-neutral and may run beside another turn.
+    /// </exception>
     member this.EnsureJournalAppend(memberName: string) =
         this.EnsureJournalUsable memberName
 
@@ -209,6 +236,12 @@ type internal FunctionalStateScope
                 $"the journal of grain type '{grainTypeName}' rejects '{memberName}' in the '{callbackName}' callback, which is state-neutral. A 'readOnly' or 'alwaysInterleave' operation may run while another turn of this activation is in flight, so its appends could not be ordered against that turn's."
 
     /// <summary>Reject a mutating member in a read-only or state-neutral interleaved callback.</summary>
+    /// <param name="descriptor">The facet identity to describe if rejected.</param>
+    /// <param name="memberName">The facade member being used.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The callback which resolved this facade has already completed, or this callback is
+    /// state-neutral and may not mutate the facet or issue storage calls.
+    /// </exception>
     member this.EnsureMutable(descriptor: PersistentStateDescriptor, memberName: string) =
         this.EnsureUsable(descriptor, memberName)
 
@@ -226,6 +259,9 @@ type internal FunctionalStateScope
     /// nothing about transactional descriptors, so it stays declared before them.
     /// </param>
     /// <param name="memberName">The facade member being used.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// This facade has already expired, or this callback never runs inside an Orleans transaction.
+    /// </exception>
     member _.EnsureTransactionalRead(description: string, memberName: string) =
         if Volatile.Read(&expired) = 1 then
             fail
@@ -243,6 +279,10 @@ type internal FunctionalStateScope
     /// <summary>Reject a transactional update in a read-only or non-transactional callback.</summary>
     /// <param name="description">The transactional facet, already described by its facade.</param>
     /// <param name="memberName">The facade member being used.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// This facade has already expired, this callback never runs inside an Orleans transaction, or
+    /// the transaction is declared 'readOnly'.
+    /// </exception>
     member this.EnsureTransactionalUpdate(description: string, memberName: string) =
         this.EnsureTransactionalRead(description, memberName)
 
@@ -268,6 +308,11 @@ type internal FunctionalPersistentStateFacade<'State>
 
     interface IStorage<'State> with
 
+        /// <summary>
+        /// The current stored value. The getter is guarded by <c>EnsureUsable</c>; the setter is
+        /// guarded by <c>EnsureMutable</c> and only replaces the in-memory holder value, never
+        /// writing storage.
+        /// </summary>
         member _.State
             with get () =
                 scope.EnsureUsable(descriptor, "State")
@@ -278,34 +323,45 @@ type internal FunctionalPersistentStateFacade<'State>
 
     interface IStorage with
 
+        /// <summary>The storage provider's opaque version tag. Guarded by <c>EnsureUsable</c>.</summary>
         member _.Etag =
             scope.EnsureUsable(descriptor, "Etag")
             inner.Etag
 
+        /// <summary>Whether a durable record exists in storage. Guarded by <c>EnsureUsable</c>.</summary>
         member _.RecordExists =
             scope.EnsureUsable(descriptor, "RecordExists")
             inner.RecordExists
 
+        /// <summary>Reload the value from storage. Guarded by <c>EnsureMutable</c>.</summary>
         member _.ReadStateAsync() =
             scope.EnsureMutable(descriptor, "ReadStateAsync()")
             inner.ReadStateAsync()
 
+        /// <summary>Persist the current value to storage. Guarded by <c>EnsureMutable</c>.</summary>
         member _.WriteStateAsync() =
             scope.EnsureMutable(descriptor, "WriteStateAsync()")
             inner.WriteStateAsync()
 
+        /// <summary>Clear the durable record. Guarded by <c>EnsureMutable</c>.</summary>
         member _.ClearStateAsync() =
             scope.EnsureMutable(descriptor, "ClearStateAsync()")
             inner.ClearStateAsync()
 
+        /// <summary>Reload the value from storage. Guarded by <c>EnsureMutable</c>.</summary>
+        /// <param name="cancellationToken">Propagated to the inner Orleans facet.</param>
         member _.ReadStateAsync(cancellationToken: CancellationToken) : Task =
             scope.EnsureMutable(descriptor, "ReadStateAsync(CancellationToken)")
             inner.ReadStateAsync cancellationToken
 
+        /// <summary>Persist the current value to storage. Guarded by <c>EnsureMutable</c>.</summary>
+        /// <param name="cancellationToken">Propagated to the inner Orleans facet.</param>
         member _.WriteStateAsync(cancellationToken: CancellationToken) : Task =
             scope.EnsureMutable(descriptor, "WriteStateAsync(CancellationToken)")
             inner.WriteStateAsync cancellationToken
 
+        /// <summary>Clear the durable record. Guarded by <c>EnsureMutable</c>.</summary>
+        /// <param name="cancellationToken">Propagated to the inner Orleans facet.</param>
         member _.ClearStateAsync(cancellationToken: CancellationToken) : Task =
             scope.EnsureMutable(descriptor, "ClearStateAsync(CancellationToken)")
             inner.ClearStateAsync cancellationToken
@@ -314,7 +370,9 @@ type internal FunctionalPersistentStateFacade<'State>
 [<Sealed>]
 type internal FunctionalPersistentStateConfiguration(stateName: string, storageName: string) =
     interface IPersistentStateConfiguration with
+        /// <summary>The Orleans state name.</summary>
         member _.StateName = stateName
+        /// <summary>The Orleans storage provider name.</summary>
         member _.StorageName = storageName
 
 /// <summary>
@@ -347,6 +405,8 @@ type internal FunctionalFacetBlueprint =
 module internal FunctionalFacet =
 
     /// <summary>Close one facet blueprint over its exact stored type.</summary>
+    /// <param name="reference">The descriptor identifying the facet to close over.</param>
+    /// <param name="initialize">The declared initializer, from the boxed domain key to the boxed stored state.</param>
     let blueprint<'StoredState> (reference: PersistentStateRef<'StoredState>) (initialize: obj -> obj) =
         let descriptor = reference.Descriptor
 

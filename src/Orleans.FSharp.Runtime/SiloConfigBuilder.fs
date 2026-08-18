@@ -215,15 +215,14 @@ module SiloConfig =
         ]
 
     /// <summary>
-    /// Applies the silo configuration to an ISiloBuilder.
-    /// Used when configuring a silo via TestClusterBuilder or UseOrleans.
-    /// </summary>
-    /// <param name="config">The silo configuration to apply.</param>
-    /// <param name="siloBuilder">The ISiloBuilder to configure.</param>
-    /// <summary>
     /// Invokes an extension method on ISiloBuilder by name, searching loaded assemblies.
     /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
     /// </summary>
+    /// <param name="methodName">The name of the static extension method to locate and invoke.</param>
+    /// <param name="args">The arguments to pass after the leading <see cref="ISiloBuilder"/> parameter.</param>
+    /// <param name="packageHint">The NuGet package name to mention in the error message if the method cannot be found.</param>
+    /// <param name="siloBuilder">The ISiloBuilder instance passed as the extension method's first argument.</param>
+    /// <exception cref="System.InvalidOperationException">No matching extension method is found in any loaded assembly.</exception>
     let private invokeExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (siloBuilder: ISiloBuilder) =
         let siloBuilderType = typeof<ISiloBuilder>
 
@@ -289,6 +288,12 @@ module SiloConfig =
 
     let private preloadManifestAssemblies () = manifestAssemblies.Force() |> ignore
 
+    /// <summary>
+    /// Applies the silo configuration to an ISiloBuilder.
+    /// Used when configuring a silo via TestClusterBuilder or UseOrleans.
+    /// </summary>
+    /// <param name="config">The silo configuration to apply.</param>
+    /// <param name="siloBuilder">The ISiloBuilder to configure.</param>
     let applyToSiloBuilder (config: SiloConfig) (siloBuilder: ISiloBuilder) : unit =
         // A consumer who composes an ISiloBuilder directly — the shape both shipped examples
         // use — never runs applyToHost, so the pre-load has to happen on this path too.
@@ -529,6 +534,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="name">The name of the storage provider.</param>
     /// <returns>The updated silo configuration with the memory storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or whitespace.</exception>
     [<CustomOperation("addMemoryStorage")>]
     member _.AddMemoryStorage(config: SiloConfig, name: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -545,6 +551,7 @@ type SiloConfigBuilder() =
     /// <param name="name">The name of the storage provider.</param>
     /// <param name="configure">A function that configures the ISiloBuilder for this storage provider.</param>
     /// <returns>The updated silo configuration with the custom storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or whitespace.</exception>
     [<CustomOperation("addCustomStorage")>]
     member _.AddCustomStorage(config: SiloConfig, name: string, configure: ISiloBuilder -> ISiloBuilder) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -562,6 +569,7 @@ type SiloConfigBuilder() =
     /// <param name="name">The name of the storage provider.</param>
     /// <param name="connectionString">The Redis connection string (e.g., "localhost:6379").</param>
     /// <returns>The updated silo configuration with the Redis storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> or <paramref name="connectionString"/> is empty or whitespace.</exception>
     [<CustomOperation("addRedisStorage")>]
     member _.AddRedisStorage(config: SiloConfig, name: string, connectionString: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -579,6 +587,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="connectionString">The Redis connection string (e.g., "localhost:6379").</param>
     /// <returns>The updated silo configuration with Redis clustering enabled.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="connectionString"/> is empty or whitespace.</exception>
     [<CustomOperation("addRedisClustering")>]
     member _.AddRedisClustering(config: SiloConfig, connectionString: string) =
         if System.String.IsNullOrWhiteSpace(connectionString) then
@@ -596,6 +605,7 @@ type SiloConfigBuilder() =
     /// <param name="name">The name of the storage provider.</param>
     /// <param name="connectionString">The Azure Storage connection string.</param>
     /// <returns>The updated silo configuration with the Azure Blob storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> or <paramref name="connectionString"/> is empty or whitespace.</exception>
     [<CustomOperation("addAzureBlobStorage")>]
     member _.AddAzureBlobStorage(config: SiloConfig, name: string, connectionString: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -615,6 +625,7 @@ type SiloConfigBuilder() =
     /// <param name="name">The name of the storage provider.</param>
     /// <param name="connectionString">The Azure Storage connection string.</param>
     /// <returns>The updated silo configuration with the Azure Table storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> or <paramref name="connectionString"/> is empty or whitespace.</exception>
     [<CustomOperation("addAzureTableStorage")>]
     member _.AddAzureTableStorage(config: SiloConfig, name: string, connectionString: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -632,6 +643,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="connectionString">The Azure Storage connection string.</param>
     /// <returns>The updated silo configuration with Azure Table clustering enabled.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="connectionString"/> is empty or whitespace.</exception>
     [<CustomOperation("addAzureTableClustering")>]
     member _.AddAzureTableClustering(config: SiloConfig, connectionString: string) =
         if System.String.IsNullOrWhiteSpace(connectionString) then
@@ -650,6 +662,7 @@ type SiloConfigBuilder() =
     /// <param name="connectionString">The ADO.NET connection string.</param>
     /// <param name="invariant">The ADO.NET provider invariant (e.g., "Npgsql", "System.Data.SqlClient").</param>
     /// <returns>The updated silo configuration with the ADO.NET storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/>, <paramref name="connectionString"/>, or <paramref name="invariant"/> is empty or whitespace.</exception>
     [<CustomOperation("addAdoNetStorage")>]
     member _.AddAdoNetStorage(config: SiloConfig, name: string, connectionString: string, invariant: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -670,6 +683,7 @@ type SiloConfigBuilder() =
     /// <param name="connectionString">The ADO.NET connection string.</param>
     /// <param name="invariant">The ADO.NET provider invariant (e.g., "Npgsql", "System.Data.SqlClient").</param>
     /// <returns>The updated silo configuration with ADO.NET clustering enabled.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="connectionString"/> or <paramref name="invariant"/> is empty or whitespace.</exception>
     [<CustomOperation("addAdoNetClustering")>]
     member _.AddAdoNetClustering(config: SiloConfig, connectionString: string, invariant: string) =
         if System.String.IsNullOrWhiteSpace(connectionString) then
@@ -687,6 +701,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="name">The name of the stream provider.</param>
     /// <returns>The updated silo configuration with the memory stream provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or whitespace.</exception>
     [<CustomOperation("addMemoryStreams")>]
     member _.AddMemoryStreams(config: SiloConfig, name: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -802,6 +817,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="name">The name of the broadcast channel provider.</param>
     /// <returns>The updated silo configuration with the broadcast channel added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or whitespace.</exception>
     [<CustomOperation("addBroadcastChannel")>]
     member _.AddBroadcastChannel(config: SiloConfig, name: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -847,6 +863,7 @@ type SiloConfigBuilder() =
     /// <param name="adapterFactory">A factory function that creates the queue adapter.</param>
     /// <param name="configurator">An action to configure the persistent stream provider.</param>
     /// <returns>The updated silo configuration with the persistent stream provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or whitespace.</exception>
     [<CustomOperation("addPersistentStreams")>]
     member _.AddPersistentStreams
         (
@@ -982,6 +999,7 @@ type SiloConfigBuilder() =
     /// <param name="accountEndpoint">The Cosmos DB account endpoint (e.g., "AccountEndpoint=...").</param>
     /// <param name="databaseName">The Cosmos DB database name.</param>
     /// <returns>The updated silo configuration with the Cosmos DB storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/>, <paramref name="accountEndpoint"/>, or <paramref name="databaseName"/> is empty or whitespace.</exception>
     [<CustomOperation("addCosmosStorage")>]
     member _.AddCosmosStorage(config: SiloConfig, name: string, accountEndpoint: string, databaseName: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -1003,6 +1021,7 @@ type SiloConfigBuilder() =
     /// <param name="name">The name of the storage provider.</param>
     /// <param name="region">The AWS region (e.g., "us-east-1").</param>
     /// <returns>The updated silo configuration with the DynamoDB storage provider added.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> or <paramref name="region"/> is empty or whitespace.</exception>
     [<CustomOperation("addDynamoDbStorage")>]
     member _.AddDynamoDbStorage(config: SiloConfig, name: string, region: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -1020,6 +1039,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="connectionString">The Redis connection string (e.g., "localhost:6379").</param>
     /// <returns>The updated silo configuration with the Redis reminder service configured.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="connectionString"/> is empty or whitespace.</exception>
     [<CustomOperation("addRedisReminderService")>]
     member _.AddRedisReminderService(config: SiloConfig, connectionString: string) =
         if System.String.IsNullOrWhiteSpace(connectionString) then
@@ -1035,6 +1055,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="id">The cluster identifier string.</param>
     /// <returns>The updated silo configuration with the cluster ID set.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="id"/> is empty or whitespace.</exception>
     [<CustomOperation("clusterId")>]
     member _.ClusterId(config: SiloConfig, id: string) =
         if System.String.IsNullOrWhiteSpace(id) then
@@ -1048,6 +1069,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="id">The service identifier string.</param>
     /// <returns>The updated silo configuration with the service ID set.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="id"/> is empty or whitespace.</exception>
     [<CustomOperation("serviceId")>]
     member _.ServiceId(config: SiloConfig, id: string) =
         if System.String.IsNullOrWhiteSpace(id) then
@@ -1061,6 +1083,7 @@ type SiloConfigBuilder() =
     /// <param name="config">The current silo configuration being built.</param>
     /// <param name="name">The silo name string.</param>
     /// <returns>The updated silo configuration with the silo name set.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or whitespace.</exception>
     [<CustomOperation("siloName")>]
     member _.SiloName(config: SiloConfig, name: string) =
         if System.String.IsNullOrWhiteSpace(name) then
@@ -1112,6 +1135,7 @@ type SiloConfigBuilder() =
         { config with GrainCollectionAge = Some age }
 
     /// <summary>Returns the completed silo configuration.</summary>
+    /// <param name="config">The fully built silo configuration.</param>
     /// <remarks>
     /// Building the configuration is also where the manifest pre-load runs, and that placement is
     /// the point: <c>applyToSiloBuilder</c> pre-loads too, but a WebApplicationBuilder host calls

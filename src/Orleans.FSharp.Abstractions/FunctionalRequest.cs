@@ -24,6 +24,8 @@ internal sealed class FunctionalRequest : Request<FunctionalReply>
     internal FunctionalRequest() => _body = new FunctionalRequestBody();
 
     /// <summary>Create a caller-side request for one envelope.</summary>
+    /// <param name="envelope">The validated fixed request data.</param>
+    /// <param name="callerToken">The caller-supplied cancellation token.</param>
     internal FunctionalRequest(FunctionalRequestEnvelope envelope, CancellationToken callerToken) =>
         _body = new FunctionalRequestBody(envelope, callerToken);
 
@@ -46,13 +48,17 @@ internal sealed class FunctionalRequest : Request<FunctionalReply>
     internal bool HasCallFilterMetadata => _body.HasCallFilterMetadata;
 
     /// <summary>Replace field 0. Used by the deserializing codec and by <c>SetArgument(0, …)</c>.</summary>
+    /// <param name="envelope">The fixed request data to store.</param>
     internal void SetEnvelope(FunctionalRequestEnvelope envelope) => _body.SetEnvelope(envelope);
 
     /// <summary>Store the caller-side call-filter metadata.</summary>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     internal void SetCallerMetadata(Type closedInterfaceType, MethodInfo dispatchMethod) =>
         _body.SetCallerMetadata(closedInterfaceType, dispatchMethod);
 
     /// <summary>The Orleans request options implied by the envelope's admission flags.</summary>
+    /// <param name="admissionFlags">The envelope's validated admission-flag byte.</param>
     internal static InvokeMethodOptions OptionsFor(byte admissionFlags) =>
         FunctionalRequestBody.OptionsFor(admissionFlags);
 
@@ -136,6 +142,8 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
     private readonly FunctionalRequestBody _body;
 
     /// <summary>Create an uninitialized request for the deserialization activator.</summary>
+    /// <param name="exceptionSerializer">The serializer the transaction base needs for an aborted-transaction exception.</param>
+    /// <param name="serviceProvider">The services of the client or activation creating this request.</param>
     internal FunctionalTransactionRequest(
         Serializer<OrleansTransactionAbortedException> exceptionSerializer,
         IServiceProvider serviceProvider)
@@ -143,6 +151,10 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
         _body = new FunctionalRequestBody();
 
     /// <summary>Create a caller-side request for one envelope.</summary>
+    /// <param name="exceptionSerializer">The serializer the transaction base needs for an aborted-transaction exception.</param>
+    /// <param name="serviceProvider">The services of the client or activation creating this request.</param>
+    /// <param name="envelope">The validated fixed request data.</param>
+    /// <param name="callerToken">The caller-supplied cancellation token.</param>
     internal FunctionalTransactionRequest(
         Serializer<OrleansTransactionAbortedException> exceptionSerializer,
         IServiceProvider serviceProvider,
@@ -167,9 +179,12 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
     internal bool HasCallFilterMetadata => _body.HasCallFilterMetadata;
 
     /// <summary>Replace field 0. Used by the deserializing codec and by <c>SetArgument(0, …)</c>.</summary>
+    /// <param name="envelope">The fixed request data to store.</param>
     internal void SetEnvelope(FunctionalRequestEnvelope envelope) => _body.SetEnvelope(envelope);
 
     /// <summary>Store the caller-side call-filter metadata.</summary>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     internal void SetCallerMetadata(Type closedInterfaceType, MethodInfo dispatchMethod) =>
         _body.SetCallerMetadata(closedInterfaceType, dispatchMethod);
 
@@ -179,6 +194,7 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
     /// than trusted from the wire, so the byte dispatch compares against the hosted descriptor is
     /// the single authority for what this call's transaction policy is.
     /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown when the envelope's admission flags declare no transaction option.</exception>
     internal void ApplyAdmissionOptions()
     {
         var flags = _body.Envelope.AdmissionFlags;
@@ -245,6 +261,152 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
         // machinery owns that field, so its own disposal must still run.
         base.Dispose();
     }
+
+    /// <inheritdoc />
+    public override string ToString() => GetActivityName() + " " + _body.Envelope;
+}
+
+/// <summary>
+/// The server-streaming request class of the functional transport: the same fixed envelope,
+/// carried by Orleans' own <c>IAsyncEnumerable</c> invokable base. Spec 004 item 6.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is the whole of the client-side and target-side streaming plumbing, and none of it is
+/// ours — the same move Phase D made with <c>TransactionRequest&lt;TResult&gt;</c>.
+/// <c>Orleans.Runtime.AsyncEnumerableRequest&lt;T&gt;</c> is a public abstract
+/// <c>[GenerateSerializer] [SuppressReferenceTracking]</c> class over <c>RequestBase</c> which
+/// <b>is itself</b> the <c>IAsyncEnumerable&lt;T&gt;</c> the caller enumerates: its
+/// <c>GetAsyncEnumerator</c> creates Orleans' <c>AsyncEnumeratorProxy&lt;T&gt;</c>, which calls
+/// <c>StartEnumeration</c> once and then <c>MoveNext</c> per batch on
+/// <c>IAsyncEnumerableGrainExtension</c> — an extension Orleans registers for every activation in
+/// <c>DefaultSiloServices</c> and auto-installs through <c>ActivationData</c>'s
+/// <c>ITargetHolder.GetComponent</c>. Sequence numbering, batching, long-poll heartbeats,
+/// cancel-on-dispose and enumerator expiry are all Orleans' own, already compiled into
+/// <c>Orleans.Core.Abstractions.dll</c> together with the proxy and every invokable, so this
+/// class needs no code generation of ours.
+/// </para>
+/// <para>
+/// Only two things are ours: the target is resolved through the functional dispatch seam
+/// (<see cref="FunctionalRequestBody.SetStreamTarget"/>), and the element type is the same fixed
+/// <see cref="FunctionalReply"/> a unary call returns — so every item carries its own protocol
+/// token and its own payload, and the per-item limit is the ordinary payload limit.
+/// </para>
+/// <para>
+/// <c>Invoke()</c> is deliberately left to the base, which throws: an
+/// <c>IAsyncEnumerable</c> request is never invoked as a unary call, and a functional streaming
+/// operation can only be reached through <c>StartEnumeration</c>.
+/// </para>
+/// </remarks>
+internal sealed class FunctionalStreamRequest : AsyncEnumerableRequest<FunctionalReply>
+{
+    /// <summary>The CLR method name the streaming dispatch seam exposes.</summary>
+    public const string StreamDispatchMethodName = "DispatchStream";
+
+    private readonly FunctionalRequestBody _body;
+
+    /// <summary>Create an uninitialized request for the deserialization activator.</summary>
+    internal FunctionalStreamRequest() => _body = new FunctionalRequestBody();
+
+    /// <summary>Create a caller-side request for one envelope.</summary>
+    /// <param name="envelope">The validated fixed request data.</param>
+    /// <param name="callerToken">The caller-supplied cancellation token.</param>
+    internal FunctionalStreamRequest(FunctionalRequestEnvelope envelope, CancellationToken callerToken) =>
+        _body = new FunctionalRequestBody(envelope, callerToken);
+
+    /// <summary>The caller-supplied cancellation token; never serialized.</summary>
+    internal CancellationToken CallerToken => _body.CallerToken;
+
+    /// <summary>Field 0 of the derived segment — the fixed request data.</summary>
+    internal FunctionalRequestEnvelope Envelope => _body.Envelope;
+
+    /// <summary>True once <see cref="SetTarget"/> has resolved a dispatch target.</summary>
+    internal bool HasTarget => _body.HasTarget;
+
+    /// <summary>True once caller-side or target-side call-filter metadata has been stored.</summary>
+    internal bool HasCallFilterMetadata => _body.HasCallFilterMetadata;
+
+    /// <summary>Replace field 0. Used by the deserializing codec and by <c>SetArgument(0, …)</c>.</summary>
+    /// <param name="envelope">The fixed request data to store.</param>
+    internal void SetEnvelope(FunctionalRequestEnvelope envelope) => _body.SetEnvelope(envelope);
+
+    /// <summary>Store the caller-side call-filter metadata.</summary>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
+    internal void SetCallerMetadata(Type closedInterfaceType, MethodInfo dispatchMethod) =>
+        _body.SetCallerMetadata(closedInterfaceType, dispatchMethod);
+
+    /// <summary>
+    /// Validate the admission flags this envelope carries. A streaming operation composes with
+    /// none of the four admission policies (contract sealing rejects every one of them), so the
+    /// byte must be clear; the check is kept because the envelope can also arrive from the wire.
+    /// </summary>
+    /// <remarks>
+    /// Unlike the unary and transactional requests this does <b>not</b> feed
+    /// <c>RequestBase.Options</c>: the message that crosses the network is Orleans'
+    /// <c>StartEnumeration</c>/<c>MoveNext</c> invokable, whose scheduling is fixed by the
+    /// <c>[AlwaysInterleave]</c> on <c>IAsyncEnumerableGrainExtension</c>, so an option set here
+    /// would never be read by anything.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when the envelope's admission flags are non-zero.</exception>
+    internal void ValidateAdmissionFlags()
+    {
+        var flags = _body.Envelope.AdmissionFlags;
+
+        if (flags != FunctionalAdmissionFlags.None)
+        {
+            throw FunctionalTransportDiagnostics.Fail(
+                $"a streaming request for operation '{_body.Envelope.OperationId}' on grain type '{_body.Envelope.GrainType}' carries admission flags 0x{flags:x2}; a streaming operation composes with no admission policy, so the byte must be 0x00.");
+        }
+    }
+
+    /// <inheritdoc />
+    protected override IAsyncEnumerable<FunctionalReply> InvokeInner() => _body.DispatchStream();
+
+    /// <inheritdoc />
+    public override object GetTarget() => _body.Target!;
+
+    /// <inheritdoc />
+    public override void SetTarget(ITargetHolder holder) => _body.SetStreamTarget(holder);
+
+    /// <inheritdoc />
+    public override int GetArgumentCount() => FunctionalRequestBody.ArgumentCount;
+
+    /// <inheritdoc />
+    public override object GetArgument(int index) => _body.GetArgument(index);
+
+    /// <inheritdoc />
+    public override void SetArgument(int index, object value) => _body.SetArgument(index, value);
+
+    /// <inheritdoc />
+    public override string GetMethodName() => StreamDispatchMethodName;
+
+    /// <inheritdoc />
+    public override string GetInterfaceName() => GetInterfaceType().FullName!;
+
+    /// <inheritdoc />
+    public override string GetActivityName() => GetInterfaceName() + "/" + StreamDispatchMethodName;
+
+    /// <inheritdoc />
+    public override Type GetInterfaceType() => _body.GetInterfaceType();
+
+    /// <inheritdoc />
+    public override MethodInfo GetMethod() => _body.GetMethod();
+
+    /// <summary>
+    /// The caller's own token, so that a <c>callCancellable</c> stream is cancelled by it.
+    /// </summary>
+    /// <remarks>
+    /// Read on the caller side by <c>AsyncEnumeratorProxy</c>'s constructor, which links it with
+    /// whatever token <c>GetAsyncEnumerator</c> was given and owns the linked source; and on the
+    /// target side by <c>StartEnumeration</c>, where the body has been reconstructed by the
+    /// deserializing activator and this is <see cref="CancellationToken.None"/> — a token is
+    /// process-local and is never wire data.
+    /// </remarks>
+    public override CancellationToken GetCancellationToken() => _body.CurrentToken;
+
+    /// <inheritdoc />
+    public override void Dispose() => _body.Dispose();
 
     /// <inheritdoc />
     public override string ToString() => GetActivityName() + " " + _body.Envelope;
