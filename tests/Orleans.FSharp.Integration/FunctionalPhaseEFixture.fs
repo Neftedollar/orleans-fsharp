@@ -83,6 +83,22 @@ module PhaseECounters =
 
     let reset (label: string) = folds.TryRemove label |> ignore
 
+/// <summary>
+/// One escaped invocation context per grain key. A context is an ordinary F# value, so a handler
+/// can stash it and a later turn can use it — which is exactly the misuse the journal facade's
+/// scope binding exists to refuse.
+/// </summary>
+[<RequireQualifiedAccess>]
+module PhaseEEscapes =
+    let private contexts = ConcurrentDictionary<string, obj>()
+
+    let keep (key: string) (context: obj) = contexts.[key] <- context
+
+    let tryTake (key: string) =
+        match contexts.TryGetValue key with
+        | true, context -> Some context
+        | _ -> None
+
 // ──────────────────────────────────────────────────────────────────────────────
 // The domain
 // ──────────────────────────────────────────────────────────────────────────────
@@ -122,6 +138,12 @@ type AccountApi =
       poison: unit -> Task<unit>
       /// Declared readOnly and yet raises an event: the negative control.
       readOnlyRaise: unit -> Task<unit>
+      /// Declared readOnly and yet appends conditionally: the second negative control.
+      readOnlyConditional: unit -> Task<string>
+      /// Stashes this invocation's context for a later turn to misuse.
+      escape: unit -> Task<unit>
+      /// Appends through the context an earlier turn stashed; reports what happened.
+      useEscaped: unit -> Task<string>
       /// The address of the silo this activation lives on.
       whereAmI: unit -> Task<string>
       /// Deactivates the activation, so the next call replays from the journal.
@@ -197,6 +219,45 @@ let accountDefinitionFor (contract: GrainContract<'Actor, string, AccountApi>) (
 
         handle (_.readOnlyRaise) (fun _ state () -> task { return [ Noted "should never be appended" ], () })
 
+        handle (_.readOnlyConditional) (fun context state () ->
+            task {
+                let! outcome =
+                    task {
+                        try
+                            let! accepted = context.raiseConditional [ Noted "should never be appended" ]
+                            return $"the append was ACCEPTED ({accepted})"
+                        with error ->
+                            return error.Message
+                    }
+
+                return [], outcome
+            })
+
+        handle (_.escape) (fun context state () ->
+            task {
+                PhaseEEscapes.keep context.key (box context)
+                return [], ()
+            })
+
+        handle (_.useEscaped) (fun context state () ->
+            task {
+                let! outcome =
+                    task {
+                        match PhaseEEscapes.tryTake context.key with
+                        | None -> return "nothing was stashed"
+                        | Some stashed ->
+                            let escaped = stashed :?> FunctionalGrainContext<'Actor, string>
+
+                            try
+                                let! accepted = escaped.raiseConditional [ Noted "escaped" ]
+                                return $"the append was ACCEPTED ({accepted})"
+                            with error ->
+                                return error.Message
+                    }
+
+                return [], outcome
+            })
+
         handle (_.whereAmI) (fun context state () ->
             task {
                 let details = context.services.GetRequiredService<ILocalSiloDetails>()
@@ -222,6 +283,7 @@ let logAccountContract =
         readOnly (_.history)
         readOnly (_.whereAmI)
         readOnly (_.readOnlyRaise)
+        readOnly (_.readOnlyConditional)
     }
 
 let stateAccountContract =
@@ -233,6 +295,7 @@ let stateAccountContract =
         readOnly (_.history)
         readOnly (_.whereAmI)
         readOnly (_.readOnlyRaise)
+        readOnly (_.readOnlyConditional)
     }
 
 let logAccountDefinition =

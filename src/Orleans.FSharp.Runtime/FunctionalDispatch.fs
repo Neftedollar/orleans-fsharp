@@ -92,7 +92,12 @@ module internal FunctionalContextFactory =
                         (env.Codec :> IFunctionalPayloadCodec)
                         scope
                 | None -> null
-          Journal = env.State.Journal }
+          Journal =
+            // The activation's journal is bound to THIS callback's scope, so a captured context
+            // cannot append after its turn and a state-neutral callback cannot append at all.
+            match env.State.Journal with
+            | null -> null
+            | journal -> FunctionalScopedJournal(journal, scope) :> IFunctionalJournalAccess }
 
     /// <summary>
     /// The invocation context core of one implicit stream or broadcast delivery: the ordinary
@@ -457,8 +462,11 @@ module internal FunctionalLifecycle =
                 match journal.OnActivate with
                 | None -> ()
                 | Some hook ->
+                    // allowsMutation = true: a journaled definition has no persistent facet for
+                    // the flag to govern, and this hook runs as an ordinary turn of the activation
+                    // with nothing else in flight, so it MAY append through raiseConditional.
                     let scope =
-                        FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", false)
+                        FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", true)
 
                     try
                         let core = FunctionalContextFactory.core env cancellationToken scope
@@ -500,7 +508,7 @@ module internal FunctionalLifecycle =
                 | None -> ()
                 | Some hook ->
                     let scope =
-                        FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", false)
+                        FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", true)
 
                     try
                         try

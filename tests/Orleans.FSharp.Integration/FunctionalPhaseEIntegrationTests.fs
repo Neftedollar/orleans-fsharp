@@ -256,6 +256,32 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
         }
 
     /// <remarks>
+    /// The journal facade is bound to its invocation, like every other facade the context hands
+    /// out. Two ways to leave that binding, both refused:
+    /// a <c>readOnly</c> operation appending conditionally (it may run beside another turn), and a
+    /// context an earlier turn stashed being used by a later one (its scope has expired).
+    /// </remarks>
+    [<Fact>]
+    member _.``the journal facade is bound to the invocation that resolved it``() =
+        task {
+            for provider, account in accounts fixture do
+                let api = account (freshKey $"scope-{provider}")
+
+                let! fromReadOnly = api.readOnlyConditional ()
+                test <@ fromReadOnly.Contains "state-neutral" @>
+                test <@ fromReadOnly.Contains "readOnly" @>
+
+                do! api.escape ()
+                let! fromEscaped = api.useEscaped ()
+                test <@ fromEscaped.Contains "after the" @>
+                test <@ fromEscaped.Contains "had already completed" @>
+
+                // Neither refusal appended anything.
+                let! version = api.version ()
+                test <@ version = 0 @>
+        }
+
+    /// <remarks>
     /// Orleans' adaptors catch an exception from <c>ILogViewAdaptorHost.UpdateView</c>, log it, and
     /// carry on with an unchanged view. That would leave the activation holding a state which is
     /// not the fold of its own journal, so the runtime raises instead. The pin matters because the

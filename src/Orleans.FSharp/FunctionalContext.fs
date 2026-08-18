@@ -46,6 +46,38 @@ type internal IFunctionalJournalAccess =
     abstract RaiseConditional: obj list -> Task<bool>
 
 /// <summary>
+/// One callback's view of the activation's journal: the activation-wide journal, bound to the
+/// scope of the callback that resolved it.
+/// </summary>
+/// <remarks>
+/// The activation-wide journal itself is unscoped, because the dispatch path uses it directly to
+/// confirm a handler's returned events after that handler's scope has already expired. What a
+/// callback receives is this wrapper, so a captured context cannot append after its turn and a
+/// state-neutral callback cannot append at all.
+/// </remarks>
+[<Sealed>]
+type internal FunctionalScopedJournal internal (journal: IFunctionalJournalAccess, scope: FunctionalStateScope) =
+
+    interface IFunctionalJournalAccess with
+        member _.Current =
+            scope.EnsureJournalUsable "state"
+            journal.Current
+
+        member _.ConfirmedVersion =
+            scope.EnsureJournalUsable "journalVersion"
+            journal.ConfirmedVersion
+
+        member _.EventType = journal.EventType
+
+        member _.RaiseAndConfirm events =
+            scope.EnsureJournalAppend "raise"
+            journal.RaiseAndConfirm events
+
+        member _.RaiseConditional events =
+            scope.EnsureJournalAppend "raiseConditional"
+            journal.RaiseConditional events
+
+/// <summary>
 /// Activation-supplied services behind one invocation context. Phase 4 fills this record for
 /// every request, hook, timer, and reminder callback.
 /// </summary>

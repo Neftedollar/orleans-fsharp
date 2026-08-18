@@ -185,6 +185,29 @@ type internal FunctionalStateScope
                 PersistentStage
                 $"{this.Describe descriptor} was used through '{memberName}' after the '{callbackName}' callback which resolved it had already completed. A persistent-state facade is bound to its invocation."
 
+    /// <summary>
+    /// Reject use of this activation's journal after the callback which resolved it completed.
+    /// </summary>
+    /// <remarks>
+    /// The journal facade is bound to its invocation for the same reason every other facade is: a
+    /// captured context is an ordinary F# value that outlives the turn, and an append made from one
+    /// would land outside the per-turn confirmation the whole model rests on.
+    /// </remarks>
+    member this.EnsureJournalUsable(memberName: string) =
+        if this.IsExpired then
+            fail
+                JournalStage
+                $"the journal of grain type '{grainTypeName}' was used through '{memberName}' after the '{callbackName}' callback which resolved it had already completed. A journal facade is bound to its invocation."
+
+    /// <summary>Reject a journal append from a callback which may run beside another turn.</summary>
+    member this.EnsureJournalAppend(memberName: string) =
+        this.EnsureJournalUsable memberName
+
+        if not allowsMutation then
+            fail
+                JournalStage
+                $"the journal of grain type '{grainTypeName}' rejects '{memberName}' in the '{callbackName}' callback, which is state-neutral. A 'readOnly' or 'alwaysInterleave' operation may run while another turn of this activation is in flight, so its appends could not be ordered against that turn's."
+
     /// <summary>Reject a mutating member in a read-only or state-neutral interleaved callback.</summary>
     member this.EnsureMutable(descriptor: PersistentStateDescriptor, memberName: string) =
         this.EnsureUsable(descriptor, memberName)
