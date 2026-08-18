@@ -1,5 +1,6 @@
 namespace Orleans.FSharp
 
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Orleans
@@ -67,6 +68,39 @@ type FunctionalGrainRef<'Actor, 'Key, 'Api>
         : Task<'Reply> =
         let call = this.Resolve("callCancellable", selector)
         (unbox<'Argument -> CancellationToken -> Task<'Reply>> call.Cancellable) argument cancellationToken
+
+    /// <summary>Resolve one explicit streaming selector against the cached shape. Spec 004 item 6.</summary>
+    member private _.ResolveStream<'Argument, 'Item>
+        (entry: string, selector: StreamSelector<'Api, 'Argument, 'Item>)
+        : BoundCall =
+        let operation = contract.ResolveStream(entry, selector)
+
+        if operation.ArgumentType <> typeof<'Argument> || operation.ReplyType <> typeof<'Item> then
+            fail
+                BindingStage
+                $"the '{entry}' selector of grain type '{contract.GrainTypeName}' resolved to operation '{operation.OperationId}', whose argument and item types are '{operation.ArgumentType.FullName}' and '{operation.ReplyType.FullName}', but the call site supplied '{typeof<'Argument>.FullName}' and '{typeof<'Item>.FullName}'."
+
+        bound.[operation.Index]
+
+    /// <summary>Open one streaming operation identified by an explicit selector.</summary>
+    member this.stream
+        (selector: StreamSelector<'Api, 'Argument, 'Item>)
+        (argument: 'Argument)
+        : IAsyncEnumerable<'Item> =
+        let call = this.ResolveStream("stream", selector)
+        (unbox<'Argument -> IAsyncEnumerable<'Item>> call.Field) argument
+
+    /// <summary>
+    /// Open one streaming operation with cooperative cancellation: the token is carried by the
+    /// request, so Orleans links it into every enumeration started from the returned sequence.
+    /// </summary>
+    member this.streamCancellable
+        (selector: StreamSelector<'Api, 'Argument, 'Item>)
+        (argument: 'Argument)
+        (cancellationToken: CancellationToken)
+        : IAsyncEnumerable<'Item> =
+        let call = this.ResolveStream("streamCancellable", selector)
+        (unbox<'Argument -> CancellationToken -> IAsyncEnumerable<'Item>> call.Cancellable) argument cancellationToken
 
 /// <summary>
 /// Reference binding: encode the key, resolve the transport, validate serializers, and create
@@ -299,3 +333,46 @@ type FunctionalGrain =
                 System.Text.Encoding.UTF8.GetBytes channelNamespace,
                 contract.GrainIdOf(key).Key.AsSpan()
             )
+
+/// <summary>
+/// Tuning of one opened functional stream. Spec 004 item 6.
+/// </summary>
+[<AbstractClass; Sealed>]
+type FunctionalStream =
+
+    /// <summary>
+    /// Ask the target to drain at most <paramref name="maxBatchSize"/> synchronously-available
+    /// items into each reply message, and return the same sequence.
+    /// </summary>
+    /// <param name="maxBatchSize">The maximum items per reply; must be positive. Orleans' own default is 100.</param>
+    /// <param name="stream">A sequence returned by a streaming API-record field of this runtime.</param>
+    /// <remarks>
+    /// <para>
+    /// This is Orleans' own <c>AsyncEnumerableRequest.MaxBatchSize</c> knob, reached through the
+    /// runtime's typed wrapper. Orleans' <c>AsyncEnumerableExtensions.WithBatchSize</c> cannot be
+    /// used directly here: it tests <c>self is AsyncEnumerableRequest&lt;T&gt;</c> at the element
+    /// type, and a functional stream's element type is the application's item type while the
+    /// underlying request's is the fixed transport reply — so that method would silently do
+    /// nothing. This one fails loudly instead when applied to something that is not a functional
+    /// stream.
+    /// </para>
+    /// <para>
+    /// Apply it to the value the API field returned, before enumerating: the batch size is read
+    /// when an enumeration starts, so setting it afterwards affects only later enumerations.
+    /// </para>
+    /// </remarks>
+    static member withBatchSize (maxBatchSize: int) (stream: IAsyncEnumerable<'Item>) : IAsyncEnumerable<'Item> =
+        if maxBatchSize <= 0 then
+            fail
+                BindingStage
+                $"'withBatchSize' requires a positive maximum batch size, but {maxBatchSize} was supplied."
+
+        match box stream with
+        | :? IFunctionalCallerStream as callerStream ->
+            callerStream.SetMaxBatchSize maxBatchSize
+            stream
+        | null -> fail BindingStage "'withBatchSize' requires a stream returned by a functional streaming operation, but null was supplied."
+        | other ->
+            fail
+                BindingStage
+                $"'withBatchSize' requires a stream returned by a functional streaming operation, but '{other.GetType().FullName}' was supplied."

@@ -97,6 +97,9 @@ type internal FunctionalReferenceSender(reference: FunctionalGrainReference, met
         member _.SendOneWay(envelope: FunctionalRequestEnvelope) =
             reference.SendOneWay(envelope, metadata.InterfaceType, metadata.DispatchMethod)
 
+        member _.OpenStream(envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
+            reference.OpenStream(envelope, metadata.InterfaceType, metadata.DispatchMethod, cancellationToken)
+
 /// <summary>Presence marker making the client-service registration idempotent.</summary>
 [<Sealed>]
 type internal FunctionalClientServicesMarker() =
@@ -110,9 +113,17 @@ type internal FunctionalClientServicesMarker() =
 [<RequireQualifiedAccess>]
 module internal FunctionalTransportTypes =
 
-    /// <summary>The three fixed transport types, in wire-nesting order.</summary>
+    /// <summary>The four fixed transport types, in wire-nesting order.</summary>
+    /// <remarks>
+    /// <c>FunctionalTransactionRequest</c> is deliberately absent: a process which never calls a
+    /// transactional operation never resolves the transaction machinery, and preflighting it would
+    /// make every client pay for it. <c>FunctionalStreamRequest</c> is present because it costs
+    /// nothing extra — its base codec lives in <c>Orleans.Core.Abstractions</c>, which every
+    /// functional process already loads.
+    /// </remarks>
     let all: Type[] =
         [| typeof<FunctionalRequest>
+           typeof<FunctionalStreamRequest>
            typeof<FunctionalRequestEnvelope>
            typeof<FunctionalReply> |]
 

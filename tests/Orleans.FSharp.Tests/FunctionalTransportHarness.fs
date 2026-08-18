@@ -9,6 +9,7 @@ module internal Orleans.FSharp.Tests.FunctionalTransportHarness
 
 open System
 open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
@@ -91,9 +92,18 @@ type RecordedCall =
 /// A grain factory whose functional transport is in-memory. Every request is recorded and then
 /// answered by the supplied dispatch function.
 /// </summary>
-type InMemoryTransport(services: IServiceProvider, dispatch: GrainId -> FunctionalRequestEnvelope -> Task<FunctionalReply>) =
+type InMemoryTransport
+    (
+        services: IServiceProvider,
+        dispatch: GrainId -> FunctionalRequestEnvelope -> Task<FunctionalReply>,
+        streamDispatch: (GrainId -> FunctionalRequestEnvelope -> IAsyncEnumerable<FunctionalReply>) option
+    ) =
 
     let recorded = ConcurrentQueue<RecordedCall>()
+
+    /// <summary>The unary-only harness, for the tests that never open a stream.</summary>
+    new(services: IServiceProvider, dispatch: GrainId -> FunctionalRequestEnvelope -> Task<FunctionalReply>) =
+        InMemoryTransport(services, dispatch, None)
 
     /// <summary>Every request observed so far, in order.</summary>
     member _.Calls = recorded.ToArray()
@@ -144,7 +154,27 @@ type InMemoryTransport(services: IServiceProvider, dispatch: GrainId -> Function
                           Envelope = envelope
                           IsOneWay = true }
 
-                    dispatch grainId envelope |> ignore }
+                    dispatch grainId envelope |> ignore
+
+                // Spec 004 item 6. The harness has no Orleans enumerator extension behind it, so a
+                // stream is whatever IAsyncEnumerable the test supplied; what it does exercise is
+                // the whole caller-side path — argument serialization, the payload limit at send,
+                // the envelope with the stream-request token, and the per-item validation and
+                // exact-type deserialization on the way back.
+                member _.OpenStream(envelope, _cancellationToken) =
+                    recorded.Enqueue
+                        { GrainId = grainId
+                          Metadata = metadata
+                          Envelope = envelope
+                          IsOneWay = false }
+
+                    match streamDispatch with
+                    | Some open' -> open' grainId envelope
+                    | None ->
+                        raise (
+                            NotSupportedException
+                                "this in-memory functional transport was built without a streaming dispatch."
+                        ) }
 
     interface IGrainFactory with
         member _.GetGrain<'T when 'T :> IGrainWithGuidKey>(_primaryKey: Guid, _prefix: string) : 'T = notSupported ()

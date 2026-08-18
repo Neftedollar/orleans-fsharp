@@ -2,6 +2,7 @@ namespace Orleans.FSharp
 
 open System
 open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Reflection
 open System.Threading.Tasks
 open FSharp.Reflection
@@ -11,6 +12,21 @@ open FSharp.Reflection
 /// The documented forms are <c>_.join</c> and <c>fun api -&gt; api.join</c>.
 /// </summary>
 type OperationSelector<'Api, 'Argument, 'Reply> = 'Api -> ('Argument -> Task<'Reply>)
+
+/// <summary>
+/// A record-field projection which identifies one <b>server-streaming</b> operation of an API
+/// record. Spec 004 item 6. Same two documented forms as
+/// <see cref="T:Orleans.FSharp.OperationSelector`3"/>.
+/// </summary>
+/// <remarks>
+/// A separate type rather than a wider <c>OperationSelector</c>, because it is what makes the
+/// admission policies structurally unavailable to a streaming field: <c>readOnly</c>,
+/// <c>oneWay</c>, <c>alwaysInterleave</c> and <c>transactional</c> all take an
+/// <c>OperationSelector</c>, whose range is <c>Task&lt;'Reply&gt;</c>, so
+/// <c>readOnly (_.watch)</c> on a streaming field does not type-check at all. Contract sealing
+/// still repeats every rejection, because a draft can also be built directly.
+/// </remarks>
+type StreamSelector<'Api, 'Argument, 'Item> = 'Api -> ('Argument -> IAsyncEnumerable<'Item>)
 
 /// <summary>Diagnostic helpers shared by the functional contract layer.</summary>
 module internal FunctionalDiagnostics =
@@ -97,7 +113,17 @@ module internal FunctionalDiagnostics =
             if value.[index] < ' ' then
                 fail stage $"{what} must not contain control characters, but one appears at index {index}."
 
-/// <summary>One reflected API-record field: an operation of shape <c>'Argument -&gt; Task&lt;'Reply&gt;</c>.</summary>
+/// <summary>Which reply shape an API-record field declares. Spec 004 item 6.</summary>
+type internal ApiFieldKind =
+    /// <summary><c>'Argument -&gt; Task&lt;'Reply&gt;</c> — one acknowledged reply.</summary>
+    | UnaryField
+    /// <summary><c>'Argument -&gt; IAsyncEnumerable&lt;'Item&gt;</c> — a server-streaming reply.</summary>
+    | StreamingField
+
+/// <summary>
+/// One reflected API-record field: an operation of shape <c>'Argument -&gt; Task&lt;'Reply&gt;</c>
+/// or <c>'Argument -&gt; IAsyncEnumerable&lt;'Item&gt;</c>.
+/// </summary>
 [<ReferenceEquality>]
 type internal ApiOperationShape =
     {
@@ -105,15 +131,24 @@ type internal ApiOperationShape =
         Index: int
         /// Source record-field name.
         FieldName: string
+        /// Which reply shape the field declares.
+        Kind: ApiFieldKind
         /// The field's exact CLR function type.
         FunctionType: Type
         /// The operation's exact argument type.
         ArgumentType: Type
-        /// The operation's exact reply type (the <c>Task&lt;_&gt;</c> element type).
+        /// <summary>
+        /// The operation's exact reply type: the <c>Task&lt;_&gt;</c> element type for a unary
+        /// field, the <c>IAsyncEnumerable&lt;_&gt;</c> element type for a streaming one. Both are
+        /// the type one payload is serialized as, which is why they share the field.
+        /// </summary>
         ReplyType: Type
         /// The unique probe sentinel installed in this field of the probe record.
         Sentinel: obj
     }
+
+    /// <summary>True when the field declares a server-streaming reply.</summary>
+    member this.IsStreaming = this.Kind = StreamingField
 
 /// <summary>The cached reflected shape of one closed API record type.</summary>
 [<ReferenceEquality>]
@@ -206,23 +241,33 @@ module internal ApiShape =
 
                 let argumentType, rangeType = FSharpType.GetFunctionElements functionType
 
-                let isTaskOfReply =
-                    rangeType.IsGenericType
-                    && rangeType.GetGenericTypeDefinition() = typedefof<Task<_>>
+                // The two recognized reply shapes are told apart structurally, exactly as the
+                // single Task shape was: by the open generic definition of the range type.
+                let kind =
+                    if not rangeType.IsGenericType then
+                        Option.None
+                    else
+                        let definition = rangeType.GetGenericTypeDefinition()
 
-                if not isTaskOfReply then
+                        if definition = typedefof<Task<_>> then Some UnaryField
+                        elif definition = typedefof<IAsyncEnumerable<_>> then Some StreamingField
+                        else Option.None
+
+                match kind with
+                | Option.None ->
                     let message =
                         $"the API field '{describeType apiType}.{field.Name}' returns '{describeType rangeType}'. "
-                        + "Every API field must have the shape 'Argument -> Task<'Reply>."
+                        + "Every API field must have the shape 'Argument -> Task<'Reply> or 'Argument -> IAsyncEnumerable<'Item>."
 
                     fail ContractStage message
-
-                { Index = index
-                  FieldName = field.Name
-                  FunctionType = functionType
-                  ArgumentType = argumentType
-                  ReplyType = rangeType.GetGenericArguments().[0]
-                  Sentinel = sentinelFor apiType field.Name functionType })
+                | Some fieldKind ->
+                    { Index = index
+                      FieldName = field.Name
+                      Kind = fieldKind
+                      FunctionType = functionType
+                      ArgumentType = argumentType
+                      ReplyType = rangeType.GetGenericArguments().[0]
+                      Sentinel = sentinelFor apiType field.Name functionType })
 
         // Defensive: the per-field sentinel rule requires physically distinct objects even
         // when two fields share the same function type.
@@ -256,24 +301,16 @@ module internal ApiShape =
         shape.Operations |> Array.tryFind (fun operation -> operation.FieldName = fieldName)
 
     /// <summary>
-    /// Resolve a selector against the probe record by physical identity of the returned sentinel.
-    /// The selector runs exactly once, here, at configuration time.
+    /// Resolve one already-boxed selector application against the probe record by physical
+    /// identity of the returned sentinel. Shared by the unary and the streaming selector types,
+    /// which differ only in the range of the field they project.
     /// </summary>
-    let resolve<'Api, 'Argument, 'Reply>
-        (shape: ApiShape)
-        (entry: string)
-        (selector: OperationSelector<'Api, 'Argument, 'Reply>)
-        : ApiOperationShape =
-        if obj.ReferenceEquals(selector, null) then
-            fail
-                ContractStage
-                $"the '{entry}' entry of '{describeType shape.ApiType}' supplied a null selector. {SelectorGuidance}"
-
+    let private resolveBoxed (shape: ApiShape) (entry: string) (apply: obj -> obj) : ApiOperationShape =
         FunctionalInstrumentation.countSelectorEvaluation ()
 
         let returned =
             try
-                box (selector (unbox<'Api> shape.Probe))
+                apply shape.Probe
             with
             | :? NullReferenceException as cause ->
                 failCause
@@ -296,3 +333,35 @@ module internal ApiShape =
             fail
                 ContractStage
                 $"the '{entry}' selector of '{describeType shape.ApiType}' did not return an API field value. {SelectorGuidance}"
+
+    /// <summary>
+    /// Resolve a selector against the probe record by physical identity of the returned sentinel.
+    /// The selector runs exactly once, here, at configuration time.
+    /// </summary>
+    let resolve<'Api, 'Argument, 'Reply>
+        (shape: ApiShape)
+        (entry: string)
+        (selector: OperationSelector<'Api, 'Argument, 'Reply>)
+        : ApiOperationShape =
+        if obj.ReferenceEquals(selector, null) then
+            fail
+                ContractStage
+                $"the '{entry}' entry of '{describeType shape.ApiType}' supplied a null selector. {SelectorGuidance}"
+
+        resolveBoxed shape entry (fun probe -> box (selector (unbox<'Api> probe)))
+
+    /// <summary>
+    /// Resolve a <b>streaming</b> selector against the probe record. Spec 004 item 6. Identical
+    /// mechanism to <see cref="resolve"/>; only the projected field's range type differs.
+    /// </summary>
+    let resolveStream<'Api, 'Argument, 'Item>
+        (shape: ApiShape)
+        (entry: string)
+        (selector: StreamSelector<'Api, 'Argument, 'Item>)
+        : ApiOperationShape =
+        if obj.ReferenceEquals(selector, null) then
+            fail
+                ContractStage
+                $"the '{entry}' entry of '{describeType shape.ApiType}' supplied a null selector. {SelectorGuidance}"
+
+        resolveBoxed shape entry (fun probe -> box (selector (unbox<'Api> probe)))

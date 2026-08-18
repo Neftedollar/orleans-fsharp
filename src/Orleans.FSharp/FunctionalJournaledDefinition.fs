@@ -333,6 +333,41 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
                 Handlers = draft.Handlers.Add(operation.Index, box handler) }
 
     /// <summary>
+    /// Bind one <b>streaming</b> handler to the operation identified by the selector. Spec 004
+    /// item 6.
+    /// </summary>
+    /// <remarks>
+    /// The same <see cref="T:Orleans.FSharp.StreamHandler`5"/> shape an ordinary definition uses,
+    /// deliberately: a streaming handler of a journaled definition raises no events for exactly the
+    /// reason it publishes no replacement state — it produces across many turns of the activation,
+    /// so an append from it could not be ordered against the appends of the turns it overlaps. It
+    /// reads the confirmed state as it stood when the enumeration started.
+    /// </remarks>
+    [<CustomOperation("handleStream")>]
+    member _.HandleStream<'State, 'Event, 'Argument, 'Item>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            selector: StreamSelector<'Api, 'Argument, 'Item>,
+            handler: StreamHandler<'Actor, 'Key, 'State, 'Argument, 'Item>
+        ) =
+        let draft = state.State
+        let operation = draft.Contract.ResolveStream("handleStream", selector)
+
+        if draft.Handlers.ContainsKey operation.Index then
+            fail
+                DefinitionStage
+                $"API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' already has a handler."
+
+        if obj.ReferenceEquals(handler, null) then
+            fail
+                DefinitionStage
+                $"'handleStream' for API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' requires a handler."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                Handlers = draft.Handlers.Add(operation.Index, box handler) }
+
+    /// <summary>
     /// Name the registered log-consistency provider this definition's journal lives in.
     /// </summary>
     /// <param name="providerName">

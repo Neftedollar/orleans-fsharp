@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Generic
 open System.Diagnostics
 open System.Runtime.ExceptionServices
 open System.Threading
@@ -123,12 +124,24 @@ module internal FunctionalContextFactory =
 [<RequireQualifiedAccess>]
 module internal FunctionalDispatch =
 
-    /// <summary>Dispatch one request on this activation.</summary>
-    let dispatch
+    /// <summary>
+    /// Steps 1 through 3 of the normative validation order, shared by the unary and the streaming
+    /// entry points: fixed envelope shape, admitted version, payload size, token length, reserved
+    /// flags, descriptor resolution, <c>sinceVersion</c>, reply shape, protocol token, and
+    /// admission flags. It returns the resolved descriptor, the admitted request version, and that
+    /// version's token pair.
+    /// </summary>
+    /// <param name="expectStreaming">
+    /// Which entry point is admitting the request. A descriptor of the other kind is rejected here,
+    /// by name, before the token comparison -- the token comparison would also reject it (the two
+    /// kinds hash different direction literals) but would report a digest mismatch rather than the
+    /// shape mismatch that actually happened.
+    /// </param>
+    let internal admit
         (env: FunctionalTargetEnvironment)
         (envelope: FunctionalRequestEnvelope)
-        (cancellationToken: CancellationToken)
-        : ValueTask<FunctionalReply> =
+        (expectStreaming: bool)
+        : struct (FunctionalHostedOperation * int * byte[] * byte[]) =
         let definition = env.Definition
         let grainTypeName = definition.GrainTypeName
 
@@ -200,6 +213,20 @@ module internal FunctionalDispatch =
                 TransportStage
                 $"operation '{operation.OperationId}' on grain type '{grainTypeName}' was introduced at contract version {operation.SinceVersion}, but the request declares version {requestVersion}."
 
+        // 2c. Spec 004 item 6: the descriptor's reply shape must be the one this entry point
+        //     serves. A unary caller reaching a streaming descriptor (or the reverse) is a shape
+        //     mismatch, and saying so is more useful than the digest mismatch the token comparison
+        //     below would report for the same call.
+        if expectStreaming <> operation.IsStreaming then
+            if expectStreaming then
+                fail
+                    TransportStage
+                    $"operation '{operation.OperationId}' on grain type '{grainTypeName}' returns Task<_> and was opened as a stream. Only an operation whose API field returns IAsyncEnumerable<_> can be enumerated."
+            else
+                fail
+                    TransportStage
+                    $"operation '{operation.OperationId}' on grain type '{grainTypeName}' returns IAsyncEnumerable<_> and was called as an ordinary operation. A streaming operation can only be enumerated."
+
         // 3. Compare the exact protocol token and the admission flags with the descriptor, at the
         //    admitted request version.
         let struct (expectedRequestToken, expectedReplyToken) = operation.TokensFor requestVersion
@@ -213,6 +240,19 @@ module internal FunctionalDispatch =
             fail
                 TransportStage
                 $"the request for operation '{operation.OperationId}' on grain type '{grainTypeName}' carries admission flags 0x{envelope.AdmissionFlags:x2}, but the hosted descriptor declares 0x{operation.AdmissionFlags:x2}."
+
+        struct (operation, requestVersion, expectedRequestToken, expectedReplyToken)
+
+    /// <summary>Dispatch one request on this activation.</summary>
+    let dispatch
+        (env: FunctionalTargetEnvironment)
+        (envelope: FunctionalRequestEnvelope)
+        (cancellationToken: CancellationToken)
+        : ValueTask<FunctionalReply> =
+        let definition = env.Definition
+        let grainTypeName = definition.GrainTypeName
+
+        let struct (operation, requestVersion, _, expectedReplyToken) = admit env envelope false
 
         // 4-6. Typed payload deserialization with a fresh session, the per-invocation context,
         //      the preclosed typed handler adapter, and the state-publication rule.
@@ -388,6 +428,146 @@ module internal FunctionalDispatch =
             }
 
         ValueTask<FunctionalReply> work
+
+/// <summary>
+/// The target-side enumerator of one server-streaming operation. Spec 004 item 6.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Lazy on purpose.</b> Every protocol check runs inside the first <c>MoveNextAsync</c>, not in
+/// the constructor: <c>AsyncEnumerableGrainExtension.StartEnumeration</c> calls
+/// <c>InvokeImplementation</c> and <c>GetAsyncEnumerator</c> outside its <c>try</c> and
+/// <c>MoveNextAsync</c> inside it, so a rejection raised from the first pull becomes a clean
+/// <c>EnumerationResult.Error</c> — the extension removes and disposes the enumerator, and the
+/// caller's <c>MoveNextAsync</c> rethrows the original exception — whereas one raised earlier would
+/// escape the grain call with a half-built entry left in the extension's table.
+/// </para>
+/// <para>
+/// <b>State-neutral by construction.</b> The scope is created with <c>allowsMutation = false</c>
+/// and no transactional access, and no replacement state is ever published: a stream produces
+/// across many turns of the activation (Orleans pulls it with a separate, always-interleaving
+/// <c>MoveNext</c> per batch), so a whole-state replacement published at the end would overwrite
+/// every other turn that ran while it was open. The state the handler sees is the snapshot taken
+/// at the first pull.
+/// </para>
+/// </remarks>
+[<Sealed>]
+type internal FunctionalStreamEnumerator
+    (env: FunctionalTargetEnvironment, envelope: FunctionalRequestEnvelope, cancellationToken: CancellationToken) =
+
+    let mutable started = false
+    let mutable source: IAsyncEnumerator<byte[]> = null
+    let mutable scope: FunctionalStateScope option = None
+    let mutable operationId = envelope.OperationId
+    let mutable requestVersion = 0
+    let mutable itemToken: byte[] = null
+    let mutable current = Unchecked.defaultof<FunctionalReply>
+    let mutable outcome = "success"
+    let mutable disposed = false
+
+    /// Steps 1 through 6 of the dispatch order, run once, on the first pull.
+    member private _.Start() =
+        let grainTypeName = env.Definition.GrainTypeName
+        let struct (operation, version, _, expectedItemToken) = FunctionalDispatch.admit env envelope true
+
+        operationId <- operation.OperationId
+        requestVersion <- version
+        itemToken <- expectedItemToken
+
+        // A streaming operation is state-neutral: no replacement state, no persistent-state
+        // mutation, no transactional facet. Sealing already rejects 'readOnly', 'oneWay',
+        // 'alwaysInterleave' and 'transactional' on a streaming field, so this is the only
+        // configuration such an operation can have.
+        let callScope =
+            FunctionalStateScope(grainTypeName, operation.OperationId, false, Unavailable)
+
+        scope <- Some callScope
+
+        let invocation =
+            { Key = env.Key
+              Core = FunctionalContextFactory.core env cancellationToken callScope
+              State = env.State.Current
+              Payload = envelope.Payload
+              Codec = env.Codec }
+
+        source <- operation.StreamAdapter.Invoke(invocation, cancellationToken)
+
+    interface IAsyncEnumerator<FunctionalReply> with
+        member _.Current = current
+
+        member this.MoveNextAsync() =
+            ValueTask<bool>(
+                task {
+                    try
+                        if not started then
+                            started <- true
+                            this.Start()
+
+                        match! source.MoveNextAsync() with
+                        | false -> return false
+                        | true ->
+                            let payload = source.Current
+
+                            PayloadLimit.ensure
+                                SiloStreamItemSend
+                                env.Definition.GrainTypeName
+                                operationId
+                                payload.Length
+                                env.MaxPayloadBytes
+
+                            current <- FunctionalReply(itemToken, payload)
+                            return true
+                    with error ->
+                        outcome <- "failed"
+                        ExceptionDispatchInfo.Capture(error).Throw()
+                        return false
+                }
+            )
+
+    interface IAsyncDisposable with
+        member _.DisposeAsync() =
+            if disposed then
+                ValueTask()
+            else
+                disposed <- true
+
+                ValueTask(
+                    task {
+                        try
+                            // Disposing the handler's own enumerator is what runs its finally
+                            // blocks. Orleans cancels the enumeration's token first (in
+                            // AsyncEnumerableGrainExtension.DisposeEnumeratorAsync), so a handler
+                            // that awaits on the token is already unblocked by the time this runs.
+                            match source with
+                            | null -> ()
+                            | enumerator -> do! enumerator.DisposeAsync()
+                        finally
+                            match scope with
+                            | None -> ()
+                            | Some callScope -> callScope.Expire()
+
+                            match Activity.Current with
+                            | null -> ()
+                            | activity ->
+                                activity
+                                    .SetTag("grainType", env.Definition.GrainTypeName)
+                                    .SetTag("operationId", operationId)
+                                    .SetTag("version", requestVersion)
+                                    .SetTag("grainId", string env.GrainContext.GrainId)
+                                    .SetTag("outcome", outcome)
+                                |> ignore
+
+                            if env.Logger.IsEnabled LogLevel.Debug then
+                                env.Logger.LogDebug(
+                                    "Functional stream grainType={GrainType} operationId={OperationId} version={Version} grainId={GrainId} outcome={Outcome}",
+                                    env.Definition.GrainTypeName,
+                                    operationId,
+                                    requestVersion,
+                                    env.GrainContext.GrainId,
+                                    outcome
+                                )
+                    }
+                )
 
 /// <summary>
 /// The functional half of the Orleans activation lifecycle. It runs between the stock

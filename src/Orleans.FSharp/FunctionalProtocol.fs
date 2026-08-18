@@ -46,6 +46,40 @@ module internal ProtocolToken =
     [<Literal>]
     let NotifyDirection = "notify"
 
+    /// <summary>
+    /// The lowercase direction literal of a server-streaming request. Spec 004 item 6.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why streaming gets its own direction rather than reusing <c>request</c>.</b> The token is
+    /// what detects descriptor misrouting, and "the same operation ID at the same version changed
+    /// from unary to streaming" is exactly a misrouting the reused direction could not detect. Under
+    /// <c>acceptsVersions (BackwardCompatible n)</c> a host admits an older caller's version and
+    /// then compares against the token it computes for <b>that</b> version — so a v1 caller who
+    /// believes <c>watch</c> returns <c>Task&lt;_&gt;</c> would present exactly the token a v1
+    /// unary <c>watch</c> has, and a host that now streams <c>watch</c> would accept it. With a
+    /// separate direction the two preimages differ in their final NUL-separated field and the call
+    /// is rejected by name.
+    /// </para>
+    /// <para>
+    /// <b>Wire compatibility.</b> Purely additive: the preimage of every existing
+    /// <c>request</c>/<c>reply</c>/<c>notify</c> token is byte-for-byte what spec 003 and Phases
+    /// A-E computed, so no already-deployed pair changes its digests. A peer that predates
+    /// streaming never computes these two digests at all, and the outcome it gets for a streaming
+    /// operation — a token mismatch — is the correct one.
+    /// </para>
+    /// </remarks>
+    [<Literal>]
+    let StreamRequestDirection = "stream-request"
+
+    /// <summary>
+    /// The lowercase direction literal of one item of a server-streaming reply. Every item carries
+    /// it, so a stream whose descriptor was misrouted is rejected on the first item rather than
+    /// deserialized as the wrong type.
+    /// </summary>
+    [<Literal>]
+    let StreamItemDirection = "stream-item"
+
     /// <summary>Compute the token for one grain type, version, operation, and direction.</summary>
     let compute (grainType: string) (version: int) (operationId: string) (direction: string) : byte[] =
         let text =
@@ -70,6 +104,14 @@ module internal ProtocolToken =
     /// <summary>The notify-direction token of one observer type, version, and push operation.</summary>
     let notify observerType version operationId =
         compute observerType version operationId NotifyDirection
+
+    /// <summary>The stream-request-direction token of one server-streaming operation.</summary>
+    let streamRequest grainType version operationId =
+        compute grainType version operationId StreamRequestDirection
+
+    /// <summary>The stream-item-direction token of one server-streaming operation.</summary>
+    let streamItem grainType version operationId =
+        compute grainType version operationId StreamItemDirection
 
     /// <summary>Render a token as lowercase hexadecimal for diagnostics.</summary>
     let toHex (token: byte[]) =
@@ -199,7 +241,7 @@ module internal FunctionalIds =
     let grainInterfaceType (grainType: string) =
         GrainInterfaceType.Create(interfaceId grainType)
 
-/// <summary>The six boundaries at which the payload limit is enforced.</summary>
+/// <summary>The eight boundaries at which the payload limit is enforced.</summary>
 type internal PayloadBoundary =
     /// The caller serialized an argument and is about to send it.
     | CallerRequestSend
@@ -213,6 +255,10 @@ type internal PayloadBoundary =
     | CallerNotifySend
     /// The observer received a notification and is about to dispatch it.
     | ObserverReceive
+    /// The silo serialized one item of a server-streaming reply and is about to yield it.
+    | SiloStreamItemSend
+    /// The caller received one item of a server-streaming reply and is about to deserialize it.
+    | CallerStreamItemReceive
 
     /// <summary>The wire direction this boundary belongs to.</summary>
     member this.Direction =
@@ -223,6 +269,8 @@ type internal PayloadBoundary =
         | CallerReplyReceive -> ProtocolToken.ReplyDirection
         | CallerNotifySend
         | ObserverReceive -> ProtocolToken.NotifyDirection
+        | SiloStreamItemSend
+        | CallerStreamItemReceive -> ProtocolToken.StreamItemDirection
 
     /// <summary>The stable diagnostic name of this boundary.</summary>
     member this.Name =
@@ -233,6 +281,8 @@ type internal PayloadBoundary =
         | CallerReplyReceive -> "caller reply receive"
         | CallerNotifySend -> "caller notify send"
         | ObserverReceive -> "observer receive"
+        | SiloStreamItemSend -> "silo stream item send"
+        | CallerStreamItemReceive -> "caller stream item receive"
 
     /// <summary>
     /// The diagnostic label of the entity the boundary is scoped to: a grain type for the four
@@ -246,6 +296,8 @@ type internal PayloadBoundary =
         | CallerReplyReceive -> "grain type"
         | CallerNotifySend
         | ObserverReceive -> "observer type"
+        | SiloStreamItemSend
+        | CallerStreamItemReceive -> "grain type"
 
 /// <summary>
 /// Payload-limit enforcement. Every endpoint enforces its own local configuration; Orleans'

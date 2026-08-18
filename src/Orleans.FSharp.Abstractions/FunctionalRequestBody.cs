@@ -142,8 +142,91 @@ internal sealed class FunctionalRequestBody
         return target.DispatchAsync(_envelope, _currentToken);
     }
 
+    /// <summary>
+    /// Open the resolved dispatch target's server-streaming operation. Spec 004 item 6.
+    /// </summary>
+    /// <remarks>
+    /// The target reference is captured now, while the request is still alive, and the returned
+    /// enumerable holds it directly. Orleans keeps the enumerator long after the
+    /// <c>StartEnumeration</c> message that produced it has completed and been disposed, so the
+    /// enumeration must not read anything back out of this body.
+    /// </remarks>
+    internal IAsyncEnumerable<FunctionalReply> DispatchStream()
+    {
+        var target = _target ?? throw FunctionalTransportDiagnostics.Fail(
+            "the streaming request was invoked before a dispatch target was set.");
+
+        return new TargetStream(target, _envelope);
+    }
+
+    /// <summary>
+    /// The captured <c>(target, envelope)</c> pair as an <see cref="IAsyncEnumerable{T}"/>, so that
+    /// the enumeration's own cancellation token — the one Orleans cancels on caller disposal —
+    /// reaches the activation.
+    /// </summary>
+    private sealed class TargetStream : IAsyncEnumerable<FunctionalReply>
+    {
+        private readonly IFunctionalDispatchTarget _target;
+        private readonly FunctionalRequestEnvelope _envelope;
+
+        public TargetStream(IFunctionalDispatchTarget target, FunctionalRequestEnvelope envelope)
+        {
+            _target = target;
+            _envelope = envelope;
+        }
+
+        public IAsyncEnumerator<FunctionalReply> GetAsyncEnumerator(CancellationToken cancellationToken) =>
+            _target.DispatchStream(_envelope, cancellationToken);
+    }
+
     /// <summary>The resolved dispatch target, or <c>null</c> before <see cref="SetTarget"/>.</summary>
     internal object? Target => _target;
+
+    /// <summary>
+    /// Resolve the dispatch target and the target-side call-filter metadata for a <b>streaming</b>
+    /// request, deliberately creating no target-local cancellation state.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A unary request owns a <see cref="CancellationTokenSource"/> whose lifetime is the call: the
+    /// request lifecycle disposes it when the reply is sent. A streaming request has no such
+    /// lifetime — the enumeration outlives the <c>StartEnumeration</c> message by design — so a
+    /// source created here would either leak for the life of the enumeration or be disposed
+    /// underneath a producer that had registered on its token.
+    /// </para>
+    /// <para>
+    /// Nothing is lost. <c>AsyncEnumerableGrainExtension.StartEnumeration</c> builds its own
+    /// <c>CancellationTokenSource.CreateLinkedTokenSource(request.GetCancellationToken())</c> and
+    /// hands <i>that</i> token to <c>GetAsyncEnumerator</c>; a linked source over
+    /// <see cref="CancellationToken.None"/> is still cancellable, and cancelling it is exactly what
+    /// <c>DisposeEnumeratorAsync</c> does when the caller disposes the enumerator.
+    /// </para>
+    /// </remarks>
+    internal void SetStreamTarget(ITargetHolder holder)
+    {
+        ArgumentNullException.ThrowIfNull(holder);
+
+        var resolved = holder.GetTarget();
+
+        if (resolved is not IFunctionalDispatchTarget target)
+        {
+            throw FunctionalTransportDiagnostics.Fail(
+                $"the activation target '{resolved?.GetType().FullName ?? "<null>"}' does not implement the functional dispatch seam.");
+        }
+
+        _target = target;
+
+        foreach (var candidate in target.GetType().GetInterfaces())
+        {
+            if (candidate.IsGenericType
+                && candidate.GetGenericTypeDefinition() == typeof(IFunctionalGrainTarget<>))
+            {
+                _interfaceType = candidate;
+                _method = candidate.GetMethod(DispatchMethodName);
+                break;
+            }
+        }
+    }
 
     /// <summary>Resolve the dispatch target and create the target-local cancellation state.</summary>
     internal void SetTarget(ITargetHolder holder)

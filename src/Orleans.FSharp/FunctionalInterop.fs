@@ -46,6 +46,17 @@ type internal FacadeInvokerFactory =
 
             Func<obj[], obj>(fun args -> box (call (unbox<'Argument> (pack.Invoke args)))))
 
+    /// <summary>
+    /// The same, for a <b>streaming</b> operation. Spec 004 item 6: the facade member returns the
+    /// BCL <c>IAsyncEnumerable&lt;TItem&gt;</c>, so a C# consumer writes <c>await foreach</c> over
+    /// it with no wrapper and no reference to this library's own types.
+    /// </summary>
+    static member CreateStream<'Argument, 'Item>(pack: Func<obj[], obj>) : Func<obj, Func<obj[], obj>> =
+        Func<obj, Func<obj[], obj>>(fun field ->
+            let call = unbox<'Argument -> IAsyncEnumerable<'Item>> field
+
+            Func<obj[], obj>(fun args -> box (call (unbox<'Argument> (pack.Invoke args)))))
+
 /// <summary>
 /// The typed contract binder. Its generic method is closed once per contract CLR type, so
 /// repeated <c>For</c> calls against the same contract close no generic at all.
@@ -124,6 +135,15 @@ module internal FacadeClosure =
         | null -> fail InteropStage "the typed facade invoker factory 'FacadeInvokerFactory.Create' was not found."
         | method -> method
 
+    let private streamInvokerMethod =
+        match
+            typeof<FacadeInvokerFactory>
+                .GetMethod("CreateStream", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+        with
+        | null ->
+            fail InteropStage "the typed facade invoker factory 'FacadeInvokerFactory.CreateStream' was not found."
+        | method -> method
+
     let private binderMethod =
         match
             typeof<FacadeBinder>
@@ -143,6 +163,21 @@ module internal FacadeClosure =
         FunctionalInstrumentation.countGenericClosing ()
 
         let closed = invokerMethod.MakeGenericMethod [| argumentType; replyType |]
+
+        let factory =
+            closed.CreateDelegate typeof<Func<Func<obj[], obj>, Func<obj, Func<obj[], obj>>>>
+            :?> Func<Func<obj[], obj>, Func<obj, Func<obj[], obj>>>
+
+        factory.Invoke pack
+
+    /// <summary>
+    /// Close the streaming invoker factory over one operation's exact argument and item types.
+    /// Spec 004 item 6.
+    /// </summary>
+    let streamInvoker (argumentType: Type) (itemType: Type) (pack: Func<obj[], obj>) : Func<obj, Func<obj[], obj>> =
+        FunctionalInstrumentation.countGenericClosing ()
+
+        let closed = streamInvokerMethod.MakeGenericMethod [| argumentType; itemType |]
 
         let factory =
             closed.CreateDelegate typeof<Func<Func<obj[], obj>, Func<obj, Func<obj[], obj>>>>
@@ -349,6 +384,21 @@ module internal FacadePlanning =
     let private validateReturn (facadeType: Type) (contract: FunctionalContract) (method: MethodInfo) (operation: FunctionalOperation) =
         let replyType = operation.ReplyType
 
+        // Spec 004 item 6: a streaming operation's member returns the BCL
+        // IAsyncEnumerable<TItem> and nothing else -- no Task form exists for it, and the whole
+        // point of the item type being BCL is that 'await foreach' works with no wrapper.
+        if operation.IsStreaming then
+            let isEnumerableOfItem =
+                method.ReturnType.IsGenericType
+                && method.ReturnType.GetGenericTypeDefinition() = typedefof<IAsyncEnumerable<_>>
+                && method.ReturnType.GetGenericArguments().[0] = replyType
+
+            if not isEnumerableOfItem then
+                fail
+                    InteropStage
+                    $"member '{method.Name}' of facade interface '{describe facadeType}' returns '{describe method.ReturnType}', but operation '{operation.OperationId}' of grain type '{contract.GrainTypeName}' is a streaming operation and requires 'IAsyncEnumerable<{describe replyType}>'."
+        else
+
         let isTaskOfReply =
             method.ReturnType.IsGenericType
             && method.ReturnType.GetGenericTypeDefinition() = typedefof<Task<_>>
@@ -408,7 +458,11 @@ module internal FacadePlanning =
                         { Method = method
                           Operation = operation
                           Pack = pack
-                          InvokerFactory = FacadeClosure.invoker operation.ArgumentType operation.ReplyType pack }
+                          InvokerFactory =
+                            if operation.IsStreaming then
+                                FacadeClosure.streamInvoker operation.ArgumentType operation.ReplyType pack
+                            else
+                                FacadeClosure.invoker operation.ArgumentType operation.ReplyType pack }
 
         { FacadeType = facadeType
           Members = members.ToArray() }

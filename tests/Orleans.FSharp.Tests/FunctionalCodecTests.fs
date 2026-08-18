@@ -9,6 +9,7 @@ module Orleans.FSharp.Tests.FunctionalCodecTests
 
 open System
 open System.Buffers
+open System.Collections.Generic
 open System.Reflection
 open System.Threading
 open System.Threading.Tasks
@@ -432,6 +433,22 @@ type private FakeTarget() =
     interface IFunctionalDispatchTarget with
         member _.DispatchAsync(_envelope, _cancellationToken) =
             ValueTask<FunctionalReply>(FunctionalReply(replyToken, payload))
+
+        member _.DispatchStream(_envelope, _cancellationToken) =
+            let mutable pending = true
+
+            { new IAsyncEnumerator<FunctionalReply> with
+                member _.Current = FunctionalReply(replyToken, payload)
+
+                member _.MoveNextAsync() =
+                    if pending then
+                        pending <- false
+                        ValueTask<bool> true
+                    else
+                        ValueTask<bool> false
+
+              interface IAsyncDisposable with
+                  member _.DisposeAsync() = ValueTask() }
 
     interface IFunctionalGrainTarget<CodecActor> with
         member _.DispatchAsync(_envelope, _cancellationToken) =

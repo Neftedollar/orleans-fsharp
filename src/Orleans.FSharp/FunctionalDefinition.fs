@@ -599,6 +599,38 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
             { draft with
                 Handlers = draft.Handlers.Add(operation.Index, box handler) }
 
+    /// <summary>
+    /// Bind one <b>streaming</b> handler to the operation identified by the selector. Spec 004
+    /// item 6.
+    /// </summary>
+    /// <remarks>
+    /// The handler returns <c>IAsyncEnumerable&lt;'Item&gt;</c> and no replacement state; see
+    /// <see cref="T:Orleans.FSharp.StreamHandler`5"/> for why a stream cannot publish one.
+    /// </remarks>
+    [<CustomOperation("handleStream")>]
+    member _.HandleStream<'State, 'Argument, 'Item>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: StreamSelector<'Api, 'Argument, 'Item>,
+            handler: StreamHandler<'Actor, 'Key, 'State, 'Argument, 'Item>
+        ) =
+        let draft = state.State
+        let operation = draft.Contract.ResolveStream("handleStream", selector)
+
+        if draft.Handlers.ContainsKey operation.Index then
+            fail
+                DefinitionStage
+                $"API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' already has a handler."
+
+        if obj.ReferenceEquals(handler, null) then
+            fail
+                DefinitionStage
+                $"'handleStream' for API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' requires a handler."
+
+        DefinitionDraft.withState
+            { draft with
+                Handlers = draft.Handlers.Add(operation.Index, box handler) }
+
     /// <summary>Select the loaded primary persistent holder for the definition's state.</summary>
     [<CustomOperation("stateFrom")>]
     member _.StateFrom<'State>

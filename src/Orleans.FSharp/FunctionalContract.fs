@@ -41,6 +41,13 @@ type internal FunctionalOperation =
         FieldName: string
         /// The stable wire operation ID.
         OperationId: string
+        /// <summary>
+        /// True when the API field returns <c>IAsyncEnumerable&lt;'Item&gt;</c> rather than
+        /// <c>Task&lt;'Reply&gt;</c>. Spec 004 item 6. A streaming operation rides Orleans' own
+        /// <c>IAsyncEnumerableGrainExtension</c> instead of the unary request path, so its protocol
+        /// tokens carry the two streaming directions and its admission byte is always zero.
+        /// </summary>
+        IsStreaming: bool
         /// The field's exact CLR function type.
         FunctionType: Type
         /// The operation's exact argument type.
@@ -237,6 +244,11 @@ type GrainContract<'Actor, 'Key, 'Api>
         let field = ApiShape.resolve shape entry selector
         operations.[field.Index]
 
+    /// <summary>Resolve a streaming selector to its descriptor. Spec 004 item 6.</summary>
+    member internal _.ResolveStream(entry: string, selector: StreamSelector<'Api, 'Argument, 'Item>) =
+        let field = ApiShape.resolveStream shape entry selector
+        operations.[field.Index]
+
     override _.ToString() =
         $"GrainContract(grainType = '{grainTypeName}', version = {version}, api = '{shape.ApiType.FullName}', operations = {operations.Length})"
 
@@ -415,6 +427,33 @@ module internal ContractDraft =
                 let isAlwaysInterleave = state.AlwaysInterleave.Contains field.Index
                 let transaction = state.Transactions |> Map.tryFind field.Index
 
+                // Spec 004 item 6. A streaming operation composes with none of the four admission
+                // policies, and every rejection below is a statement about a mechanism rather than
+                // a matter of taste. The F# types already make all four unreachable from the
+                // computation expression -- readOnly/oneWay/alwaysInterleave/transactional take an
+                // OperationSelector, whose range is Task<'Reply>, so none of them accepts a
+                // streaming field -- so these are defence in depth for a draft built directly.
+                if field.IsStreaming then
+                    if isOneWay then
+                        fail
+                            ContractStage
+                            $"API field '{field.FieldName}' of '{grainTypeName}' combines 'oneWay' with a streaming reply. The stream IS the reply, so there is nothing left to deliver one-way."
+
+                    if isReadOnly then
+                        fail
+                            ContractStage
+                            $"API field '{field.FieldName}' of '{grainTypeName}' declares 'readOnly' on a streaming operation, where it can have no effect. The message that crosses the network is Orleans' own IAsyncEnumerableGrainExtension call, whose scheduling is fixed by the [AlwaysInterleave] on that interface, and a streaming handler is already state-neutral: it publishes no replacement state and its persistent facades reject every mutation."
+
+                    if isAlwaysInterleave then
+                        fail
+                            ContractStage
+                            $"API field '{field.FieldName}' of '{grainTypeName}' declares 'alwaysInterleave' on a streaming operation, where it can have no effect. Every message of a streaming enumeration -- StartEnumeration, MoveNext and DisposeAsync -- already carries Orleans' own [AlwaysInterleave], so the enumeration never becomes this activation's blocking request."
+
+                    if transaction.IsSome then
+                        fail
+                            ContractStage
+                            $"API field '{field.FieldName}' of '{grainTypeName}' combines 'transactional' with a streaming reply. A transaction is scoped to one call: Orleans reports the participant set back inside the TransactionResponse of that call, and a stream is many calls (one StartEnumeration and one MoveNext per batch) whose producer outlives all of them, so there is no call whose response could carry the participants and no boundary at which the transaction could commit."
+
                 if isOneWay && field.ReplyType <> typeof<unit> then
                     fail
                         ContractStage
@@ -514,6 +553,7 @@ module internal ContractDraft =
                 { Index = field.Index
                   FieldName = field.FieldName
                   OperationId = operationId
+                  IsStreaming = field.IsStreaming
                   FunctionType = field.FunctionType
                   ArgumentType = field.ArgumentType
                   ReplyType = field.ReplyType
@@ -522,10 +562,22 @@ module internal ContractDraft =
                   IsAlwaysInterleave = isAlwaysInterleave
                   Transaction = transaction
                   SinceVersion = sinceVersion
-                  RequestToken = ProtocolToken.request grainTypeName version operationId
-                  ReplyToken = ProtocolToken.reply grainTypeName version operationId
+                  RequestToken =
+                    if field.IsStreaming then
+                        ProtocolToken.streamRequest grainTypeName version operationId
+                    else
+                        ProtocolToken.request grainTypeName version operationId
+                  ReplyToken =
+                    if field.IsStreaming then
+                        ProtocolToken.streamItem grainTypeName version operationId
+                    else
+                        ProtocolToken.reply grainTypeName version operationId
                   AdmissionFlags = AdmissionFlags.compose isReadOnly isOneWay isAlwaysInterleave transaction
-                  ClosureFactory = BoundClosure.precompute field.ArgumentType field.ReplyType })
+                  ClosureFactory =
+                    if field.IsStreaming then
+                        BoundClosure.precomputeStream field.ArgumentType field.ReplyType
+                    else
+                        BoundClosure.precompute field.ArgumentType field.ReplyType })
 
         let seen = Dictionary<string, string>(StringComparer.Ordinal)
 
@@ -629,6 +681,27 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
             selector: OperationSelector<'Api, 'Argument, 'Reply>
         ) =
         let operation = ApiShape.resolve state.State.Shape "sinceVersion" selector
+
+        if state.State.SinceVersions.ContainsKey operation.Index then
+            fail ContractStage $"'sinceVersion' is applied more than once to API field '{operation.FieldName}'."
+
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                SinceVersions = state.State.SinceVersions.Add(operation.Index, introducedAt) }
+
+    /// <summary>
+    /// Declare the contract version one <b>streaming</b> operation was introduced at. Spec 004
+    /// item 6: same rule and same diagnostics as the unary overload; only the selector's range
+    /// differs.
+    /// </summary>
+    [<CustomOperation("sinceVersion")>]
+    member _.SinceVersion<'Argument, 'Item>
+        (
+            state: GrainContractDraft<'Actor, 'Key, 'Api>,
+            introducedAt: int,
+            selector: StreamSelector<'Api, 'Argument, 'Item>
+        ) =
+        let operation = ApiShape.resolveStream state.State.Shape "sinceVersion" selector
 
         if state.State.SinceVersions.ContainsKey operation.Index then
             fail ContractStage $"'sinceVersion' is applied more than once to API field '{operation.FieldName}'."
@@ -879,6 +952,33 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         ensureWireText ContractStage "'operationId'" stableWireId
 
         let operation = ApiShape.resolve state.State.Shape "operationId" selector
+
+        if state.State.OperationIds.ContainsKey operation.Index then
+            fail
+                ContractStage
+                $"'operationId' is applied more than once to API field '{operation.FieldName}'."
+
+        ContractDraft.withState<'Actor, 'Key, 'Api>
+            { state.State with
+                OperationIds = state.State.OperationIds.Add(operation.Index, stableWireId) }
+
+    /// <summary>
+    /// Override the stable wire ID of one <b>streaming</b> operation. Spec 004 item 6: same rule
+    /// and same diagnostics as the unary overload; only the selector's range differs.
+    /// </summary>
+    [<CustomOperation("operationId")>]
+    member _.OperationId<'Argument, 'Item>
+        (
+            state: GrainContractDraft<'Actor, 'Key, 'Api>,
+            stableWireId: string,
+            selector: StreamSelector<'Api, 'Argument, 'Item>
+        ) =
+        if isBlank stableWireId then
+            fail ContractStage "'operationId' requires a non-blank wire ID."
+
+        ensureWireText ContractStage "'operationId'" stableWireId
+
+        let operation = ApiShape.resolveStream state.State.Shape "operationId" selector
 
         if state.State.OperationIds.ContainsKey operation.Index then
             fail

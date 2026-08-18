@@ -3,6 +3,7 @@ namespace Orleans.FSharp
 open System
 open System.Buffers
 open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Reflection
 open System.Runtime.CompilerServices
 open System.Threading
@@ -90,6 +91,20 @@ type internal IFunctionalRequestSender =
 
     /// <summary>Send a one-way request; completion means the local send path accepted it.</summary>
     abstract SendOneWay: envelope: FunctionalRequestEnvelope -> unit
+
+    /// <summary>
+    /// Open a server-streaming operation and return the sequence of fixed item replies. Spec 004
+    /// item 6.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is sent yet: the returned value is Orleans' own <c>AsyncEnumerableRequest</c>, and
+    /// the first message leaves only when a consumer calls <c>GetAsyncEnumerator</c> and pulls.
+    /// Enumerating it twice runs two independent remote enumerations, which is Orleans' semantics
+    /// and is preserved unchanged.
+    /// </remarks>
+    abstract OpenStream:
+        envelope: FunctionalRequestEnvelope * cancellationToken: CancellationToken ->
+            IAsyncEnumerable<FunctionalReply>
 
 /// <summary>
 /// The single seam between reference binding and the Orleans transport. Phase 3 replaces the
@@ -336,6 +351,114 @@ type internal BoundCall =
     }
 
 /// <summary>
+/// The caller-side view of one opened functional stream, used by
+/// <see cref="M:Orleans.FSharp.FunctionalStream.withBatchSize"/> to reach the batch-size knob of
+/// Orleans' underlying request through our typed wrapper.
+/// </summary>
+type internal IFunctionalCallerStream =
+
+    /// <summary>Ask Orleans to drain at most this many elements into one reply message.</summary>
+    abstract SetMaxBatchSize: maxBatchSize: int -> unit
+
+/// <summary>
+/// The caller-side enumerator of one server-streaming operation: it pulls fixed item replies from
+/// Orleans' own enumerator proxy and turns each one into the operation's exact item type, applying
+/// the same reply validation a unary call applies -- token length, token identity, non-null
+/// payload, local payload limit -- before any user payload is deserialized.
+/// </summary>
+[<Sealed>]
+type internal FunctionalStreamCallEnumerator<'Item>
+    (
+        source: IAsyncEnumerator<FunctionalReply>,
+        codec: FunctionalPayloadCodec,
+        grainType: string,
+        operationId: string,
+        itemToken: byte[],
+        maxPayloadBytes: int
+    ) =
+
+    let mutable current = Unchecked.defaultof<'Item>
+
+    member private _.Validate(reply: FunctionalReply) =
+        if obj.ReferenceEquals(reply, null) then
+            fail
+                TransportStage
+                $"streaming operation '{operationId}' on grain type '{grainType}' yielded an item with no reply."
+
+        if isNull reply.ProtocolToken || reply.ProtocolToken.Length <> ProtocolToken.Length then
+            fail
+                TransportStage
+                $"an item of streaming operation '{operationId}' on grain type '{grainType}' carries a protocol token of {(if isNull reply.ProtocolToken then 0 else reply.ProtocolToken.Length)} bytes; exactly {ProtocolToken.Length} bytes are required."
+
+        if not (ProtocolToken.equal reply.ProtocolToken itemToken) then
+            fail
+                TransportStage
+                $"an item of streaming operation '{operationId}' on grain type '{grainType}' carries protocol token {ProtocolToken.toHex reply.ProtocolToken}, but {ProtocolToken.toHex itemToken} was expected."
+
+        if isNull reply.Payload then
+            fail
+                TransportStage
+                $"an item of streaming operation '{operationId}' on grain type '{grainType}' carries no payload."
+
+        PayloadLimit.ensure CallerStreamItemReceive grainType operationId reply.Payload.Length maxPayloadBytes
+
+    interface IAsyncEnumerator<'Item> with
+        member _.Current = current
+
+        member this.MoveNextAsync() =
+            ValueTask<bool>(
+                task {
+                    match! source.MoveNextAsync() with
+                    | false -> return false
+                    | true ->
+                        let reply = source.Current
+                        this.Validate reply
+                        current <- codec.Deserialize<'Item> reply.Payload
+                        return true
+                }
+            )
+
+    interface IAsyncDisposable with
+        member _.DisposeAsync() = source.DisposeAsync()
+
+/// <summary>
+/// The caller-side <c>IAsyncEnumerable</c> one bound streaming operation returns. It is the value
+/// an F# caller pipes into <c>TaskSeq</c> and a C# caller writes <c>await foreach</c> over.
+/// </summary>
+[<Sealed>]
+type internal FunctionalStreamCall<'Item>
+    (
+        source: IAsyncEnumerable<FunctionalReply>,
+        codec: FunctionalPayloadCodec,
+        grainType: string,
+        operationId: string,
+        itemToken: byte[],
+        maxPayloadBytes: int
+    ) =
+
+    interface IAsyncEnumerable<'Item> with
+        member _.GetAsyncEnumerator(cancellationToken: CancellationToken) =
+            new FunctionalStreamCallEnumerator<'Item>(
+                source.GetAsyncEnumerator cancellationToken,
+                codec,
+                grainType,
+                operationId,
+                itemToken,
+                maxPayloadBytes
+            )
+            :> IAsyncEnumerator<'Item>
+
+    interface IFunctionalCallerStream with
+        member _.SetMaxBatchSize(maxBatchSize: int) =
+            match box source with
+            | :? Orleans.Runtime.AsyncEnumerableRequest<FunctionalReply> as request ->
+                request.MaxBatchSize <- maxBatchSize
+            | _ ->
+                // The in-memory unit-test transport yields items one at a time and has no batching
+                // to configure; the knob is Orleans' and only exists on the Orleans path.
+                ()
+
+/// <summary>
 /// Everything one bound operation needs at call time: the sender, the payload codec, the
 /// immutable envelope metadata, the precomputed protocol tokens, and the local payload limit.
 /// One instance is created per bound operation while binding a reference.
@@ -426,6 +549,44 @@ type internal FunctionalCallSite
                     return codec.Deserialize<'Reply> reply.Payload
             }
 
+    /// <summary>
+    /// Serialize the exact argument, construct the fixed streaming request, and return the lazy
+    /// sequence of exact items. Spec 004 item 6.
+    /// </summary>
+    /// <remarks>
+    /// Argument serialization and the caller-side payload check happen <b>now</b>, when the API
+    /// field is applied, not on first pull: an argument that cannot be sent is a fault of the call,
+    /// and deferring it to the first <c>MoveNextAsync</c> would report it from a place the caller
+    /// did not write. Nothing is sent yet — the first message leaves on the first pull.
+    /// </remarks>
+    member _.InvokeStream<'Argument, 'Item>
+        (argument: 'Argument, cancellationToken: CancellationToken)
+        : IAsyncEnumerable<'Item> =
+        let payload = codec.Serialize<'Argument> argument
+        PayloadLimit.ensure CallerRequestSend grainType operationId payload.Length maxPayloadBytes
+
+        let envelope =
+            FunctionalRequestEnvelope(
+                grainType,
+                contractVersion,
+                operationId,
+                requestToken,
+                admissionFlags,
+                payload
+            )
+
+        // The reply token of a streaming descriptor is its stream-item token, so the same field
+        // carries the per-item expectation the unary path carries the per-reply one.
+        FunctionalStreamCall<'Item>(
+            sender.OpenStream(envelope, cancellationToken),
+            codec,
+            grainType,
+            operationId,
+            replyToken,
+            maxPayloadBytes
+        )
+        :> IAsyncEnumerable<'Item>
+
 /// <summary>
 /// The typed client-closure factory. Its generic method is closed once per operation
 /// descriptor while the contract is sealed, so binding and calling never close a generic.
@@ -440,6 +601,21 @@ type internal BoundCallFactory =
             box (fun (argument: 'Argument) (cancellationToken: CancellationToken) ->
                 site.Invoke<'Argument, 'Reply>(argument, cancellationToken)) }
 
+    /// <summary>Create both closures of one bound <b>streaming</b> operation over its call site.</summary>
+    /// <remarks>
+    /// The caller's token is carried by the request rather than applied to the enumerator, because
+    /// that is where Orleans reads it: <c>AsyncEnumeratorProxy</c> links
+    /// <c>request.GetCancellationToken()</c> with whatever token <c>GetAsyncEnumerator</c> is given
+    /// and owns the linked source's disposal, so both tokens end up cancelling the enumeration and
+    /// neither of them is ours to manage.
+    /// </remarks>
+    static member CreateStream<'Argument, 'Item>(site: FunctionalCallSite) : BoundCall =
+        { Field =
+            box (fun (argument: 'Argument) -> site.InvokeStream<'Argument, 'Item>(argument, CancellationToken.None))
+          Cancellable =
+            box (fun (argument: 'Argument) (cancellationToken: CancellationToken) ->
+                site.InvokeStream<'Argument, 'Item>(argument, cancellationToken)) }
+
 /// <summary>Preclosing of the typed client-closure factory.</summary>
 [<RequireQualifiedAccess>]
 module internal BoundClosure =
@@ -452,6 +628,14 @@ module internal BoundClosure =
         | null -> fail ContractStage "the typed client-closure factory 'BoundCallFactory.Create' was not found."
         | method -> method
 
+    let private createStreamMethod =
+        match
+            typeof<BoundCallFactory>
+                .GetMethod("CreateStream", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+        with
+        | null -> fail ContractStage "the typed client-closure factory 'BoundCallFactory.CreateStream' was not found."
+        | method -> method
+
     /// <summary>
     /// Close the client-closure factory over one operation's exact argument and reply types.
     /// Called once per descriptor while the contract is sealed.
@@ -460,6 +644,17 @@ module internal BoundClosure =
         FunctionalInstrumentation.countGenericClosing ()
 
         let closed = createMethod.MakeGenericMethod [| argumentType; replyType |]
+
+        closed.CreateDelegate typeof<Func<FunctionalCallSite, BoundCall>> :?> Func<FunctionalCallSite, BoundCall>
+
+    /// <summary>
+    /// Close the streaming client-closure factory over one operation's exact argument and item
+    /// types. Called once per streaming descriptor while the contract is sealed.
+    /// </summary>
+    let precomputeStream (argumentType: Type) (itemType: Type) : Func<FunctionalCallSite, BoundCall> =
+        FunctionalInstrumentation.countGenericClosing ()
+
+        let closed = createStreamMethod.MakeGenericMethod [| argumentType; itemType |]
 
         closed.CreateDelegate typeof<Func<FunctionalCallSite, BoundCall>> :?> Func<FunctionalCallSite, BoundCall>
 

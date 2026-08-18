@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
@@ -298,6 +299,33 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
 /// </summary>
 type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
     FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>
+
+/// <summary>
+/// A handler for one <b>server-streaming</b> API operation. Spec 004 item 6. It receives the
+/// invocation context, the current primary state, and the exact argument, and returns the sequence
+/// of exact items.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>The return type is the BCL interface.</b> No wrapper, no library type: the handler body is
+/// free to be a <c>taskSeq { … }</c> (the <c>FSharp.Control.TaskSeq</c> package this library
+/// already depends on, so nothing new is added to an application's closure), a C# async iterator,
+/// an <c>IAsyncEnumerable</c> obtained from somewhere else, or a hand-written enumerator. What the
+/// runtime needs is only that it can be enumerated once, with the enumeration's cancellation token.
+/// </para>
+/// <para>
+/// <b>There is no replacement state.</b> Unlike <see cref="T:Orleans.FSharp.Handler`5"/> the
+/// handler returns items only. A stream produces across many turns of the activation — Orleans
+/// pulls it with a separate, always-interleaving <c>MoveNext</c> call per batch — so a whole-state
+/// replacement published when the sequence ended would overwrite everything every other turn did
+/// while it ran. The state the handler receives is therefore the snapshot taken when the
+/// enumeration started, its persistent-state facades reject every mutation, and a journaled
+/// definition's streaming handler raises no events. Publish from an ordinary operation and read
+/// from the stream.
+/// </para>
+/// </remarks>
+type StreamHandler<'Actor, 'Key, 'State, 'Argument, 'Item> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> IAsyncEnumerable<'Item>
 
 /// <summary>
 /// A handler for one API operation of a journaled definition. It receives the invocation context,

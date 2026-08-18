@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
@@ -38,6 +39,11 @@ type internal FunctionalGrainTarget<'Actor>
     interface IFunctionalDispatchTarget with
         member _.DispatchAsync(envelope, cancellationToken) =
             FunctionalDispatch.dispatch env envelope cancellationToken
+
+        // Spec 004 item 6. The enumerator is lazy: nothing is validated, no context is built and
+        // no handler runs until Orleans pulls the first item. See FunctionalStreamEnumerator.
+        member _.DispatchStream(envelope, cancellationToken) =
+            new FunctionalStreamEnumerator(env, envelope, cancellationToken) :> IAsyncEnumerator<FunctionalReply>
 
     interface IFunctionalGrainTarget<'Actor> with
         member _.DispatchAsync(envelope, cancellationToken) =

@@ -103,6 +103,29 @@ internal sealed class FunctionalGrainReference : GrainReference
         return InvokeAsync<FunctionalReply>(request).AsTask();
     }
 
+    /// <summary>
+    /// Open a server-streaming operation. Spec 004 item 6. The returned value is Orleans' own
+    /// <c>AsyncEnumerableRequest</c> bound to this reference: nothing is sent until a consumer
+    /// enumerates it, and each enumeration is an independent remote enumeration with its own
+    /// request id, exactly as it is for a codegen grain method returning
+    /// <c>IAsyncEnumerable&lt;T&gt;</c>.
+    /// </summary>
+    internal IAsyncEnumerable<FunctionalReply> OpenStream(
+        FunctionalRequestEnvelope envelope,
+        Type closedInterfaceType,
+        MethodInfo dispatchMethod,
+        CancellationToken cancellationToken)
+    {
+        var request = new FunctionalStreamRequest(envelope, cancellationToken);
+        request.SetCallerMetadata(closedInterfaceType, dispatchMethod);
+        request.ValidateAdmissionFlags();
+
+        // The attribute Orleans puts on AsyncEnumerableRequest<T> for its own code generator,
+        // [ReturnValueProxy(nameof(InitializeRequest))], means exactly this call: bind the request
+        // to the reference it will enumerate against, and hand the request back as the enumerable.
+        return request.InitializeRequest(this);
+    }
+
     private static FunctionalRequest CreateRequest(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,

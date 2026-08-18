@@ -394,6 +394,30 @@ internal interface IFunctionalDispatchTarget
     ValueTask<FunctionalReply> DispatchAsync(
         FunctionalRequestEnvelope envelope,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Open one server-streaming operation on the activation. Spec 004 item 6.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An enumerator rather than an enumerable, because Orleans hands the enumeration's own
+    /// cancellation token to <c>GetAsyncEnumerator</c> and there is exactly one enumeration per
+    /// call of this method: <c>AsyncEnumerableGrainExtension.StartEnumeration</c> calls
+    /// <c>request.InvokeImplementation().GetAsyncEnumerator(linkedToken)</c> once, and that
+    /// <paramref name="cancellationToken"/> is the one it cancels when the caller disposes.
+    /// </para>
+    /// <para>
+    /// The returned enumerator must be <b>lazy</b>: every protocol check belongs in its first
+    /// <c>MoveNextAsync</c>, not in this method. <c>StartEnumeration</c> calls
+    /// <c>InvokeImplementation</c> and <c>GetAsyncEnumerator</c> outside its <c>try</c> but calls
+    /// <c>MoveNextAsync</c> inside it, so a rejection raised from the first pull is turned into a
+    /// clean <c>EnumerationResult.Error</c> with the enumerator removed from the extension's table,
+    /// while one raised earlier would leave a half-built entry behind.
+    /// </para>
+    /// </remarks>
+    IAsyncEnumerator<FunctionalReply> DispatchStream(
+        FunctionalRequestEnvelope envelope,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
