@@ -582,9 +582,9 @@ covered. Repeated registrations of the same type are de-duplicated.
 ## Per-grain Orleans attributes (C# CodeGen path)
 
 > This whole section is about the deprecated `grain { }` model. On the
-> [functional grain runtime](/orleans-fsharp/functional-grains/) each of these concepts is a
-> first-class `grainContract` / `grainFor` operation — `readOnly`, `oneWay`, `alwaysInterleave`,
-> `reentrant`, `mayInterleave`, `acceptsVersions` / `sinceVersion`, `grainType`, `collectionAge`,
+> [functional grain runtime](/orleans-fsharp/functional-grains/) each of these concepts is a first-class
+> `grainContract` / `grainFor` operation — `readOnly`, `oneWay`, `alwaysInterleave`, `reentrant`,
+> `mayInterleave`, `acceptsVersions` / `sinceVersion`, `grainType`, `collectionAge`,
 > `statelessWorker`, `placement`, and `onStream` / `onBroadcast` for implicit stream and
 > broadcast-channel subscriptions — with no C# and no code generation.
 

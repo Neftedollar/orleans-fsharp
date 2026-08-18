@@ -15,6 +15,7 @@ description: "A second, complete authoring model: user-authored API records inst
 - Reentrancy variants: whole-grain `reentrant` and the per-request `mayInterleave` predicate
 - The persistence model: explicit writes only, unique state names, and multi-provider non-atomicity
 - Distributed ACID transactions: `transactionalStateFrom`, per-operation `transactional`, and the normative re-execution semantics
+- Event sourcing: `journaledGrainFor`, a second definition kind whose state is the fold of an event journal
 - Lifecycle hooks, timers, reminders, and collection age
 - Delivery semantics: acknowledged vs. one-way, what a successful call does *not* imply, and cancellation without rollback
 - Immutable-state guidance -- deep mutation is unguarded by design
@@ -1284,6 +1285,54 @@ only when the client itself drives `ITransactionClient.RunTransaction`.
   deserialize per transaction per written state; in exchange, an application that mutates its own
   state object in place cannot corrupt the version an abort has to restore.
 
+## Event sourcing: `journaledGrainFor`
+
+A **journaled** definition is the second definition kind over the same contract layer. The
+contract, the transport, the client binding, the C# facade, and every contract-level operation
+are unchanged; three things differ:
+
+| | `grainFor` | `journaledGrainFor` |
+|---|---|---|
+| initial state | `defaultState` / `initialState` | `initialEventState` |
+| what a handler returns | `state', reply` | `events, reply` |
+| where the state comes from | memory, or a `stateFrom` holder | the fold of the journal |
+
+```fsharp
+let accountDefinition =
+    journaledGrainFor accountContract {
+        initialEventState (fun key -> { balance = 0m })
+        apply (fun state event -> match event with Deposited amount -> { state with balance = state.balance + amount })
+
+        logProvider "LogStorage"
+        journalStorage "Journals"
+
+        handle (_.deposit) (fun _ state amount ->
+            task { return [ Deposited amount ], state.balance + amount })
+    }
+```
+
+```fsharp
+silo.AddMemoryGrainStorage "Journals" |> ignore
+silo.AddLogStorageBasedLogConsistencyProvider "LogStorage" |> ignore
+silo.AddFunctionalJournaledGrain accountDefinition |> ignore
+```
+
+The state lives in an Orleans log-consistency provider — the same machinery `JournaledGrain`
+uses, driven directly rather than by deriving from it. The runtime appends a handler's returned
+events as one atomic batch and waits for the provider to confirm them **after the handler returns
+and before the reply leaves the activation**, so a caller that got a reply is looking at
+confirmed state. A handler that returns an empty event list performs no storage write at all.
+
+`apply` is `'State -> 'Event -> 'State` and must be pure: it runs when an event is raised **and
+again on every later activation that replays the journal**, so a fold that read the clock or
+called a service would produce a different state on replay than the one the application saw.
+
+The definition kind is invisible to callers, to the C# facade, and to every contract-level
+operation. What it changes on the definition side — which `grainFor` operations carry over,
+which are refused and why, what each built-in provider actually stores, why there is no
+`snapshotEvery`, and what the model does not give you — is in
+**[event-sourcing.md](/orleans-fsharp/event-sourcing/)**.
+
 ## Reminder rename and removal: the explicit unregister migration
 
 Reminder reconciliation (`RegisterOrUpdateReminder`, run per declared reminder on every successful
@@ -1659,6 +1708,7 @@ carries `[<Obsolete>]`.
   there
 - `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the complete runnable sample this guide's
   examples are drawn from
+- [Event Sourcing](/orleans-fsharp/event-sourcing/) -- `journaledGrainFor`, the journaled definition kind
 - `specs/003-functional-grain-runtime/spec.md` -- the full normative specification
 
 ## A build note for contributors: codegen and cold caches

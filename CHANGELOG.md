@@ -22,6 +22,26 @@
 
 ### Added
 
+- **Functional event sourcing** (spec 004 item 3). `journaledGrainFor contract { ... }` is a
+  second definition kind over the same contract layer: `initialEventState` seeds the fold,
+  `apply` is the pure replay fold, and a handler returns the events it raises together with its
+  reply instead of a replacement state. The state lives in an Orleans log-consistency provider
+  named by `logProvider` — the same machinery `JournaledGrain` uses, driven directly rather than
+  by deriving from it, so `AddLogStorageBasedLogConsistencyProvider` and
+  `AddStateStorageBasedLogConsistencyProvider` both work and so does any third-party
+  `ILogViewAdaptorFactory` registered under a name. Confirmation is per turn: the runtime appends
+  a handler's events atomically and waits for the provider to confirm them after the handler
+  returns and before the reply leaves the activation, so a caller that got a reply is looking at
+  confirmed state, and a handler that raises nothing performs no storage write at all. Unlike
+  `JournaledGrain`, the replay is forced to completion during activation rather than left to the
+  adaptor's batch worker, because a functional handler is handed its state as an argument. What a
+  journal cannot honour is refused with its mechanism named: `transactional` (a log-view adaptor
+  is not a transaction participant), `statelessWorker`, a derived grain type, and the durable
+  state operations. There is deliberately no `snapshotEvery`: `ILogViewAdaptor` has no snapshot
+  or truncate operation, so neither built-in provider could honour one. The classic
+  `eventSourcedGrain { }` / `JournaledGrain` path is unchanged and still shipped, now documented
+  as the deprecated half of `docs/event-sourcing.md`.
+
 - **Distributed ACID transactions for the functional grain runtime** (spec 004 item 2).
   `transactionalStateFrom (TransactionalState.create<'S> name storage)` attaches an
   Orleans transactional facet, reached through `context.transactionalState`, and

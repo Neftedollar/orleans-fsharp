@@ -36,7 +36,6 @@ SITE = ROOT / 'website' / 'src' / 'content' / 'docs'
 KNOWN_DRIFT = {
     'api-reference.md',    # website copy documents a different onActivate/onDeactivate/
                            # EventSourcedGrainDefinition surface than docs/
-    'event-sourcing.md',
     'redis-example.md',
     'testing.md',          # website copy uses EventSourcedGrainDefinition.handleCommand
 }

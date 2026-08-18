@@ -349,6 +349,12 @@ naming, because both features they touch are decided on the target side from tha
   A C# caller can drive a whole transfer, commit and abort, through facades alone
   (`tests/Orleans.FSharp.Integration/FunctionalPhaseDIntegrationTests.fs`, "the C# facade drives a
   transaction end to end").
+- **The definition kind.** A facade is built from the **contract**, and a journaled definition
+  (`journaledGrainFor`) shares the contract layer with an ordinary one — so a facade over a
+  journaled grain names no journal concept at all and behaves identically. Depositing through a
+  facade raises and confirms events exactly as an F# call does
+  (`tests/Orleans.FSharp.Integration/FunctionalPhaseEIntegrationTests.fs`, "the C# facade over a
+  journaled contract is transport-transparent"). See [Event Sourcing](event-sourcing.md).
 
 See [Functional Grain Runtime](functional-grains.md), "Reentrancy", "Version tolerance", and
 "Distributed ACID transactions", for what those decisions are.
@@ -366,5 +372,6 @@ handler side is still an F# record. That is a separate step; see spec 004 item 9
 ## Related
 
 - [Functional Grain Runtime](functional-grains.md) — the contract and definition this facade binds
+- [Event Sourcing](event-sourcing.md) — a facade over a journaled contract
 - [Serialization](serialization.md) — which F# types cross the wire and how
 - [Streaming](streaming.md) — observers, streams, and broadcast channels
