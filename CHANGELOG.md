@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `Stream.asTaskSeq` no longer fires its stream subscription and forgets it: the subscription
+  is awaited on the first pull, so a subscription failure surfaces to the consumer instead of
+  leaving it pulling forever from a stream it was never subscribed to. The integration test
+  that guessed a 500 ms subscription-setup delay (and hung on slower CI runners — main red
+  since 2026-08-12) now proves the subscription live with a re-published sentinel instead of
+  sleeping.
+
 ### Changed
 
 - **The declared Orleans dependency is now a floor of 10.1.0, not the newest release.**

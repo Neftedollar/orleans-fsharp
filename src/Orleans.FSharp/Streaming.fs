@@ -119,11 +119,15 @@ module Stream =
                 channel.Writer.Complete()
                 Task.CompletedTask)
 
-        // Fire-and-forget subscription setup
-        let _subscriptionTask =
+        // The subscription starts eagerly but is AWAITED on the first pull: enumeration cannot
+        // observe an event before the subscription is live anyway, and a subscription failure
+        // must surface to the consumer -- the previous fire-and-forget left it on an unobserved
+        // task, so a caller could pull forever from a stream it was never subscribed to.
+        let subscriptionTask =
             asyncStream.SubscribeAsync(onNext, onError, onCompleted)
 
         taskSeq {
+            let! _subscription = subscriptionTask
             let reader = channel.Reader
 
             while! reader.WaitToReadAsync() do
