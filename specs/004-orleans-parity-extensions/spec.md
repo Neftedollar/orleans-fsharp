@@ -569,13 +569,18 @@ journaledGrainFor accountContract {
 - A **one-way** operation appends and confirms in its own turn like any other, but its caller
   completed at the local acknowledgement and learns nothing about the outcome, the append
   included.
-- **A mid-confirm failure does not fail the call.** Orleans' adaptor records the issue and retries
-  forever with a delay ("be stubborn until we can read what is there"), so the turn *blocks*; what
-  the caller observes is its own request timeout while the activation is still retrying. If the
-  confirm later succeeds, the events are in the journal even though the caller saw a timeout — **a
-  timed-out call is not a rolled-back call.** The next call therefore observes a state that may
-  include a command the caller believes failed. Commands must be idempotent, or carry a
-  de-duplication key.
+- **A mid-confirm failure does not fail the call.** `UpdatePrimary` loops while `WriteAsync`
+  reports no progress and never throws to the caller, so the turn *blocks*; what the caller
+  observes is its own request timeout while the activation is still retrying. If the confirm later
+  succeeds, the events are in the journal even though the caller saw a timeout — **a timed-out call
+  is not a rolled-back call.** The next call therefore observes a state that may include a command
+  the caller believes failed. Commands must be idempotent, or carry a de-duplication key.
+  **Tested, not inferred**: a fault-injecting storage provider refuses the first three writes; the
+  call does not fault, the provider records exactly four write attempts, and a later activation
+  replays the events. The test is assertion-based rather than timed, which is possible because
+  `PrimaryOperationFailed.ComputeRetryDelay` returns `TimeSpan.Zero` for the first failure and only
+  then backs off (~7-22 ms, ~19-56 ms, x1.5 to a 10 s slow-poll), so three refused writes resolve
+  in tens of milliseconds.
 
 ### Rulings
 
@@ -658,6 +663,13 @@ journaledGrainFor accountContract {
 - **No exactly-once command semantics.** See the confirmation section: a timed-out call cannot be
   distinguished from a lost reply.
 - **No ordering across grains.** Each grain's journal is its own; there is no global sequence.
+- **A storage provider that does not follow Orleans' read contract defeats the retry protocol.**
+  Orleans' own providers REPLACE `grainState.State` with a fresh instance when no record exists
+  (`MemoryStorage.ReadStateAsync`). The log-view adaptor decides whether an apparently-failed write
+  actually landed by re-reading and comparing a write bit it had already flipped in the in-memory
+  instance, so a provider that leaves the caller's instance alone hands the flipped bit straight
+  back and the adaptor concludes a failed write succeeded. Found while building the fault-injection
+  test, which it had silently turned into a no-op.
 - **The fold pays a codec round trip per event.** `UpdateView` decodes the state, decodes the event,
   applies, and re-encodes — chosen over holding the live object because the alternative needs a
   copier registration for every application state type and writes CLR type names into durable

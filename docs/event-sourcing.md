@@ -175,12 +175,21 @@ The confirmation goes through Orleans' own adaptor, and its failure behaviour is
 this library's:
 
 - A storage failure does **not** fail the call. `PrimaryBasedLogViewAdaptor` records the issue,
-  retries with a delay, and keeps retrying — "be stubborn until we can read what is there".
-  The turn therefore *blocks* rather than throwing, and what the caller eventually observes is
-  its own request timeout while the activation is still retrying.
+  retries, and keeps retrying — `UpdatePrimary` loops while the write reports no progress and
+  never throws to the caller. The turn therefore *blocks* rather than throwing, and what the
+  caller eventually observes is its own request timeout while the activation is still retrying.
+  The retry is fast at first and only then backs off: `PrimaryOperationFailed.ComputeRetryDelay`
+  returns `TimeSpan.Zero` for the first failure, then roughly 7–22 ms, then 19–56 ms, growing
+  x1.5 up to a 10-second slow-poll interval. So a brief storage blip costs milliseconds, and a
+  sustained outage settles into a 10-second poll.
 - If the confirm does eventually succeed, the events are in the journal even though the caller
   saw a timeout. **A timed-out call is not a rolled-back call.** Make commands idempotent, or
   carry a de-duplication key in the event, if a caller may retry.
+  (Both halves are tested rather than inferred: a fault-injecting storage provider refuses the
+  first three writes, the call does not fault, the storage records exactly four write attempts,
+  and a later activation replays the events —
+  `tests/Orleans.FSharp.Integration/FunctionalPhaseEIntegrationTests.fs`, "a storage failure
+  during confirmation blocks the turn and then completes".)
 - An `IConnectionIssueListener` warning is logged for every such issue and an informational line
   when it resolves, so a stuck journal is visible in the silo log rather than silent.
 

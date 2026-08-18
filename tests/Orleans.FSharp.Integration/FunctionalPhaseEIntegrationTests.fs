@@ -377,6 +377,120 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
         }
 
     /// <remarks>
+    /// <para>
+    /// The confirmation section's most operationally important claim, tested rather than read: a
+    /// storage failure does NOT fail the call. Orleans' adaptor treats it as something to retry —
+    /// <c>UpdatePrimary</c> loops while <c>WriteAsync</c> returns 0 and never throws to the caller
+    /// — so the turn blocks and then completes once the storage recovers, with the events in the
+    /// journal.
+    /// </para>
+    /// <para>
+    /// <b>Nothing here is timed.</b> The assertions are awaited-completion and a write-attempt
+    /// count, never elapsed wall-clock: the call either returns or it does not. That is possible
+    /// because <c>PrimaryOperationFailed.ComputeRetryDelay</c> returns <c>TimeSpan.Zero</c> for the
+    /// first failure and only then backs off (~7-22 ms, ~19-56 ms, x1.5 up to a 10 s slowpoll), so
+    /// three failed writes resolve in tens of milliseconds.
+    /// </para>
+    /// <para>
+    /// The attempt count is the non-vacuity control. If the armed grain identity did not match the
+    /// one the runtime actually writes under, the first write would simply succeed and the count
+    /// would be 1 — so this assertion also pins that the journal is stored under the grain identity
+    /// the test thinks it is.
+    /// </para>
+    /// </remarks>
+    [<Fact>]
+    member _.``a storage failure during confirmation blocks the turn and then completes``() =
+        task {
+            let cases =
+                [ PhaseEProviders.LogStorage, PhaseEGrainTypes.LogAccount, logAccountRef fixture.Client
+                  PhaseEProviders.StateStorage, PhaseEGrainTypes.StateAccount, stateAccountRef fixture.Client ]
+
+            for provider, grainType, account in cases do
+                let key = freshKey $"fault-{provider}"
+                let api = account key
+                let grainId = string (GrainId.Create(grainType, key))
+
+                // Activate first, so the arming window covers the confirm and not the activation.
+                let! _ = api.version ()
+
+                PhaseEFaults.arm grainId 3
+
+                // The call must NOT fault. If the claim were wrong, this line would throw.
+                let! balance = api.deposit 50m
+                test <@ balance = 50m @>
+
+                // It really did go through the failing window: exactly three refusals plus the
+                // write that won. Exact rather than a lower bound, because the retry is
+                // deterministic — UpdatePrimary loops until one WriteAsync reports progress, and
+                // each WriteAsync issues exactly one storage write.
+                test <@ PhaseEFaults.writeAttempts grainId = 4 @>
+
+                // The events are in the journal, not just in memory: a fresh activation replays them.
+                do! api.recycle ()
+                do! settleDeactivation ()
+
+                let! replayed = api.balance ()
+                let! version = api.version ()
+
+                test <@ replayed = 50m @>
+                test <@ version = 1 @>
+        }
+
+    /// <remarks>
+    /// A journaled definition on a native <c>int64</c> key. The encoding is the interesting part:
+    /// <c>int64Key</c> encodes through <c>GrainIdKeyExtensions.CreateIntegerKey</c>, which is NOT
+    /// the decimal rendering of the number — so the raw grain identity is asserted against that
+    /// encoding directly, and the decoded key the handler sees is asserted to be the original
+    /// <c>int64</c> again. Encode, route, store, replay, decode: the whole round trip.
+    /// </remarks>
+    [<Fact>]
+    member _.``a journaled definition works on a native int64 key``() =
+        task {
+            let key = 4_611_686_018_427_387_903L
+            let api = counterRef fixture.Client key
+
+            let! decodedKey, grainId = api.identity ()
+            let expectedGrainId =
+                string (
+                    GrainId.Create(
+                        GrainType.Create PhaseEGrainTypes.Counter,
+                        GrainIdKeyExtensions.CreateIntegerKey key
+                    )
+                )
+
+            test <@ decodedKey = key @>
+            test <@ grainId = expectedGrainId @>
+            // Non-vacuity: the identity is the codec's encoding, not the number written out.
+            test <@ not (grainId.EndsWith(string key)) @>
+
+            // initialEventState was handed the DECODED key, not the raw identity.
+            let! seeded = api.seededFrom ()
+            test <@ seeded = key @>
+
+            let! afterFirst = api.add 7L
+            let! afterSecond = api.add 5L
+            test <@ afterFirst = 7L @>
+            test <@ afterSecond = 12L @>
+
+            do! api.recycle ()
+            do! settleDeactivation ()
+
+            // Replayed under the same encoded identity.
+            let! replayed = api.total ()
+            let! seededAfter = api.seededFrom ()
+            let! _, grainIdAfter = api.identity ()
+
+            test <@ replayed = 12L @>
+            test <@ seededAfter = key @>
+            test <@ grainIdAfter = expectedGrainId @>
+
+            // A different int64 key is a different journal, so the encoding is not collapsing keys.
+            let other = counterRef fixture.Client 1L
+            let! otherTotal = other.total ()
+            test <@ otherTotal = 0L @>
+        }
+
+    /// <remarks>
     /// The C# facade is built from the CONTRACT, which a journaled definition shares with an
     /// ordinary one, so the definition kind is invisible across the interop boundary. This is the
     /// verification of that claim rather than an assumption of it.

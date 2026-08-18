@@ -5,10 +5,11 @@
 /// </summary>
 /// <remarks>
 /// <para>
-/// The journal storage is the process-wide <c>RetainedGrainStorage</c> the Phase-4 restart tests
-/// introduced rather than stock memory storage: memory storage keeps its records in ordinary
-/// grains, which die with the silo that hosts them, so a "the journal follows the grain to another
-/// silo" test on top of it would be proving nothing.
+/// The journal storage is a process-wide table rather than stock memory storage: memory storage
+/// keeps its records in ordinary grains, which die with the silo that hosts them, so a "the journal
+/// follows the grain to another silo" test on top of it would be proving nothing. The same store
+/// injects write faults on demand, which is the only way to observe what Orleans' adaptor does with
+/// a storage failure.
 /// </para>
 /// <para>
 /// <c>PhaseECounters</c> counts fold invocations from inside <c>apply</c>. That is deliberately
@@ -32,7 +33,6 @@ open Orleans.Runtime
 open Orleans.Storage
 open Orleans.TestingHost
 open Orleans.FSharp
-open Orleans.FSharp.Integration.FunctionalStateRestartTests
 open Xunit
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -48,6 +48,10 @@ module PhaseEGrainTypes =
     /// The same definition over Orleans' StateStorage provider.
     [<Literal>]
     let StateAccount = "phasee.state.account"
+
+    /// A journaled definition on a native int64 key.
+    [<Literal>]
+    let Counter = "phasee.counter"
 
 [<RequireQualifiedAccess>]
 module PhaseEProviders =
@@ -82,6 +86,98 @@ module PhaseECounters =
         Volatile.Read(&box.Value)
 
     let reset (label: string) = folds.TryRemove label |> ignore
+
+/// <summary>
+/// Write faults the journal store injects, per grain identity.
+/// </summary>
+/// <remarks>
+/// Failing the FIRST N writes and then succeeding is the shape that matters: Orleans' adaptor
+/// treats a storage failure as something to retry rather than something to report, so the only way
+/// to observe that behaviour is to let it eventually win.
+/// </remarks>
+[<RequireQualifiedAccess>]
+module PhaseEFaults =
+    let private remaining = ConcurrentDictionary<string, StrongBox<int>>()
+    let private attempts = ConcurrentDictionary<string, StrongBox<int>>()
+
+    let private cell (table: ConcurrentDictionary<string, StrongBox<int>>) (key: string) =
+        table.GetOrAdd(key, fun _ -> StrongBox<int> 0)
+
+    /// <summary>Make the next <paramref name="count"/> writes of this grain's journal fail.</summary>
+    let arm (grainId: string) (count: int) =
+        Volatile.Write(&(cell attempts grainId).Value, 0)
+        Volatile.Write(&(cell remaining grainId).Value, count)
+
+    /// <summary>How many write attempts this grain's journal has made since it was armed.</summary>
+    let writeAttempts (grainId: string) = Volatile.Read(&(cell attempts grainId).Value)
+
+    /// <summary>Whether this write must fail. Counts the attempt either way.</summary>
+    let shouldFail (grainId: string) =
+        Interlocked.Increment(&(cell attempts grainId).Value) |> ignore
+        let box = cell remaining grainId
+
+        if Volatile.Read(&box.Value) > 0 then
+            Interlocked.Decrement(&box.Value) |> ignore
+            true
+        else
+            false
+
+/// <summary>
+/// The journal store: a process-wide table, so a journal outlives the silo that wrote it, plus the
+/// write-fault injection above.
+/// </summary>
+/// <remarks>
+/// A failing write throws BEFORE storing anything, so the adaptor's "did my apparently-failed write
+/// actually succeed" bit check correctly concludes it did not and re-submits the same batch.
+/// </remarks>
+[<Sealed>]
+type PhaseEJournalStorage() =
+    static let records = ConcurrentDictionary<string, obj * string>()
+
+    static let recordKey (stateName: string) (grainId: GrainId) = $"{stateName}/{grainId}"
+
+    interface IGrainStorage with
+        member _.ReadStateAsync<'T>(stateName: string, grainId: GrainId, grainState: IGrainState<'T>) =
+            match records.TryGetValue(recordKey stateName grainId) with
+            | true, (state, etag) ->
+                grainState.State <- unbox<'T> state
+                grainState.ETag <- etag
+                grainState.RecordExists <- true
+            | _ ->
+                // Orleans' own providers REPLACE the state with a fresh instance when no record
+                // exists (MemoryStorage: `grainState.State = CreateInstance<T>()`), and conforming
+                // to that is load-bearing here rather than cosmetic. The log-view adaptor decides
+                // whether an apparently-failed write actually landed by re-reading and comparing a
+                // write bit it had already flipped in the in-memory instance — so a provider that
+                // leaves the caller's instance alone hands back the flipped bit and the adaptor
+                // concludes the failed write succeeded. That silently turned the first version of
+                // the fault-injection test into a no-op.
+                if not (isNull (typeof<'T>.GetConstructor Type.EmptyTypes)) then
+                    grainState.State <- Activator.CreateInstance<'T>()
+
+                grainState.ETag <- null
+                grainState.RecordExists <- false
+
+            Task.CompletedTask
+
+        member _.WriteStateAsync<'T>(stateName: string, grainId: GrainId, grainState: IGrainState<'T>) =
+            if PhaseEFaults.shouldFail (string grainId) then
+                raise (
+                    InvalidOperationException
+                        $"PhaseE fault injection: the journal store refused a write for '{grainId}'"
+                )
+
+            let etag = Guid.NewGuid().ToString "N"
+            records.[recordKey stateName grainId] <- (box grainState.State, etag)
+            grainState.ETag <- etag
+            grainState.RecordExists <- true
+            Task.CompletedTask
+
+        member _.ClearStateAsync<'T>(stateName: string, grainId: GrainId, grainState: IGrainState<'T>) =
+            records.TryRemove(recordKey stateName grainId) |> ignore
+            grainState.ETag <- null
+            grainState.RecordExists <- false
+            Task.CompletedTask
 
 /// <summary>
 /// One escaped invocation context per grain key. A context is an ordinary F# value, so a handler
@@ -331,6 +427,63 @@ let logAccountRef = FunctionalGrain.ref logAccountContract
 let stateAccountRef = FunctionalGrain.ref stateAccountContract
 
 // ──────────────────────────────────────────────────────────────────────────────
+// A journaled definition on a NON-string key
+// ──────────────────────────────────────────────────────────────────────────────
+
+type CounterActor = private CounterActor of unit
+
+/// <summary>The seed records the key it was derived from, so a wrong decode is visible in state.</summary>
+type CounterState = { total: int64; seededFrom: int64 }
+
+type CounterEvent = Added of int64
+
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { add: int64 -> Task<int64>
+      total: unit -> Task<int64>
+      /// The key `initialEventState` was handed, folded into the state at seed time.
+      seededFrom: unit -> Task<int64>
+      /// The decoded domain key this activation sees, and its raw Orleans grain identity.
+      identity: unit -> Task<int64 * string>
+      recycle: unit -> Task<unit> }
+
+let counterContract =
+    grainContract<CounterActor, int64, CounterApi> () {
+        grainType PhaseEGrainTypes.Counter
+        version 1
+        int64Key
+        readOnly (_.total)
+        readOnly (_.seededFrom)
+        readOnly (_.identity)
+    }
+
+let counterDefinition =
+    journaledGrainFor counterContract {
+        initialEventState (fun (key: int64) -> { total = 0L; seededFrom = key })
+        apply (fun state (Added amount) -> { state with total = state.total + amount })
+
+        logProvider PhaseEProviders.LogStorage
+        journalStorage PhaseEProviders.JournalStore
+
+        handle (_.add) (fun _ state (amount: int64) -> task { return [ Added amount ], state.total + amount })
+
+        handle (_.total) (fun _ state () -> task { return ([]: CounterEvent list), state.total })
+
+        handle (_.seededFrom) (fun _ state () -> task { return ([]: CounterEvent list), state.seededFrom })
+
+        handle (_.identity) (fun context state () ->
+            task { return ([]: CounterEvent list), (context.key, string context.grainId) })
+
+        handle (_.recycle) (fun context state () ->
+            task {
+                context.deactivateOnIdle ()
+                return [], ()
+            })
+    }
+
+let counterRef = FunctionalGrain.ref counterContract
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Cluster
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -339,8 +492,7 @@ type PhaseESiloConfigurator() =
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.Services.AddKeyedSingleton<IGrainStorage>(
                 PhaseEProviders.JournalStore,
-                Func<IServiceProvider, obj, IGrainStorage>(fun _ _ ->
-                    RetainedGrainStorage PhaseEProviders.JournalStore :> IGrainStorage)
+                Func<IServiceProvider, obj, IGrainStorage>(fun _ _ -> PhaseEJournalStorage() :> IGrainStorage)
             )
             |> ignore
 
@@ -352,6 +504,7 @@ type PhaseESiloConfigurator() =
 
             siloBuilder.AddFunctionalJournaledGrain logAccountDefinition |> ignore
             siloBuilder.AddFunctionalJournaledGrain stateAccountDefinition |> ignore
+            siloBuilder.AddFunctionalJournaledGrain counterDefinition |> ignore
 
 type PhaseEClientConfigurator() =
     interface IClientBuilderConfigurator with
