@@ -63,4 +63,9 @@ Each item is grounded in a verified finding; pointers name the evidence.
     `FunctionalPhase5IntegrationTests … KeepAlive=false does not extend
     collection lifetime` (an Orleans collection-age window). Both assert pure
     wall-clock budgets; hardening candidates (wider budgets, virtual time, or
-    quarantine-with-retry), on their own ticket.
+    quarantine-with-retry), on their own ticket. Same family (added during
+    Phase D, outcome-agnostic but wall-clock-shaped): the transactional
+    contention test `concurrent transactions on one state each run once and
+    apply once` (a 3 s hold against a 2 s LockAcquireTimeout), and the
+    pre-existing `TemplateTests.template generated tests all pass` (shells
+    out to `dotnet new`; failed once under full-suite load, passes alone).
