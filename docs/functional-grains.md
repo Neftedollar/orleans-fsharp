@@ -149,13 +149,17 @@ Nothing requires the brand to be a dedicated type. The contract's `'Actor` param
 unconstrained, and any CLR type identity works -- including the API record's own:
 
 ```fsharp
-let contract =
-    grainContract<CounterApi, string, CounterApi> () {
+let counterContract =
+    contract<string, CounterApi> () {
         grainType "counter"
         version 1
         stringKey
     }
 ```
+
+`contract<'Key, 'Api>` is the dedicated entry point for this form -- it is exactly
+`grainContract<'Api, 'Key, 'Api>`, so the two spellings seal the same contract type and everything
+said below applies to either.
 
 No phantom type is declared at all, and everything downstream is unchanged: the runtime closes the
 marker over the record type (`FunctionalGrainMarker<CounterApi>`), so the grain class Orleans'

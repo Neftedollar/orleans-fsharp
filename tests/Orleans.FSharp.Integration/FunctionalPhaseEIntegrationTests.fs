@@ -144,7 +144,8 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
                             { state with
                                 balance = state.balance + amount
                                 history = state.history @ [ $"+{amount}" ] })
-                        { balance = 0m
+                        { key = key
+                          balance = 0m
                           history = [ $"opened:{key}" ] }
 
                 test <@ replayedBalance = expected.balance @>
@@ -523,8 +524,15 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
     [<Fact>]
     member _.``LogStorage replays the whole journal and StateStorage replays none of it``() =
         task {
-            let logApi = logAccountRef fixture.Client (freshKey "folds-log")
-            let stateApi = stateAccountRef fixture.Client (freshKey "folds-state")
+            let logKey = freshKey "folds-log"
+            let stateKey = freshKey "folds-state"
+            let logApi = logAccountRef fixture.Client logKey
+            let stateApi = stateAccountRef fixture.Client stateKey
+
+            // Counter labels are per (provider, grain key): fresh keys mean fresh counters, and
+            // parallel test collections folding on the same providers cannot leak into them.
+            let logLabel = $"{PhaseEProviders.LogStorage}|{logKey}"
+            let stateLabel = $"{PhaseEProviders.StateStorage}|{stateKey}"
 
             for api in [ logApi; stateApi ] do
                 let! _ = api.deposit 1m
@@ -532,9 +540,16 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
                 let! _ = api.deposit 3m
                 ()
 
-            // Everything so far: three folds each, one per raised event.
-            PhaseECounters.reset PhaseEProviders.LogStorage
-            PhaseECounters.reset PhaseEProviders.StateStorage
+            // Everything so far: SIX folds each — two per raised event, by design. The runtime
+            // dry-runs the fold over the confirmed state before submitting (so a throwing `apply`
+            // fails the call with nothing appended, instead of poisoning the journal Orleans
+            // folds only AFTER the durable write), and the adaptor's UpdateView then folds the
+            // same entry once more. Purity is what makes the double run sound; this counter is
+            // where that design becomes visible.
+            let logBefore = PhaseECounters.count logLabel
+            let stateBefore = PhaseECounters.count stateLabel
+            test <@ logBefore = 6 @>
+            test <@ stateBefore = 6 @>
 
             do! logApi.recycle ()
             do! stateApi.recycle ()
@@ -547,9 +562,9 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
             test <@ stateBalance = 6m @>
 
             // LogStorage re-folded all three stored entries to rebuild the view.
-            test <@ PhaseECounters.count PhaseEProviders.LogStorage = 3 @>
+            test <@ PhaseECounters.count logLabel - logBefore = 3 @>
             // StateStorage read the view back whole; there was nothing to fold.
-            test <@ PhaseECounters.count PhaseEProviders.StateStorage = 0 @>
+            test <@ PhaseECounters.count stateLabel - stateBefore = 0 @>
         }
 
 // ──────────────────────────────────────────────────────────────────────────────

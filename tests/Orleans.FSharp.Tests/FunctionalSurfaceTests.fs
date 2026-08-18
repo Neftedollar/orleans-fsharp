@@ -522,6 +522,44 @@ let private customOperations (builderType: Type) =
     |> Array.sort
 
 [<Fact>]
+let ``the builders module exposes exactly the specified entry points`` () =
+    // Module-level public bindings are pinned by name: an entry point appearing in (or vanishing
+    // from) the AutoOpen'd FunctionalGrainBuilders module is a public-surface change nothing else
+    // in the suite would notice -- a binding once appeared here unauthored and 2,566 tests stayed
+    // green, which is exactly the gap this pin closes.
+    let expected = [| "contract"; "grainContract"; "grainFor"; "journaledGrainFor" |]
+
+    let moduleType =
+        typeof<GrainContract<SurfaceActor, string, SurfaceApi>>.Assembly.GetType
+            "Orleans.FSharp.FunctionalGrainBuilders"
+
+    let actual =
+        moduleType.GetMethods(
+            Reflection.BindingFlags.Public
+            ||| Reflection.BindingFlags.Static
+            ||| Reflection.BindingFlags.DeclaredOnly
+        )
+        |> Array.map (fun method' -> method'.Name)
+        |> Array.sort
+
+    test <@ actual = expected @>
+
+[<Fact>]
+let ``the contract short form brands the contract with its own API record`` () =
+    // contract<'Key, 'Api> is grainContract<'Api, 'Key, 'Api>: the record IS the brand. Qualified
+    // access here because this file's own module-level `contract` binding shadows the AutoOpen'd
+    // function -- which is itself worth demonstrating: user code that names a local binding
+    // `contract` keeps working unchanged.
+    let shortForm =
+        FunctionalGrainBuilders.contract<string, SurfaceApi> () {
+            grainType "surface.short-form"
+            version 1
+            stringKey
+        }
+
+    test <@ shortForm.GetType() = typeof<GrainContract<SurfaceApi, string, SurfaceApi>> @>
+
+[<Fact>]
 let ``the contract builder declares exactly the specified custom operations`` () =
     let expected =
         [| "acceptsVersions"

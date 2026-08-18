@@ -36,6 +36,7 @@ handlers to it. See [Functional Grain Runtime](/orleans-fsharp/functional-grains
 | Function | Signature | Description |
 |---|---|---|
 | `grainContract<'Actor, 'Key, 'Api> ()` | `unit -> GrainContractBuilder<'Actor,'Key,'Api>` | Opens the contract CE |
+| `contract<'Key, 'Api> ()` | `unit -> GrainContractBuilder<'Api,'Key,'Api>` | Short form: the API record is its own actor brand ([details](functional-grains.md#the-short-form-the-api-record-as-its-own-brand)) |
 | `grainFor contract` | `GrainContract<...> -> FunctionalGrainDefinitionBuilder<...>` | Opens the definition CE |
 | `journaledGrainFor contract` | `GrainContract<...> -> FunctionalJournaledGrainDefinitionBuilder<...>` | Opens the journaled definition CE ([Event Sourcing](/orleans-fsharp/event-sourcing/)) |
 | `observerContract<'Brand, 'Api> ()` | `unit -> ObserverContractBuilder<'Brand,'Api>` | Opens the observer contract CE |

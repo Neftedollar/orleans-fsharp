@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`contract<'Key, 'Api>` — the short contract form.** The API record now serves as its own
+  actor brand for the common one-record-one-grain case: `contract<RoomId, RoomApi> () { ... }`
+  is exactly `grainContract<RoomApi, RoomId, RoomApi> () { ... }`. A separate brand (and the
+  3-arity form) remains the tool when several grain types share one API record or when the
+  record type must be replaceable without moving the grain's transport identity — see
+  docs/functional-grains.md, "The short form: the API record as its own brand". The builders
+  module's public entry points are now pinned by a surface test.
+
 ### Removed
 
 - **The `Orleans.FSharp.EventSourcing.Marten` package.** It never contained a Marten

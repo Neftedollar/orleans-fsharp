@@ -85,7 +85,6 @@ module PhaseECounters =
         let box = cell label
         Volatile.Read(&box.Value)
 
-    let reset (label: string) = folds.TryRemove label |> ignore
 
 /// <summary>
 /// Write faults the journal store injects, per grain identity.
@@ -201,7 +200,8 @@ module PhaseEEscapes =
 
 /// The state: the fold of the journal, never written anywhere by the application.
 type AccountState =
-    { balance: decimal
+    { key: string
+      balance: decimal
       history: string list }
 
 /// The events. A handler raises these; only <c>apply</c> turns them into state.
@@ -255,14 +255,20 @@ type AccountApi =
 /// </summary>
 let accountDefinitionFor (contract: GrainContract<'Actor, string, AccountApi>) (providerName: string) =
     journaledGrainFor contract {
-        initialEventState (fun key -> { balance = 0m; history = [ $"opened:{key}" ] })
+        initialEventState (fun key ->
+            { key = key
+              balance = 0m
+              history = [ $"opened:{key}" ] })
 
         apply (fun state event ->
             // Test instrumentation, and the one impure thing in this file's fold: it is how the
-            // tests observe how much of a journal each provider actually replays. `apply` receives
-            // no key by design, so the counter is keyed by provider — safe because xUnit does not
-            // run the tests of one collection in parallel.
-            PhaseECounters.fold providerName
+            // tests observe how much of a journal each provider actually replays. The label
+            // carries the GRAIN KEY (seeded into the state by initialEventState) as well as the
+            // provider, because the counter is a process-wide static and xUnit runs OTHER test
+            // collections hosting these same definitions in parallel — a provider-only label
+            // absorbs their folds and flakes (observed: StateStorage read 4 where its own grain
+            // folded 0). Per-key labels make each test's counters its own.
+            PhaseECounters.fold $"{providerName}|{state.key}"
 
             match event with
             | Deposited amount ->
