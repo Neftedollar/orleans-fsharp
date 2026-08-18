@@ -56,7 +56,7 @@ type CustomStorageAdapter =
 /// <remarks>
 /// With the built-in <c>LogStorageBasedLogConsistencyProvider</c>, all events are
 /// always replayed on activation — this type declares <em>intent</em> for providers
-/// that support hybrid snapshot+tail-event storage (e.g. a future Marten provider).
+/// that support hybrid snapshot+tail-event storage (a future custom provider).
 /// Use <c>Never</c> to disable snapshots entirely (default).
 /// </remarks>
 /// <typeparam name="'State">The grain state type that will be snapshotted.</typeparam>
@@ -106,7 +106,7 @@ type EventSourcedGrainDefinition<'State, 'Event, 'Command> =
         /// <summary>
         /// Controls when state snapshots are written.
         /// Defaults to <c>Never</c>. Requires a snapshot-capable log-consistency provider
-        /// (e.g. a future Marten hybrid provider) to have an effect at runtime.
+        /// (a future custom hybrid provider) to have an effect at runtime.
         /// </summary>
         SnapshotStrategy: SnapshotStrategy<'State>
         /// <summary>

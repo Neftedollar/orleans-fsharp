@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **The `Orleans.FSharp.EventSourcing.Marten` package.** It never contained a Marten
+  integration: its three helpers forwarded to Orleans' own
+  `AddLogStorageBasedLogConsistencyProvider*`, `addMartenEventStore` ignored its connection
+  string, and the referenced Marten NuGet package was unused. Removed by owner decision —
+  external-store adapters, if ever wanted, are a new optional package registering a named
+  `ILogViewAdaptorFactory` (the shape `docs/event-sourcing.md` § "Bringing your own provider"
+  documents and a hosting test pins). `examples/bank-account` now calls the Orleans
+  extensions directly. The published `2.0.0-alpha.1` on nuget.org should be deprecated/unlisted
+  separately.
+
 ### Fixed
 
 - `Stream.asTaskSeq` no longer fires its stream subscription and forgets it: the subscription

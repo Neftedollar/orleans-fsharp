@@ -454,8 +454,8 @@ named Orleans source at both supported versions (`v10.1.0`, `v10.2.2`).
 had no event-sourced definition kind.
 
 **Provider story (owner ruling 2026-08-17, unchanged):** Orleans' own log-consistency providers
-(`LogStorage`/`StateStorage`) are the base; Marten would ship as a separate optional adapter
-package. See ruling 8 for what the existing `Orleans.FSharp.EventSourcing.Marten` package turned
+(`LogStorage`/`StateStorage`) are the base; any external-store adapter would ship as a separate
+optional package. See ruling 8 for what the former `Orleans.FSharp.EventSourcing.Marten` package turned
 out to contain.
 
 ### The mechanism (normative)
@@ -640,8 +640,10 @@ journaledGrainFor accountContract {
    a grain base class, so there is nothing Marten-shaped to compose with — the composition claim was
    therefore proved in the general form instead: a hand-registered keyed `ILogViewAdaptorFactory` of
    a *different* implementation serves a journaled definition alongside a stock one, with nothing
-   functional-specific on either side (`FunctionalJournalHostingTests.fs`). A real Marten adapter
-   remains a separate optional package, per the owner ruling. One constraint an adapter author must
+   functional-specific on either side (`FunctionalJournalHostingTests.fs`). **The placeholder
+   package was removed on 2026-08-18 by owner decision** ("мартен нам не нужен"); an adapter for
+   any external store, if ever wanted, is a new separate optional package registering a named
+   `ILogViewAdaptorFactory`. One constraint an adapter author must
    know, and startup now checks: `AddLogConsistencyProtocolServicesFactory` is internal to Orleans,
    so a hand-registered provider has to ride along with one stock `Add*BasedLogConsistencyProvider`
    call.

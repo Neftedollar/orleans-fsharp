@@ -134,7 +134,7 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
                 // Evaluate snapshot strategy after confirming events.
                 // With built-in log-consistency providers (e.g. LogStorageBasedLogConsistencyProvider)
                 // there is no snapshot storage mechanism, so we log the intent for diagnostic purposes.
-                // A future custom provider (e.g. Marten hybrid) can honour this by reading
+                // A future custom hybrid provider can honour this by reading
                 // EventStore.shouldSnapshot and writing the state checkpoint.
                 if EventStore.shouldSnapshot definition this.InternalVersion this.InternalState then
                     Log.logDebug

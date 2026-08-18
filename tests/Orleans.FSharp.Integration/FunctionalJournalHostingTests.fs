@@ -108,8 +108,7 @@ let private missingStorageDefinition =
 /// cannot be confused with "the stock provider happened to serve it".
 /// </summary>
 /// <remarks>
-/// This is the shape any third-party adapter package takes — the classic path's
-/// <c>Orleans.FSharp.EventSourcing.Marten</c> included: register an
+/// This is the shape any third-party adapter package takes: register an
 /// <c>ILogViewAdaptorFactory</c> under a name and let applications name it. Nothing
 /// functional-specific is needed on either side.
 /// </remarks>

@@ -68,7 +68,6 @@
     <!-- Serilog.Extensions.Logging previously floated at 10.*; only 10.x in cache = 10.0.0 -->
     <PackageVersion Include="Serilog.Extensions.Logging"                    Version="10.0.0" />
     <PackageVersion Include="Serilog.Sinks.Console"                        Version="6.1.1" />
-    <PackageVersion Include="Marten"                                        Version="8.37.3" />
     <!-- Scriban previously floated at 5.*; highest 5.x in cache = 5.12.1 -->
     <PackageVersion Include="Scriban"                                       Version="5.12.1" />
     <PackageVersion Include="TypeShape"                                     Version="10.0.0" />

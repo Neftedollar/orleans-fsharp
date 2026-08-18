@@ -5,7 +5,6 @@ open Orleans.Hosting
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.EventSourcing
-open Orleans.FSharp.EventSourcing.Marten
 open BankAccount.Domain
 
 let config =
@@ -18,10 +17,11 @@ let config =
 let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 
-// Add log-consistency storage for event sourcing and register the grain definition
+// Add log-consistency storage for event sourcing and register the grain definition.
+// These are Orleans' own log-consistency providers, called directly.
 builder.UseOrleans(fun siloBuilder ->
-    MartenConfig.addLogStorage "LogStorage" siloBuilder |> ignore
-    MartenConfig.addLogStorageDefault siloBuilder |> ignore)
+    siloBuilder.AddLogStorageBasedLogConsistencyProvider("LogStorage") |> ignore
+    siloBuilder.AddLogStorageBasedLogConsistencyProviderAsDefault() |> ignore)
 |> ignore
 
 builder.Services.AddFSharpEventSourcedGrain<AccountState, AccountEvent, AccountCommand>(AccountGrainDef.account)

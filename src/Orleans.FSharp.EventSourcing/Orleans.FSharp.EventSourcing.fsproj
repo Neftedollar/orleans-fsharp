@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Declarative event sourcing for Orleans grains in F# — eventSourcedGrain {} CE with apply/handle, JournaledGrain bridge, and Marten configuration helpers.</Description>
+    <Description>Declarative event sourcing for Orleans grains in F# — eventSourcedGrain {} CE with apply/handle and a JournaledGrain bridge.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
