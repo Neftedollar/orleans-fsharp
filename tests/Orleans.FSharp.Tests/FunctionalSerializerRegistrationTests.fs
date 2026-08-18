@@ -368,13 +368,21 @@ let private functionalClientProvider () =
     services.BuildServiceProvider()
 
 [<Fact>]
-let ``the preflight list is exactly the three fixed transport types`` () =
+let ``the preflight list is exactly the four fixed transport types`` () =
     // Non-vacuity guard for every preflight test below: an empty or shortened list would make
     // them all pass without checking anything.
     let names =
         FunctionalTransportTypes.all |> Array.map (fun candidate -> candidate.Name) |> Array.toList
 
-    test <@ names = [ "FunctionalRequest"; "FunctionalRequestEnvelope"; "FunctionalReply" ] @>
+    // Spec 004 item 6 adds the streaming request. FunctionalTransactionRequest is still absent on
+    // purpose: a process that never calls a transactional operation must not be made to resolve the
+    // transaction machinery at startup, whereas the streaming request's base codec lives in
+    // Orleans.Core.Abstractions, which every functional process already loads.
+    test
+        <@ names = [ "FunctionalRequest"
+                     "FunctionalStreamRequest"
+                     "FunctionalRequestEnvelope"
+                     "FunctionalReply" ] @>
 
 [<Fact>]
 let ``the fixed transport types pass preflight on a functional client`` () =
