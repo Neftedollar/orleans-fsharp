@@ -866,33 +866,161 @@ operation and refuses another on the same activation, seeing our envelope in bot
 
 **Size:** M — as estimated.
 
-## 6. Server-streaming replies (`IAsyncEnumerable<'T>`)
+## 6. Server-streaming replies (`IAsyncEnumerable<'T>`) — RESOLVED
 
-**Gap:** API fields are exactly `'Arg -> Task<'Reply>`; Orleans grains can
-return `IAsyncEnumerable<T>` (codegen-based). The functional transport has no
-streaming-reply envelope.
+**Status: implemented.** Delivered on `feat/004-parity-phase-f`; the design sketch below has been
+replaced by the resolved design it turned into, and every claim here is backed by a test or by
+named Orleans source. The two supported Orleans versions are effectively identical here:
+`src/Orleans.Core/Runtime/AsyncEnumerableGrainExtension.cs` is byte-identical between the `v10.1.0`
+and `v10.2.2` tags, and the only diff in
+`src/Orleans.Core.Abstractions/Runtime/AsyncEnumerableRequest.cs` is one `ILogger` call converted to
+a source-generated `[LoggerMessage]` partial.
 
-**Design sketch:**
+**Gap (for the record):** API fields were exactly `'Arg -> Task<'Reply>`, and the functional
+transport carried one serialized reply payload per request.
 
-- New field kind: `'Arg -> IAsyncEnumerable<'Item>` (BCL type — directly
-  consumable from C# with `await foreach`, satisfying the C#-surface rule).
-- Transport: a chunk-stream envelope family over the fixed transport —
-  sequence-numbered item envelopes + completion/fault envelope, one-way from
-  the target with credit-based flow control from the caller, cancellation
-  through the existing cancellable machinery (disposing the enumerator sends
-  the cancel).
-- Handler shape: `handle (_.watch) (fun ctx state arg -> taskSeq { ... })`
-  (or an explicit writer object — decide against `taskSeq` dependency vs a
-  minimal own builder).
-- Payload limits apply per item envelope; the spec-003 hot-path rule applies
-  (no per-item reflection).
+### The ruling: ride Orleans' machinery, do not build a chunk protocol
 
-**Open questions:** backpressure window defaults; whether interleaving rules
-treat an in-flight stream as an open turn (it must not block the activation —
-likely requires the streaming send to run detached like one-way notifies).
+The sketch below proposed our own chunk-stream envelope family with credit-based flow control. It
+was not built, and nothing about it was blocked — it was simply redundant. Orleans has supported
+`IAsyncEnumerable<T>` grain methods since 7.1 through a grain extension it installs on **every**
+activation, and every part the sketch named already exists there:
 
-**Size:** L — the largest single item; propose it as its own phase or even
-its own spec once 004's smaller items land.
+| Sketch item | Where it already lives |
+|---|---|
+| sequence-numbered item envelopes | `EnumerationResult` (`Element` / `Batch` / `CompletedWith*`) plus the caller's batch cursor |
+| completion/fault envelope | `Completed`, `Error`, `Canceled`, `MissingEnumeratorError` |
+| credit-based flow control | one in-flight `MoveNext` at a time, draining at most `MaxBatchSize` (default 100) synchronously-available items per reply, plus a long poll of `ResponseTimeout / 2` answered with `Heartbeat` |
+| cancellation through disposal | `AsyncEnumeratorProxy.DisposeAsync` → `DisposeAsync(requestId)` → `DisposeEnumeratorAsync` cancels the producer's token, then disposes it |
+| per-item payload limit | ours, because the item payload is ours |
+
+Two facts made riding it possible without any code generation of ours:
+
+1. **The extension point is public.** `Orleans.Runtime.AsyncEnumerableRequest<T>` is a public
+   abstract `[GenerateSerializer] [SuppressReferenceTracking] [ReturnValueProxy(nameof(InitializeRequest))]`
+   class over `RequestBase`, with a `protected abstract IAsyncEnumerable<T> InvokeInner()` and a
+   public `InitializeRequest(GrainReference)`. Subclassing it by hand is the same move Phase D made
+   with `TransactionRequest<TResult>`, and its generated `Codec_AsyncEnumerableRequest`1` implements
+   `IBaseCodec<AsyncEnumerableRequest<T>>`, so a hand-written derived codec delegates the base
+   segment to Orleans exactly as `FunctionalTransactionRequestCodec` does.
+2. **The target side installs itself.** `DefaultSiloServices` registers
+   `AddScoped<IAsyncEnumerableGrainExtension, AsyncEnumerableGrainExtension>()` plus a keyed
+   `IGrainExtension` factory, and `ActivationData`'s explicit `ITargetHolder.GetComponent(Type)`
+   auto-installs any keyed `IGrainExtension` on first use. A functional activation therefore needs
+   no new interface, no registration and no manifest property to serve a stream. A
+   `MetadataLoadContext` scan of the shipped `Orleans.Core.Abstractions.dll` at both versions finds
+   `Proxy_IAsyncEnumerableGrainExtension`, five `Invokable_IAsyncEnumerableGrainExtension_*` types
+   and their codec/copier pairs already compiled — the same "Orleans' own assemblies carry the
+   proxies" property Phase B's observers rely on.
+
+### The mechanism (normative)
+
+- **Field kind.** An API field may be `'Argument -> IAsyncEnumerable<'Item>`. It is recognized
+  structurally, by the open generic definition of the range type, exactly as `Task<'Reply>` is; a
+  synchronous `seq<_>` range is still rejected, and the diagnostic now names both accepted shapes.
+- **Third request shape.** `FunctionalStreamRequest : AsyncEnumerableRequest<FunctionalReply>`,
+  beside `FunctionalRequest : Request<FunctionalReply>` and
+  `FunctionalTransactionRequest : TransactionRequest<FunctionalReply>`. All three share
+  `FunctionalRequestBody`, so the envelope, the dispatch-target resolution and the call-filter
+  metadata cannot drift. **The element type is the same fixed `FunctionalReply` a unary call
+  returns**, so every item carries its own protocol token and its own payload and the per-item limit
+  is the ordinary payload limit.
+- **No target-local cancellation source.** The streaming request resolves its target through
+  `SetStreamTarget`, which deliberately creates none. A unary request's `CancellationTokenSource`
+  has the call's lifetime; an enumeration outlives the `StartEnumeration` message by design, so a
+  source created there would either leak or be disposed underneath a producer registered on its
+  token. Nothing is lost: `StartEnumeration` builds its own linked source and hands *that* token to
+  `GetAsyncEnumerator`, and a linked source over `CancellationToken.None` is still cancellable.
+- **Lazy target enumerator.** `IFunctionalDispatchTarget.DispatchStream(envelope, ct)` returns an
+  `IAsyncEnumerator<FunctionalReply>` that runs every protocol check inside its **first**
+  `MoveNextAsync`. `StartEnumeration` calls `InvokeImplementation` and `GetAsyncEnumerator` outside
+  its `try` and `MoveNextAsync` inside it, so a rejection raised from the first pull becomes a clean
+  `EnumerationResult.Error` — enumerator removed and disposed, original exception rethrown at the
+  caller — while one raised earlier would leave a half-built entry in the extension's table.
+- **Protocol tokens: two new directions.** A streaming operation hashes `stream-request` and
+  `stream-item` instead of `request` and `reply`. The reason is exactly what the token exists for:
+  under `acceptsVersions (BackwardCompatible n)` a host answers an older caller with **that
+  caller's** version's tokens, so a unary→streaming change at the same operation ID and version
+  would otherwise present the very digest the host expects. The change is purely additive — every
+  existing preimage is unchanged, and a peer that predates streaming gets a token mismatch, which is
+  the correct outcome.
+- **No new admission bit.** A streaming operation's admission byte is always `0x00`, and dispatch's
+  existing byte comparison keeps it that way. The two entry points additionally reject a descriptor
+  of the wrong kind by name, before the token comparison, because "this operation is not streaming"
+  is a more useful diagnosis than a digest mismatch.
+- **Handler shape.** `handleStream (_.tail) (fun ctx state arg -> …)` with
+  `StreamHandler<'Actor,'Key,'State,'Argument,'Item> = ctx -> 'State -> 'Argument -> IAsyncEnumerable<'Item>`.
+  The return type is the BCL interface — no wrapper type of ours — so any producer works.
+  `taskSeq { }` is the natural F# authoring tool and costs nothing: `FSharp.Control.TaskSeq` is
+  already a dependency of the core package (it backs `Streaming.asTaskSeq`). **`handleStream` is a
+  separate custom operation rather than an overload of `handle`** — an overloaded `handle` makes F#
+  resolve the handler lambda before the selector, which breaks record-field inference in existing
+  handler bodies (it broke two files in this repository immediately).
+- **Scheduling — the sketch's open question, answered.** Every `IAsyncEnumerableGrainExtension`
+  method carries Orleans' own `[AlwaysInterleave]`, and `ActivationData.RecordRunning` never makes
+  an always-interleave message the activation's `_blockingRequest`. So an open enumeration — even
+  one whose `MoveNext` is long-polling a parked producer — never blocks an ordinary call, and
+  `MayInvokeRequest` admits that call at its `_blockingRequest is null` check. Nothing detached is
+  needed; the property is Orleans'.
+- **State — a streaming handler is state-neutral.** It reads the snapshot taken when the
+  enumeration started, publishes no replacement, gets persistent-state facades that reject every
+  mutation, has no transactional facade, and raises no events on a journaled definition. The reason
+  is the scheduling above: a stream produces across many turns, so a whole-state replacement
+  published when it ended would overwrite everything those turns did — silently, and more the longer
+  it ran.
+- **Composition, refused with mechanism.** `readOnly` and `alwaysInterleave` are refused as
+  declarations that could not have an effect; `oneWay` because the stream is the reply;
+  `transactional` because a transaction is scoped to one call and reports its participants in that
+  call's response, while a stream is many calls whose producer outlives all of them;
+  `statelessWorker` because `StatelessWorkerGrainContext.ReceiveMessageInternal` picks a worker per
+  **message** and `StatelessWorkerDirector` places on whichever silo the caller reached, so a second
+  `MoveNext` can reach an activation with no record of the enumerator. The F# types already make the
+  first four unreachable from the computation expression — they all take an `OperationSelector`,
+  whose range is `Task<'Reply>` — and sealing repeats every rejection because a draft can also be
+  built directly.
+- **Composes unchanged:** `operationId` and `sinceVersion` (both gained streaming overloads),
+  `acceptsVersions` (one token pair per admitted version, as for a unary operation), `placement`,
+  persistence, timers, reminders, implicit subscriptions, `journaledGrainFor`, and the C# facade.
+- **Batching.** `FunctionalStream.withBatchSize` reaches Orleans' `MaxBatchSize` through the typed
+  wrapper. Orleans' own `AsyncEnumerableExtensions.WithBatchSize` cannot be used directly: it tests
+  `self is AsyncEnumerableRequest<T>` at the element type, and a functional stream's element type is
+  the application's item type while the underlying request's is the fixed transport reply — so it
+  would silently do nothing. Ours fails loudly on anything that is not a functional stream.
+- **Expiry.** Entirely Orleans': a grain timer at `DueTime = Period = ResponseTimeout` clears a
+  per-enumerator "seen" flag each tick and removes any enumerator untouched since the previous one,
+  so an abandoned enumerator is collected after one to two periods and a caller that returns gets
+  `EnumerationAbortedException`. There is no separate knob and none was added.
+
+### What this does not give you
+
+- **Client-streaming or bidirectional streaming.** The argument is still one value.
+- **A durable or replayable stream.** An enumeration is a conversation with one activation: if it is
+  deactivated or its silo is lost, the enumeration ends. There is no cursor and no at-least-once
+  delivery. Item 1's implicit subscriptions and Orleans streams remain the durable fan-out story.
+- **Application call filters over a streaming operation.** The message that crosses the network is
+  Orleans' own extension invokable; our request travels as its argument. So an
+  `IIncomingGrainCallFilter`/`IOutgoingGrainCallFilter` written against `IFunctionalRequestMetadata`
+  does **not** run for a streaming operation. This is a real narrowing relative to unary operations
+  and is documented as such; cross-cutting checks belong in the handler or in a unary entry point.
+- **A backpressure window you control.** The caller pulls, which is backpressure, but the window is
+  Orleans' (one in-flight `MoveNext`, up to `MaxBatchSize` items), not a credit scheme of ours.
+- **State publication from a streaming handler.** See above.
+- **Ordering across enumerations.** Items within one enumeration are ordered; two enumerations of
+  the same operation are independent and interleave freely.
+
+### One upstream defect worth knowing
+
+`FSharp.Control.TaskSeq` 0.6.0's **wrapping** combinators — `TaskSeq.map`, and
+`taskSeq { for x in someStream do … }` — over an `IAsyncEnumerable` produced by this runtime were
+measured yielding the last item twice when they run under an activation's task scheduler;
+enumerating the same stream directly is correct, and a hand-written enumerator is correct. This is
+not in this runtime's path: the measurement is taken entirely inside one grain and returned as an
+ordinary unary reply (`FunctionalPhaseFIntegrationTests`, "consuming an upstream stream inside a
+grain"). Grain-to-grain re-streaming therefore pulls the upstream enumerator by hand, and the
+documentation says so.
+
+**Size:** L, as predicted — but the largest part of the estimate (the chunk protocol) was the part
+that did not need to exist.
 
 ## 7. Version-tolerant contracts — RESOLVED
 
@@ -1213,8 +1341,10 @@ nothing about streaming is implemented here.
   above is the resolved design.
 - **Phase E:** 3 (event sourcing) — after the provider-story decision. **Landed:** item 3 is
   implemented and its section above is the resolved design.
-- **Phase F:** 6 (streaming replies) — largest; consider splitting into its
-  own spec once A-C land.
+- **Phase F:** 6 (streaming replies) — largest. **Landed:** item 6 is implemented and its section
+  above is the resolved design. It did not need its own spec: the chunk protocol the estimate was
+  built around turned out to be Orleans' own `IAsyncEnumerableGrainExtension`, already compiled and
+  installed on every activation.
 
 Each phase repeats the spec-003 discipline: seam proofs before runtime
 layers, both-Orleans-versions matrix, mutation-checked guards, examples with
