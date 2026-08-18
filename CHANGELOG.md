@@ -22,6 +22,24 @@
 
 ### Added
 
+- **Server-streaming replies** (spec 004 item 6). An API record field may now be
+  `'Arg -> IAsyncEnumerable<'Item>` instead of `'Arg -> Task<'Reply>`, bound with `handleStream`
+  and consumed with `for … in` from F# or `await foreach` from C#. It is not a transport of ours:
+  it rides Orleans' own `IAsyncEnumerableGrainExtension` — the extension a codegen grain method
+  returning `IAsyncEnumerable<T>` uses, registered for every activation by `DefaultSiloServices`
+  and auto-installed by `ActivationData` — so batching, long-poll heartbeats, cancel-on-dispose
+  and abandoned-enumerator expiry are Orleans'. The functional side is a third request shape,
+  `FunctionalStreamRequest : AsyncEnumerableRequest<FunctionalReply>`, beside the unary and
+  transactional ones; because its element type is the same fixed reply, every item carries its own
+  protocol token (new `stream-request`/`stream-item` directions) and its own payload limit.
+  An open enumeration never blocks an ordinary call to the same activation, because every message
+  of one carries Orleans' `[AlwaysInterleave]`. A streaming handler is state-neutral — it reads the
+  snapshot taken when the enumeration started and publishes nothing — and the four admission
+  policies (`readOnly`, `oneWay`, `alwaysInterleave`, `transactional`) plus `statelessWorker` are
+  refused at sealing, each with the mechanism named. `operationId`, `sinceVersion`,
+  `acceptsVersions`, placement, persistence and `journaledGrainFor` all compose. See
+  [docs/streaming-replies.md](docs/streaming-replies.md).
+
 - **Functional event sourcing** (spec 004 item 3). `journaledGrainFor contract { ... }` is a
   second definition kind over the same contract layer: `initialEventState` seeds the fold,
   `apply` is the pure replay fold, and a handler returns the events it raises together with its
