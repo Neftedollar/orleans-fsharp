@@ -1332,11 +1332,14 @@ nothing about streaming is implemented here.
 ## Suggested phasing
 
 - **Phase A (S items):** 4 (placement), 8 (lifecycle + scripting), 9 (C# facade).
+  **Landed:** items 4, 8 and 9 are implemented (Tasks A1/A2) and their sections
+  above carry the delivered designs.
 - **Phase B:** 1 (implicit subscriptions) — the manifest/extension seams are
   fresh from spec 003. **Landed:** item 1 is implemented and its section above is
   the resolved design.
 - **Phase C:** 5 (reentrancy), 7 (version tolerance) — both are admission-layer
-  work and share tests.
+  work and share tests. **Landed:** items 5 and 7 are implemented and their
+  sections above are the resolved designs.
 - **Phase D:** 2 (transactions). **Landed:** item 2 is implemented and its section
   above is the resolved design.
 - **Phase E:** 3 (event sourcing) — after the provider-story decision. **Landed:** item 3 is
