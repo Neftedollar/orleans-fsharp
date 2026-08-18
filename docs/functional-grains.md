@@ -4,7 +4,7 @@
 
 ## What you'll learn
 
-- Why the actor brand type exists, and why it is never constructed
+- Why the actor brand type exists, why it is never constructed, and the short form that reuses the API record as the brand
 - Key-codec identity rules: what changes a grain's routing/storage identity, what does not
 - Operation rename via `operationId`, contract-version matching, and opting into version tolerance
 - Reentrancy variants: whole-grain `reentrant` and the per-request `mayInterleave` predicate
@@ -142,6 +142,45 @@ What the brand is **not**: it plays no part in wire or storage identity. `GrainI
 explicit `grainType` string and the encoded key alone (see
 [Key-codec identity rules](#key-codec-identity-rules) below) -- renaming the brand type, like
 renaming the module or the API record type, changes nothing about routing or stored state.
+
+### The short form: the API record as its own brand
+
+Nothing requires the brand to be a dedicated type. The contract's `'Actor` parameter is
+unconstrained, and any CLR type identity works -- including the API record's own:
+
+```fsharp
+let contract =
+    grainContract<CounterApi, string, CounterApi> () {
+        grainType "counter"
+        version 1
+        stringKey
+    }
+```
+
+No phantom type is declared at all, and everything downstream is unchanged: the runtime closes the
+marker over the record type (`FunctionalGrainMarker<CounterApi>`), so the grain class Orleans'
+manifest and Dashboard display carries the record's name -- if anything, more readable than a
+phantom's. This is the right default for the common case, where one API record belongs to exactly
+one grain type.
+
+A **separate** brand type is load-bearing in exactly two situations:
+
+- **Several grain types over one API record.** Two contracts can share an API shape and differ
+  only in policy -- the feature tour's reentrancy section hosts `tour.reentrant` and `tour.serial`
+  over one `GateApi` with two brands. With the record as the brand, both would close the same
+  marker CLR type, and the silo registry rejects a second definition per brand -- so the record
+  would have to be duplicated just to tell them apart.
+- **Replacing the record type while keeping the grain's identity.** Under
+  [version tolerance](#version-tolerance-acceptsversions-and-sinceversion), a newer client may declare a *new* record type with a
+  wire-compatible shape. The brand participates in the closed transport-interface identity, so a
+  stable brand lets the record type change underneath it; with the record as the brand, changing
+  the record moves that identity too.
+
+One interaction to know: with a derived `grainType` (see
+[Optional grainType](#optional-graintype-when-the-derived-default-is-safe) below), the default
+grain type becomes the *record's* simple name, and renaming the record then changes wire and
+storage identity -- the same trade-off as renaming a phantom brand under a derived name, with the
+same fix: declare `grainType` explicitly.
 
 ## Key-codec identity rules
 
