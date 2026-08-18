@@ -93,10 +93,12 @@ module AccountApi =
             version 1
             stringKey
 
-            // Neither query raises an event, so neither needs the write path. A readOnly
-            // operation's returned state is discarded — on a journaled definition there is no
-            // returned state to discard in the first place, only an event list, and a readOnly
-            // handler that tried to raise one would be refused at definition time.
+            // Neither query raises an event, so neither needs the write path. On a journaled
+            // definition a readOnly handler that DID return an event is refused when it is
+            // called -- the runtime throws a diagnostic naming 'readOnly' and appends nothing
+            // (pinned by tests/Orleans.FSharp.Integration/FunctionalPhaseEIntegrationTests.fs,
+            // "a readOnly operation that raises events is refused"). Returning `[]` here is the
+            // contract, not a formality.
             readOnly (_.balance)
             readOnly (_.journalVersion)
         }
