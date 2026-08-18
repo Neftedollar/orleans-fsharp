@@ -43,6 +43,7 @@ type EventSourcedStubInfo =
 
 /// Extract DU case names from an F# discriminated union type.
 /// Returns [] when the type is not a DU.
+/// <param name="t">The type to inspect.</param>
 let private getUnionCaseNames (t: Type) : string list =
     let shape = TypeShape.Create t
 
@@ -53,6 +54,10 @@ let private getUnionCaseNames (t: Type) : string list =
 
 /// Validate that a state type satisfies JournaledGrain<TState,TEvent> constraints:
 ///   TState : not struct  AND  TState : (new : unit -> TState)
+/// <param name="t">The discovered state type to validate.</param>
+/// <exception cref="System.Exception">
+/// Thrown when <paramref name="t"/> is a value type, or has no public parameterless constructor.
+/// </exception>
 let private validateStateType (t: Type) =
     if t.IsValueType then
         failwithf
@@ -86,12 +91,19 @@ let private UniversalInterfaceFullName =
     "Orleans.FSharp.IFSharpEventSourcedGrain"
 
 /// True when the interface inherits IFSharpEventSourcedGrain (by name, cross-load-context safe).
+/// <param name="t">The grain interface type to inspect.</param>
 let private inheritsUniversalInterface (t: Type) : bool =
     t.GetInterfaces()
     |> Array.exists (fun i -> i.FullName = UniversalInterfaceFullName)
 
 /// Scan all public static properties in the assembly for
 /// [<FSharpEventSourcedGrain(typeof<IGrainInterface>)>] bindings.
+/// <param name="assembly">The assembly to scan for marked event-sourced grain definitions.</param>
+/// <exception cref="System.Exception">
+/// Thrown when a discovered attribute has no accessible <c>GrainInterface</c> value, or when a
+/// discovered state type fails <c>JournaledGrain</c>'s reference-type-with-parameterless-constructor
+/// validation (see <see cref="validateStateType"/>).
+/// </exception>
 let discoverEventSourcedGrains (assembly: Assembly) : EventSourcedStubInfo list =
     [ for t in assembly.GetTypes() do
           for prop in t.GetProperties(BindingFlags.Public ||| BindingFlags.Static) do

@@ -224,27 +224,43 @@ type GrainContract<'Actor, 'Key, 'Api>
     member internal _.DeclaredTypes = declaredTypes
 
     /// <summary>Encode a domain key into the exact Orleans grain identity of this contract.</summary>
+    /// <param name="key">The domain key to encode.</param>
     member internal _.GrainIdOf(key: 'Key) = GrainId.Create(grainType, keyCodec.EncodeKey key)
 
     /// <summary>Decode the domain key from an Orleans grain identity.</summary>
+    /// <param name="grainId">The Orleans grain identity to decode.</param>
     member internal _.KeyOf(grainId: GrainId) = keyCodec.DecodeKey grainId
 
     /// <summary>Look up a descriptor by its ordinal wire operation ID.</summary>
+    /// <param name="operationId">The stable wire operation ID to find.</param>
     member internal _.TryFindOperation(operationId: string) =
         match byId.TryGetValue operationId with
         | true, operation -> Some operation
         | _ -> None
 
     /// <summary>Look up a descriptor by its source record-field name.</summary>
+    /// <param name="fieldName">The source record-field name to find.</param>
     member internal _.TryFindField(fieldName: string) =
         operations |> Array.tryFind (fun operation -> operation.FieldName = fieldName)
 
     /// <summary>Resolve a selector to its descriptor, running it once against the probe record.</summary>
+    /// <param name="entry">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="selector">The caller-supplied field projection to resolve.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not return
+    /// one of this contract's own API field values.
+    /// </exception>
     member internal _.Resolve(entry: string, selector: OperationSelector<'Api, 'Argument, 'Reply>) =
         let field = ApiShape.resolve shape entry selector
         operations.[field.Index]
 
     /// <summary>Resolve a streaming selector to its descriptor. Spec 004 item 6.</summary>
+    /// <param name="entry">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="selector">The caller-supplied streaming field projection to resolve.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not return
+    /// one of this contract's own API field values.
+    /// </exception>
     member internal _.ResolveStream(entry: string, selector: StreamSelector<'Api, 'Argument, 'Item>) =
         let field = ApiShape.resolveStream shape entry selector
         operations.[field.Index]
@@ -255,18 +271,31 @@ type GrainContract<'Actor, 'Key, 'Api>
 /// <summary>Accumulated, not yet validated, contract configuration.</summary>
 [<ReferenceEquality>]
 type internal ContractDraftState<'Key> =
-    { Shape: ApiShape
+    { /// The reflected API shape for 'Api.
+      Shape: ApiShape
+      /// The explicit 'grainType' value, when declared.
       GrainTypeName: string option
+      /// The explicit 'version' value, when declared; defaults to 1 at sealing.
       Version: int option
+      /// The explicit 'acceptsVersions' policy, when declared; defaults to Exact at sealing.
       AcceptedVersions: VersionPolicy option
+      /// Whether 'reentrant' has been declared.
       IsReentrant: bool
+      /// The declared 'mayInterleave' predicate, when declared.
       MayInterleave: (IFunctionalRequestMetadata -> bool) option
+      /// The installed key codec, when a key operation has been declared.
       KeyCodec: KeyCodec<'Key> option
+      /// API-field indices declared 'readOnly'.
       ReadOnly: Set<int>
+      /// API-field indices declared 'oneWay'.
       OneWay: Set<int>
+      /// API-field indices declared 'alwaysInterleave'.
       AlwaysInterleave: Set<int>
+      /// The declared Orleans transaction option, keyed by API-field index.
       Transactions: Map<int, Orleans.TransactionOption>
+      /// The declared 'sinceVersion' floor, keyed by API-field index.
       SinceVersions: Map<int, int>
+      /// The declared 'operationId' override, keyed by API-field index.
       OperationIds: Map<int, string> }
 
 /// <summary>
@@ -282,6 +311,11 @@ type GrainContractDraft<'Actor, 'Key, 'Api> internal (state: ContractDraftState<
 /// <summary>Contract-draft helpers shared by the computation-expression builder.</summary>
 module internal ContractDraft =
 
+    /// <summary>Start an empty contract draft for 'Api.</summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown, on the first call for this 'Api, when it is not a valid API shape; see
+    /// <see cref="M:Orleans.FSharp.ApiShape.ofType"/>.
+    /// </exception>
     let create<'Actor, 'Key, 'Api> () =
         GrainContractDraft<'Actor, 'Key, 'Api>(
             { Shape = ApiShape.of'<'Api> ()
@@ -299,10 +333,16 @@ module internal ContractDraft =
               OperationIds = Map.empty }
         )
 
+    /// <summary>Wrap an accumulated draft state back into a draft value.</summary>
+    /// <param name="state">The accumulated state to wrap.</param>
     let withState<'Actor, 'Key, 'Api> (state: ContractDraftState<'Key>) =
         GrainContractDraft<'Actor, 'Key, 'Api>(state)
 
     /// <summary>Install a key codec, rejecting a second key operation.</summary>
+    /// <param name="operationName">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="codec">The key codec to install.</param>
+    /// <param name="state">The accumulated draft state to extend.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key codec is already installed.</exception>
     let withKey (operationName: string) (codec: KeyCodec<'Key>) (state: ContractDraftState<'Key>) =
         match state.KeyCodec with
         | Some existing ->
@@ -312,6 +352,10 @@ module internal ContractDraft =
         | None -> { state with KeyCodec = Some codec }
 
     /// <summary>Add a policy to one field, rejecting a repeated policy of the same kind.</summary>
+    /// <param name="policyName">The policy's own name, used to phrase the diagnostic.</param>
+    /// <param name="current">The set of field indices this policy is already applied to.</param>
+    /// <param name="operation">The field to add the policy to.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when this policy is already applied to <paramref name="operation"/>.</exception>
     let addPolicy (policyName: string) (current: Set<int>) (operation: ApiOperationShape) =
         if current.Contains operation.Index then
             fail ContractStage $"'{policyName}' is applied more than once to API field '{operation.FieldName}'."
@@ -327,6 +371,10 @@ module internal ContractDraft =
     /// carries a '+' separator in its qualified name. Either case must declare 'grainType'
     /// explicitly instead.
     /// </summary>
+    /// <param name="actorType">The actor brand type to derive a grain type name from.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="actorType"/> is a generic type or a nested type.
+    /// </exception>
     let private deriveGrainTypeName (actorType: Type) =
         if actorType.IsGenericType then
             fail
@@ -341,6 +389,20 @@ module internal ContractDraft =
         actorType.Name
 
     /// <summary>Seal a draft into an immutable contract.</summary>
+    /// <param name="draft">The accumulated draft to validate and seal.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the draft fails sealing validation: an explicit or derived grain type name, or
+    /// an explicit or defaulted operation ID, that fails the fixed transport's wire-text bounds; a
+    /// 'acceptsVersions (BackwardCompatible n)' floor that is non-positive or above the contract
+    /// version; both 'reentrant' and 'mayInterleave' declared; no key operation declared; a
+    /// streaming field combined with 'oneWay', 'readOnly', 'alwaysInterleave', or 'transactional';
+    /// 'oneWay' on a field that does not return <c>Task&lt;unit&gt;</c>, or combined with
+    /// 'readOnly'; 'transactional' combined with 'oneWay' or 'alwaysInterleave';
+    /// 'alwaysInterleave' without 'readOnly' or 'oneWay', or combined with a contract declared
+    /// 'reentrant' or 'mayInterleave'; a 'sinceVersion' that is non-positive, above the contract
+    /// version, or unable to ever reject a call given the accepted-versions floor; or two API
+    /// fields sharing one operation ID.
+    /// </exception>
     let run<'Actor, 'Key, 'Api> (draft: GrainContractDraft<'Actor, 'Key, 'Api>) : GrainContract<'Actor, 'Key, 'Api> =
         let state = draft.State
 
@@ -612,10 +674,20 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     member _.Yield(_: unit) : GrainContractDraft<'Actor, 'Key, 'Api> = ContractDraft.create<'Actor, 'Key, 'Api> ()
 
     /// <summary>Validate and seal the draft into an immutable contract.</summary>
+    /// <param name="draft">The accumulated draft to validate and seal.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when sealing validation fails; see
+    /// <see cref="M:Orleans.FSharp.ContractDraft.run"/> for the complete list of checks.
+    /// </exception>
     member _.Run(draft: GrainContractDraft<'Actor, 'Key, 'Api>) : GrainContract<'Actor, 'Key, 'Api> =
         ContractDraft.run draft
 
     /// <summary>Set the explicit Orleans grain type; required exactly once.</summary>
+    /// <param name="value">The explicit Orleans grain type name.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="value"/> is blank, fails the fixed transport's wire-text
+    /// bounds, or 'grainType' is already set.
+    /// </exception>
     [<CustomOperation("grainType")>]
     member _.GrainType(state: GrainContractDraft<'Actor, 'Key, 'Api>, value: string) =
         if isBlank value then
@@ -628,6 +700,10 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with GrainTypeName = Some value }
 
     /// <summary>Set the application contract version; defaults to <c>1</c>.</summary>
+    /// <param name="value">The application contract version; must be positive.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="value"/> is not positive, or 'version' is already set.
+    /// </exception>
     [<CustomOperation("version")>]
     member _.Version(state: GrainContractDraft<'Actor, 'Key, 'Api>, value: int) =
         if value <= 0 then
@@ -658,6 +734,8 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// (a new <c>operationId</c>), not a wider policy.
     /// </para>
     /// </remarks>
+    /// <param name="policy">The version admission policy.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'acceptsVersions' is already set.</exception>
     [<CustomOperation("acceptsVersions")>]
     member _.AcceptsVersions(state: GrainContractDraft<'Actor, 'Key, 'Api>, policy: VersionPolicy) =
         match state.State.AcceptedVersions with
@@ -673,6 +751,13 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// Only meaningful together with an <c>acceptsVersions</c> floor below the declared value:
     /// sealing rejects a <c>sinceVersion</c> that no admitted version could ever fall below.
     /// </remarks>
+    /// <param name="introducedAt">The contract version this operation was introduced at.</param>
+    /// <param name="selector">The API field to declare a version floor for.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when 'sinceVersion' is already applied to that
+    /// field.
+    /// </exception>
     [<CustomOperation("sinceVersion")>]
     member _.SinceVersion<'Argument, 'Reply>
         (
@@ -694,6 +779,13 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// item 6: same rule and same diagnostics as the unary overload; only the selector's range
     /// differs.
     /// </summary>
+    /// <param name="introducedAt">The contract version this operation was introduced at.</param>
+    /// <param name="selector">The streaming API field to declare a version floor for.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when 'sinceVersion' is already applied to that
+    /// field.
+    /// </exception>
     [<CustomOperation("sinceVersion")>]
     member _.SinceVersion<'Argument, 'Item>
         (
@@ -729,6 +821,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// replacement is discarded rather than published.
     /// </para>
     /// </remarks>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'reentrant' is already declared.</exception>
     [<CustomOperation("reentrant")>]
     member _.Reentrant(state: GrainContractDraft<'Actor, 'Key, 'Api>) =
         if state.State.IsReentrant then
@@ -761,6 +854,9 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// transport-stage diagnostic naming the grain type and operation so it is attributable.
     /// </para>
     /// </remarks>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="predicate"/> is null, or 'mayInterleave' is already declared.
+    /// </exception>
     [<CustomOperation("mayInterleave")>]
     member _.MayInterleave
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, predicate: IFunctionalRequestMetadata -> bool)
@@ -773,11 +869,15 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with MayInterleave = Some predicate }
 
     /// <summary>Use the native Orleans string key.</summary>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("stringKey")>]
     member _.StringKey(state: GrainContractDraft<'Actor, string, 'Api>) =
         ContractDraft.withState<'Actor, string, 'Api> (ContractDraft.withKey "stringKey" KeyCodecs.stringKey state.State)
 
     /// <summary>Map a domain key onto the native Orleans string key.</summary>
+    /// <param name="encode">Encodes the domain key as the native Orleans string key.</param>
+    /// <param name="decode">Decodes the domain key from the native Orleans string key.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("stringKeyMapped")>]
     member _.StringKeyMapped
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, encode: 'Key -> string, decode: string -> 'Key)
@@ -787,11 +887,15 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Use the native Orleans Guid key.</summary>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("guidKey")>]
     member _.GuidKey(state: GrainContractDraft<'Actor, Guid, 'Api>) =
         ContractDraft.withState<'Actor, Guid, 'Api> (ContractDraft.withKey "guidKey" KeyCodecs.guidKey state.State)
 
     /// <summary>Map a domain key onto the native Orleans Guid key.</summary>
+    /// <param name="encode">Encodes the domain key as the native Orleans Guid key.</param>
+    /// <param name="decode">Decodes the domain key from the native Orleans Guid key.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("guidKeyMapped")>]
     member _.GuidKeyMapped(state: GrainContractDraft<'Actor, 'Key, 'Api>, encode: 'Key -> Guid, decode: Guid -> 'Key) =
         ContractDraft.withState<'Actor, 'Key, 'Api> (
@@ -799,11 +903,15 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Use the native Orleans int64 key.</summary>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("int64Key")>]
     member _.Int64Key(state: GrainContractDraft<'Actor, int64, 'Api>) =
         ContractDraft.withState<'Actor, int64, 'Api> (ContractDraft.withKey "int64Key" KeyCodecs.int64Key state.State)
 
     /// <summary>Map a domain key onto the native Orleans int64 key.</summary>
+    /// <param name="encode">Encodes the domain key as the native Orleans int64 key.</param>
+    /// <param name="decode">Decodes the domain key from the native Orleans int64 key.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("int64KeyMapped")>]
     member _.Int64KeyMapped
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, encode: 'Key -> int64, decode: int64 -> 'Key)
@@ -813,6 +921,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Use the native Orleans Guid compound key.</summary>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("guidCompoundKey")>]
     member _.GuidCompoundKey(state: GrainContractDraft<'Actor, Guid * string, 'Api>) =
         ContractDraft.withState<'Actor, Guid * string, 'Api> (
@@ -820,6 +929,9 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Map a domain key onto the native Orleans Guid compound key.</summary>
+    /// <param name="encode">Encodes the domain key as the native Orleans Guid compound key.</param>
+    /// <param name="decode">Decodes the domain key from the native Orleans Guid compound key.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("guidCompoundKeyMapped")>]
     member _.GuidCompoundKeyMapped
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, encode: 'Key -> Guid * string, decode: Guid -> string -> 'Key)
@@ -829,6 +941,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Use the native Orleans int64 compound key.</summary>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("int64CompoundKey")>]
     member _.Int64CompoundKey(state: GrainContractDraft<'Actor, int64 * string, 'Api>) =
         ContractDraft.withState<'Actor, int64 * string, 'Api> (
@@ -836,6 +949,9 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Map a domain key onto the native Orleans int64 compound key.</summary>
+    /// <param name="encode">Encodes the domain key as the native Orleans int64 compound key.</param>
+    /// <param name="decode">Decodes the domain key from the native Orleans int64 compound key.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("int64CompoundKeyMapped")>]
     member _.Int64CompoundKeyMapped
         (
@@ -848,6 +964,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         )
 
     /// <summary>Select Orleans read-only scheduling for one operation.</summary>
+    /// <param name="selector">The API field to declare read-only.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when 'readOnly' is already applied to that field.
+    /// </exception>
     [<CustomOperation("readOnly")>]
     member _.ReadOnly<'Argument, 'Reply>
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector<'Api, 'Argument, 'Reply>)
@@ -859,6 +980,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
                 ReadOnly = ContractDraft.addPolicy "readOnly" state.State.ReadOnly operation }
 
     /// <summary>Select one-way delivery for one <c>Task&lt;unit&gt;</c> operation.</summary>
+    /// <param name="selector">The API field to declare one-way.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when 'oneWay' is already applied to that field.
+    /// </exception>
     [<CustomOperation("oneWay")>]
     member _.OneWay<'Argument>
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector<'Api, 'Argument, unit>)
@@ -870,6 +996,12 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
                 OneWay = ContractDraft.addPolicy "oneWay" state.State.OneWay operation }
 
     /// <summary>Permit a read-only or one-way operation to interleave.</summary>
+    /// <param name="selector">The API field to declare always-interleaving.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when 'alwaysInterleave' is already applied to
+    /// that field.
+    /// </exception>
     [<CustomOperation("alwaysInterleave")>]
     member _.AlwaysInterleave<'Argument, 'Reply>
         (state: GrainContractDraft<'Actor, 'Key, 'Api>, selector: OperationSelector<'Api, 'Argument, 'Reply>)
@@ -917,6 +1049,12 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// update.
     /// </para>
     /// </remarks>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="option"/> is not a defined <c>Orleans.TransactionOption</c>
+    /// value; when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; or when 'transactional' is already applied to that
+    /// field.
+    /// </exception>
     [<CustomOperation("transactional")>]
     member _.Transactional<'Argument, 'Reply>
         (
@@ -939,6 +1077,14 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
                 Transactions = state.State.Transactions.Add(operation.Index, option) }
 
     /// <summary>Override the stable wire ID of one operation, keeping it across a field rename.</summary>
+    /// <param name="stableWireId">The stable wire ID to use instead of the default field-name-derived one.</param>
+    /// <param name="selector">The API field to override the wire ID of.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="stableWireId"/> is blank or fails the fixed transport's
+    /// wire-text bounds; when <paramref name="selector"/> is null, invoking it throws, or it does
+    /// not resolve to one of the contract's own API fields; or when 'operationId' is already
+    /// applied to that field.
+    /// </exception>
     [<CustomOperation("operationId")>]
     member _.OperationId<'Argument, 'Reply>
         (
@@ -966,6 +1112,14 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// Override the stable wire ID of one <b>streaming</b> operation. Spec 004 item 6: same rule
     /// and same diagnostics as the unary overload; only the selector's range differs.
     /// </summary>
+    /// <param name="stableWireId">The stable wire ID to use instead of the default field-name-derived one.</param>
+    /// <param name="selector">The streaming API field to override the wire ID of.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="stableWireId"/> is blank or fails the fixed transport's
+    /// wire-text bounds; when <paramref name="selector"/> is null, invoking it throws, or it does
+    /// not resolve to one of the contract's own API fields; or when 'operationId' is already
+    /// applied to that field.
+    /// </exception>
     [<CustomOperation("operationId")>]
     member _.OperationId<'Argument, 'Item>
         (

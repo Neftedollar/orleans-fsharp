@@ -14,6 +14,8 @@ open Microsoft.Extensions.Hosting
 type internal ShutdownHandlerService(handler: CancellationToken -> Task<unit>) =
     inherit BackgroundService()
 
+    /// <summary>Wait for the host to signal stopping, then run the shutdown handler.</summary>
+    /// <param name="stoppingToken">Triggered when the host begins stopping.</param>
     override _.ExecuteAsync(stoppingToken: CancellationToken) : Task =
         task {
             // Wait until the host signals stopping

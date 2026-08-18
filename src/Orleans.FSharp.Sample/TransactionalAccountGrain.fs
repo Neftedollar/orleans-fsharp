@@ -28,7 +28,7 @@ module TransactionalAccountGrainDef =
     /// Definition for the transactional account grain.
     /// <list type="bullet">
     ///   <item><description><c>Deposit</c>: adds the amount to the balance and returns updated state.</description></item>
-    ///   <item><description><c>Withdraw</c>: subtracts the amount; throws <c>InvalidOperationException</c> on overdraft.</description></item>
+    ///   <item><description><c>Withdraw</c>: subtracts the amount; throws <c>System.Exception</c> (via <c>failwith</c>) on overdraft.</description></item>
     ///   <item><description><c>GetBalance</c>: reads the current balance.</description></item>
     ///   <item><description><c>CopyState</c>: copies field values from source to target (required for transactional state).</description></item>
     /// </list>
@@ -63,10 +63,13 @@ type ITransactionalAccountGrain =
     inherit IGrainWithStringKey
 
     /// <summary>Deposits <paramref name="amount"/> into the account within the ambient transaction.</summary>
+    /// <param name="amount">The amount to deposit.</param>
     [<Transaction(TransactionOption.CreateOrJoin)>]
     abstract Deposit: amount: decimal -> Task
 
     /// <summary>Withdraws <paramref name="amount"/> from the account within the ambient transaction. Throws on overdraft.</summary>
+    /// <param name="amount">The amount to withdraw.</param>
+    /// <exception cref="System.Exception">Thrown by the underlying handler when the account balance is less than <paramref name="amount"/>.</exception>
     [<Transaction(TransactionOption.CreateOrJoin)>]
     abstract Withdraw: amount: decimal -> Task
 
@@ -86,5 +89,8 @@ type ITransactionalAtmGrain =
     /// <paramref name="fromKey"/> to the account identified by <paramref name="toKey"/>.
     /// Creates a new transaction; both withdraw and deposit are atomic.
     /// </summary>
+    /// <param name="fromKey">The source account's grain key.</param>
+    /// <param name="toKey">The destination account's grain key.</param>
+    /// <param name="amount">The amount to transfer.</param>
     [<Transaction(TransactionOption.Create)>]
     abstract Transfer: fromKey: string * toKey: string * amount: decimal -> Task

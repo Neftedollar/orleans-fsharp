@@ -268,6 +268,8 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     /// <c>GrainDefinition</c> is registered as a singleton by <c>AddFSharpGrain</c>;
     /// <c>IPersistentState</c> is injected with the "Default" storage provider.
     /// </summary>
+    /// <param name="definition">The F# grain definition singleton.</param>
+    /// <param name="state">The injected persistent state for the "Default" storage provider.</param>
     public LifecycleTestGrainImpl(
 #pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         GrainDefinition<LifecycleState, LifecycleTestCommand> definition,
@@ -283,6 +285,7 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     /// Restores persisted state (if any), then invokes the <c>onActivate</c> F# hook
     /// via <see cref="GrainDefinition.invokeOnActivate"/>.
     /// </summary>
+    /// <param name="ct">The activation cancellation token.</param>
     public override async Task OnActivateAsync(CancellationToken ct)
     {
         if (_state.RecordExists)
@@ -296,6 +299,8 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     /// <summary>
     /// Invokes the <c>onDeactivate</c> F# hook via <see cref="GrainDefinition.invokeOnDeactivate"/>.
     /// </summary>
+    /// <param name="reason">The reason Orleans is deactivating this activation.</param>
+    /// <param name="ct">The deactivation cancellation token.</param>
     public override async Task OnDeactivateAsync(DeactivationReason reason, CancellationToken ct)
     {
 #pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
@@ -307,6 +312,7 @@ public class LifecycleTestGrainImpl : Grain, ILifecycleTestGrain
     /// Dispatches a lifecycle command to the F# handler, persists the updated state,
     /// and returns the boxed result.
     /// </summary>
+    /// <param name="cmd">The lifecycle command to dispatch.</param>
     public async Task<object> HandleMessage(LifecycleTestCommand cmd)
     {
 #pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
@@ -351,6 +357,8 @@ public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
     /// fixture (NOT via <c>AddFSharpGrain</c>) to avoid adding the message type to the universal
     /// handler registry, which would cause <c>IFSharpGrain</c> ambiguity.
     /// </summary>
+    /// <param name="definition">The F# grain definition singleton.</param>
+    /// <param name="state">The injected persistent state for the "Default" storage provider.</param>
     public AdditionalStateTestGrainImpl(
 #pragma warning disable CS0618 // deprecated API self-reference (spec-003 deprecation pass)
         GrainDefinition<AdditionalState, AdditionalStateCommand> definition,
@@ -367,6 +375,7 @@ public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
     /// declared in the grain definition via
     /// <see cref="Orleans.FSharp.Runtime.GrainDefinition.initAdditionalStates{TState,TMessage}"/>.
     /// </summary>
+    /// <param name="ct">The activation cancellation token.</param>
     public override async Task OnActivateAsync(CancellationToken ct)
     {
         if (_state.RecordExists)
@@ -383,6 +392,7 @@ public class AdditionalStateTestGrainImpl : Grain, IAdditionalStateTestGrain
     /// and dispatches the command to the F# context-aware handler.
     /// Both primary and additional states are persisted on mutating commands.
     /// </summary>
+    /// <param name="cmd">The command to dispatch.</param>
     public async Task<object> HandleMessage(AdditionalStateCommand cmd)
     {
         // GrainContext module compiles as GrainContextModule in C# (F# appends "Module" suffix
@@ -415,10 +425,13 @@ public interface ITestChatObserver : IGrainObserver
 public interface ITestChatGrain : IGrainWithStringKey
 {
     /// <summary>Registers an observer to receive future broadcasts.</summary>
+    /// <param name="observer">The observer to add to the subscription list.</param>
     Task Subscribe(ITestChatObserver observer);
     /// <summary>Removes an observer from the subscription list.</summary>
+    /// <param name="observer">The observer to remove.</param>
     Task Unsubscribe(ITestChatObserver observer);
     /// <summary>Notifies all active subscribers with the given message.</summary>
+    /// <param name="message">The message to broadcast.</param>
     Task Broadcast(string message);
     /// <summary>Returns the number of currently active subscribers.</summary>
     Task<int> GetSubscriberCount();
@@ -468,6 +481,10 @@ public class TransactionalAccountGrainImpl
     : Orleans.FSharp.Runtime.FSharpTransactionalGrain<Orleans.FSharp.Sample.TransactionalAccountState>,
       Orleans.FSharp.Sample.ITransactionalAccountGrain
 {
+    /// <summary>Initialises the grain from DI, forwarding to the generic transactional grain base.</summary>
+    /// <param name="state">The injected Orleans transactional state facet.</param>
+    /// <param name="definition">The F# transactional grain definition singleton.</param>
+    /// <param name="logger">The logger for the base class.</param>
     public TransactionalAccountGrainImpl(
         [TransactionalState("state", "TransactionStore")] ITransactionalState<Orleans.FSharp.Sample.TransactionalAccountState> state,
         Orleans.FSharp.Runtime.TransactionalGrainDefinition<Orleans.FSharp.Sample.TransactionalAccountState> definition,
@@ -484,6 +501,9 @@ public class TransactionalAtmGrainImpl
     : Orleans.FSharp.Runtime.FSharpAtmGrain<Orleans.FSharp.Sample.ITransactionalAccountGrain>,
       Orleans.FSharp.Sample.ITransactionalAtmGrain
 {
+    /// <summary>Initialises the grain from DI, forwarding to the generic ATM grain base.</summary>
+    /// <param name="definition">The F# ATM grain definition singleton.</param>
+    /// <param name="logger">The logger for the base class.</param>
     public TransactionalAtmGrainImpl(
         Orleans.FSharp.Runtime.AtmGrainDefinition<Orleans.FSharp.Sample.ITransactionalAccountGrain> definition,
         Microsoft.Extensions.Logging.ILogger<Orleans.FSharp.Runtime.FSharpAtmGrain<Orleans.FSharp.Sample.ITransactionalAccountGrain>> logger)

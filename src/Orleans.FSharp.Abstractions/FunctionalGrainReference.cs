@@ -14,7 +14,10 @@ namespace Orleans.FSharp;
 /// </summary>
 internal sealed class FunctionalGrainReference : GrainReference
 {
+    /// <summary>The exact-type payload codec of the process which created this reference.</summary>
     private readonly IFunctionalPayloadCodec _payloadCodec;
+
+    /// <summary>The services of the client or activation which created this reference.</summary>
     private readonly IServiceProvider _services;
 
     /// <summary>
@@ -25,6 +28,11 @@ internal sealed class FunctionalGrainReference : GrainReference
     private Serializer<OrleansTransactionAbortedException>? _transactionExceptionSerializer;
 
     /// <summary>Create a reference over the shared state built by the functional provider.</summary>
+    /// <param name="shared">The Orleans reference-shared state to construct the base <see cref="GrainReference"/> over.</param>
+    /// <param name="key">The grain's identity key.</param>
+    /// <param name="payloadCodec">The exact-type payload codec to store on the reference.</param>
+    /// <param name="services">The services of the client or activation creating this reference.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="payloadCodec"/> or <paramref name="services"/> is null.</exception>
     internal FunctionalGrainReference(
         GrainReferenceShared shared,
         IdSpan key,
@@ -49,6 +57,11 @@ internal sealed class FunctionalGrainReference : GrainReference
     /// actor-specific target interface taken from the contract descriptor, and the Orleans
     /// request options are restored from the envelope's validated admission flags before send.
     /// </summary>
+    /// <param name="envelope">The validated fixed request to send.</param>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
+    /// <param name="cancellationToken">The token that cancels the call.</param>
+    /// <returns>The fixed reply once the target has completed the call.</returns>
     internal Task<FunctionalReply> SendAsync(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,
@@ -63,6 +76,9 @@ internal sealed class FunctionalGrainReference : GrainReference
     /// Send a one-way request. Completion means the message entered the local Orleans send
     /// path; there is no target acknowledgement.
     /// </summary>
+    /// <param name="envelope">The validated fixed request to send.</param>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     internal void SendOneWay(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,
@@ -82,6 +98,11 @@ internal sealed class FunctionalGrainReference : GrainReference
     /// Orleans' own transactional invokable base, so the ambient transaction is joined (or a new
     /// one started) by <c>TransactionRequestBase</c> itself, on both the caller and target sides.
     /// </summary>
+    /// <param name="envelope">The validated fixed request to send.</param>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
+    /// <param name="cancellationToken">The token that cancels the call.</param>
+    /// <returns>The fixed reply once the target has completed the call.</returns>
     internal Task<FunctionalReply> SendTransactionalAsync(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,
@@ -110,6 +131,11 @@ internal sealed class FunctionalGrainReference : GrainReference
     /// request id, exactly as it is for a codegen grain method returning
     /// <c>IAsyncEnumerable&lt;T&gt;</c>.
     /// </summary>
+    /// <param name="envelope">The validated fixed request describing the stream to open.</param>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
+    /// <param name="cancellationToken">The token that cancels the enumeration.</param>
+    /// <returns>The unbound stream of fixed replies; enumerating it drives the remote call.</returns>
     internal IAsyncEnumerable<FunctionalReply> OpenStream(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,
@@ -126,6 +152,12 @@ internal sealed class FunctionalGrainReference : GrainReference
         return request.InitializeRequest(this);
     }
 
+    /// <summary>Build and configure a non-transactional, non-streaming request from a validated envelope.</summary>
+    /// <param name="envelope">The validated fixed request to wrap.</param>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
+    /// <param name="cancellationToken">The token that cancels the call.</param>
+    /// <returns>A request configured with caller metadata and admission options, ready to invoke.</returns>
     private static FunctionalRequest CreateRequest(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,

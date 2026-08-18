@@ -103,6 +103,7 @@ type internal FunctionalActivationState
     member _.Journal = journal
 
     /// <summary>Attach this activation's journal. Called once, from the grain activator.</summary>
+    /// <param name="access">The journal access surface for this activation.</param>
     member _.AttachJournal(access: IFunctionalJournalAccess) = journal <- access
 
     /// <summary>
@@ -141,6 +142,8 @@ type internal FunctionalActivationState
     /// synchronization this deliberately does without.
     /// </para>
     /// </remarks>
+    /// <param name="value">The replacement primary state value, boxed.</param>
+    /// <exception cref="System.InvalidOperationException">The activation is journaled, so its state is the fold of the journal and cannot be replaced directly.</exception>
     member _.Publish(value: obj) =
         match journal with
         | null ->
@@ -156,12 +159,14 @@ type internal FunctionalActivationState
                 $"the state of grain type '{definition.GrainTypeName}' is the fold of its journal and cannot be replaced directly. Raise an event instead."
 
     /// <summary>Resolve an attached facet by its logical descriptor.</summary>
+    /// <param name="descriptor">The logical descriptor of the persistent facet to resolve.</param>
     member _.TryResolve(descriptor: PersistentStateDescriptor) =
         match byDescriptor.TryGetValue descriptor with
         | true, facet -> Some facet
         | _ -> None
 
     /// <summary>Resolve an attached transactional facet by its logical descriptor.</summary>
+    /// <param name="descriptor">The logical descriptor of the transactional facet to resolve.</param>
     member _.TryResolveTransactional(descriptor: TransactionalStateDescriptor) =
         match byTransactionalDescriptor.TryGetValue descriptor with
         | true, facet -> Some facet
@@ -172,6 +177,7 @@ type internal FunctionalActivationState
     /// holder which reports no durable record. Initializers populate memory only; nothing here
     /// writes storage.
     /// </summary>
+    /// <param name="key">The activation's primary key, passed to each facet's and the primary state's initializer.</param>
     member _.Initialize(key: obj) =
         for facet in facets do
             if not (facet.Blueprint.RecordExists facet.Instance) then

@@ -11,6 +11,11 @@ open Discovery
 // Template loading
 // ---------------------------------------------------------------------------
 
+/// Load and parse an embedded Scriban template by resource-relative name.
+/// <param name="name">The template file name, relative to the <c>Templates</c> embedded-resource folder.</param>
+/// <exception cref="System.Exception">
+/// Thrown when no embedded resource matches <paramref name="name"/>, or when the loaded template fails to parse.
+/// </exception>
 let private loadTemplate (name: string) : Template =
     let resourceName = $"Orleans.FSharp.Generator.Templates.{name}"
 
@@ -38,12 +43,14 @@ let private loadTemplate (name: string) : Template =
 // ---------------------------------------------------------------------------
 
 /// Strip leading 'I' and append 'Impl': IBankAccountGrain → BankAccountGrainImpl
+/// <param name="interfaceType">The grain interface type to derive the stub class name from.</param>
 let private toClassName (interfaceType: Type) : string =
     let name = interfaceType.Name
     let stripped = if name.StartsWith("I", StringComparison.Ordinal) then name.[1..] else name
     stripped + "Impl"
 
 /// C# fully-qualified name (nested type '+' → '.')
+/// <param name="t">The type to render a C#-syntax fully-qualified name for.</param>
 let private fqn (t: Type) =
     t.FullName.Replace('+', '.')
 
@@ -51,6 +58,14 @@ let private fqn (t: Type) =
 // Rendering
 // ---------------------------------------------------------------------------
 
+/// <summary>
+/// Renders the generated C# event-sourced grain stub source for one discovered interface, by
+/// filling the thin or full Scriban template (chosen from <c>info.UseThinStub</c>) with the
+/// stub's class name, fully-qualified type names, and definition metadata.
+/// </summary>
+/// <param name="info">The discovered event-sourced grain stub metadata to render.</param>
+/// <param name="ns">The namespace to emit the generated class into.</param>
+/// <returns>The rendered C# source text for the stub.</returns>
 let renderEventSourcedStub (info: EventSourcedStubInfo) (ns: string) : string =
     // Choose thin template when interface inherits IFSharpEventSourcedGrain.
     let templateName =
@@ -82,6 +97,13 @@ let renderEventSourcedStub (info: EventSourcedStubInfo) (ns: string) : string =
 // File output
 // ---------------------------------------------------------------------------
 
+/// <summary>
+/// Renders every discovered event-sourced grain stub and writes each as a
+/// <c>{ClassName}.g.cs</c> file into the output directory, creating it if needed.
+/// </summary>
+/// <param name="stubs">The discovered event-sourced grain stubs to render.</param>
+/// <param name="outputDir">The directory to write the generated <c>.g.cs</c> files into.</param>
+/// <param name="ns">The namespace to emit each generated class into.</param>
 let generateAll (stubs: EventSourcedStubInfo list) (outputDir: string) (ns: string) =
     Directory.CreateDirectory(outputDir) |> ignore
 

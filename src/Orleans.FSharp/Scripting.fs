@@ -40,6 +40,9 @@ module Scripting =
     /// higher layer can extend the scripting silo builder without <c>Orleans.FSharp</c> itself
     /// depending back on it.
     /// </summary>
+    /// <param name="siloPort">The silo-to-silo communication port.</param>
+    /// <param name="gatewayPort">The client-to-silo gateway port.</param>
+    /// <param name="configureExtra">Applied to the silo builder after the fixed recipe, for anything a caller needs beyond it.</param>
     let internal startOnPortsWith
         (siloPort: int)
         (gatewayPort: int)

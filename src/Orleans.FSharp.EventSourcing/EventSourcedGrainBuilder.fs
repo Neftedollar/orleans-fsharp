@@ -22,6 +22,7 @@ open System.Threading.Tasks
 /// }
 /// </code>
 /// </example>
+/// <param name="grainInterface">The Orleans grain interface the generated C# stub will implement.</param>
 [<AttributeUsage(AttributeTargets.Property ||| AttributeTargets.Field)>]
 type FSharpEventSourcedGrainAttribute(grainInterface: Type) =
     inherit Attribute()
@@ -298,7 +299,8 @@ type EventSourcedGrainBuilder() =
         { definition with CustomStorage = Some adapter }
 
     /// <summary>Returns the completed event-sourced grain definition. Validates that defaultState was set.</summary>
-    /// <exception cref="System.InvalidOperationException">Thrown when defaultState was not set for reference types.</exception>
+    /// <param name="definition">The definition being finalized.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when defaultState was not set.</exception>
     member _.Run(definition: EventSourcedGrainDefinition<'State, 'Event, 'Command>) =
         if definition.DefaultState.IsNone then
             invalidOp

@@ -81,6 +81,10 @@ module internal ProtocolToken =
     let StreamItemDirection = "stream-item"
 
     /// <summary>Compute the token for one grain type, version, operation, and direction.</summary>
+    /// <param name="grainType">The grain type (or observer type) the token is scoped to.</param>
+    /// <param name="version">The application contract version.</param>
+    /// <param name="operationId">The operation ID.</param>
+    /// <param name="direction">The lowercase direction literal.</param>
     let compute (grainType: string) (version: int) (operationId: string) (direction: string) : byte[] =
         let text =
             String.Join(
@@ -94,26 +98,42 @@ module internal ProtocolToken =
         SHA256.HashData(Encoding.UTF8.GetBytes text)
 
     /// <summary>The request-direction token.</summary>
+    /// <param name="grainType">The grain type the token is scoped to.</param>
+    /// <param name="version">The application contract version.</param>
+    /// <param name="operationId">The operation ID.</param>
     let request grainType version operationId =
         compute grainType version operationId RequestDirection
 
     /// <summary>The reply-direction token.</summary>
+    /// <param name="grainType">The grain type the token is scoped to.</param>
+    /// <param name="version">The application contract version.</param>
+    /// <param name="operationId">The operation ID.</param>
     let reply grainType version operationId =
         compute grainType version operationId ReplyDirection
 
     /// <summary>The notify-direction token of one observer type, version, and push operation.</summary>
+    /// <param name="observerType">The observer type the token is scoped to.</param>
+    /// <param name="version">The application contract version.</param>
+    /// <param name="operationId">The push operation ID.</param>
     let notify observerType version operationId =
         compute observerType version operationId NotifyDirection
 
     /// <summary>The stream-request-direction token of one server-streaming operation.</summary>
+    /// <param name="grainType">The grain type the token is scoped to.</param>
+    /// <param name="version">The application contract version.</param>
+    /// <param name="operationId">The operation ID.</param>
     let streamRequest grainType version operationId =
         compute grainType version operationId StreamRequestDirection
 
     /// <summary>The stream-item-direction token of one server-streaming operation.</summary>
+    /// <param name="grainType">The grain type the token is scoped to.</param>
+    /// <param name="version">The application contract version.</param>
+    /// <param name="operationId">The operation ID.</param>
     let streamItem grainType version operationId =
         compute grainType version operationId StreamItemDirection
 
     /// <summary>Render a token as lowercase hexadecimal for diagnostics.</summary>
+    /// <param name="token">The token to render; <c>null</c> renders as <c>"&lt;null&gt;"</c>.</param>
     let toHex (token: byte[]) =
         if isNull token then
             "<null>"
@@ -121,6 +141,8 @@ module internal ProtocolToken =
             Convert.ToHexString(token).ToLowerInvariant()
 
     /// <summary>True when two tokens are byte-identical.</summary>
+    /// <param name="left">The first token.</param>
+    /// <param name="right">The second token.</param>
     let equal (left: byte[]) (right: byte[]) =
         not (isNull left)
         && not (isNull right)
@@ -183,10 +205,15 @@ module internal AdmissionFlags =
     let Reserved = 0xC0uy
 
     /// <summary>Encode one transaction option into the transaction field.</summary>
+    /// <param name="option">The transaction option to encode.</param>
     let encodeTransaction (option: Orleans.TransactionOption) =
         (byte (int option + 1)) <<< TransactionShift
 
     /// <summary>Compose the flag byte from the three policy decisions and the transaction option.</summary>
+    /// <param name="isReadOnly">Whether the operation is declared read-only.</param>
+    /// <param name="isOneWay">Whether the operation is declared one-way.</param>
+    /// <param name="isAlwaysInterleave">Whether the operation is declared always-interleave.</param>
+    /// <param name="transaction">The declared transaction option, if any.</param>
     let compose
         (isReadOnly: bool)
         (isOneWay: bool)
@@ -201,19 +228,24 @@ module internal AdmissionFlags =
              | Option.None -> None)
 
     /// <summary>True when the value sets at least one reserved bit.</summary>
+    /// <param name="flags">The admission-flag byte.</param>
     let hasReserved (flags: byte) = flags &&& Reserved <> None
 
     /// <summary>The raw transaction code carried in bits 3-5.</summary>
+    /// <param name="flags">The admission-flag byte.</param>
     let transactionCode (flags: byte) = (flags &&& TransactionMask) >>> TransactionShift
 
     /// <summary>True when the operation declares a transaction option.</summary>
+    /// <param name="flags">The admission-flag byte.</param>
     let isTransactional (flags: byte) = flags &&& TransactionMask <> None
 
     /// <summary>True unless bits 3-5 carry the one unassigned code.</summary>
+    /// <param name="flags">The admission-flag byte.</param>
     let hasValidTransactionField (flags: byte) =
         transactionCode flags <> UnassignedTransactionCode
 
     /// <summary>Decode the transaction field; <c>None</c> for a non-transactional operation.</summary>
+    /// <param name="flags">The admission-flag byte.</param>
     let tryTransactionOption (flags: byte) : Orleans.TransactionOption option =
         let code = transactionCode flags
 
@@ -235,9 +267,11 @@ module internal FunctionalIds =
     let InterfaceVersion = 1us
 
     /// <summary>The functional interface ID of one explicit grain type.</summary>
+    /// <param name="grainType">The explicit grain type name.</param>
     let interfaceId (grainType: string) = Prefix + grainType
 
     /// <summary>The stable actor-specific <c>GrainInterfaceType</c> of one explicit grain type.</summary>
+    /// <param name="grainType">The explicit grain type name.</param>
     let grainInterfaceType (grainType: string) =
         GrainInterfaceType.Create(interfaceId grainType)
 
@@ -309,6 +343,8 @@ type internal PayloadBoundary =
 module internal PayloadLimit =
 
     /// <summary>Reject a non-positive configured limit.</summary>
+    /// <param name="maxPayloadBytes">The configured local payload-size limit.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="maxPayloadBytes"/> is not positive.</exception>
     let validateLimit (maxPayloadBytes: int) =
         if maxPayloadBytes <= 0 then
             fail
@@ -322,6 +358,14 @@ module internal PayloadLimit =
     /// for the four request/reply boundaries and the observer type for the two notification
     /// boundaries.
     /// </summary>
+    /// <param name="boundary">The wire boundary the limit is enforced at.</param>
+    /// <param name="ownerType">The grain type or observer type the boundary is scoped to.</param>
+    /// <param name="operationId">The operation ID.</param>
+    /// <param name="actualBytes">The actual serialized payload size, in bytes.</param>
+    /// <param name="maxPayloadBytes">The configured local payload-size limit.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// <paramref name="actualBytes"/> exceeds <paramref name="maxPayloadBytes"/>.
+    /// </exception>
     let ensure
         (boundary: PayloadBoundary)
         (ownerType: string)

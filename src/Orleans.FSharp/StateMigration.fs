@@ -37,6 +37,10 @@ module StateMigration =
     /// <typeparam name="'TOld">The source state type before migration.</typeparam>
     /// <typeparam name="'TNew">The target state type after migration.</typeparam>
     /// <returns>A migration that operates on boxed values, suitable for chaining.</returns>
+    /// <exception cref="System.InvalidCastException">
+    /// The returned migration's <c>Migrate</c> function throws this when applied to a boxed value
+    /// that is not actually a <paramref name="migrate"/>-compatible <c>'TOld</c>.
+    /// </exception>
     let migration<'TOld, 'TNew> (fromVer: int) (toVer: int) (migrate: 'TOld -> 'TNew) : Migration<obj, obj> =
         {
             FromVersion = fromVer
@@ -54,7 +58,12 @@ module StateMigration =
     /// <param name="state">The boxed state value at the given version.</param>
     /// <typeparam name="'T">The target state type after all migrations are applied.</typeparam>
     /// <returns>The migrated state value, unboxed to the target type.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when no migration is found for a required version step.</exception>
+    /// <exception cref="System.InvalidCastException">
+    /// The final migrated value is not actually a <typeparamref name="'T"/> — for example because
+    /// no migration applies to <paramref name="currentVersion"/> and <paramref name="state"/>
+    /// itself is not a <typeparamref name="'T"/>, or the migration chain does not end at
+    /// <typeparamref name="'T"/>.
+    /// </exception>
     let applyMigrations<'T> (migrations: Migration<obj, obj> list) (currentVersion: int) (state: obj) : 'T =
         let sorted =
             migrations
@@ -115,6 +124,10 @@ module StateMigration =
     /// | Error errs  -> // log errs
     /// </code>
     /// </example>
+    /// <exception cref="System.InvalidCastException">
+    /// Validation passes (a contiguous, duplicate-free chain) but the chain still does not end at
+    /// <typeparamref name="'T"/>. See <see cref="applyMigrations"/>.
+    /// </exception>
     let tryApplyMigrations<'T>
         (migrations: Migration<obj, obj> list)
         (currentVersion: int)

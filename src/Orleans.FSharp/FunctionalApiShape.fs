@@ -67,18 +67,29 @@ module internal FunctionalDiagnostics =
     [<Literal>]
     let JournalStage = "Orleans.FSharp functional journal"
 
-    /// <summary>Raise a construction-stage diagnostic.</summary>
+    /// <summary>Raise a construction-stage diagnostic. Never returns.</summary>
+    /// <param name="stage">The diagnostic stage prefix identifying which validation layer failed.</param>
+    /// <param name="message">The specific failure detail, appended after the stage prefix.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Always thrown, carrying "<paramref name="stage"/>: <paramref name="message"/>".
+    /// </exception>
     let fail<'T> (stage: string) (message: string) : 'T =
         raise (InvalidOperationException(stage + ": " + message))
 
-    /// <summary>Raise a construction-stage diagnostic which preserves an inner cause.</summary>
+    /// <summary>Raise a construction-stage diagnostic which preserves an inner cause. Never returns.</summary>
+    /// <param name="stage">The diagnostic stage prefix identifying which validation layer failed.</param>
+    /// <param name="message">The specific failure detail, appended after the stage prefix.</param>
+    /// <param name="cause">The original exception, preserved as <see cref="P:System.Exception.InnerException"/>.</param>
+    /// <exception cref="System.InvalidOperationException">Always thrown, wrapping <paramref name="cause"/>.</exception>
     let failCause<'T> (stage: string) (message: string) (cause: exn) : 'T =
         raise (InvalidOperationException(stage + ": " + message, cause))
 
     /// <summary>True when a name is null, empty, or white-space only.</summary>
+    /// <param name="value">The string to check.</param>
     let isBlank (value: string) = String.IsNullOrWhiteSpace value
 
     /// <summary>True when a name contains a NUL character.</summary>
+    /// <param name="value">The string to check.</param>
     let containsNul (value: string) =
         not (isNull value) && value.IndexOf('\000') >= 0
 
@@ -103,6 +114,11 @@ module internal FunctionalDiagnostics =
     /// The value to check. Blank is not this function's concern: every call site already has its
     /// own "non-blank" diagnostic phrased for what the field actually is, raised before this runs.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="value"/> is longer than
+    /// <see cref="F:Orleans.FSharp.FunctionalTransportDiagnostics.MaxWireTextLength"/> characters, or
+    /// contains a control character (a codepoint below <c>' '</c>).
+    /// </exception>
     let ensureWireText (stage: string) (what: string) (value: string) =
         if value.Length > FunctionalTransportDiagnostics.MaxWireTextLength then
             fail
@@ -290,13 +306,26 @@ module internal ApiShape =
           Constructor = recordConstructor }
 
     /// <summary>Return the cached shape for a closed API record type, building it once.</summary>
+    /// <param name="apiType">The closed API record type to reflect.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown, on the first call for this type, when <paramref name="apiType"/> is not a valid API
+    /// shape: a struct record, an open generic type, not public, not a public F# record, has no
+    /// operations, or has a field whose type is not <c>'Argument -&gt; Task&lt;'Reply&gt;</c> or
+    /// <c>'Argument -&gt; IAsyncEnumerable&lt;'Item&gt;</c>.
+    /// </exception>
     let ofType (apiType: Type) : ApiShape =
         cache.GetOrAdd(apiType, fun t -> lazy (build t)).Value
 
     /// <summary>Return the cached shape for <c>'Api</c>.</summary>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown, on the first call for <c>'Api</c>, when it is not a valid API shape; see
+    /// <see cref="ofType"/>.
+    /// </exception>
     let of'<'Api> () : ApiShape = ofType typeof<'Api>
 
     /// <summary>Look up an operation by source-field name.</summary>
+    /// <param name="shape">The reflected API shape to search.</param>
+    /// <param name="fieldName">The source record-field name to find.</param>
     let tryFindField (shape: ApiShape) (fieldName: string) =
         shape.Operations |> Array.tryFind (fun operation -> operation.FieldName = fieldName)
 
@@ -305,6 +334,17 @@ module internal ApiShape =
     /// identity of the returned sentinel. Shared by the unary and the streaming selector types,
     /// which differ only in the range of the field they project.
     /// </summary>
+    /// <param name="shape">The reflected API shape whose probe record the selector is applied to.</param>
+    /// <param name="entry">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="apply">
+    /// The boxed selector application: invokes the caller's selector against the boxed probe and
+    /// boxes its result.
+    /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when invoking <paramref name="apply"/> itself throws (the original exception is
+    /// preserved as the inner exception), or when its result is not physically one of
+    /// <paramref name="shape"/>'s own sentinel values.
+    /// </exception>
     let private resolveBoxed (shape: ApiShape) (entry: string) (apply: obj -> obj) : ApiOperationShape =
         FunctionalInstrumentation.countSelectorEvaluation ()
 
@@ -338,6 +378,13 @@ module internal ApiShape =
     /// Resolve a selector against the probe record by physical identity of the returned sentinel.
     /// The selector runs exactly once, here, at configuration time.
     /// </summary>
+    /// <param name="shape">The reflected API shape to resolve against.</param>
+    /// <param name="entry">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="selector">The caller-supplied field projection to resolve.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, when invoking it throws, or when it does
+    /// not return one of <paramref name="shape"/>'s own API field values.
+    /// </exception>
     let resolve<'Api, 'Argument, 'Reply>
         (shape: ApiShape)
         (entry: string)
@@ -354,6 +401,13 @@ module internal ApiShape =
     /// Resolve a <b>streaming</b> selector against the probe record. Spec 004 item 6. Identical
     /// mechanism to <see cref="resolve"/>; only the projected field's range type differs.
     /// </summary>
+    /// <param name="shape">The reflected API shape to resolve against.</param>
+    /// <param name="entry">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="selector">The caller-supplied streaming field projection to resolve.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, when invoking it throws, or when it does
+    /// not return one of <paramref name="shape"/>'s own API field values.
+    /// </exception>
     let resolveStream<'Api, 'Argument, 'Item>
         (shape: ApiShape)
         (entry: string)

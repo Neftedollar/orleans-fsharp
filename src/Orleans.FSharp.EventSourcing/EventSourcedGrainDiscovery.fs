@@ -19,6 +19,8 @@ open Orleans.FSharp
 /// <typeparam name="'State">The type of the grain's state, rebuilt by folding events.</typeparam>
 /// <typeparam name="'Event">The type of events that modify state.</typeparam>
 /// <typeparam name="'Command">The type of commands the grain handles.</typeparam>
+/// <param name="definition">The registered event-sourced grain definition to delegate to.</param>
+/// <param name="logger">The logger for activation and command-handling diagnostics.</param>
 type FSharpEventSourcedGrain< 'State, 'Event, 'Command
     when 'State: not struct and 'State: (new: unit -> 'State)
     and 'Event: not struct>
@@ -34,6 +36,8 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
     /// Because JournaledGrain manages the state instance, field values are copied
     /// from the new state back into the existing state object via reflection.
     /// </summary>
+    /// <param name="state">The current state instance, mutated in place.</param>
+    /// <param name="event">The event to apply.</param>
     override _.TransitionState(state: 'State, event: 'Event) =
         let newState = definition.Apply state event
 
@@ -53,6 +57,7 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
     member internal this.InternalVersion = this.Version
 
     /// <summary>Internal bridge for protected RaiseEvent method, callable from closures.</summary>
+    /// <param name="event">The event to raise on the journal.</param>
     member internal this.InternalRaiseEvent(event: 'Event) = this.RaiseEvent(event)
 
     /// <summary>Internal bridge for protected ConfirmEvents method, callable from closures.</summary>
@@ -64,6 +69,7 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
         /// Delegates to the <c>customStorage</c> read callback defined in the grain definition.
         /// Throws <see cref="System.NotSupportedException"/> when no custom storage is configured.
         /// </summary>
+        /// <exception cref="System.NotSupportedException">Thrown when no custom storage is configured.</exception>
         member _.ReadStateFromStorage() =
             match definition.CustomStorage with
             | None ->
@@ -85,6 +91,9 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
         /// Delegates to the <c>customStorage</c> write callback defined in the grain definition.
         /// Throws <see cref="System.NotSupportedException"/> when no custom storage is configured.
         /// </summary>
+        /// <param name="updates">The events to write.</param>
+        /// <param name="expectedVersion">The log version the caller expects storage to currently be at.</param>
+        /// <exception cref="System.NotSupportedException">Thrown when no custom storage is configured.</exception>
         member _.ApplyUpdatesToStorage(updates: IReadOnlyList<'Event>, expectedVersion: int) =
             match definition.CustomStorage with
             | None ->
@@ -100,6 +109,7 @@ type FSharpEventSourcedGrain< 'State, 'Event, 'Command
     /// <summary>
     /// Called when the grain is activated. Logs activation with current state.
     /// </summary>
+    /// <param name="_ct">The activation cancellation token (unused).</param>
     override this.OnActivateAsync(_ct: CancellationToken) =
         Log.logInfo
             logger

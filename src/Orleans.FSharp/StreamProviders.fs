@@ -18,6 +18,7 @@ module StreamProviders =
     /// <param name="methodName">The extension method name (e.g., "AddRedisStreams").</param>
     /// <param name="paramCount">The total parameter count including the ISiloBuilder receiver.</param>
     /// <param name="packageHint">The NuGet package to suggest installing when the method is absent.</param>
+    /// <exception cref="System.InvalidOperationException">No matching extension method is found in any loaded assembly.</exception>
     let private findExtensionMethod (methodName: string) (paramCount: int) (packageHint: string) : Reflection.MethodInfo =
         let siloBuilderType = typeof<ISiloBuilder>
 
@@ -46,6 +47,11 @@ module StreamProviders =
     /// Invokes an extension method on ISiloBuilder by name, searching loaded assemblies.
     /// Throws InvalidOperationException with a helpful message if the method or assembly is not found.
     /// </summary>
+    /// <param name="methodName">The static extension method name to search for.</param>
+    /// <param name="args">The extra arguments to pass after the silo builder.</param>
+    /// <param name="packageHint">The NuGet package to name in the diagnostic if the method is not found.</param>
+    /// <param name="siloBuilder">The silo builder passed as the extension method's first argument.</param>
+    /// <exception cref="System.InvalidOperationException">No matching extension method is found in any loaded assembly.</exception>
     let private invokeExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (siloBuilder: ISiloBuilder) =
         let m = findExtensionMethod methodName (args.Length + 1) packageHint
         m.Invoke(null, Array.append [| box siloBuilder |] args) |> ignore
@@ -60,6 +66,9 @@ module StreamProviders =
     /// <param name="connStr">The Event Hubs connection string.</param>
     /// <param name="hubName">The Event Hub name (path).</param>
     /// <returns>A function that configures the ISiloBuilder with the Event Hubs stream provider.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// The returned function throws this if <c>AddEventHubStreams</c> cannot be found by reflection.
+    /// </exception>
     let addEventHubStreams (name: string) (connStr: string) (hubName: string) : (ISiloBuilder -> ISiloBuilder) =
         fun builder ->
             invokeExtensionMethod
@@ -76,6 +85,9 @@ module StreamProviders =
     /// <param name="name">The name of the stream provider.</param>
     /// <param name="connStr">The Azure Storage connection string.</param>
     /// <returns>A function that configures the ISiloBuilder with the Azure Queue stream provider.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// The returned function throws this if <c>AddAzureQueueStreams</c> cannot be found by reflection.
+    /// </exception>
     let addAzureQueueStreams (name: string) (connStr: string) : (ISiloBuilder -> ISiloBuilder) =
         fun builder ->
             invokeExtensionMethod
@@ -91,8 +103,12 @@ module StreamProviders =
     /// </summary>
     [<AbstractClass; Sealed>]
     type private RedisDelegateFactory =
+        /// <summary>Build a one-argument <c>Action&lt;'T&gt;</c> whose body is an untyped reflection closure.</summary>
+        /// <param name="body">The untyped closure to invoke, boxing the typed argument.</param>
         static member Action1<'T>(body: obj -> unit) : Action<'T> = Action<'T>(fun (t: 'T) -> body (box t))
 
+        /// <summary>Build a two-argument <c>Action&lt;'T1,'T2&gt;</c> whose body is an untyped reflection closure.</summary>
+        /// <param name="body">The untyped closure to invoke, boxing each typed argument.</param>
         static member Action2<'T1, 'T2>(body: obj -> obj -> unit) : Action<'T1, 'T2> =
             Action<'T1, 'T2>(fun (a: 'T1) (b: 'T2) -> body (box a) (box b))
 
@@ -102,6 +118,12 @@ module StreamProviders =
     /// via the configurator's <c>ConfigureOptions(Action&lt;RedisStreamingOptions, IServiceProvider&gt;)</c> method.
     /// All types are resolved by reflection so the optional package stays off the compile-time dependency set.
     /// </summary>
+    /// <param name="configuratorActionType">The reflected <c>Action&lt;SiloRedisStreamConfigurator&gt;</c> type.</param>
+    /// <param name="connectionString">The Redis connection string to wire into the configurator.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// The installed Redis streaming package does not expose the expected
+    /// <c>ConfigureOptions</c>/<c>ConfigurationOptions</c>/<c>Parse</c> reflection surface.
+    /// </exception>
     let private buildRedisConfigurator (configuratorActionType: Type) (connectionString: string) : obj =
         // configuratorActionType is Action<SiloRedisStreamConfigurator>
         let configuratorType = configuratorActionType.GetGenericArguments().[0]
@@ -172,6 +194,11 @@ module StreamProviders =
     /// <param name="name">The name of the stream provider.</param>
     /// <param name="connectionString">The Redis connection string (e.g., "localhost:6379"), parsed into StackExchange.Redis ConfigurationOptions.</param>
     /// <returns>A function that configures the ISiloBuilder with the Redis Streams provider.</returns>
+    /// <exception cref="System.InvalidOperationException">
+    /// The returned function throws this if <c>AddRedisStreams</c> cannot be found by reflection,
+    /// or the installed package does not expose the reflection surface
+    /// <see cref="buildRedisConfigurator"/> requires.
+    /// </exception>
     let addRedisStreams (name: string) (connectionString: string) : (ISiloBuilder -> ISiloBuilder) =
         fun builder ->
             // Resolve the extension method first so an absent package yields the clean "install the package" error

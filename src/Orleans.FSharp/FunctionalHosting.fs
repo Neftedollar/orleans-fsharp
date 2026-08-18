@@ -16,6 +16,9 @@ type FunctionalGrainClientHostingExtensions =
     /// payload codec services, transport options with startup validation, and the F# generalized
     /// codec with its type filter on a client builder. Idempotent.
     /// </summary>
+    /// <param name="builder">The client builder to configure.</param>
+    /// <returns><paramref name="builder"/>, for chaining.</returns>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="builder"/> is null.</exception>
     [<Extension>]
     static member AddFunctionalGrainClient(builder: IClientBuilder) : IClientBuilder =
         if isNull (box builder) then

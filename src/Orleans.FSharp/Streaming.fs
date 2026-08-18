@@ -166,13 +166,13 @@ module Stream =
         }
 
     /// <summary>
-    /// Gets the current sequence token for a subscription by querying the stream
-    /// for all subscription handles and finding the matching one.
-    /// Returns None if the token cannot be determined.
+    /// Always returns <c>None</c>: <c>StreamSubscriptionHandle</c> does not expose the sequence
+    /// token directly, so this is a permanent stub rather than a lookup. The token is delivered
+    /// with each event via the <c>onNext</c> callback and must be tracked by the consumer.
     /// </summary>
     /// <param name="sub">The stream subscription to query.</param>
     /// <typeparam name="'T">The type of events on the subscribed stream.</typeparam>
-    /// <returns>The sequence token if available, or None.</returns>
+    /// <returns>Always <c>None</c>.</returns>
     let getSequenceToken<'T> (sub: StreamSubscription<'T>) : StreamSequenceToken option =
         // StreamSubscriptionHandle does not directly expose the token;
         // the token is delivered with each event via the onNext callback.

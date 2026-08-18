@@ -24,6 +24,8 @@ internal sealed class FunctionalRequest : Request<FunctionalReply>
     internal FunctionalRequest() => _body = new FunctionalRequestBody();
 
     /// <summary>Create a caller-side request for one envelope.</summary>
+    /// <param name="envelope">The validated fixed request data.</param>
+    /// <param name="callerToken">The caller-supplied cancellation token.</param>
     internal FunctionalRequest(FunctionalRequestEnvelope envelope, CancellationToken callerToken) =>
         _body = new FunctionalRequestBody(envelope, callerToken);
 
@@ -46,13 +48,17 @@ internal sealed class FunctionalRequest : Request<FunctionalReply>
     internal bool HasCallFilterMetadata => _body.HasCallFilterMetadata;
 
     /// <summary>Replace field 0. Used by the deserializing codec and by <c>SetArgument(0, …)</c>.</summary>
+    /// <param name="envelope">The fixed request data to store.</param>
     internal void SetEnvelope(FunctionalRequestEnvelope envelope) => _body.SetEnvelope(envelope);
 
     /// <summary>Store the caller-side call-filter metadata.</summary>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     internal void SetCallerMetadata(Type closedInterfaceType, MethodInfo dispatchMethod) =>
         _body.SetCallerMetadata(closedInterfaceType, dispatchMethod);
 
     /// <summary>The Orleans request options implied by the envelope's admission flags.</summary>
+    /// <param name="admissionFlags">The envelope's validated admission-flag byte.</param>
     internal static InvokeMethodOptions OptionsFor(byte admissionFlags) =>
         FunctionalRequestBody.OptionsFor(admissionFlags);
 
@@ -136,6 +142,8 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
     private readonly FunctionalRequestBody _body;
 
     /// <summary>Create an uninitialized request for the deserialization activator.</summary>
+    /// <param name="exceptionSerializer">The serializer the transaction base needs for an aborted-transaction exception.</param>
+    /// <param name="serviceProvider">The services of the client or activation creating this request.</param>
     internal FunctionalTransactionRequest(
         Serializer<OrleansTransactionAbortedException> exceptionSerializer,
         IServiceProvider serviceProvider)
@@ -143,6 +151,10 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
         _body = new FunctionalRequestBody();
 
     /// <summary>Create a caller-side request for one envelope.</summary>
+    /// <param name="exceptionSerializer">The serializer the transaction base needs for an aborted-transaction exception.</param>
+    /// <param name="serviceProvider">The services of the client or activation creating this request.</param>
+    /// <param name="envelope">The validated fixed request data.</param>
+    /// <param name="callerToken">The caller-supplied cancellation token.</param>
     internal FunctionalTransactionRequest(
         Serializer<OrleansTransactionAbortedException> exceptionSerializer,
         IServiceProvider serviceProvider,
@@ -167,9 +179,12 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
     internal bool HasCallFilterMetadata => _body.HasCallFilterMetadata;
 
     /// <summary>Replace field 0. Used by the deserializing codec and by <c>SetArgument(0, …)</c>.</summary>
+    /// <param name="envelope">The fixed request data to store.</param>
     internal void SetEnvelope(FunctionalRequestEnvelope envelope) => _body.SetEnvelope(envelope);
 
     /// <summary>Store the caller-side call-filter metadata.</summary>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     internal void SetCallerMetadata(Type closedInterfaceType, MethodInfo dispatchMethod) =>
         _body.SetCallerMetadata(closedInterfaceType, dispatchMethod);
 
@@ -179,6 +194,7 @@ internal sealed class FunctionalTransactionRequest : TransactionRequest<Function
     /// than trusted from the wire, so the byte dispatch compares against the hosted descriptor is
     /// the single authority for what this call's transaction policy is.
     /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown when the envelope's admission flags declare no transaction option.</exception>
     internal void ApplyAdmissionOptions()
     {
         var flags = _body.Envelope.AdmissionFlags;
@@ -293,6 +309,8 @@ internal sealed class FunctionalStreamRequest : AsyncEnumerableRequest<Functiona
     internal FunctionalStreamRequest() => _body = new FunctionalRequestBody();
 
     /// <summary>Create a caller-side request for one envelope.</summary>
+    /// <param name="envelope">The validated fixed request data.</param>
+    /// <param name="callerToken">The caller-supplied cancellation token.</param>
     internal FunctionalStreamRequest(FunctionalRequestEnvelope envelope, CancellationToken callerToken) =>
         _body = new FunctionalRequestBody(envelope, callerToken);
 
@@ -309,9 +327,12 @@ internal sealed class FunctionalStreamRequest : AsyncEnumerableRequest<Functiona
     internal bool HasCallFilterMetadata => _body.HasCallFilterMetadata;
 
     /// <summary>Replace field 0. Used by the deserializing codec and by <c>SetArgument(0, …)</c>.</summary>
+    /// <param name="envelope">The fixed request data to store.</param>
     internal void SetEnvelope(FunctionalRequestEnvelope envelope) => _body.SetEnvelope(envelope);
 
     /// <summary>Store the caller-side call-filter metadata.</summary>
+    /// <param name="closedInterfaceType">The closed actor-specific target interface from the contract descriptor.</param>
+    /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     internal void SetCallerMetadata(Type closedInterfaceType, MethodInfo dispatchMethod) =>
         _body.SetCallerMetadata(closedInterfaceType, dispatchMethod);
 
@@ -327,6 +348,7 @@ internal sealed class FunctionalStreamRequest : AsyncEnumerableRequest<Functiona
     /// <c>[AlwaysInterleave]</c> on <c>IAsyncEnumerableGrainExtension</c>, so an option set here
     /// would never be read by anything.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when the envelope's admission flags are non-zero.</exception>
     internal void ValidateAdmissionFlags()
     {
         var flags = _body.Envelope.AdmissionFlags;

@@ -9,6 +9,14 @@ open System.Runtime.Loader
 // CLI
 // ---------------------------------------------------------------------------
 
+/// <summary>
+/// CLI entry point. Parses <c>--assembly</c> / <c>--output</c> / <c>--namespace</c> / <c>--mode</c>,
+/// loads the target assembly, discovers <c>[FSharpEventSourcedGrain]</c> definitions, and writes
+/// generated stubs via <see cref="CodeGen.generateAll"/>. Exceptions from loading or generation are
+/// caught and reported rather than propagated.
+/// </summary>
+/// <param name="argv">The process command-line arguments.</param>
+/// <returns>0 on success, 1 on a usage error, a missing assembly, or a caught exception.</returns>
 [<EntryPoint>]
 let main argv =
     // Parse: --assembly <path> --output <dir> [--namespace <ns>]

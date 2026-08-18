@@ -29,6 +29,13 @@ open Orleans.FSharp.FunctionalSiloDiagnostics
 [<Sealed>]
 type internal FunctionalSiloStartupValidator(services: IServiceProvider, registry: FunctionalGrainRegistry) =
 
+    /// <summary>
+    /// Runs every startup check: registry/manifest agreement, serializer availability, reminder
+    /// period floors, and that every named storage, transactional, journal, stream, and
+    /// broadcast-channel provider a registered definition names is actually registered on this
+    /// silo.
+    /// </summary>
+    /// <exception cref="System.InvalidOperationException">Any of the checks above fails.</exception>
     let validate () =
         // Materializing the options runs the functional post-configure, which atomically freezes
         // the registry; every check below therefore reads the same immutable snapshot.
@@ -291,6 +298,8 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                     $"the functional interface ID '{entry.InterfaceId}' of grain type '{entry.GrainTypeName}' does not appear in this silo's grain manifest."
 
     interface ILifecycleParticipant<ISiloLifecycle> with
+        /// <summary>Subscribes <c>validate</c> to run at <c>ServiceLifecycleStage.RuntimeInitialize</c>, before the silo admits traffic.</summary>
+        /// <param name="lifecycle">The silo's observable lifecycle to subscribe on.</param>
         member _.Participate(lifecycle: ISiloLifecycle) =
             lifecycle.Subscribe(
                 "Orleans.FSharp.FunctionalGrainRuntime",
@@ -309,6 +318,7 @@ module internal FunctionalSiloServices =
     /// The registry instance of this service collection, registering the silo-side services on
     /// first use so repeated <c>AddFunctionalGrain</c> calls share one registry.
     /// </summary>
+    /// <param name="services">The silo's service collection.</param>
     let private registryOf (services: IServiceCollection) =
         let existing =
             services
@@ -355,6 +365,8 @@ module internal FunctionalSiloServices =
             registry
 
     /// <summary>Register one hosted definition together with the silo-side services.</summary>
+    /// <param name="services">The silo's service collection.</param>
+    /// <param name="definition">The hosted definition to register.</param>
     let addTo (services: IServiceCollection) (definition: FunctionalHostedDefinition) =
         FunctionalClientServices.addTo services |> ignore
 
@@ -379,6 +391,11 @@ module internal FunctionalSiloServices =
 module internal FunctionalDurableIdentityGuard =
 
     /// <summary>Fail registration when a durable attachment meets a derived grain type.</summary>
+    /// <param name="actorType">The actor brand CLR type, named in the diagnostic if it fires.</param>
+    /// <param name="grainTypeName">The definition's grain type name.</param>
+    /// <param name="isGrainTypeExplicit">Whether the contract declared <c>grainType</c> explicitly rather than deriving it from the actor brand.</param>
+    /// <param name="hasDurableAttachment">Whether the definition attaches <c>stateFrom</c>, <c>usePersistentState</c>, or declares <c>onReminder</c>.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="hasDurableAttachment"/> is <c>true</c> and <paramref name="isGrainTypeExplicit"/> is <c>false</c>.</exception>
     let ensure
         (actorType: Type)
         (grainTypeName: string)
@@ -401,6 +418,9 @@ type FunctionalGrainSiloHostingExtensions =
     /// Register a hosted JOURNALED definition: the grain's state is the fold of an event journal
     /// kept by the named Orleans log-consistency provider.
     /// </summary>
+    /// <param name="builder">The silo builder to register the definition on.</param>
+    /// <param name="definition">The journaled grain definition to host.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="builder"/> is <c>null</c>.</exception>
     [<Extension>]
     static member AddFunctionalJournaledGrain<'Actor, 'Key, 'Api, 'State, 'Event>
         (
@@ -432,6 +452,9 @@ type FunctionalGrainSiloHostingExtensions =
     /// and silo startup validation. Repeated registration of the same definition value is
     /// idempotent; conflicting contracts or definitions are configuration errors.
     /// </summary>
+    /// <param name="builder">The silo builder to register the definition on.</param>
+    /// <param name="definition">The grain definition to host.</param>
+    /// <exception cref="System.InvalidOperationException"><paramref name="builder"/> is <c>null</c>.</exception>
     [<Extension>]
     static member AddFunctionalGrain<'Actor, 'Key, 'Api, 'State>
         (builder: ISiloBuilder, definition: FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>)

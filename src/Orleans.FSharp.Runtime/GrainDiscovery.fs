@@ -26,14 +26,17 @@ type internal SimpleGrainState<'T>(initialValue: 'T) =
     let mutable recordExists = false
 
     interface Orleans.IGrainState<'T> with
+        /// <inheritdoc/>
         member _.State
             with get () = state
             and set v = state <- v
 
+        /// <inheritdoc/>
         member _.ETag
             with get () = etag
             and set v = etag <- v
 
+        /// <inheritdoc/>
         member _.RecordExists
             with get () = recordExists
             and set v = recordExists <- v
@@ -74,18 +77,27 @@ type NamedPersistentState<'T>(storage: IGrainStorage, grainId: GrainId, stateNam
         storage.ClearStateAsync(stateName, grainId, iGrainState)
 
     interface IPersistentState<'T> with
+        /// <inheritdoc/>
         member this.State
             with get () = this.State
             and set v = this.State <- v
 
     interface Orleans.Core.IStorage with
+        /// <inheritdoc/>
         member this.Etag = this.Etag
+        /// <inheritdoc/>
         member this.RecordExists = this.RecordExists
+        /// <inheritdoc/>
         member this.ReadStateAsync() = this.ReadStateAsync()
+        /// <inheritdoc/>
         member this.WriteStateAsync() = this.WriteStateAsync()
+        /// <inheritdoc/>
         member this.ClearStateAsync() = this.ClearStateAsync()
+        /// <inheritdoc/>
         member this.ReadStateAsync(_ct) = this.ReadStateAsync()
+        /// <inheritdoc/>
         member this.WriteStateAsync(_ct) = this.WriteStateAsync()
+        /// <inheritdoc/>
         member this.ClearStateAsync(_ct) = this.ClearStateAsync()
 #warnon "44"
 
@@ -110,6 +122,7 @@ type FSharpGrain<'State, 'Message>
     let mutable additionalStates: Map<string, obj> = Map.empty
 
     /// <summary>Internal bridge for the protected DelayDeactivation method, callable from lambdas.</summary>
+    /// <param name="delay">The amount of time to delay deactivation by.</param>
     member internal this.InternalDelayDeactivation(delay: System.TimeSpan) =
         this.DelayDeactivation(delay)
 
@@ -118,6 +131,8 @@ type FSharpGrain<'State, 'Message>
     /// Initializes any additional named persistent states declared in the grain definition.
     /// Emits a structured log entry with grain context.
     /// </summary>
+    /// <param name="ct">Cancellation token observed while restoring state and running the onActivate hook.</param>
+    /// <exception cref="System.InvalidOperationException">A named additional state declares a storage provider name that is not registered in the silo configuration.</exception>
     override this.OnActivateAsync(ct: CancellationToken) =
         // Capture protected members before entering task CE (closure can't access protected members)
         let sp = this.ServiceProvider
@@ -185,6 +200,8 @@ type FSharpGrain<'State, 'Message>
     /// Called when the grain is being deactivated. Runs the onDeactivate hook.
     /// Emits a structured log entry with grain context.
     /// </summary>
+    /// <param name="reason">Why the grain is being deactivated.</param>
+    /// <param name="ct">Cancellation token observed while running the onDeactivate hook.</param>
     override this.OnDeactivateAsync(reason: DeactivationReason, ct: CancellationToken) =
         task {
             ct.ThrowIfCancellationRequested()
@@ -203,6 +220,7 @@ type FSharpGrain<'State, 'Message>
     /// Participates in the grain lifecycle by subscribing hooks declared in the GrainDefinition.
     /// Each hook is registered at its specified lifecycle stage and executed during grain activation.
     /// </summary>
+    /// <param name="lifecycle">The grain's lifecycle to subscribe hooks against.</param>
     member _.Participate(lifecycle: IGrainLifecycle) =
         for KeyValue(stage, hooks) in definition.LifecycleHooks do
             for hook in hooks do
@@ -213,19 +231,12 @@ type FSharpGrain<'State, 'Message>
                 |> ignore
 
     interface ILifecycleParticipant<IGrainLifecycle> with
+        /// <inheritdoc/>
         member this.Participate(lifecycle) = this.Participate(lifecycle)
 
-    /// <summary>
-    /// Handles an incoming message by delegating to the GrainDefinition handler.
-    /// Updates state and persists it if a storage provider is configured.
-    /// Passes a GrainContext to context-aware handlers for grain-to-grain communication.
-    /// Propagates the current correlation ID across the grain call.
-    /// Accepts an optional CancellationToken that is forwarded to cancellable handlers.
-    /// </summary>
-    /// <param name="message">The message to handle.</param>
-    /// <param name="ct">Optional cancellation token for cooperative cancellation.</param>
-    /// <returns>A boxed result value from the handler.</returns>
     /// <summary>Extracts the primary key from a GrainId as a boxed value (string, Guid, or int64).</summary>
+    /// <param name="grainId">The grain's identity to extract the primary key from.</param>
+    /// <returns>The primary key boxed as <see cref="System.Guid"/>, <see cref="System.Int64"/>, or <see cref="System.String"/>; <c>None</c> if extraction fails.</returns>
     static member private ExtractPrimaryKey(grainId: GrainId) : obj option =
         try
             let key = grainId.Key.ToString()
@@ -241,6 +252,16 @@ type FSharpGrain<'State, 'Message>
                     Some(box key)
         with _ -> None
 
+    /// <summary>
+    /// Handles an incoming message by delegating to the GrainDefinition handler.
+    /// Updates state and persists it if a storage provider is configured.
+    /// Passes a GrainContext to context-aware handlers for grain-to-grain communication.
+    /// Propagates the current correlation ID across the grain call.
+    /// Accepts an optional CancellationToken that is forwarded to cancellable handlers.
+    /// </summary>
+    /// <param name="message">The message to handle.</param>
+    /// <param name="ct">Optional cancellation token for cooperative cancellation.</param>
+    /// <returns>A boxed result value from the handler.</returns>
     member this.HandleMessage(message: 'Message, [<System.Runtime.InteropServices.Optional; System.Runtime.InteropServices.DefaultParameterValue(CancellationToken())>] ct: CancellationToken) : Task<obj> =
         // Capture protected members before entering task CE
         let sp = this.ServiceProvider
@@ -286,6 +307,7 @@ type FSharpGrain<'State, 'Message>
         /// Receives a boxed message, downcasts to the grain's typed message, and dispatches.
         /// This is the universal entry point used by IFSharpGrain proxies.
         /// </summary>
+        /// <param name="message">The boxed message, expected to be an instance of <c>'Message</c>.</param>
         member this.HandleMessage(message: obj) : Task<obj> =
             let typedMsg = message :?> 'Message
             this.HandleMessage(typedMsg)
@@ -295,6 +317,7 @@ type FSharpGrain<'State, 'Message>
         /// discards the result so no response is marshalled back to the caller.
         /// Backs <c>FSharpGrain.post</c>.
         /// </summary>
+        /// <param name="message">The boxed message, expected to be an instance of <c>'Message</c>.</param>
         member this.HandleMessageOneWay(message: obj) : Task =
             let typedMsg = message :?> 'Message
             this.HandleMessage(typedMsg) :> Task
@@ -306,6 +329,8 @@ type FSharpGrain<'State, 'Message>
         /// If no handler is registered for the given reminder name, logs a warning.
         /// If the handler throws, the exception is caught, logged, and the reminder continues to fire.
         /// </summary>
+        /// <param name="reminderName">The name of the reminder that fired.</param>
+        /// <param name="status">Orleans' tick status for this reminder invocation.</param>
         member this.ReceiveReminder(reminderName: string, status: TickStatus) : Task =
             task {
                 match definition.ReminderHandlers |> Map.tryFind reminderName with
@@ -372,6 +397,7 @@ module GrainDefinition =
     /// <see cref="NamedPersistentState{T}"/> wrapper (already read from storage).
     /// Returns an empty dictionary when the definition declares no additional states.
     /// </returns>
+    /// <exception cref="System.InvalidOperationException">A declared additional state names a storage provider that is not registered in the silo configuration.</exception>
     let initAdditionalStates<'State, 'Message>
         (definition: GrainDefinition<'State, 'Message>)
         (serviceProvider: IServiceProvider)
@@ -425,6 +451,7 @@ module SiloBuilderExtensions =
         /// </summary>
         /// <param name="key">The grain interface type key.</param>
         /// <param name="stateType">The state type being registered.</param>
+        /// <exception cref="System.InvalidOperationException"><paramref name="key"/> is already registered against a different state type.</exception>
         member _.Register(key: string, stateType: Type) =
             match registrations |> Map.tryFind key with
             | Some existingType ->
@@ -463,6 +490,8 @@ module SiloBuilderExtensions =
         /// Registers a grain definition. Called once per <c>AddFSharpGrain&lt;S,M&gt;</c> invocation.
         /// Not thread-safe — must be called only during silo startup (single-threaded configuration phase).
         /// </summary>
+        /// <param name="definition">The grain definition supplying the handler chain and default state for <c>'Message</c>.</param>
+        /// <exception cref="System.InvalidOperationException"><c>'Message</c> is already registered by a previous <c>AddFSharpGrain&lt;S,M&gt;</c> call.</exception>
         /// <remarks>
         /// Uses the cancellable context-aware handler chain (<c>getCancellableContextHandler</c>),
         /// which falls back through all handler variants in order:
@@ -633,6 +662,7 @@ Use distinct command/message types for each grain."
                 defaults |> Map.tryFind messageType.FullName |> Option.defaultValue null
 
             /// <inheritdoc/>
+            /// <exception cref="System.InvalidOperationException">No handler is registered for <paramref name="message"/>'s runtime type.</exception>
             member _.Handle(currentState: obj, message: obj, serviceProvider: IServiceProvider, grainFactory: IGrainFactory, grainBase: Orleans.IGrainBase) : Task<GrainDispatchResult> =
                 let key = message.GetType().FullName
 
@@ -657,6 +687,7 @@ Use distinct command/message types for each grain."
         /// </summary>
         /// <param name="definition">The grain definition to register.</param>
         /// <returns>The service collection for chaining.</returns>
+        /// <exception cref="System.InvalidOperationException">A <c>GrainRegistry</c> or <c>UniversalGrainHandlerRegistry</c> singleton is already registered with an unexpected implementation type.</exception>
 // deprecated API self-reference (spec-003 deprecation pass)
 #nowarn "44"
         [<Obsolete("AddFSharpGrain (grain{} / FSharpGrain.ref message-passing registration) is superseded by the functional grain runtime: define the grain with grainContract<...> / grainFor and register it with AddFunctionalGrain. See docs/functional-grains.md for the migration.", false)>]

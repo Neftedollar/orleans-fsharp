@@ -26,6 +26,7 @@ type CapturedLogEntry =
 /// An in-memory logger that captures structured log entries for test assertions.
 /// Implements ILogger so it can be used as a drop-in replacement in tests.
 /// </summary>
+/// <param name="categoryName">The logger category name to report from <see cref="CategoryName"/>.</param>
 type CapturingLogger(categoryName: string) =
     let entries = Collections.Concurrent.ConcurrentBag<CapturedLogEntry>()
 
@@ -40,13 +41,27 @@ type CapturingLogger(categoryName: string) =
     member _.CategoryName = categoryName
 
     interface ILogger with
+        /// <summary>No-op scope: this logger does not track scopes.</summary>
+        /// <param name="state">Ignored.</param>
         member _.BeginScope<'TState>(state: 'TState) : IDisposable =
             { new IDisposable with
                 member _.Dispose() = ()
             }
 
+        /// <summary>Always enabled, so every log call is captured.</summary>
+        /// <param name="_logLevel">Ignored.</param>
         member _.IsEnabled(_logLevel: LogLevel) : bool = true
 
+        /// <summary>
+        /// Formats the entry, extracts its structured properties and original template from
+        /// the state's <c>IReadOnlyList&lt;KeyValuePair&lt;string,obj&gt;&gt;</c> shape when
+        /// present, and appends the captured entry.
+        /// </summary>
+        /// <param name="logLevel">The level of the log entry.</param>
+        /// <param name="_eventId">Ignored.</param>
+        /// <param name="state">The structured log state.</param>
+        /// <param name="exn">The associated exception, or null.</param>
+        /// <param name="formatter">Formats the state and exception into a message string.</param>
         member _.Log<'TState>
             (
                 logLevel: LogLevel,
@@ -108,10 +123,16 @@ type CapturingLoggerFactory() =
         loggers.Values |> Seq.iter (fun l -> l.Clear())
 
     interface ILoggerFactory with
+        /// <summary>Gets or creates the <see cref="CapturingLogger"/> for the given category, tracked for <see cref="AllEntries"/>.</summary>
+        /// <param name="categoryName">The logger category name.</param>
         member _.CreateLogger(categoryName: string) : ILogger =
             loggers.GetOrAdd(categoryName, fun name -> CapturingLogger(name)) :> ILogger
 
+        /// <summary>No-op: this factory does not forward to external logging providers.</summary>
+        /// <param name="_provider">Ignored.</param>
         member _.AddProvider(_provider: ILoggerProvider) : unit = ()
+
+        /// <summary>No-op: this factory holds no unmanaged resources.</summary>
         member _.Dispose() = ()
 
 /// <summary>

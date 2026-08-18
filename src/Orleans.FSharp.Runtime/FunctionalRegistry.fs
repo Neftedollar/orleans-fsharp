@@ -99,6 +99,8 @@ type internal FunctionalGrainRegistry() =
     /// that name was declared explicitly or derived from the actor brand — is a configuration
     /// error.
     /// </summary>
+    /// <param name="definition">The hosted definition to register.</param>
+    /// <exception cref="System.InvalidOperationException">The registry is already frozen, or <paramref name="definition"/>'s grain type name or actor brand conflicts with an already-registered definition.</exception>
     member _.Add(definition: FunctionalHostedDefinition) =
         lock gate (fun () ->
             match frozen with
@@ -150,14 +152,17 @@ type internal FunctionalGrainRegistry() =
     member _.IsFrozen = frozen.IsSome
 
     /// <summary>The registered definition whose closed marker is this CLR type.</summary>
+    /// <param name="markerType">The closed marker CLR type to look up.</param>
     member this.TryByMarker(markerType: Type) =
         this.Snapshot |> Array.tryFind (fun entry -> entry.MarkerType = markerType)
 
     /// <summary>The registered definition whose closed target interface is this CLR type.</summary>
+    /// <param name="interfaceType">The closed target interface CLR type to look up.</param>
     member this.TryByInterface(interfaceType: Type) =
         this.Snapshot |> Array.tryFind (fun entry -> entry.InterfaceType = interfaceType)
 
     /// <summary>The registered definition of one explicit grain type name.</summary>
+    /// <param name="grainTypeName">The explicit Orleans grain type name to look up.</param>
     member this.TryByGrainType(grainTypeName: string) =
         this.Snapshot
         |> Array.tryFind (fun entry -> String.Equals(entry.GrainTypeName, grainTypeName, StringComparison.Ordinal))

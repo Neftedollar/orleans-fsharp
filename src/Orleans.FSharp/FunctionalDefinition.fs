@@ -147,20 +147,37 @@ type internal FunctionalStreamDeclaration =
 /// <summary>Accumulated, not yet sealed, definition configuration.</summary>
 [<ReferenceEquality>]
 type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
-    { Contract: GrainContract<'Actor, 'Key, 'Api>
+    { /// The contract this definition is being built for.
+      Contract: GrainContract<'Actor, 'Key, 'Api>
+      /// The custom operation that introduced the state type ('defaultState' or
+      /// 'initialState'), used in diagnostics.
       InitializerOperation: string
+      /// State initialization normalized to 'Key -> 'State.
       Initializer: 'Key -> 'State
+      /// The primary persistent holder, when 'stateFrom' has been declared.
       Primary: PersistentStateRef<'State> option
+      /// Additional attached persistent states, in declaration order.
       Additional: FunctionalFacetBlueprint list
+      /// Attached transactional states, in declaration order.
       TransactionalFacets: FunctionalTransactionalBlueprint list
+      /// The declared idle collection age, when 'collectionAge' has been declared.
       CollectionAge: TimeSpan option
+      /// The declared activation hook, when 'onActivate' has been declared.
       OnActivate: ActivateHook<'Actor, 'Key, 'State> option
+      /// The declared deactivation hook, when 'onDeactivate' has been declared.
       OnDeactivate: DeactivateHook<'Actor, 'Key, 'State> option
+      /// Declared reminders, in declaration order.
       Reminders: ReminderDeclaration<'Actor, 'Key, 'State> list
+      /// Declared timers, in declaration order.
       Timers: TimerDeclaration<'Actor, 'Key, 'State> list
+      /// Declared implicit stream and broadcast subscriptions, in declaration order.
       StreamBindings: FunctionalStreamDeclaration list
+      /// The declared placement configuration, when 'statelessWorker' or 'placement' has been
+      /// declared.
       Placement: PlacementConfiguration option
+      /// Declared lifecycle-stage hooks, keyed by their unique stage.
       LifecycleHooks: Map<LifecycleStage, LifecycleHook<'Actor, 'Key>>
+      /// Boxed handlers keyed by API-record field index.
       Handlers: Map<int, obj> }
 
 /// <summary>
@@ -218,6 +235,7 @@ type FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
     member internal _.Handlers = state.Handlers
 
     /// <summary>The boxed handler for one operation descriptor.</summary>
+    /// <param name="operation">The operation descriptor whose handler to look up.</param>
     member internal _.HandlerFor(operation: FunctionalOperation) = state.Handlers.[operation.Index]
 
     override _.ToString() =
@@ -244,6 +262,11 @@ type FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>
 /// <summary>Definition-draft helpers shared by the computation-expression builder.</summary>
 module internal DefinitionDraft =
 
+    /// <summary>Start a definition draft from a state factory.</summary>
+    /// <param name="contract">The contract the definition will host.</param>
+    /// <param name="operationName">The custom operation's own name ("defaultState" or "initialState"), used to phrase the diagnostic.</param>
+    /// <param name="initializer">The state factory; the seed of <c>DefinitionDraftState.Initializer</c>.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="initializer"/> is null.</exception>
     let create
         (contract: GrainContract<'Actor, 'Key, 'Api>)
         (operationName: string)
@@ -270,10 +293,17 @@ module internal DefinitionDraft =
               Handlers = Map.empty }
         )
 
+    /// <summary>Wrap an accumulated draft state back into a draft value.</summary>
+    /// <param name="state">The accumulated state to wrap.</param>
     let withState (state: DefinitionDraftState<'Actor, 'Key, 'Api, 'State>) =
         FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>(state)
 
     /// <summary>Reject a repeated singleton operation instead of replacing the earlier value.</summary>
+    /// <param name="operationName">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="grainTypeName">The grain type being defined, used to phrase the diagnostic.</param>
+    /// <param name="current">The slot's current value, if the operation already ran once.</param>
+    /// <param name="value">The new value to install when the slot is still empty.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="current"/> is already <c>Some</c>.</exception>
     let single (operationName: string) (grainTypeName: string) (current: 'T option) (value: 'T) =
         match current with
         | Some _ ->
@@ -286,6 +316,11 @@ module internal DefinitionDraft =
     /// Reject a second placement operation: <c>statelessWorker</c> and <c>placement</c> are
     /// mutually exclusive, in either order, so the message does not name which one came first.
     /// </summary>
+    /// <param name="operationName">The custom operation's own name, used to phrase the diagnostic.</param>
+    /// <param name="grainTypeName">The grain type being defined, used to phrase the diagnostic.</param>
+    /// <param name="current">The draft's current placement configuration, if one is already set.</param>
+    /// <param name="value">The new placement configuration to install when none is set yet.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="current"/> is already <c>Some</c>.</exception>
     let singlePlacement
         (operationName: string)
         (grainTypeName: string)
@@ -300,6 +335,19 @@ module internal DefinitionDraft =
         | None -> Some value
 
     /// <summary>Seal a draft into an immutable definition.</summary>
+    /// <param name="draft">The accumulated draft to validate and seal.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when the draft fails sealing validation: a durable attachment ('stateFrom',
+    /// 'usePersistentState', 'transactionalStateFrom', or 'onReminder') without an explicit
+    /// 'grainType'; a missing handler for an API field; a duplicate persistent-state or
+    /// transactional-state name, or one whose stored type Orleans cannot hold; a transactional
+    /// facet no transactional operation can reach; a non-positive 'collectionAge'; any of the
+    /// combinations 'statelessWorker' rejects ('stateFrom', 'usePersistentState',
+    /// 'transactionalStateFrom', 'onReminder', 'collectionAge', 'onStream'/'onBroadcast', a
+    /// non-positive maxLocalWorkers, or a streaming API field); a blank or duplicate reminder or
+    /// timer name, an invalid reminder dueTime/period, or a timer declared with Interleave = true;
+    /// or a blank or duplicate 'onStream'/'onBroadcast' provider/namespace pair.
+    /// </exception>
     let run
         (draft: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>)
         : FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State> =
@@ -573,12 +621,18 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>(contract)
 
     /// <summary>Validate and seal the draft into an immutable definition.</summary>
+    /// <param name="draft">The accumulated draft to validate and seal.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when sealing validation fails; see
+    /// <see cref="M:Orleans.FSharp.DefinitionDraft.run"/> for the complete list of checks.
+    /// </exception>
     member _.Run<'State>
         (draft: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>)
         : FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State> =
         DefinitionDraft.run draft
 
     /// <summary>Introduce the state type with a key-independent factory.</summary>
+    /// <param name="factory">Produces the initial state; called once per activation regardless of key.</param>
     [<CustomOperation("defaultState")>]
     member _.DefaultState<'State>
         (state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>, factory: unit -> 'State)
@@ -586,6 +640,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.create state.Contract "defaultState" (fun _ -> factory ())
 
     /// <summary>Introduce the state type with a key-aware factory.</summary>
+    /// <param name="factory">Produces the initial state from the activation's domain key.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="factory"/> is null.</exception>
     [<CustomOperation("initialState")>]
     member _.InitialState<'State>
         (state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>, factory: 'Key -> 'State)
@@ -593,6 +649,13 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.create state.Contract "initialState" factory
 
     /// <summary>Bind one handler to the operation identified by the selector.</summary>
+    /// <param name="selector">The API field to bind the handler to.</param>
+    /// <param name="handler">The handler to run for the operation.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; when that field already has a handler; or when
+    /// <paramref name="handler"/> is null.
+    /// </exception>
     [<CustomOperation("handle")>]
     member _.Handle<'State, 'Argument, 'Reply>
         (
@@ -621,6 +684,13 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// Bind one <b>streaming</b> handler to the operation identified by the selector. Spec 004
     /// item 6.
     /// </summary>
+    /// <param name="selector">The streaming API field to bind the handler to.</param>
+    /// <param name="handler">The streaming handler to run for the operation.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; when that field already has a handler; or when
+    /// <paramref name="handler"/> is null.
+    /// </exception>
     /// <remarks>
     /// The handler returns <c>IAsyncEnumerable&lt;'Item&gt;</c> and no replacement state; see
     /// <see cref="T:Orleans.FSharp.StreamHandler`5"/> for why a stream cannot publish one.
@@ -650,6 +720,11 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 Handlers = draft.Handlers.Add(operation.Index, box handler) }
 
     /// <summary>Select the loaded primary persistent holder for the definition's state.</summary>
+    /// <param name="persistentState">The persistent-state reference to attach as the primary state.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="persistentState"/> is null, or when 'stateFrom' is already
+    /// declared for this draft.
+    /// </exception>
     [<CustomOperation("stateFrom")>]
     member _.StateFrom<'State>
         (
@@ -666,6 +741,11 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 Primary = DefinitionDraft.single "stateFrom" draft.Contract.GrainTypeName draft.Primary persistentState }
 
     /// <summary>Attach an additional independently typed persistent state.</summary>
+    /// <param name="persistentState">The persistent-state reference to attach.</param>
+    /// <param name="initializer">The value an unwritten instance of this state reads as.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="persistentState"/> or <paramref name="initializer"/> is null.
+    /// </exception>
     [<CustomOperation("usePersistentState")>]
     member _.UsePersistentState<'State, 'StoredState>
         (
@@ -703,6 +783,10 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// so the declared initial value is what a first read observes; it is stored only when an
     /// update actually writes.
     /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="transactionalState"/> or <paramref name="initializer"/> is
+    /// null.
+    /// </exception>
     /// <remarks>
     /// <para>
     /// The facet is reachable only from an operation declared <c>transactional</c> with
@@ -747,6 +831,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 TransactionalFacets = draft.TransactionalFacets @ [ attached ] }
 
     /// <summary>Set the Orleans idle collection age for this grain type.</summary>
+    /// <param name="age">The idle duration after which Orleans may collect an inactive activation.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'collectionAge' is already declared for this draft.</exception>
     [<CustomOperation("collectionAge")>]
     member _.CollectionAge<'State>(state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, age: TimeSpan) =
         let draft = state.State
@@ -757,6 +843,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                     DefinitionDraft.single "collectionAge" draft.Contract.GrainTypeName draft.CollectionAge age }
 
     /// <summary>Run a hook after persistent-state setup; its returned state is published in memory.</summary>
+    /// <param name="hook">The activation hook.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'onActivate' is already declared for this draft.</exception>
     [<CustomOperation("onActivate")>]
     member _.OnActivate<'State>
         (
@@ -770,6 +858,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 OnActivate = DefinitionDraft.single "onActivate" draft.Contract.GrainTypeName draft.OnActivate hook }
 
     /// <summary>Run a cleanup hook during deactivation; it returns no replacement state.</summary>
+    /// <param name="hook">The deactivation hook.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when 'onDeactivate' is already declared for this draft.</exception>
     [<CustomOperation("onDeactivate")>]
     member _.OnDeactivate<'State>
         (
@@ -824,6 +914,10 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// declaration; there is no in-place rename.
     /// </para>
     /// </remarks>
+    /// <param name="name">The durable reminder name; validated (non-blank, unique) at sealing.</param>
+    /// <param name="dueTime">The time from registration to the first tick; validated (non-negative) at sealing.</param>
+    /// <param name="period">The time between ticks after the first; validated (positive) at sealing.</param>
+    /// <param name="hook">The reminder hook.</param>
     [<CustomOperation("onReminder")>]
     member _.OnReminder<'State>
         (
@@ -846,6 +940,9 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 Reminders = draft.Reminders @ [ declaration ] }
 
     /// <summary>Declare an activation-local timer.</summary>
+    /// <param name="name">The timer name, unique within the definition; validated at sealing.</param>
+    /// <param name="options">The Orleans timer creation options (due time, period, interleave, keep-alive).</param>
+    /// <param name="hook">The timer hook.</param>
     [<CustomOperation("onTimer")>]
     member _.OnTimer<'State>
         (
@@ -880,6 +977,7 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// <param name="streamNamespace">The stream namespace to subscribe to, matched exactly.</param>
     /// <param name="hook">The delivery hook. Its item type is inferred from the lambda, so an
     /// annotation is usually needed: <c>(fun context state (item: Ping) -&gt; ...)</c>.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="hook"/> is null.</exception>
     /// <remarks>
     /// <para>
     /// <b>Scheduling and state.</b> A delivery is an ordinary non-reentrant grain call
@@ -976,6 +1074,7 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// what selects the activation.</param>
     /// <param name="hook">The delivery hook, with the same shape and rules as
     /// <c>onStream</c>'s.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="hook"/> is null.</exception>
     /// <remarks>
     /// <para>
     /// The delivery rules match <c>onStream</c>'s exactly — non-reentrant delivery, whole-state
@@ -1066,6 +1165,13 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// stateless worker at all, and implicit delivery addresses one activation identity derived
     /// from the stream key.
     /// </summary>
+    /// <param name="maxLocalWorkers">
+    /// The maximum local activation count per silo; validated (strictly positive) at sealing.
+    /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when a placement configuration ('statelessWorker' or 'placement') is already
+    /// declared for this draft.
+    /// </exception>
     [<CustomOperation("statelessWorker")>]
     member _.StatelessWorker<'State>
         (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, maxLocalWorkers: int)
@@ -1085,6 +1191,11 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// Select one stock Orleans placement strategy for this grain type. Mutually exclusive with
     /// <c>statelessWorker</c> and with a second <c>placement</c> operation.
     /// </summary>
+    /// <param name="strategy">The stock Orleans placement strategy to use.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when a placement configuration ('statelessWorker' or 'placement') is already
+    /// declared for this draft.
+    /// </exception>
     [<CustomOperation("placement")>]
     member _.Placement<'State>
         (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, strategy: PlacementStrategy)
@@ -1129,6 +1240,12 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// parameter is the functional runtime's own, meaningfully initialized value.
     /// </para>
     /// </remarks>
+    /// <param name="stage">The lifecycle stage to hook; <c>Activate</c> is rejected.</param>
+    /// <param name="hook">The lifecycle hook.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="stage"/> is <c>Activate</c>, when this stage already has a hook
+    /// declared, or when <paramref name="hook"/> is null.
+    /// </exception>
     [<CustomOperation("onLifecycle")>]
     member _.OnLifecycle<'State>
         (

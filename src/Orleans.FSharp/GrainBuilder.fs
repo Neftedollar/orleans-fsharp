@@ -369,6 +369,7 @@ module GrainDefinition =
     /// <summary>
     /// Returns true if any handler (plain, context, cancellable, or cancellable-context) is registered.
     /// </summary>
+    /// <param name="definition">The grain definition to inspect.</param>
     let hasAnyHandler (definition: GrainDefinition<'State, 'Message>) =
         definition.Handler.IsSome
         || definition.ContextHandler.IsSome
@@ -459,6 +460,7 @@ module GrainDefinition =
     /// <param name="state">The current state.</param>
     /// <param name="message">The message to handle.</param>
     /// <returns>A Task containing a tuple of the new state and a boxed result.</returns>
+    /// <exception cref="System.InvalidOperationException">No handler has been registered. See <see cref="getHandler"/>.</exception>
     let invokeHandler (definition: GrainDefinition<'State, 'Message>) (state: 'State) (message: 'Message) : Task<'State * obj> =
         let handler = getHandler definition
         handler state message
@@ -472,6 +474,7 @@ module GrainDefinition =
     /// <param name="state">The current state.</param>
     /// <param name="message">The message to handle.</param>
     /// <returns>A Task containing a tuple of the new state and a boxed result.</returns>
+    /// <exception cref="System.InvalidOperationException">No handler has been registered. See <see cref="getContextHandler"/>.</exception>
     let invokeContextHandler
         (definition: GrainDefinition<'State, 'Message>)
         (ctx: GrainContext)
@@ -491,6 +494,7 @@ module GrainDefinition =
     /// <param name="message">The message to handle.</param>
     /// <param name="ct">The cancellation token to pass to the handler.</param>
     /// <returns>A Task containing a tuple of the new state and a boxed result.</returns>
+    /// <exception cref="System.InvalidOperationException">No handler has been registered. See <see cref="getCancellableContextHandler"/>.</exception>
     let invokeCancellableContextHandler
         (definition: GrainDefinition<'State, 'Message>)
         (ctx: GrainContext)
@@ -731,6 +735,7 @@ type GrainBuilder() =
     /// <param name="definition">The current grain definition being built.</param>
     /// <param name="name">The storage provider name (e.g., "Default", "AzureBlob").</param>
     /// <returns>The updated grain definition with persistence configured.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or white-space.</exception>
     [<CustomOperation("persist")>]
     member _.Persist(definition: GrainDefinition<'State, 'Message>, name: string) =
         if String.IsNullOrWhiteSpace(name) then
@@ -775,6 +780,7 @@ type GrainBuilder() =
     /// <param name="name">The unique name of the reminder.</param>
     /// <param name="handler">The reminder handler function.</param>
     /// <returns>The updated grain definition with the reminder handler registered.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or white-space.</exception>
     [<CustomOperation("onReminder")>]
     member _.OnReminder
         (
@@ -800,6 +806,7 @@ type GrainBuilder() =
     /// <param name="period">The interval between subsequent firings.</param>
     /// <param name="handler">The timer handler function that transforms state.</param>
     /// <returns>The updated grain definition with the timer handler registered.</returns>
+    /// <exception cref="System.ArgumentException"><paramref name="name"/> is empty or white-space.</exception>
     [<CustomOperation("onTimer")>]
     member _.OnTimer
         (
@@ -1092,6 +1099,7 @@ type GrainBuilder() =
     /// <param name="name">The unique name for this persistent state.</param>
     /// <param name="storageName">The Orleans storage provider name to use.</param>
     /// <param name="defaultValue">The default value for this state.</param>
+    /// <typeparam name="'T">The type of the persistent state value.</typeparam>
     /// <returns>The updated grain definition with the additional state declared.</returns>
     [<CustomOperation("additionalState")>]
     member _.AdditionalState(definition: GrainDefinition<'State, 'Message>, name: string, storageName: string, defaultValue: 'T) =
@@ -1171,6 +1179,7 @@ type GrainBuilder() =
 
     /// <summary>Returns the completed grain definition. Validates constraints:
     /// defaultState must be explicitly set and at least one handler must be registered.</summary>
+    /// <param name="definition">The accumulated grain definition to validate and return.</param>
     /// <exception cref="System.InvalidOperationException">Thrown when validation fails.</exception>
     member _.Run(definition: GrainDefinition<'State, 'Message>) =
         if definition.DefaultState.IsNone then

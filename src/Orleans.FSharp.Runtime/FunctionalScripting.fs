@@ -13,6 +13,7 @@ open Orleans.FSharp.Runtime
 type FunctionalGrainRegistration internal (register: ISiloBuilder -> unit) =
 
     /// <summary>Apply this registration's <c>AddFunctionalGrain</c> call to the silo builder.</summary>
+    /// <param name="builder">The silo builder to register the boxed grain definition on.</param>
     member internal _.Apply(builder: ISiloBuilder) = register builder
 
 /// <summary>Construction of boxed functional grain registrations.</summary>
@@ -23,6 +24,7 @@ module FunctionalGrainRegistration =
     /// Box one sealed functional grain definition for
     /// <see cref="M:Orleans.FSharp.FunctionalScripting.startOnPorts"/>.
     /// </summary>
+    /// <param name="definition">The functional grain definition to box.</param>
     let of' (definition: FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>) : FunctionalGrainRegistration =
         FunctionalGrainRegistration(fun builder -> builder.AddFunctionalGrain definition |> ignore)
 

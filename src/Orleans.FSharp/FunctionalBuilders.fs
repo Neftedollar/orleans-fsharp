@@ -12,6 +12,8 @@ module FunctionalGrainBuilders =
         GrainContractBuilder<'Actor, 'Key, 'Api>()
 
     /// <summary>Start a server-definition expression for a sealed contract.</summary>
+    /// <param name="contract">The sealed contract to build a definition for.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="contract"/> is null.</exception>
     let grainFor (contract: GrainContract<'Actor, 'Key, 'Api>) : FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> =
         if obj.ReferenceEquals(contract, null) then
             FunctionalDiagnostics.fail FunctionalDiagnostics.DefinitionStage "'grainFor' requires a contract value."
@@ -23,6 +25,8 @@ module FunctionalGrainBuilders =
     /// the fold of an event journal kept by an Orleans log-consistency provider, and handlers
     /// raise events instead of returning a replacement state.
     /// </summary>
+    /// <param name="contract">The sealed contract to build a journaled definition for.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="contract"/> is null.</exception>
     let journaledGrainFor
         (contract: GrainContract<'Actor, 'Key, 'Api>)
         : FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> =

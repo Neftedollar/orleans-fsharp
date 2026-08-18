@@ -49,9 +49,12 @@ module internal FunctionalInterleave =
     [<Literal>]
     let CallbackName = "MayInterleave"
 
+    /// <summary>One grain type's bound <c>mayInterleave</c> predicate, keyed elsewhere by its closed marker type.</summary>
     [<ReferenceEquality>]
     type internal Registration =
-        { GrainTypeName: string
+        { /// The grain type name the predicate is bound to.
+          GrainTypeName: string
+          /// The declared interleave predicate itself.
           Predicate: IFunctionalRequestMetadata -> bool }
 
     let private table = ConcurrentDictionary<Type, Registration>()
@@ -73,6 +76,9 @@ module internal FunctionalInterleave =
     /// caller raises the configuration diagnostic — this module cannot, because the
     /// silo-registration stage vocabulary is declared further down the compile order.
     /// </returns>
+    /// <param name="markerType">The closed marker CLR type to bind the predicate to.</param>
+    /// <param name="grainTypeName">The grain type name the caller is registering.</param>
+    /// <param name="predicate">The declared <c>mayInterleave</c> predicate.</param>
     let register (markerType: Type) (grainTypeName: string) (predicate: IFunctionalRequestMetadata -> bool) =
         lock gate (fun () ->
             match table.TryGetValue markerType with
@@ -86,6 +92,7 @@ module internal FunctionalInterleave =
                 None)
 
     /// <summary>The registration of one closed marker type, if it has one.</summary>
+    /// <param name="markerType">The closed marker CLR type to look up.</param>
     let tryFind (markerType: Type) =
         match table.TryGetValue markerType with
         | true, registration -> Some registration
@@ -103,6 +110,9 @@ module internal FunctionalInterleave =
     /// dispatch admits the request. That is spec 003's protocol-before-payload invariant, held
     /// intact on a path Orleans runs before dispatch is even reached.
     /// </remarks>
+    /// <param name="markerType">The closed marker CLR type whose registration to consult.</param>
+    /// <param name="request">The Orleans invocation being considered for interleaving.</param>
+    /// <exception cref="System.InvalidOperationException">The registered <c>mayInterleave</c> predicate threw while evaluating <paramref name="request"/>.</exception>
     let evaluate (markerType: Type) (request: IInvokable) : bool =
         // The argument count is checked BEFORE argument 0 is read, and it is not defensive
         // decoration: Orleans' code generator emits no GetArgument override at all for a method
@@ -161,6 +171,8 @@ type FunctionalGrainMarker<'Actor>() =
     inherit Grain()
 
     interface IFunctionalGrainTarget<'Actor> with
+        /// <inheritdoc/>
+        /// <exception cref="System.InvalidOperationException">Always thrown: a call reaching the manifest marker means the functional grain activator was not installed on this silo.</exception>
         member _.DispatchAsync(_envelope: FunctionalRequestEnvelope, _cancellationToken: CancellationToken) =
             raise (
                 FunctionalTransportDiagnostics.Fail
@@ -168,6 +180,8 @@ type FunctionalGrainMarker<'Actor>() =
             )
 
     interface IRemindable with
+        /// <inheritdoc/>
+        /// <exception cref="System.InvalidOperationException">Always thrown: a reminder reaching the manifest marker means the functional grain activator was not installed on this silo.</exception>
         member _.ReceiveReminder(reminderName: string, _status: TickStatus) =
             raise (
                 FunctionalTransportDiagnostics.Fail
@@ -237,12 +251,16 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     member this.DeactivateNow() = this.DeactivateOnIdle()
 
     /// <summary>Narrow wrapper for the protected <c>Grain.DelayDeactivation</c>.</summary>
+    /// <param name="timeSpan">How long to delay deactivation by.</param>
     member this.DelayDeactivationFor(timeSpan: TimeSpan) = this.DelayDeactivation timeSpan
 
     /// <summary>
     /// Register a durable reminder through the stock Orleans reminder extension. This activation
     /// must implement <c>IRemindable</c>, which every functional target does.
     /// </summary>
+    /// <param name="reminderName">The name of the reminder to register or update.</param>
+    /// <param name="dueTime">The time to wait before the first tick.</param>
+    /// <param name="period">The period between subsequent ticks.</param>
     member this.RegisterReminderNow(reminderName: string, dueTime: TimeSpan, period: TimeSpan) =
         GrainReminderExtensions.RegisterOrUpdateReminder(this, reminderName, dueTime, period)
 
@@ -250,6 +268,8 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     /// Create one declared timer through the stock Orleans timer extension and track its handle
     /// for guaranteed disposal, regardless of whatever else activation-local cleanup does.
     /// </summary>
+    /// <param name="callback">The timer callback.</param>
+    /// <param name="options">The Orleans timer creation options (due time, period).</param>
     member this.CreateTrackedTimer
         (callback: CancellationToken -> Task, options: GrainTimerCreationOptions)
         : IGrainTimer =
@@ -264,6 +284,7 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     /// what makes "timer disposal" a distinct, independently observable stage of deactivation
     /// ordering rather than an implementation detail invisible outside this type.
     /// </summary>
+    /// <param name="onError">Called for each timer whose <c>Dispose</c> throws, with the caught exception.</param>
     member private this.DisposeTimers(onError: exn -> unit) =
         let snapshot = lock timersGate (fun () -> timers.ToArray())
 
@@ -310,15 +331,20 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     /// The functional half of activation, run by Orleans after the stock
     /// <c>GrainLifecycleStage.SetupState</c> load and before activation completes.
     /// </summary>
+    /// <param name="_cancellationToken">Cancellation token for the activation.</param>
     abstract OnActivating: CancellationToken -> Task
 
     default _.OnActivating(_cancellationToken: CancellationToken) = Task.CompletedTask
 
     /// <summary>The functional half of deactivation, run before the lifecycle stop stages.</summary>
+    /// <param name="_reason">Why the grain is being deactivated.</param>
+    /// <param name="_cancellationToken">Cancellation token for the deactivation.</param>
     abstract OnDeactivating: DeactivationReason * CancellationToken -> Task
 
     default _.OnDeactivating(_reason: DeactivationReason, _cancellationToken: CancellationToken) = Task.CompletedTask
 
+    /// <summary>Runs the stock Orleans activation, then the functional <c>OnActivating</c> hook.</summary>
+    /// <param name="cancellationToken">Cancellation token for the activation.</param>
     /// <remarks>
     /// <para>
     /// The stock <c>Grain</c> implementation is awaited as well rather than replaced, so a
@@ -345,6 +371,9 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
             }
             :> Task
 
+    /// <summary>Runs the functional <c>OnDeactivating</c> hook, then the stock Orleans deactivation.</summary>
+    /// <param name="reason">Why the grain is being deactivated.</param>
+    /// <param name="cancellationToken">Cancellation token for the deactivation.</param>
     override this.OnDeactivateAsync(reason: DeactivationReason, cancellationToken: CancellationToken) =
         let functional = this.OnDeactivating(reason, cancellationToken)
 
@@ -360,10 +389,13 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
             :> Task
 
     /// <summary>The stock <c>Grain</c> deactivation, reachable from inside a closure.</summary>
+    /// <param name="reason">Why the grain is being deactivated.</param>
+    /// <param name="cancellationToken">Cancellation token for the deactivation.</param>
     member private this.StockDeactivateAsync(reason: DeactivationReason, cancellationToken: CancellationToken) : Task =
         base.OnDeactivateAsync(reason, cancellationToken)
 
     interface IDisposable with
+        /// <inheritdoc/>
         member this.Dispose() =
             if Interlocked.Exchange(&disposals, 1) = 0 then
                 // Deactivation ordering: the functional onDeactivate hook and the remaining

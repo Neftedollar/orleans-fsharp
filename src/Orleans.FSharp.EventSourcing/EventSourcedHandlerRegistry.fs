@@ -40,6 +40,7 @@ type EventSourcedHandlerRegistry() =
     /// Registers a typed grain definition, storing boxed dispatch functions keyed by
     /// command-type and event-type full names.
     /// </summary>
+    /// <param name="definition">The event-sourced grain definition to register.</param>
     member _.Register< 'State, 'Event, 'Command
         when 'State : not struct
         and  'State : (new : unit -> 'State)
@@ -78,6 +79,10 @@ type EventSourcedHandlerRegistry() =
 
     interface IEventSourcedHandlerRegistry with
 
+        /// <summary>Returns the boxed default state for the grain registered for the given command type.</summary>
+        /// <param name="commandType">The runtime type of the command.</param>
+        /// <returns>The boxed default state.</returns>
+        /// <exception cref="System.Exception">Thrown when no grain definition is registered for <paramref name="commandType"/>.</exception>
         member _.GetDefaultStateByCommandType(commandType: Type) =
             match commandHandlers.TryGetValue(commandType.FullName) with
             | true, e -> e.GetDefaultState()
@@ -86,6 +91,10 @@ type EventSourcedHandlerRegistry() =
                     $"No event-sourced grain registered for command type '{commandType.FullName}'. \
                       Ensure AddFSharpEventSourcedGrain was called in the silo configurator."
 
+        /// <summary>Returns the boxed default state for the grain registered for the given event type.</summary>
+        /// <param name="eventType">The runtime type of the event.</param>
+        /// <returns>The boxed default state.</returns>
+        /// <exception cref="System.Exception">Thrown when no grain definition is registered for <paramref name="eventType"/>.</exception>
         member _.GetDefaultStateByEventType(eventType: Type) =
             match eventHandlers.TryGetValue(eventType.FullName) with
             | true, e -> e.GetDefaultState()
@@ -94,6 +103,11 @@ type EventSourcedHandlerRegistry() =
                     $"No event-sourced grain registered for event type '{eventType.FullName}'. \
                       Ensure AddFSharpEventSourcedGrain was called in the silo configurator."
 
+        /// <summary>Dispatches a boxed command to the registered F# handler.</summary>
+        /// <param name="state">The current boxed grain state.</param>
+        /// <param name="command">The boxed command to handle.</param>
+        /// <returns>The boxed events produced by the command handler.</returns>
+        /// <exception cref="System.Exception">Thrown when no handler is registered for the command's runtime type.</exception>
         member _.HandleCommand(state: obj, command: obj) =
             let key = command.GetType().FullName
             match commandHandlers.TryGetValue(key) with
@@ -106,6 +120,11 @@ type EventSourcedHandlerRegistry() =
                     $"No handler for command type '{key}'. \
                       Ensure AddFSharpEventSourcedGrain was called in the silo configurator."
 
+        /// <summary>Applies a boxed event to a boxed state using the registered F# apply function.</summary>
+        /// <param name="state">The boxed state to fold the event onto.</param>
+        /// <param name="event">The boxed event to apply.</param>
+        /// <returns>The resulting boxed state.</returns>
+        /// <exception cref="System.Exception">Thrown when no apply function is registered for the event's runtime type.</exception>
         member _.ApplyEvent(state: obj, event: obj) =
             let key = event.GetType().FullName
             match eventHandlers.TryGetValue(key) with

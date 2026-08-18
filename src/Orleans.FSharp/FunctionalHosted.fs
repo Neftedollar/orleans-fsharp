@@ -41,6 +41,7 @@ type internal FunctionalServerAdapter = delegate of FunctionalInvocation -> Task
 type internal ServerAdapterFactory =
 
     /// <summary>Close one handler over its exact actor, key, state, argument, and reply types.</summary>
+    /// <param name="handler">The boxed application handler, of type <c>Handler&lt;'Actor,'Key,'State,'Argument,'Reply&gt;</c>.</param>
     static member Create<'Actor, 'Key, 'State, 'Argument, 'Reply>(handler: obj) : FunctionalServerAdapter =
         let typed = unbox<Handler<'Actor, 'Key, 'State, 'Argument, 'Reply>> handler
 
@@ -77,6 +78,12 @@ module internal ServerAdapter =
     /// Close the server-adapter factory over one operation's exact types. Called once per hosted
     /// operation while the definition is registered on a silo, never per call.
     /// </summary>
+    /// <param name="actorType">The actor brand CLR type.</param>
+    /// <param name="keyType">The domain key CLR type.</param>
+    /// <param name="stateType">The definition's declared primary state CLR type.</param>
+    /// <param name="argumentType">The operation's exact argument type.</param>
+    /// <param name="replyType">The operation's exact reply type.</param>
+    /// <param name="handler">The boxed application handler.</param>
     let precompute
         (actorType: Type)
         (keyType: Type)
@@ -135,6 +142,11 @@ type internal SerializingStreamEnumerator<'Item>
 type internal StreamServerAdapterFactory =
 
     /// <summary>Close one streaming handler over its exact actor, key, state, argument, and item types.</summary>
+    /// <param name="handler">The boxed application handler, of type <c>StreamHandler&lt;'Actor,'Key,'State,'Argument,'Item&gt;</c>.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown, from the returned adapter's own invocation, when the handler returns a null
+    /// <c>IAsyncEnumerable</c>.
+    /// </exception>
     static member Create<'Actor, 'Key, 'State, 'Argument, 'Item>(handler: obj) : FunctionalStreamServerAdapter =
         let typed = unbox<StreamHandler<'Actor, 'Key, 'State, 'Argument, 'Item>> handler
 
@@ -176,6 +188,12 @@ module internal StreamServerAdapter =
         | method -> method
 
     /// <summary>Close the streaming server-adapter factory over one operation's exact types.</summary>
+    /// <param name="actorType">The actor brand CLR type.</param>
+    /// <param name="keyType">The domain key CLR type.</param>
+    /// <param name="stateType">The definition's declared primary state CLR type.</param>
+    /// <param name="argumentType">The operation's exact argument type.</param>
+    /// <param name="itemType">The operation's exact streamed item type.</param>
+    /// <param name="handler">The boxed application handler.</param>
     let precompute
         (actorType: Type)
         (keyType: Type)
@@ -203,6 +221,7 @@ module internal StreamServerAdapter =
 type internal JournaledServerAdapterFactory =
 
     /// <summary>Close one journaled handler over its exact types.</summary>
+    /// <param name="handler">The boxed application handler, of type <c>JournaledHandler&lt;'Actor,'Key,'State,'Event,'Argument,'Reply&gt;</c>.</param>
     static member Create<'Actor, 'Key, 'State, 'Event, 'Argument, 'Reply>(handler: obj) : FunctionalServerAdapter =
         let typed =
             unbox<JournaledHandler<'Actor, 'Key, 'State, 'Event, 'Argument, 'Reply>> handler
@@ -235,6 +254,13 @@ module internal JournaledServerAdapter =
         | method -> method
 
     /// <summary>Close the journaled server-adapter factory over one operation's exact types.</summary>
+    /// <param name="actorType">The actor brand CLR type.</param>
+    /// <param name="keyType">The domain key CLR type.</param>
+    /// <param name="stateType">The definition's declared confirmed-state CLR type.</param>
+    /// <param name="eventType">The definition's declared event CLR type.</param>
+    /// <param name="argumentType">The operation's exact argument type.</param>
+    /// <param name="replyType">The operation's exact reply type.</param>
+    /// <param name="handler">The boxed application handler.</param>
     let precompute
         (actorType: Type)
         (keyType: Type)
@@ -434,6 +460,7 @@ type internal FunctionalHostedOperation =
     }
 
     /// <summary>The protocol-token pair this operation uses for one admitted request version.</summary>
+    /// <param name="version">The admitted request version to look up.</param>
     member this.TokensFor(version: int) = this.VersionTokens.[version - this.MinAcceptedVersion]
 
     /// <summary>The request-direction protocol token at the hosted contract version.</summary>
@@ -522,6 +549,7 @@ type internal FunctionalHostedDefinition
     member _.MayInterleave = mayInterleave
 
     /// <summary>True when this definition admits a request carrying that contract version.</summary>
+    /// <param name="requestVersion">The contract version the incoming request carries.</param>
     member this.AcceptsVersion(requestVersion: int) =
         requestVersion >= this.MinAcceptedVersion && requestVersion <= version
 
@@ -530,6 +558,7 @@ type internal FunctionalHostedDefinition
     /// <c>Exact</c> policy it is byte-for-byte the spec-003 sentence, so nothing that reads the
     /// diagnostic changes when version tolerance ships unused.
     /// </summary>
+    /// <param name="requestVersion">The contract version the incoming request carries.</param>
     member this.VersionRejection(requestVersion: int) =
         match acceptedVersions with
         | Exact ->
@@ -559,15 +588,18 @@ type internal FunctionalHostedDefinition
     member _.DeclaredTypes = declaredTypes
 
     /// <summary>Look up a hosted operation by its ordinal wire ID.</summary>
+    /// <param name="operationId">The stable wire operation ID to find.</param>
     member _.TryFindOperation(operationId: string) =
         match byId.TryGetValue operationId with
         | true, operation -> Some operation
         | _ -> None
 
     /// <summary>Decode the boxed domain key from an Orleans grain identity.</summary>
+    /// <param name="grainId">The Orleans grain identity to decode.</param>
     member _.DecodeKey(grainId: GrainId) = decodeKey grainId
 
     /// <summary>Create the initial primary state of one activation from its boxed domain key.</summary>
+    /// <param name="key">The boxed domain key.</param>
     member _.CreateState(key: obj) = createState key
 
     /// <summary>
@@ -610,6 +642,9 @@ type internal FunctionalHostedDefinition
     /// namespace but not a provider, so a namespace declared for one provider can still be
     /// routed here from another; such a delivery matches nothing and returns <c>None</c>.
     /// </summary>
+    /// <param name="isStream">True to match an Orleans-streams (<c>onStream</c>) binding; false for a broadcast-channel (<c>onBroadcast</c>) one.</param>
+    /// <param name="providerName">The named provider the delivery arrived on.</param>
+    /// <param name="streamNamespace">The stream or channel namespace the delivery arrived on.</param>
     member _.TryFindStreamBinding(isStream: bool, providerName: string, streamNamespace: string) =
         streamBindings
         |> Array.tryFind (fun binding ->
@@ -633,6 +668,7 @@ type internal FunctionalHostedDefinition
     member _.Journal = journal
 
     /// <summary>Look up a declared reminder by its exact ordinal name.</summary>
+    /// <param name="reminderName">The durable reminder name to find.</param>
     member _.TryFindReminder(reminderName: string) =
         reminders
         |> Array.tryFind (fun reminder -> String.Equals(reminder.Name, reminderName, StringComparison.Ordinal))
@@ -650,6 +686,10 @@ module internal FunctionalHostedTokens =
     /// <c>stream-request</c>/<c>stream-item</c> directions; every other operation gets
     /// <c>request</c>/<c>reply</c>, byte-for-byte what spec 003 precomputed.
     /// </summary>
+    /// <param name="grainTypeName">The hosted grain type name.</param>
+    /// <param name="operation">The operation to precompute tokens for.</param>
+    /// <param name="minAcceptedVersion">The lowest request version the hosting definition admits.</param>
+    /// <param name="hostedVersion">The hosted contract version.</param>
     let forOperation
         (grainTypeName: string)
         (operation: FunctionalOperation)
@@ -671,6 +711,8 @@ module internal FunctionalHostedTokens =
 module internal FunctionalHosted =
 
     /// <summary>Build the silo-side view of one sealed definition, preclosing every adapter.</summary>
+    /// <param name="definition">The sealed definition to build a hosted view of.</param>
+    /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="definition"/> is null.</exception>
     let create (definition: FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>) : FunctionalHostedDefinition =
         if obj.ReferenceEquals(definition, null) then
             fail DefinitionStage "AddFunctionalGrain requires a sealed functional grain definition."
@@ -836,6 +878,12 @@ module internal FunctionalHosted =
 module internal FunctionalJournaledHosted =
 
     /// <summary>Build the silo-side view of one sealed journaled definition.</summary>
+    /// <param name="definition">The sealed journaled definition to build a hosted view of.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="definition"/> is null; also thrown, defensively, if the
+    /// definition somehow has no 'logProvider', which sealing already rejects and this repeats as
+    /// an unreachable guard.
+    /// </exception>
     let create
         (definition: FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>)
         : FunctionalHostedDefinition =

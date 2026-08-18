@@ -31,6 +31,8 @@ namespace Orleans.FSharp;
 internal static class FunctionalWire
 {
     /// <summary>Reject a field ID that is not part of the fixed layout.</summary>
+    /// <param name="typeName">The wire type name to name in the diagnostic.</param>
+    /// <param name="id">The unrecognized field ID.</param>
     public static InvalidOperationException UnknownField(string typeName, uint id) =>
         FunctionalTransportDiagnostics.Fail(
             string.Create(
@@ -38,6 +40,8 @@ internal static class FunctionalWire
                 $"'{typeName}' received unknown wire field {id}; the fixed layout is closed."));
 
     /// <summary>Reject a field ID that appeared twice.</summary>
+    /// <param name="typeName">The wire type name to name in the diagnostic.</param>
+    /// <param name="id">The field ID that repeated.</param>
     public static InvalidOperationException DuplicateField(string typeName, uint id) =>
         FunctionalTransportDiagnostics.Fail(
             string.Create(
@@ -45,6 +49,9 @@ internal static class FunctionalWire
                 $"'{typeName}' received wire field {id} more than once; every field is required exactly once."));
 
     /// <summary>Reject a payload whose required fields were not all present.</summary>
+    /// <param name="typeName">The wire type name to name in the diagnostic.</param>
+    /// <param name="seen">The bitmask of field IDs actually observed.</param>
+    /// <param name="required">The bitmask of field IDs the fixed layout requires.</param>
     public static InvalidOperationException MissingFields(string typeName, uint seen, uint required) =>
         FunctionalTransportDiagnostics.Fail(
             string.Create(
@@ -52,6 +59,10 @@ internal static class FunctionalWire
                 $"'{typeName}' is missing required wire fields (mask 0x{required & ~seen:x2}); every field is required exactly once."));
 
     /// <summary>Mark one field as seen, rejecting a repeat.</summary>
+    /// <param name="typeName">The wire type name to name in the diagnostic.</param>
+    /// <param name="seen">The bitmask of field IDs observed so far, updated with <paramref name="id"/>.</param>
+    /// <param name="id">The field ID just read.</param>
+    /// <exception cref="InvalidOperationException">Thrown when <paramref name="id"/> was already marked seen.</exception>
     public static void MarkSeen(string typeName, ref uint seen, uint id)
     {
         var bit = 1u << (int)id;
@@ -98,6 +109,8 @@ internal sealed class FunctionalTransactionRequestActivator : IActivator<Functio
     private readonly IServiceProvider _services;
 
     /// <summary>Create the activator from the transaction machinery's own dependencies.</summary>
+    /// <param name="exceptionSerializer">The serializer the transaction base needs for an aborted-transaction exception.</param>
+    /// <param name="services">The services of the process resolving this activator.</param>
     public FunctionalTransactionRequestActivator(
         Serializer<OrleansTransactionAbortedException> exceptionSerializer,
         IServiceProvider services)
@@ -130,6 +143,7 @@ internal sealed class FunctionalRequestEnvelopeCodec : IFieldCodec<FunctionalReq
     private readonly IActivator<FunctionalRequestEnvelope> _activator;
 
     /// <summary>Create the codec with the activator Orleans resolves for the envelope.</summary>
+    /// <param name="activator">The activator that creates uninitialized envelopes for deserialization.</param>
     public FunctionalRequestEnvelopeCodec(IActivator<FunctionalRequestEnvelope> activator) =>
         _activator = activator;
 
@@ -157,6 +171,10 @@ internal sealed class FunctionalRequestEnvelopeCodec : IFieldCodec<FunctionalReq
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wire data carries an unknown field ID, omits a required field, or sets a
+    /// reserved admission-flag bit.
+    /// </exception>
     public FunctionalRequestEnvelope ReadValue<TInput>(ref Reader<TInput> reader, Field field)
     {
         if (field.IsReference)
@@ -244,6 +262,7 @@ internal sealed class FunctionalReplyCodec : IFieldCodec<FunctionalReply>
     private readonly IActivator<FunctionalReply> _activator;
 
     /// <summary>Create the codec with the activator Orleans resolves for the reply.</summary>
+    /// <param name="activator">The activator that creates uninitialized replies for deserialization.</param>
     public FunctionalReplyCodec(IActivator<FunctionalReply> activator) => _activator = activator;
 
     /// <inheritdoc />
@@ -266,6 +285,9 @@ internal sealed class FunctionalReplyCodec : IFieldCodec<FunctionalReply>
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wire data carries an unknown field ID or omits a required field.
+    /// </exception>
     public FunctionalReply ReadValue<TInput>(ref Reader<TInput> reader, Field field)
     {
         if (field.IsReference)
@@ -336,6 +358,8 @@ internal sealed class FunctionalRequestCodec : IFieldCodec<FunctionalRequest>
     private IFieldCodec<FunctionalRequestEnvelope>? _envelopeCodec;
 
     /// <summary>Create the codec with the shared codec provider and the request activator.</summary>
+    /// <param name="codecProvider">The Orleans codec provider used to resolve the envelope field codec.</param>
+    /// <param name="activator">The activator that creates uninitialized requests for deserialization.</param>
     public FunctionalRequestCodec(ICodecProvider codecProvider, IActivator<FunctionalRequest> activator)
     {
         _codecProvider = codecProvider;
@@ -366,6 +390,9 @@ internal sealed class FunctionalRequestCodec : IFieldCodec<FunctionalRequest>
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wire data carries an unknown field ID or omits the envelope field.
+    /// </exception>
     public FunctionalRequest ReadValue<TInput>(ref Reader<TInput> reader, Field field)
     {
         if (field.IsReference)
@@ -445,6 +472,8 @@ internal sealed class FunctionalTransactionRequestCodec : IFieldCodec<Functional
     private IFieldCodec<FunctionalRequestEnvelope>? _envelopeCodec;
 
     /// <summary>Create the codec with the shared codec provider and the request activator.</summary>
+    /// <param name="codecProvider">The Orleans codec provider used to resolve the envelope field codec and the transaction base codec.</param>
+    /// <param name="activator">The activator that creates uninitialized requests for deserialization.</param>
     public FunctionalTransactionRequestCodec(
         ICodecProvider codecProvider,
         IActivator<FunctionalTransactionRequest> activator)
@@ -480,6 +509,9 @@ internal sealed class FunctionalTransactionRequestCodec : IFieldCodec<Functional
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wire data carries an unknown field ID or omits the envelope field.
+    /// </exception>
     public FunctionalTransactionRequest ReadValue<TInput>(ref Reader<TInput> reader, Field field)
     {
         if (field.IsReference)
@@ -561,6 +593,8 @@ internal sealed class FunctionalStreamRequestCodec : IFieldCodec<FunctionalStrea
     private IFieldCodec<FunctionalRequestEnvelope>? _envelopeCodec;
 
     /// <summary>Create the codec with the shared codec provider and the request activator.</summary>
+    /// <param name="codecProvider">The Orleans codec provider used to resolve the envelope field codec and the async-enumerable base codec.</param>
+    /// <param name="activator">The activator that creates uninitialized requests for deserialization.</param>
     public FunctionalStreamRequestCodec(
         ICodecProvider codecProvider,
         IActivator<FunctionalStreamRequest> activator)
@@ -596,6 +630,9 @@ internal sealed class FunctionalStreamRequestCodec : IFieldCodec<FunctionalStrea
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the wire data carries an unknown field ID or omits the envelope field.
+    /// </exception>
     public FunctionalStreamRequest ReadValue<TInput>(ref Reader<TInput> reader, Field field)
     {
         if (field.IsReference)
@@ -716,6 +753,9 @@ internal sealed class FunctionalTransactionRequestCopier : IDeepCopier<Functiona
     private readonly IBaseCopier<TransactionRequestBase> _baseCopier;
 
     /// <summary>Create the copier with the request dependencies and Orleans' transaction base copier.</summary>
+    /// <param name="codecProvider">The Orleans codec provider used to resolve the transaction base copier.</param>
+    /// <param name="exceptionSerializer">The serializer the transaction base needs for an aborted-transaction exception.</param>
+    /// <param name="services">The services of the process resolving this copier.</param>
     public FunctionalTransactionRequestCopier(
         ICodecProvider codecProvider,
         Serializer<OrleansTransactionAbortedException> exceptionSerializer,
@@ -772,6 +812,7 @@ internal sealed class FunctionalStreamRequestCopier : IDeepCopier<FunctionalStre
     private readonly IBaseCopier<AsyncEnumerableRequest<FunctionalReply>> _baseCopier;
 
     /// <summary>Create the copier with Orleans' async-enumerable base copier.</summary>
+    /// <param name="codecProvider">The Orleans codec provider used to resolve the async-enumerable base copier.</param>
     public FunctionalStreamRequestCopier(ICodecProvider codecProvider) =>
         _baseCopier = codecProvider.GetBaseCopier<AsyncEnumerableRequest<FunctionalReply>>();
 
@@ -833,6 +874,7 @@ internal sealed class FunctionalTransportManifestProvider : TypeManifestProvider
 internal static class FunctionalTransportSerialization
 {
     /// <summary>True for exactly the five fixed transport types.</summary>
+    /// <param name="type">The type to test.</param>
     public static bool IsFixedTransportType(Type type) =>
         type == typeof(FunctionalRequestEnvelope)
         || type == typeof(FunctionalReply)
@@ -844,6 +886,8 @@ internal static class FunctionalTransportSerialization
     /// Register the explicit fixed-transport serialization on a serializer builder. Repeated
     /// registration is idempotent.
     /// </summary>
+    /// <param name="builder">The serializer builder to register against.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
     public static ISerializerBuilder AddFunctionalTransport(ISerializerBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -855,6 +899,8 @@ internal static class FunctionalTransportSerialization
     /// Register the explicit fixed-transport serialization on a service collection. Repeated
     /// registration is idempotent.
     /// </summary>
+    /// <param name="services">The service collection to register against.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
     public static IServiceCollection AddFunctionalTransport(IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -865,6 +911,8 @@ internal static class FunctionalTransportSerialization
     }
 
     /// <summary>Add the explicit codecs, copiers, and activators to a type manifest.</summary>
+    /// <param name="config">The type manifest to add to.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="config"/> is null.</exception>
     public static void Configure(TypeManifestOptions config)
     {
         ArgumentNullException.ThrowIfNull(config);
