@@ -65,6 +65,8 @@
     <Compile Include="FunctionalPhaseDFixture.fs" />
     <Compile Include="FunctionalPhaseDIntegrationTests.fs" />
     <Compile Include="FunctionalJournalSeamProbe.fs" />
+    <Compile Include="FunctionalPhaseEFixture.fs" />
+    <Compile Include="FunctionalPhaseEIntegrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

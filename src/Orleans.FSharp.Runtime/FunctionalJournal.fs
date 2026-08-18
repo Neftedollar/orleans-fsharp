@@ -68,6 +68,31 @@ type internal FunctionalJournalHost
         elif view.HasValue && not (isNull view.Payload) then blueprint.DecodeState codec view.Payload
         else this.InitialState
 
+    /// <summary>
+    /// Fold the events onto the current confirmed state before anything is submitted, so a fold
+    /// that throws fails the turn with NOTHING appended.
+    /// </summary>
+    /// <remarks>
+    /// It is not belt and braces, it is the only place the check can be made. Both Orleans
+    /// adaptors fold an entry <b>after</b> the storage write that made it durable — LogStorage
+    /// writes the log and then calls <c>UpdateView</c> for each new entry — so by the time a
+    /// failing fold is observed inside the adaptor the event is already in the journal, and every
+    /// later activation would replay it and fail again. Running the fold first turns a permanently
+    /// poisoned journal into a failed call. It is sound precisely because <c>apply</c> is required
+    /// to be pure: running it twice for the same event has no effect other than the cost.
+    /// </remarks>
+    member private this.EnsureFoldable(events: obj list) =
+        let mutable state = (this :> IFunctionalJournalAccess).Current
+
+        for event in events do
+            try
+                state <- blueprint.Apply state event
+            with cause ->
+                failCause
+                    JournalStage
+                    $"the 'apply' fold of grain type '{grainTypeName}' failed for an event raised by grain '{grainContext.GrainId}'. Nothing was appended: the fold is run over the confirmed state before the events are submitted, because Orleans' adaptors fold an entry only after the storage write that made it durable — an event whose fold throws would otherwise stay in the journal and fail every later replay."
+                    cause
+
     /// <summary>Raise the fold failure this host recorded, if any, and forget it.</summary>
     member private _.RethrowFoldFailure(stage: string) =
         match foldFailure with
@@ -237,6 +262,8 @@ type internal FunctionalJournalHost
                 // ordinary grain.
                 Task.CompletedTask
             | _ ->
+                this.EnsureFoldable events
+
                 task {
                     let entries =
                         events
@@ -254,6 +281,8 @@ type internal FunctionalJournalHost
             match events with
             | [] -> Task.FromResult true
             | _ ->
+                this.EnsureFoldable events
+
                 task {
                     let entries =
                         events
