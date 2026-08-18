@@ -97,6 +97,33 @@
   nothing could roll either back. Orleans does **not** re-execute a handler when a
   transaction aborts; the normative re-execution semantics are in
   `docs/functional-grains.md`.
+- **Functional twins for the two remaining classic-only examples.** `examples/bank-account`
+  gains a `journaledGrainFor` twin over the same `AccountEvent` journal and the same
+  `AccountState` view, and `examples/bank-transactions` gains a `grainFor` twin with a
+  `transactionalStateFrom` facet under the same `("state", "TransactionStore")` identity
+  plus a state-free orchestrator. Neither twin restates a business rule: `apply` *is*
+  `AccountGrainDef.applyEvent`, the write handlers run `AccountGrainDef.handleCommand`,
+  and the transactional updates are `AccountGrainDef.deposit` / `.withdraw` handed to
+  Orleans as `'State -> 'State` functions — so each example's existing property tests are
+  parity evidence for both paths at once. The functional twin is the live entry path in
+  both; the classic definitions stay compiled, registered and tested, and both classic
+  *demos* are kept as commented blocks because a bare `factory.GetGrain<IBankAccountGrain>`
+  cannot resolve without C# CodeGen (verified by running them, not inferred). The
+  bank-account demo prints its own replay proof from `onActivate`; the bank-transactions
+  demo shows both abort shapes — a participant refusing, and an orchestrator failing after
+  both accounts were written, which is the one that proves a rollback rather than a
+  short-circuit.
+- **`docs/api-reference.md` is functional-first.** The functional grain runtime now leads
+  the page — contract, definition and journaled-definition builders, the invocation
+  context, the bound reference, handler/hook types, persistent and transactional state,
+  streaming replies, observers, hosting, scripting and the C# facade — with the `grain { }`
+  cluster kept in full in a clearly deprecated section at the bottom. Every builder-keyword
+  and context-member table is the set `tests/Orleans.FSharp.Tests/FunctionalSurfaceTests.fs`
+  pins by reflection, and the classic tables were re-derived from the code rather than
+  carried over: the classic `onActivate` / `onDeactivate` / `onReminder` signatures were
+  wrong in `docs/`, and a `GrainMock.createMockContext` that does not exist has been
+  dropped. The page's docs/ and website copies are identical again, so `api-reference.md`
+  leaves `KNOWN_DRIFT` in `scripts/check-docs-mirror.py` (3 exemptions down to 2).
 - **CI matrix across the supported Orleans range.** `build-and-test` now runs twice:
   at the declared floor, and at Orleans 10.2.2 via `-p:OrleansVersion=10.2.2`. Breakage
   from Orleans moving forward is caught without raising the floor for consumers. Bump
