@@ -28,10 +28,13 @@ System.InvalidOperationException: Unable to find an IGrainReferenceActivatorProv
 `IChatObserver` is declared in F# (`ChatTypes.fs`) and this example has no C# CodeGen project to
 generate its reference-activator/proxy, so the observer reference itself cannot be constructed --
 independent of which grain it would be passed to. `Orleans.FSharp.BroadcastChannel` (also KEEP-list)
-was checked as a second candidate before writing any code for it: `docs/streaming.md` states that
-broadcast-channel *consumers* are grains implementing `IOnBroadcastChannelSubscribed` with
-`[ImplicitChannelSubscription]`, "handled by the C# CodeGen" -- the identical wall, one hop later.
-Neither is a functional-runtime gap; both are this example's total absence of a C# CodeGen project.
+was checked as a second candidate before writing any code for it: on the classic path a
+broadcast-channel *consumer* is a class grain implementing `IOnBroadcastChannelSubscribed` and
+carrying `[ImplicitChannelSubscription]` (see
+[docs/streaming.md](../../docs/streaming.md)) -- the identical wall, one hop later. Neither is a
+functional-runtime gap; both are this example's total absence of a C# CodeGen project. On the
+functional runtime the `onBroadcast` definition operation removes the need for that class grain
+entirely.
 
 **What closes it.** A functional observer needs no application interface at all: the single
 C#-declared interface lives inside `Orleans.FSharp.Abstractions`, where Orleans' proxy generator

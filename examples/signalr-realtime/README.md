@@ -33,12 +33,13 @@ Confirmed with an actual browser session (not just `dotnet build`): connected, r
 `ReceiveMetrics` push with a live-generated `DashboardUpdate`, and the four metric cards rendered
 with real values -- see the commit for this example.
 
-**A correction to this README's own older claim:** the dashboard does **not** push continuously to
-connected browsers via `IHubContext<T>` from the grain -- neither the old grain nor the functional
-twin ever did that (there is no `IHubContext` usage anywhere in this example). The `onTimer` /
-declarative timer keeps the grain's own sequence number advancing in the background regardless of
-callers, but `DashboardHub.OnConnectedAsync` only sends **one** update, at connect time. The
-architecture section below is corrected to describe what the code actually does.
+**What this example does and does not push.** The dashboard does **not** push continuously to
+connected browsers: there is no `IHubContext<T>` usage anywhere in it, and neither the grain nor
+its functional twin sends to clients on its own. The declarative `onTimer` keeps the grain's
+sequence number advancing in the background regardless of callers, while
+`DashboardHub.OnConnectedAsync` sends exactly **one** update, at connect time. To push
+continuously, inject `IHubContext<DashboardHub>` into a hosted service and have it poll the grain
+-- a grain cannot reach SignalR's client registry by itself.
 
 ## How to run
 

@@ -459,7 +459,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainBatch.choose<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR option>) -> Task<'TR list>` | Fan-out; filters out None results |
 | `GrainBatch.partition<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list * exn list>` | Fan-out; separates successes from failures |
 
-> **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and compiles to the same `Task.WhenAll` pattern. Use `GrainBatch` when the number of grains is dynamic.
+> **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and starts every bound call before awaiting any of them, exactly as these do. Use `GrainBatch` when the number of grains is dynamic.
 
 #### Other modules
 
