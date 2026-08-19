@@ -29,6 +29,7 @@ A journaled definition is a second definition kind over the same contract layer 
 | where the state comes from | memory, or a `stateFrom` holder | the fold of the journal |
 
 ```fsharp
+open System.Threading.Tasks
 open Orleans.FSharp
 
 type AccountActor = private AccountActor of unit
@@ -342,13 +343,14 @@ See [calling-from-csharp.md](/orleans-fsharp/calling-from-csharp/).
 
 ---
 
-## Classic path (deprecated)
+## Classic path (superseded)
 
-> **Deprecated.** The `eventSourcedGrain { }` computation expression and
+> **Superseded, not deprecated.** The `eventSourcedGrain { }` computation expression and
 > `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class,
 > and they need C# CodeGen for the grain interface. New code should use `journaledGrainFor` from
-> the functional grain runtime (above, and [functional-grains.md](/orleans-fsharp/functional-grains/)). The
-> classic path is still shipped and still works; it is not being removed.
+> the functional grain runtime (above, and [functional-grains.md](/orleans-fsharp/functional-grains/)). Nothing
+> in `Orleans.FSharp.EventSourcing` carries `[<Obsolete>]`, so this path compiles without a
+> warning; it is still shipped and is not being removed.
 
 The classic model splits a grain into `apply` (a pure fold), `handle` (a command handler
 returning events), and `defaultState`, and the `Orleans.FSharp.CodeGen` package generates a C#
@@ -459,8 +461,10 @@ These are used internally by the generated C# `JournaledGrain` class.
 ### Clearing the event log
 
 ```fsharp
-open Orleans.FSharp.EventSourcing
+open Orleans.FSharp   // the FSharpEventSourcedGrain handle module lives here, not in
+                      // Orleans.FSharp.EventSourcing, which holds the CE and its types
 
+let handle = FSharpEventSourcedGrain.ref<BankAccountState, BankAccountCommand> grainFactory "acc-1"
 do! handle |> FSharpEventSourcedGrain.clearLog
 ```
 

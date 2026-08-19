@@ -426,6 +426,6 @@ dotnet test
 | [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
 | [Serialization](serialization.md) | FSharpBinaryCodec, JSON fallback, Orleans native |
 | [Streaming](streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](event-sourcing.md) | `journaledGrainFor { }` — state as the fold of an event journal (and the deprecated `eventSourcedGrain { }` CE) |
+| [Event Sourcing](event-sourcing.md) | `journaledGrainFor { }` — state as the fold of an event journal (and the superseded `eventSourcedGrain { }` CE) |
 | [Testing](testing.md) | TestHarness, GrainMock, property tests, and testing functional grains |
 | [API Reference](api-reference.md) | All public modules and functions |

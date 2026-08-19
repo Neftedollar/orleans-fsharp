@@ -431,6 +431,6 @@ dotnet test
 | [Silo Configuration](/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
 | [Serialization](/orleans-fsharp/serialization/) | FSharpBinaryCodec, JSON fallback, Orleans native |
 | [Streaming](/orleans-fsharp/streaming/) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](/orleans-fsharp/event-sourcing/) | `journaledGrainFor { }` — state as the fold of an event journal (and the deprecated `eventSourcedGrain { }` CE) |
+| [Event Sourcing](/orleans-fsharp/event-sourcing/) | `journaledGrainFor { }` — state as the fold of an event journal (and the superseded `eventSourcedGrain { }` CE) |
 | [Testing](/orleans-fsharp/testing/) | TestHarness, GrainMock, property tests, and testing functional grains |
 | [API Reference](/orleans-fsharp/api-reference/) | All public modules and functions |

@@ -297,7 +297,7 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 | [Client Configuration](docs/client-configuration.md) | `clientConfig { }` CE reference |
 | [Serialization](docs/serialization.md) | 3 modes: F# Binary, JSON, Orleans Native |
 | [Streaming](docs/streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](docs/event-sourcing.md) | `journaledGrainFor { }` — a grain whose state is the fold of an event journal (and the deprecated `eventSourcedGrain { }` CE) |
+| [Event Sourcing](docs/event-sourcing.md) | `journaledGrainFor { }` — a grain whose state is the fold of an event journal (and the superseded `eventSourcedGrain { }` CE) |
 | [Server-Streaming Replies](docs/streaming-replies.md) | `'Arg -> IAsyncEnumerable<'Item>` — items delivered as they are produced, over Orleans' async-enumerable grain extension |
 | [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |
 | [Analyzers](docs/analyzers.md) | OF0001: async {} detection, AllowAsync opt-out |
