@@ -284,7 +284,7 @@ See the [Silo Configuration](/orleans-fsharp/silo-configuration/) and [Security]
 ## Next steps
 
 - [Functional Grain Runtime](/orleans-fsharp/functional-grains/) -- the current authoring model, full guide
-- [Grain Definition](/orleans-fsharp/grain-definition/) -- all 31 keywords in the `grain {}` CE (deprecated model, kept for reference)
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- all 27 keywords in the `grain {}` CE (deprecated model, kept for reference)
 - [Event Sourcing](/orleans-fsharp/event-sourcing/) -- CQRS with `eventSourcedGrain {}`
 - [Testing](/orleans-fsharp/testing/) -- TestHarness, GrainMock, and property tests
 - [API Reference](/orleans-fsharp/api-reference/) -- complete module and function reference
