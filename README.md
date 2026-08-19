@@ -164,6 +164,8 @@ Everything Orleans offers, as contract or definition operations — no attribute
 | `addRedisReminderService` | Redis reminders |
 | `addCustomReminderService` | Custom reminder service |
 | `useSerilog` | Wire Serilog as logging provider |
+| `useFSharpBinarySerialization` | F# binary codec for F# types |
+| `useJsonFallbackSerialization` | JSON fallback for types the binary codec declines |
 | `configureServices` | Register custom DI services |
 | `addIncomingFilter` | Incoming grain call filter |
 | `addOutgoingFilter` | Outgoing grain call filter |
@@ -258,7 +260,7 @@ dotnet new orleans-fsharp -n MyApp
 
 ## Upgrading to 4.0
 
-4.0 is the **functional-era major**: specs 003 and 004 in one release. The functional grain
+4.0 is the **functional-era major**. The functional grain
 runtime (`grainContract` / `grainFor` / `journaledGrainFor`) is the recommended authoring model,
 with full Orleans parity as first-class operations — transactions, event sourcing over Orleans'
 log-consistency providers, implicit stream subscriptions, `IAsyncEnumerable` streaming replies,
