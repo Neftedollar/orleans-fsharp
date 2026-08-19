@@ -116,9 +116,9 @@ hosting CEs are current and unaffected.
 | Test suite | **2,500+** unit + integration tests |
 | Orleans support | **10.1.0 – 10.2.2**, CI-tested at both ends of the range |
 | Feature tour | **16** Orleans capabilities demonstrated live in `examples/feature-tour` |
-| NuGet packages | **7** — core, runtime, abstractions, testing, event sourcing, analyzers, templates |
+| NuGet packages | **8** — core, runtime, abstractions, testing, event sourcing, codegen, analyzers, templates |
 | License | **MIT** |
-| Local API overhead | **~8ns** in benchmark scenarios |
+| Dispatch overhead | **under 5%** versus calling the handler function directly, measured over 1,000,000 iterations |
 
 ## Quick Start
 

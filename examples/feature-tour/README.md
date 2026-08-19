@@ -49,7 +49,7 @@ Status means:
 | 13 | Distributed ACID transactions | **supported** | `Transactions.fs`, tour §14. `transactionalStateFrom (TransactionalState.create<'S> name storage)` attaches an Orleans transactional facet, and `transactional TransactionOption.X (_.op)` declares the per-operation policy. `tour.teller` creates one transaction and drives two `tour.account` participants inside it: a transfer of 40 leaves `(60, 40)` read back inside a single transaction, and a transfer of 500 aborts with `OrleansTransactionAbortedException` leaving `(60, 40)` — the earlier deposit rolled back with it. The tour also prints the two refusals the runtime adds (`readOnly` + `transactional` cannot update; an operation with no `transactional` declaration cannot touch the facet at all) and the measured re-execution answer: the aborted transfer entered the `withdraw` handler exactly **once**. The classic KEEP-path's definitions are unchanged, still registered and still under test in [`examples/bank-transactions`](../bank-transactions), whose live demo is now that example's own functional twin. |
 | 14 | `IAsyncEnumerable<'T>` replies | **supported** | `StreamingReplies.fs`, tour §16. An API record field may be `'Arg -> IAsyncEnumerable<'Item>`, bound with `handleStream`. It is not a transport of ours — it rides Orleans' own `IAsyncEnumerableGrainExtension`, the same extension a codegen grain method returning `IAsyncEnumerable<T>` uses, so batching, long-poll heartbeats, cancel-on-dispose and abandoned-enumerator expiry are Orleans'. The tour holds the producer at a gate per item and shows that after each item the producer had produced exactly that many and no more; that an ordinary call to the same activation returns in ~0 ms while the enumeration is open (every enumeration message carries Orleans' `[AlwaysInterleave]`); and that disposing the enumerator early cancels the producer's token and runs its `finally`. The negative control is the sealing refusal of `statelessWorker` next to a streaming field. A streaming handler is state-neutral — see [docs/streaming-replies.md](../../docs/streaming-replies.md). |
 | 15 | Reentrancy variants: `reentrant` and `mayInterleave` | **supported** | `Interleaving.fs`, tour §13. Both are first-class contract operations. `tour.reentrant` declares `reentrant` and a second call reaches it while the first is parked; `tour.serial` is the identical contract without it and the second call times out. `tour.selective` declares `mayInterleave (fun m -> m.OperationId = "release")`: `release` gets in, `audit` does not, and the transcript prints what the predicate actually saw. The tour also shows the cost — two interleaved writers publishing whole replacement states are last-writer-wins, so the interleaved write is lost. |
-| 16 | Event sourcing: `journaledGrainFor` | **supported** | `EventSourcing.fs`, tour §15. A second definition kind over the same contract layer. `initialEventState` seeds the fold, `apply` is the pure replay fold, and a handler returns the events it raises instead of a replacement state — the runtime appends them and waits for the log-consistency provider to confirm them before the reply leaves the activation. The tour drives both built-in providers (`AddLogStorageBasedLogConsistencyProvider` and `AddStateStorageBasedLogConsistencyProvider`) from one definition: state `110` at journal version `3` before the activation is dropped and the same `110` at version `3` after, rebuilt by replay with nothing having written the state anywhere. A refused command raises no event and does not move the version; a `readOnly` operation that raises one is refused by name. Neither built-in provider truncates or snapshots, so `snapshotEvery` is deliberately absent — see [docs/event-sourcing.md](../../docs/event-sourcing.md). The classic `JournaledGrain`-based path is unchanged and still shipped, deprecated. |
+| 16 | Event sourcing: `journaledGrainFor` | **supported** | `EventSourcing.fs`, tour §15. A second definition kind over the same contract layer. `initialEventState` seeds the fold, `apply` is the pure replay fold, and a handler returns the events it raises instead of a replacement state — the runtime appends them and waits for the log-consistency provider to confirm them before the reply leaves the activation. The tour drives both built-in providers (`AddLogStorageBasedLogConsistencyProvider` and `AddStateStorageBasedLogConsistencyProvider`) from one definition: state `110` at journal version `3` before the activation is dropped and the same `110` at version `3` after, rebuilt by replay with nothing having written the state anywhere. A refused command raises no event and does not move the version; a `readOnly` operation that raises one is refused by name. Neither built-in provider truncates or snapshots, so `snapshotEvery` is deliberately absent — see [docs/event-sourcing.md](../../docs/event-sourcing.md). The classic `JournaledGrain`-based path is unchanged and still shipped; it carries no `[<Obsolete>]`, it is simply superseded. |
 
 ## Walls and hazards found while building this
 
@@ -125,9 +125,10 @@ if request.GetArgumentCount() > 0 then
 
 ### `IReminderRegistry` lives in `Orleans.Timers`
 
-Not `Orleans.Runtime`. The reminder-retirement snippet in
-[`docs/functional-grains.md`](../../docs/functional-grains.md) omits the `open Orleans.Timers`
-its own code needs.
+Not `Orleans.Runtime`, which is the natural guess and does not compile. The assembly is
+`Orleans.Reminders`. The reminder-retirement snippet in
+[`docs/functional-grains.md`](../../docs/functional-grains.md) opens it explicitly for that
+reason.
 
 ### Assemblies reached only through F# must be pre-loaded
 
@@ -234,6 +235,10 @@ src/FeatureTour/            the F# app — one module per feature, plus the driv
   Placement.fs              §10
   Implicit.fs               §11
   Heterogeneous.fs          §12
+  Interleaving.fs           §13
+  Transactions.fs           §14
+  EventSourcing.fs          §15
+  StreamingReplies.fs       §16
   Program.fs                the driver: silo configuration and every section
 src/TourInterop/            the C# half: the observer interface and one broadcast consumer grain
 ```
