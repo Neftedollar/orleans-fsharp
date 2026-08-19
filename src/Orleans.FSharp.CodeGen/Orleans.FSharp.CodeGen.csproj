@@ -57,6 +57,19 @@
          call inherits this project's global properties, matching the in-solution case;
          the Exists preflight below turns the out-of-solution mismatch into an actionable
          error instead of a missing-file mystery. -->
+    <!-- An explicit Build call precedes each GetTargetPath, because GetTargetPath only ANSWERS
+         with the path and never builds — and on a cold parallel solution build this target can
+         fire before the scheduler has built Generator/Sample on another node, failing the
+         Exists preflight below (first seen on the v4.0.0 publish job, whose runner had no warm
+         bin/ to mask the race; reproduced locally with a cold Release build). MSBuild's result
+         cache makes the Build call a no-op when the solution build already produced the project
+         on this or another node. Build and GetTargetPath are SEPARATE invocations: one call with
+         Targets="Build;GetTargetPath" would aggregate both targets' outputs into the property
+         ("path;path"), which the Exists preflight would then reject. -->
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\Orleans.FSharp.Generator.fsproj"
+             Targets="Build" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj"
+             Targets="Build" />
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\Orleans.FSharp.Generator\Orleans.FSharp.Generator.fsproj"
              Targets="GetTargetPath">
       <Output TaskParameter="TargetOutputs" PropertyName="_GeneratorAssembly" />
