@@ -447,8 +447,9 @@ siloConfig {
 ```
 
 `grainCollectionAge` is the global idle-deactivation timeout. There is no per-grain `grain { }`
-keyword for it; for a per-grain idle timeout, use the C# CodeGen path with Orleans'
-`[CollectionAgeLimit]` attribute.
+keyword for it: on the [functional grain runtime](/orleans-fsharp/functional-grains/) use the `collectionAge`
+operation in `grainFor { }`, and on the C# CodeGen path use Orleans' `[CollectionAgeLimit]`
+attribute.
 
 ---
 
@@ -555,6 +556,24 @@ siloConfig {
         services.AddHttpClient() |> ignore)
 }
 ```
+
+---
+
+## Serialization
+
+Opt a silo into the F# codecs. The universal grain pattern and the functional grain runtime both
+register `FSharpBinaryCodec` for you; declare these only when you are on the per-grain C# CodeGen
+path, or when you want the JSON fallback as well:
+
+```fsharp
+siloConfig {
+    useLocalhostClustering
+    useFSharpBinarySerialization   // F# records, unions, lists, maps, options
+    useJsonFallbackSerialization   // System.Text.Json for the rest
+}
+```
+
+See [Serialization](/orleans-fsharp/serialization/) for what each mode covers and how the two compose.
 
 ---
 
