@@ -840,6 +840,12 @@ observer-specific rule: a push operation that returns anything but `Task<unit>` 
 construction -- an observer never returns data. There is no key operation either; an observer is
 addressed by the reference inside its handle, not by a domain key.
 
+The **derived** `observerType` carries the same restriction a derived
+[`grainType`](#optional-graintype-when-the-derived-default-is-safe) does: the brand must be a
+simple, non-generic, non-nested CLR type. A brand declared inside an F# `module` rather than a
+`namespace` is nested, and contract construction refuses to derive a name from it -- declare
+`observerType` explicitly there.
+
 ### Subscribing
 
 The client wraps its handlers and gets back a typed, serializable **handle**:

@@ -215,7 +215,7 @@ functional observers".
 
 | Keyword | Signature | Description |
 |---|---|---|
-| `observerType` | `string` | Wire identity of the observer; defaults to the brand's simple CLR name |
+| `observerType` | `string` | Wire identity of the observer; defaults to the brand's simple CLR name, which requires a simple, non-generic, non-nested brand exactly as a derived `grainType` does |
 | `version` | `int` | Contract version; defaults to `1` |
 
 A push operation's wire ID is always its handler-record field name -- there is no `operationId`
