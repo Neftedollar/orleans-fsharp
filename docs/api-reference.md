@@ -491,7 +491,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `unsubscribe<'T>` | `StreamSubscription<'T> -> Task<unit>` | Cancel subscription |
 | `getSubscriptions<'T>` | `StreamRef<'T> -> Task<StreamSubscription<'T> list>` | List subscriptions |
 | `resumeAll<'T>` | `StreamRef<'T> -> ('T -> Task<unit>) -> Task<unit>` | Resume all subscriptions |
-| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | Get current token |
+| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | **Always `None`** — a permanent stub, because `StreamSubscriptionHandle` does not expose the token. Read `context.streamSequenceToken` in an `onStream` hook instead |
 
 A functional definition consumes a stream declaratively with `onStream` instead; see
 [Streaming](streaming.md) and [Functional grains](functional-grains.md), "Implicit subscriptions".

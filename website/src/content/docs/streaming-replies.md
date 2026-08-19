@@ -67,13 +67,19 @@ let feedDefinition =
     }
 ```
 
-Calling it is ordinary F#:
+Calling it is ordinary F#. `for … in` over an `IAsyncEnumerable` needs an asynchronous
+computation expression, so enumerate inside `task { }` (or `taskSeq { }`) with
+`FSharp.Control` opened:
 
 ```fsharp
-let api = feed factory "general"
+open FSharp.Control          // enumerating an IAsyncEnumerable with `for … in`
 
-for entry in api.tail 20 do
-    printfn "%s" entry.text
+task {
+    let api = feed factory "general"
+
+    for entry in api.tail 20 do
+        printfn "%s" entry.text
+}
 ```
 
 and ordinary C#, because the return type is the BCL interface:
@@ -90,7 +96,7 @@ await foreach (var entry in api.tail.Invoke(20))
 ## The mechanism
 
 **Almost none of this is ours.** Orleans has supported `IAsyncEnumerable<T>` grain methods since
-7.1, through a grain extension it installs on every activation, and a streaming functional
+7.2, through a grain extension it installs on every activation, and a streaming functional
 operation rides exactly that extension:
 
 | Concern | Who does it |
