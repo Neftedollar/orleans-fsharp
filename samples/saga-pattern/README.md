@@ -387,16 +387,15 @@ deactivates mid-saga, it can resume or compensate on reactivation.
 ```fsharp
 // Use grain persistent state to track saga progress
 let sagaGrain = grain {
-    name "Saga"
-    state { Status = NotStarted; Steps = [] }
-    handle (fun ctx state msg ->
+    defaultState { Status = NotStarted; Steps = [] }
+    handleTypedWithContext (fun ctx state msg ->
         task {
             match msg with
             | StartSaga steps ->
                 let! result = executeSaga ctx { state with Steps = steps }
-                return Ok result
+                return result, result
             | GetStatus ->
-                return Ok state
+                return state, state
         })
 }
 ```

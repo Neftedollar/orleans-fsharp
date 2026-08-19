@@ -291,13 +291,12 @@ let handleCommand (state: OrderState) (cmd: OrderCommand) : Result<OrderState, s
 
 // In the grain builder:
 let orderGrain = grain {
-    name "OrderCommand"
-    state Empty
-    handle (fun ctx state cmd ->
+    defaultState Empty
+    handleTyped (fun state cmd ->
         task {
             match handleCommand state cmd with
-            | Ok newState -> return Ok newState
-            | Error e -> return Error e
+            | Ok newState -> return newState, Ok newState
+            | Error e -> return state, Error e
         })
 }
 ```
@@ -321,11 +320,10 @@ type OrderQuery =
 // A separate grain for read queries, potentially backed by
 // a different storage provider optimized for reads.
 let orderQueryGrain = grain {
-    name "OrderQuery"
-    state { OrderId = ""; ItemCount = 0; Status = "unknown"; LastUpdated = System.DateTimeOffset.MinValue }
-    handle (fun ctx state query ->
+    defaultState { OrderId = ""; ItemCount = 0; Status = "unknown"; LastUpdated = System.DateTimeOffset.MinValue }
+    handleTyped (fun state (_query: OrderQuery) ->
         task {
-            return Ok state
+            return state, state
         })
 }
 ```
