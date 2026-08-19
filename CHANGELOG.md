@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-19
+
+The functional-era release: everything specs 003 and 004 delivered, in one version.
+Highlights — the functional grain runtime (`grainContract` / `grainFor` / `journaledGrainFor`,
+API records instead of interfaces, no code generation), full Orleans parity as first-class
+operations (transactions, event sourcing, implicit stream subscriptions, `IAsyncEnumerable`
+streaming replies, reentrancy policies, version-tolerant contracts, placement, lifecycle hooks),
+a typed C# facade, and the classic `grain { }` surface deprecated with per-entry-point
+replacement pointers. Details in the sections below (accumulated since 3.0.x).
+
 ### Added
 
 - **`contract<'Key, 'Api>` — the short contract form.** The API record now serves as its own
@@ -655,6 +665,7 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 - 3 sample patterns: CQRS, Saga, Rate Limiter
 - Complete API reference
 
-[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v2.0.0-alpha.1...HEAD
+[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v3.0.2...v4.0.0
 [2.0.0-alpha.1]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v2.0.0-alpha.1
 [1.0.0]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v1.0.0
