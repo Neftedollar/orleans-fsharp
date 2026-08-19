@@ -100,7 +100,7 @@ Every API field takes exactly one argument; a multi-input operation groups its i
 
 ### Journaled definition builder — `journaledGrainFor contract { }`
 
-A deliberate **subset** of the operations above plus two of its own. Every absence is a ruling: a
+A deliberate **subset** of the operations above plus two of its own. Every absence is deliberate: a
 journal cannot honour a whole-state-replacement hook, cannot be a transaction participant, and
 cannot be shared by the many activations of a stateless worker. See
 [Event Sourcing](/orleans-fsharp/event-sourcing/).

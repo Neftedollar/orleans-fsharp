@@ -402,7 +402,7 @@ See [Functional Grain Runtime](functional-grains.md), "Reentrancy", "Version tol
 
 **Functional observers.** A C# process can already be pushed to — the observer handle is an
 ordinary operation argument — but there is no facade over `FunctionalObserverHandle` yet, so the
-handler side is still an F# record. That is a separate step; see spec 004 item 9.
+handler side is still an F# record. An observer facade is a possible future addition.
 
 ---
 

@@ -11,7 +11,7 @@
 > below is the classic CodeGen one and is unchanged. The functional runtime has its own, which
 > needs no CodeGen and no mutable state class: see
 > [functional-grains.md, "Distributed ACID transactions"](functional-grains.md#distributed-acid-transactions)
-> for `transactionalStateFrom`, per-operation `transactional`, and the normative re-execution
+> for `transactionalStateFrom`, per-operation `transactional`, and the exact re-execution
 > semantics.
 
 ## What you'll learn

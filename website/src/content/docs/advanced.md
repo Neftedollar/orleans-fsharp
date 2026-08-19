@@ -16,7 +16,7 @@ description: "Transactions, grain directory, OpenTelemetry, shutdown, state migr
 > below is the classic CodeGen one and is unchanged. The functional runtime has its own, which
 > needs no CodeGen and no mutable state class: see
 > [functional-grains.md, "Distributed ACID transactions"](/orleans-fsharp/functional-grains/#distributed-acid-transactions)
-> for `transactionalStateFrom`, per-operation `transactional`, and the normative re-execution
+> for `transactionalStateFrom`, per-operation `transactional`, and the exact re-execution
 > semantics.
 
 ## What you'll learn

@@ -14,7 +14,7 @@ description: "A second, complete authoring model: user-authored API records inst
 - Operation rename via `operationId`, contract-version matching, and opting into version tolerance
 - Reentrancy variants: whole-grain `reentrant` and the per-request `mayInterleave` predicate
 - The persistence model: explicit writes only, unique state names, and multi-provider non-atomicity
-- Distributed ACID transactions: `transactionalStateFrom`, per-operation `transactional`, and the normative re-execution semantics
+- Distributed ACID transactions: `transactionalStateFrom`, per-operation `transactional`, and the exact re-execution semantics
 - Event sourcing: `journaledGrainFor`, a second definition kind whose state is the fold of an event journal
 - Lifecycle hooks, timers, reminders, and collection age
 - Delivery semantics: acknowledged vs. one-way, what a successful call does *not* imply, and cancellation without rollback
@@ -65,8 +65,7 @@ module RoomApi =
 Server-side, a `grainFor` definition attaches handlers and persistent state to the contract, and
 `AddFunctionalGrain` / `AddFunctionalGrainClient` register it on the silo / client builders. See
 `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` for the complete, runnable version of this
-example (contract, definition, registration, and a driven call sequence), which is the same
-source spec 003's "Public authoring model" section shows.
+example (contract, definition, registration, and a driven call sequence).
 
 ## One operation, one argument
 
@@ -346,7 +345,7 @@ wider policy; `sinceVersion` then keeps the old callers off it.
 One consequence is easy to miss: the **admission-flag byte** (`readOnly` / `oneWay` /
 `alwaysInterleave`) travels in the envelope and is compared against the hosted descriptor, so an
 operation whose flags changed between two versions inside the accepted range still fails — with
-the spec-003 admission-flags diagnostic, not a version one. Wire compatibility means the flags
+the transport's admission-flags diagnostic, not a version one. Wire compatibility means the flags
 too, not only the argument and reply types.
 
 What the policy changes is **admission, and nothing else**. The wire format, the stable operation
@@ -376,7 +375,7 @@ Sealing rejects a policy that cannot do anything:
 That last rule is what catches the common mistake: `sinceVersion` **without** `acceptsVersions` is
 always dead, because the default policy admits the hosted version only.
 
-If you would rather not widen the policy at all, the spec-003 answer still works: host **two
+If you would rather not widen the policy at all, the original exact-version pattern still works: host **two
 contracts** (one per version, e.g. two different `grainType` strings), migrate traffic explicitly,
 then retire the old one.
 
@@ -746,7 +745,7 @@ grainContract<GatewayActor, string, GatewayApi> () {
 
 The predicate receives `IFunctionalRequestMetadata` — grain type, contract version, operation ID,
 the three admission flags, and the payload **length**. **Metadata only:** the argument payload is
-never deserialized to decide admission, which is what keeps spec 003's protocol-before-payload
+never deserialized to decide admission, which is what keeps the transport's protocol-before-payload
 invariant intact on a path Orleans runs *before* dispatch is reached at all. The predicate runs on
 the activation's scheduling path, so it must be cheap, pure, and non-blocking.
 
@@ -1567,8 +1566,8 @@ by `tests/Orleans.FSharp.Integration`, which does load that bridge assembly.
 
 `Scripting.startOnPorts` (the fixed-recipe `.fsx` silo helper) has no configuration hook of its
 own, so it could not host a functional grain definition -- `AddFunctionalGrain` needs a silo
-builder to call, and `Scripting.startOnPorts` builds and starts its host internally. Spec 004
-item 8b closes this: `Orleans.FSharp.Runtime.FunctionalScripting.startOnPorts` takes the same
+builder to call, and `Scripting.startOnPorts` builds and starts its host internally.
+`Orleans.FSharp.Runtime.FunctionalScripting.startOnPorts` closes this: it takes the same
 `siloPort`/`gatewayPort` pair plus the functional grain definitions to host, boxed with
 `FunctionalGrainRegistration.of'` (erasing their four type parameters into one list), applies
 each through `AddFunctionalGrain` inside the same builder callback `Scripting.startOnPorts`
@@ -1652,8 +1651,8 @@ introduced it — a changelog records what shipped when and is deliberately left
 
 Inside this repository the library files that must keep naming these symbols (the definitions
 themselves, the runtime host, the registries, the test harness) wrap exactly those references in
-`#nowarn "44"` ... `#warnon "44"` brackets carrying the comment
-`deprecated API self-reference (spec-003 deprecation pass)`. That is a self-reference bracket, not
+`#nowarn "44"` ... `#warnon "44"` brackets carrying a `deprecated API self-reference` comment.
+That is a self-reference bracket, not
 a blanket suppression: nothing outside the bracketed lines is silenced, and no library project
 disables FS0044 project-wide.
 
@@ -1683,7 +1682,7 @@ Before/after mapping:
 
 `grain { }`'s `onLifecycleStage` operation let a grain hook an *arbitrary* `GrainLifecycleStage`
 (`First`/`SetupState`/`Activate`/`Last`/any other int) with a `CancellationToken -> Task<unit>`
-callback. `grainFor { }` now has `onLifecycle` (spec 004 item 8a) for the closed set of
+callback. `grainFor { }` now has `onLifecycle` for the closed set of
 documented Orleans stages -- see [Lifecycle-stage hooks](#lifecycle-stage-hooks-onlifecycle)
 below for the resolved design, including why the hook carries no state at any stage and the
 verified activation ordering. A grain that genuinely needs an *undocumented* numbered stage

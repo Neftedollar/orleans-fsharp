@@ -467,7 +467,7 @@ including `Last`.** `OnActivateAsync` is a separate step Orleans runs only after
 sequence completes; it is not itself gated by the numbered `Activate` stage. So a hook declared at
 any of these four stages — `Activate` and `Last` included — always runs *before* whatever your
 `OnActivateAsync` override (or, in the functional grain runtime, the `onActivate` definition
-operation) does. Verified by an integration probe subscribed directly at the raw stage number,
+operation) does. The library test suite pins this by subscribing directly at the raw stage number,
 not assumed from the stage names — see `tests/Orleans.FSharp.Integration/FunctionalPlacementIntegrationTests.fs`
 and, for the functional runtime's own `onLifecycle` operation with the closed
 `First`/`SetupState`/`Activate`/`Last` set, [Lifecycle-stage hooks](functional-grains.md#lifecycle-stage-hooks-onlifecycle)

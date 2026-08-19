@@ -149,7 +149,7 @@ surface.
 
 ## Confirmation: what a reply means
 
-**Normative.** The runtime appends a handler's returned events as one atomic batch and waits
+**Guaranteed.** The runtime appends a handler's returned events as one atomic batch and waits
 for the log-consistency provider to confirm them, and it does that **after the handler has
 returned and before the reply leaves the activation**. So:
 

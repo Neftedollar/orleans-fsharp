@@ -137,7 +137,7 @@ Everything Orleans offers, as contract or definition operations — no attribute
 > **This caveat is about the deprecated `grain { }` model only.** On the
 > [functional grain runtime](docs/functional-grains.md) every one of those concepts is a
 > first-class `grainContract` / `grainFor` operation — `readOnly`, `oneWay`, `alwaysInterleave`,
-> `grainType`, `collectionAge`, `statelessWorker`, `placement`, and (spec 004 item 1)
+> `grainType`, `collectionAge`, `statelessWorker`, `placement`, and
 > `onStream` / `onBroadcast` for implicit stream and broadcast-channel subscriptions. No C# and
 > no code generation.
 
