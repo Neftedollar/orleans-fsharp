@@ -18,48 +18,84 @@
 
 ## Why this exists
 
-Orleans is a powerful virtual actor framework, but using it from F# means fighting C# idioms at every turn: mutable state bags, attribute-heavy classes, verbose DI wiring. Orleans.FSharp replaces all of that with computation expressions that let you define grains, configure silos, and wire streaming in natural F# style -- discriminated unions as state, pure handler functions, and declarative configuration. The full Orleans runtime does the heavy lifting underneath.
+Orleans is a powerful virtual actor framework, but using it from F# means fighting C# idioms at every turn: mutable state bags, attribute-heavy classes, interface-plus-codegen ceremony. Orleans.FSharp replaces all of that: a grain's public surface is a plain F# record of functions, its behavior is pure `state -> reply` handlers, and silos are configured with computation expressions -- discriminated unions as state, explicit storage writes, no code generation anywhere. The full Orleans runtime does the heavy lifting underneath.
 
 ## Quick Start
 
-> **Two grain authoring models.** The `grain { }` CE below still compiles and runs, but its public
-> surface (`grain { }`, `GrainDefinition`, the old `GrainContext`, `[<FSharpGrain>]`,
-> `AddFSharpGrain(sFromAssembly)`, `FSharpGrain.*`, `Timers`, `Reminder`) now carries
-> `[<Obsolete>]` -- a **warning, not an error**. New code should use the functional grain runtime
-> (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`); see
-> [Functional Grain Runtime](docs/functional-grains.md) for the before/after mapping of every
-> deprecated entry point. `siloConfig { }`, `clientConfig { }` and `eventSourcedGrain { }` are
-> unaffected.
+The grain's public surface is a plain F# record of functions — no interface, no attributes,
+no code generation:
 
 ```fsharp
+open System.Threading.Tasks
 open Orleans.FSharp
-open Orleans.FSharp.Runtime
 
-// 1. Define state and commands — plain F# types, no attributes needed
-type CounterState = { Count: int }
-type CounterCommand = Increment | Decrement | GetValue
+// 1. The API record IS the grain's surface, and here also its type identity (the brand)
+type CounterActor = private CounterActor of unit
 
-// 2. Define the grain with a computation expression
-let counter = grain {
-    defaultState { Count = 0 }
-    handle (fun state cmd -> task {
-        match cmd with
-        | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
-        | Decrement -> return { Count = state.Count - 1 }, box (state.Count - 1)
-        | GetValue  -> return state, box state.Count
-    })
-    persist "Default"
-}
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { increment: unit -> Task<int>
+      value: unit -> Task<int> }
 
-// 3. Configure the silo — clean F#, no C# extension method chains
+// 2. The contract: stable wire identity — grain type, version, key encoding
+let contract =
+    grainContract<CounterActor, string, CounterApi> () {
+        grainType "counter"
+        version 1
+        stringKey
+        readOnly (_.value)
+    }
+
+// 3. The definition: pure state -> reply handlers; storage is written only when you say so
+let counter =
+    grainFor contract {
+        defaultState (fun () -> 0)
+        handle (_.increment) (fun _ctx n () -> task { return n + 1, n + 1 })
+        handle (_.value)     (fun _ctx n () -> task { return n, n })
+    }
+```
+
+Host it and call it — the call site is the record itself:
+
+```fsharp
+// Silo: siloConfig { } for hosting, AddFunctionalGrain for the definition
 let config = siloConfig {
     useLocalhostClustering
     addMemoryStorage "Default"
-    useJsonFallbackSerialization  // enables clean types without Orleans attributes
 }
+
+builder.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddFunctionalGrain(counter) |> ignore)
+
+// Client or another grain — no proxy interface, no cast
+let api = FunctionalGrain.ref contract factory "my-counter"
+let! n = api.increment ()
 ```
 
+Prefer an even shorter contract? `contract<'Key, 'Api>` uses the API record itself as the brand —
+see [the short form](docs/functional-grains.md#the-short-form-the-api-record-as-its-own-brand).
+
+> **Older authoring models.** The original `grain { }` CE (shown further below) still compiles
+> and runs, but its public surface (`grain { }`, `GrainDefinition`, the old `GrainContext`,
+> `[<FSharpGrain>]`, `AddFSharpGrain`, `FSharpGrain.*`, `Timers`, `Reminder`) carries
+> `[<Obsolete>]` -- a **warning, not an error** -- and the classic `eventSourcedGrain { }` is
+> superseded by the functional `journaledGrainFor`. See
+> [Functional Grain Runtime](docs/functional-grains.md) for the before/after mapping of every
+> deprecated entry point. `siloConfig { }` and `clientConfig { }` are current and unaffected.
+
 ## Feature Showcase
+
+### Functional grain runtime — the current authoring model
+
+Everything Orleans offers, as contract or definition operations — no attributes, no codegen:
+
+| Where | Operations |
+|---|---|
+| `grainContract { }` | `grainType` (optional for ephemeral grains), `version`, key codecs (`stringKey` / `guidKey` / `int64Key`, compound + mapped forms), per-operation `readOnly` / `oneWay` / `alwaysInterleave` / `operationId` / `sinceVersion` / `transactional`, whole-grain `reentrant` / `mayInterleave`, `acceptsVersions` |
+| `grainFor { }` | `defaultState` / `initialState` / `stateFrom`, `usePersistentState`, `transactionalStateFrom`, `onActivate` / `onDeactivate` / `onLifecycle`, `onTimer` / `onReminder`, `onStream` / `onBroadcast` (implicit subscriptions), `statelessWorker` / `placement`, `collectionAge`, `handle` / `handleStream` |
+| `journaledGrainFor { }` | event sourcing over Orleans' own log-consistency providers: `initialEventState`, pure `apply` fold, handlers that raise events — see [Event Sourcing](docs/event-sourcing.md) |
+| API field shapes | `'Arg -> Task<'Reply>` and `'Arg -> IAsyncEnumerable<'Item>` ([streaming replies](docs/streaming-replies.md)) |
+| From C# | a typed facade over any contract: awaited calls and `await foreach` — [Calling from C#](docs/calling-from-csharp.md) |
 
 ### `grain { }` -- Grain Definition *(deprecated -- see [Functional Grain Runtime](docs/functional-grains.md))*
 
@@ -156,7 +192,7 @@ let config = siloConfig {
 | `gatewayListRefreshPeriod` | Gateway refresh interval |
 | `preferredGatewayIndex` | Preferred gateway |
 
-### Universal Grain Pattern — zero C# stubs
+### Universal Grain Pattern *(deprecated — `FSharpGrain.*` carries `[<Obsolete>]`; the functional runtime is the codegen-free path)*
 
 Call any registered F# grain without defining a per-grain C# interface:
 
@@ -183,7 +219,7 @@ do! h |> FSharpGrain.postInt MyCommand
 
 The universal pattern works with any F# discriminated union as the command type — including cases with fields (`Append of string`) and nullary cases in mixed DUs. No CodeGen project is required; Orleans discovers the grains through `Orleans.FSharp.Abstractions`.
 
-### `eventSourcedGrain { }` -- Event Sourcing
+### `eventSourcedGrain { }` -- Event Sourcing *(classic model; superseded by [`journaledGrainFor`](docs/event-sourcing.md))*
 
 | Keyword | Description |
 |---|---|
@@ -195,26 +231,21 @@ The universal pattern works with any F# discriminated union as the command type 
 ## Installation
 
 ```bash
-dotnet add package Orleans.FSharp
-dotnet add package Orleans.FSharp.Runtime
+dotnet add package Orleans.FSharp          # contracts, definitions, the functional runtime surface
+dotnet add package Orleans.FSharp.Runtime  # silo/client hosting: AddFunctionalGrain, siloConfig { }
 ```
 
-Silo-side proxy generation (required for Orleans to locate your grains):
-
-```bash
-dotnet add package Orleans.FSharp.Abstractions
-```
+That is the whole functional-runtime setup: `Orleans.FSharp.Abstractions` (the fixed transport —
+request envelopes, protocol tokens, and Orleans proxies precompiled once inside the package) comes
+in transitively, and there is nothing to generate in your projects.
 
 Optional packages:
 
 ```bash
-dotnet add package Orleans.FSharp.EventSourcing  # Event sourcing
 dotnet add package Orleans.FSharp.Testing         # Test harness + FsCheck
+dotnet add package Orleans.FSharp.EventSourcing   # the classic eventSourcedGrain { } model only —
+                                                  # functional journaledGrainFor ships in the core package
 ```
-
-> **Why `Orleans.FSharp.Abstractions`?** Orleans source generators only run on C# projects.
-> `Abstractions` is a tiny C# shim (no code to write) that lets the Orleans runtime generate
-> the proxy classes for `IFSharpGrain`. Reference it from your silo project — that's it.
 
 ## Project Template
 
@@ -224,6 +255,18 @@ Scaffold a new project in seconds:
 dotnet new install Orleans.FSharp.Templates
 dotnet new orleans-fsharp -n MyApp
 ```
+
+## Upgrading to 4.0
+
+4.0 is the **functional-era major**: specs 003 and 004 in one release. The functional grain
+runtime (`grainContract` / `grainFor` / `journaledGrainFor`) is the recommended authoring model,
+with full Orleans parity as first-class operations — transactions, event sourcing over Orleans'
+log-consistency providers, implicit stream subscriptions, `IAsyncEnumerable` streaming replies,
+reentrancy policies, version-tolerant contracts, placement, lifecycle hooks, and a typed C#
+facade. Everything you had keeps compiling: the old `grain { }` / `FSharpGrain.*` surface is
+`[<Obsolete>]` **warnings**, each message naming its replacement. The placeholder
+`Orleans.FSharp.EventSourcing.Marten` package (which never contained a Marten integration) was
+removed and delisted. Details in the [CHANGELOG](CHANGELOG.md).
 
 ## Upgrading to 3.0
 
@@ -267,10 +310,10 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 
 | Package | Description |
 |---|---|
-| `Orleans.FSharp` | Core: grain CE, GrainRef, streaming, logging, reminders, timers, observers, serialization |
+| `Orleans.FSharp` | Core: the functional grain runtime (`grainContract`/`grainFor`/`journaledGrainFor`), observers, streaming, logging, serialization — plus the deprecated `grain { }` CE |
 | `Orleans.FSharp.Runtime` | Silo hosting, client config, grain discovery |
-| `Orleans.FSharp.Abstractions` | C# shim — Orleans proxy generation for `IFSharpGrain` (reference from silo) |
-| `Orleans.FSharp.EventSourcing` | Event-sourced grain CE |
+| `Orleans.FSharp.Abstractions` | The fixed functional transport: envelopes, protocol tokens, precompiled Orleans proxies (arrives transitively) |
+| `Orleans.FSharp.EventSourcing` | The classic `eventSourcedGrain { }` model (functional `journaledGrainFor` lives in core) |
 | `Orleans.FSharp.CodeGen` | Optional: per-grain C# code generation for custom grain interfaces (legacy pattern) |
 | `Orleans.FSharp.Testing` | Test harness, GrainArbitrary, GrainMock, log capture |
 | `Orleans.FSharp.Analyzers` | F# analyzer: OF0001 warns on `async { }` usage; `[<AllowAsync>]` opt-out |
