@@ -203,7 +203,7 @@ open Orleans.FSharp.Runtime
 let config = siloConfig {
     useLocalhostClustering          // single-node for development
     addMemoryStorage "Default"      // in-memory state (swap to Redis/Azure for production)
-    enableDashboard 8080            // Orleans Dashboard at http://localhost:8080
+    addDashboard                    // Orleans Dashboard (map it in your ASP.NET Core pipeline)
 }
 ```
 
@@ -211,8 +211,8 @@ For production, replace with persistent providers:
 
 ```fsharp
 let prodConfig = siloConfig {
-    useRedisClustering "redis-connection-string"
-    addRedisStorage "Default" "redis-connection-string"
+    addRedisClustering redisConnectionString
+    addRedisStorage "Default" redisConnectionString
     addMemoryStreams "StreamProvider"
     enableHealthChecks
 }
@@ -262,11 +262,13 @@ let ``account balance is never negative`` () =
 Publish and subscribe to event streams with typed `StreamRef<'T>`:
 
 ```fsharp
-open Orleans.FSharp.Streaming
+open Orleans.Streams              // IStreamProvider
+open Orleans.FSharp.Streaming     // the Stream module
 
-// In a grain handler:
-let! streamRef = Stream.getRef<AccountEvent> ctx "StreamProvider" "Accounts" grainId
-do! Stream.publish streamRef (Deposited amount)
+// In a functional handler: the named provider is a keyed service on context.services
+let provider = context.services.GetRequiredKeyedService<IStreamProvider> "StreamProvider"
+let stream = Stream.getStream<AccountEvent> provider "Accounts" (string context.key)
+do! Stream.publish stream (Deposited amount)
 ```
 
 ## Step 9: Deploy to production
@@ -284,8 +286,8 @@ See the [Silo Configuration](/orleans-fsharp/silo-configuration/) and [Security]
 ## Next steps
 
 - [Functional Grain Runtime](/orleans-fsharp/functional-grains/) -- the current authoring model, full guide
-- [Grain Definition](/orleans-fsharp/grain-definition/) -- all 31 keywords in the `grain {}` CE (deprecated model, kept for reference)
-- [Event Sourcing](/orleans-fsharp/event-sourcing/) -- CQRS with `eventSourcedGrain {}`
+- [Grain Definition](/orleans-fsharp/grain-definition/) -- all 27 keywords in the `grain {}` CE (deprecated model, kept for reference)
+- [Event Sourcing](/orleans-fsharp/event-sourcing/) -- `journaledGrainFor { }`, a grain whose state is the fold of an event journal
 - [Testing](/orleans-fsharp/testing/) -- TestHarness, GrainMock, and property tests
 - [API Reference](/orleans-fsharp/api-reference/) -- complete module and function reference
 
@@ -346,7 +348,7 @@ See the [Silo Configuration](/orleans-fsharp/silo-configuration/) and [Security]
     {
       "@type": "HowToStep",
       "name": "Add streaming",
-      "text": "Use Stream.getRef and Stream.publish from Orleans.FSharp.Streaming for typed event streams.",
+      "text": "Use Stream.getStream and Stream.publish from Orleans.FSharp.Streaming for typed event streams.",
       "position": 8
     },
     {

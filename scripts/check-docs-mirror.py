@@ -35,7 +35,6 @@ SITE = ROOT / 'website' / 'src' / 'content' / 'docs'
 # Shrink this set by reconciling a pair; never grow it to make a new edit pass.
 KNOWN_DRIFT = {
     'redis-example.md',
-    'testing.md',          # website copy uses EventSourcedGrainDefinition.handleCommand
 }
 
 

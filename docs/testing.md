@@ -11,7 +11,8 @@
 ## What you'll learn
 
 - How to test grain handler logic directly (pure function testing)
-- How to test the universal grain pattern (`FSharpGrain.ref/send`)
+- How to test a functional grain (`grainContract`/`grainFor`) with a real `TestingHost` cluster
+- How to test the universal grain pattern (`FSharpGrain.ref/send`) (deprecated model)
 - How to use TestHarness for integration tests
 - How to use GrainMock for isolated unit tests
 - How to write property tests with GrainArbitrary and FsCheck
@@ -26,8 +27,6 @@ dotnet add package FsCheck.Xunit
 dotnet add package xunit
 dotnet add package Microsoft.Orleans.TestingHost
 ```
-
----
 
 ---
 
@@ -65,6 +64,31 @@ let ``increment increases count`` () =
 ```
 
 `GrainDefinition.getHandler` extracts the pure `state -> command -> Task<state * obj>` function — no grain activation, no silo, instant feedback.
+
+**Functional equivalent.** A `FunctionalGrainDefinition` exposes no comparable extraction function --
+but you never lose the handler in the first place, since `handle (_.op) handler` takes *your own*
+plain function value rather than hiding it inside the CE. A handler that ignores its `context`
+argument is directly callable:
+
+```fsharp
+open Orleans.FSharp
+
+let increment (_context: FunctionalGrainContext<CounterActor, string>) (state: int) () =
+    task { let next = state + 1 in return next, next }
+
+[<Fact>]
+let ``increment increases count (functional)`` () =
+    task {
+        let! newState, result = increment Unchecked.defaultof<_> 0 ()
+        Assert.Equal(1, newState)
+        Assert.Equal(1, result)
+    }
+```
+
+A handler that *does* read `context` (services, persistent state, grain factory, request context)
+cannot be unit-tested this way: `FunctionalGrainContext`'s constructor is `internal`, so nothing
+outside the library can fabricate one. That handler needs a real activation -- see
+[Testing a Functional Grain](#testing-a-functional-grain) below.
 
 ---
 
@@ -107,6 +131,70 @@ let ``FSharpGrain.ref round-trip`` () =
         Assert.Equal(1, state.Count)
     }
 ```
+
+---
+
+## Testing a Functional Grain
+
+Functional-runtime grains have no `TestHarness`/`GrainMock` no-silo path today -- `FunctionalGrainContext`'s
+constructor is `internal`, so nothing outside the library can build one, and `GrainMock` has no
+`withFunctionalGrain` counterpart to `withFSharpGrain*`. The supported pattern is a real (if
+lightweight) `TestingHost` cluster, driven through `FunctionalGrain.ref` exactly as production code
+would. `counterDefinition` and `CounterApi` below are the same `grainContract`/`grainFor` pair shown
+in [Getting Started](getting-started.md):
+
+```fsharp
+open Orleans
+open Orleans.Hosting
+open Orleans.TestingHost
+open Orleans.FSharp
+open Xunit
+
+type CounterSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage("Default") |> ignore
+            siloBuilder.AddFunctionalGrain(counterDefinition) |> ignore
+
+type CounterClientConfigurator() =
+    interface IClientBuilderConfigurator with
+        member _.Configure(_configuration, clientBuilder: IClientBuilder) =
+            clientBuilder.AddFunctionalGrainClient() |> ignore
+
+type CounterClusterFixture() =
+    let cluster =
+        let builder = TestClusterBuilder 1s
+        builder.AddSiloBuilderConfigurator<CounterSiloConfigurator>() |> ignore
+        builder.AddClientBuilderConfigurator<CounterClientConfigurator>() |> ignore
+        let cluster = builder.Build()
+        cluster.Deploy()
+        cluster
+
+    member _.Client = cluster.Client
+
+    interface IDisposable with
+        member _.Dispose() = cluster.StopAllSilos()
+
+type CounterFunctionalTests(fixture: CounterClusterFixture) =
+    interface IClassFixture<CounterClusterFixture>
+
+    [<Fact>]
+    member _.``increment round-trips through a real activation``() =
+        task {
+            let api = CounterApi.ref fixture.Client "test-counter"
+            let! c1 = api.increment ()
+            let! c2 = api.increment ()
+            Assert.Equal(1, c1)
+            Assert.Equal(2, c2)
+        }
+```
+
+`GrainArbitrary.forState<'State>()` transfers unchanged -- a functional grain's state is an ordinary
+F# type, DU or otherwise, exactly like the classic model's. `GrainArbitrary.forCommands<'Command>()`
+does **not** transfer as directly: it targets one command discriminated union, and a functional API
+record is several independently typed operations rather than one sum type. A property test over a
+functional grain instead drives the API record's operations directly in a loop (or the raw handler
+functions, for the context-free case above) rather than folding over a generated `'Command list`.
 
 ---
 
@@ -319,6 +407,12 @@ let intFactory  = GrainMock.create() |> GrainMock.withFSharpGrainInt 42L counter
 The mock maintains grain state across calls exactly like a real grain — each `send` or `ask`
 updates the internal state.
 
+**Functional equivalent: none today.** `GrainMock` has no `withFunctionalGrain*` counterpart --
+verified against its public surface, which stops at `create` / `withGrain` / `withFSharpGrain*`. A
+functional grain's handlers can only run inside a real activation, so the supported unit-testing
+path is either calling a context-free handler function directly, or a `TestingHost` cluster; see
+[Testing a Functional Grain](#testing-a-functional-grain) above.
+
 ---
 
 ## GrainArbitrary
@@ -443,13 +537,15 @@ open Orleans.FSharp.EventSourcing
 [<Fact>]
 let ``deposit produces Deposited event`` () =
     let state = { Balance = 100m; TransactionCount = 0 }
-    let events = bankAccount.Handle state (Deposit 50m)
+    let newState, events =
+        EventSourcedGrainDefinition.handleCommand bankAccount state (Deposit 50m)
     Assert.Equal([ Deposited 50m ], events)
+    Assert.Equal(150m, newState.Balance)
 
 [<Fact>]
 let ``apply Deposited increases balance`` () =
     let state = { Balance = 100m; TransactionCount = 0 }
-    let newState = bankAccount.Apply state (Deposited 50m)
+    let newState = EventSourcedGrainDefinition.applyEvent bankAccount state (Deposited 50m)
     Assert.Equal(150m, newState.Balance)
 
 [<Property>]
@@ -459,9 +555,10 @@ let ``replaying events produces the same state as fold`` () =
         let mutable state = { Balance = 0m; TransactionCount = 0 }
         let mutable allEvents = []
         for cmd in commands do
-            let events = bankAccount.Handle state cmd
+            let newState, events =
+                EventSourcedGrainDefinition.handleCommand bankAccount state cmd
             allEvents <- allEvents @ events
-            state <- events |> List.fold bankAccount.Apply state
+            state <- newState
 
         let replayed =
             EventSourcedGrainDefinition.foldEvents bankAccount
@@ -474,6 +571,12 @@ let ``replaying events produces the same state as fold`` () =
 ---
 
 ## Testing Handlers Directly
+
+> **Functional equivalent.** Everything in this section is `GrainDefinition`'s handler-extraction
+> surface, which the functional runtime does not have (and does not need -- see
+> [Testing Handler Logic Directly](#testing-handler-logic-directly-no-silo-required) above for why).
+> The nearest functional-runtime analogue for a context-free handler is calling your own function
+> directly; for a context-touching one, see [Testing a Functional Grain](#testing-a-functional-grain).
 
 All 12 CE handler variants can be tested without a silo by extracting the handler function from a
 `GrainDefinition` and calling it directly. Three dispatch helpers cover all variants:
@@ -713,8 +816,14 @@ module ScoreProperties =
         s1 = s2
 ```
 
+This suite's cross-variant equivalence check is specific to the classic CE's dispatch-helper family
+(`getHandler` vs. `getCancellableContextHandler`), which the functional runtime does not have; its
+unit test, property test, and TestingHost integration test are covered individually above under
+[Testing a Functional Grain](#testing-a-functional-grain).
+
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- the grain definitions you are testing
+- [Functional Grain Runtime](functional-grains.md) -- the current authoring model
+- [Grain Definition](grain-definition.md) -- the grain definitions you are testing (deprecated model, kept for reference)
 - [Event Sourcing](event-sourcing.md) -- testing event-sourced grains
 - [Advanced](advanced.md) -- transactions, serialization, and more

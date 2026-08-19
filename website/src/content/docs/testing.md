@@ -35,8 +35,6 @@ dotnet add package Microsoft.Orleans.TestingHost
 
 ---
 
----
-
 ## Testing Handler Logic Directly (No Silo Required)
 
 The fastest way to test a grain is to call its handler function directly — no TestCluster, no DI setup.

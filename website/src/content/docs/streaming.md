@@ -106,11 +106,19 @@ let! subscription =
     Stream.subscribeFrom stream savedToken (fun event ->
         task {
             processEvent event
-            // Save the token for future recovery
         })
 ```
 
-This is only supported by rewindable stream providers (e.g., Event Hubs).
+This works on any rewindable stream provider — Orleans' in-memory streams and Event Hubs both
+are; a non-rewindable provider rejects the token.
+
+**Where `savedToken` comes from is your problem, and deliberately so.** The `Stream` module's
+handler shape is `'T -> Task<unit>`, so it does not hand you the cursor of each item, and
+`Stream.getSequenceToken` always returns `None` — `StreamSubscriptionHandle` does not expose the
+token, so it is a permanent stub rather than a lookup. To checkpoint, subscribe through Orleans'
+own `IAsyncStream<'T>.SubscribeAsync` overload whose `onNext` carries the token, or — on the
+[functional grain runtime](/orleans-fsharp/functional-grains/) — read `context.streamSequenceToken` inside an
+`onStream` hook, which does carry the cursor of the delivered item.
 
 ---
 
@@ -255,7 +263,7 @@ it cannot drift.
 
 **A throwing `onStream` hook.** The exception travels back to Orleans' pulling agent, which
 **redelivers the same item** with backoff for up to
-`StreamPullingAgentOptions.MaxEventDeliveryTime` (30 seconds by default) and then moves on. An
+`StreamPullingAgentOptions.MaxEventDeliveryTime` (one minute by default) and then moves on. An
 implicit subscription is never faulted by a delivery failure — Orleans'
 `PersistentStreamPullingAgent.ErrorProtocol` excludes implicit subscriptions from subscription
 faulting explicitly — so the next item still arrives. Delivery is therefore **at-least-once**: a

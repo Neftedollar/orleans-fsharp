@@ -215,7 +215,7 @@ functional observers".
 
 | Keyword | Signature | Description |
 |---|---|---|
-| `observerType` | `string` | Wire identity of the observer; defaults to the brand's simple CLR name |
+| `observerType` | `string` | Wire identity of the observer; defaults to the brand's simple CLR name, which requires a simple, non-generic, non-nested brand exactly as a derived `grainType` does |
 | `version` | `int` | Contract version; defaults to `1` |
 
 A push operation's wire ID is always its handler-record field name -- there is no `operationId`
@@ -408,10 +408,10 @@ codegen-free equivalent see [Observers](#observers) above.
 
 | Function | Signature | Description |
 |---|---|---|
-| `migration<'TOld, 'TNew>` | `int -> int -> ('TOld -> 'TNew) -> Migration<'TOld, 'TNew>` | Define a migration |
-| `applyMigrations<'T>` | `Migration list -> int -> obj -> 'T` | Apply migration chain (throws on invalid chain) |
-| `tryApplyMigrations<'T>` | `Migration list -> int -> obj -> Result<'T, string list>` | Validate and apply; returns `Ok` or `Error` with messages |
-| `validate` | `Migration list -> string list` | Validate migration chain; empty list means valid |
+| `migration<'TOld, 'TNew>` | `int -> int -> ('TOld -> 'TNew) -> Migration<obj, obj>` | Define a migration. The result is erased to `Migration<obj, obj>` so a chain over several state versions is one homogeneous list |
+| `applyMigrations<'T>` | `Migration<obj, obj> list -> int -> obj -> 'T` | Apply migration chain (throws on invalid chain) |
+| `tryApplyMigrations<'T>` | `Migration<obj, obj> list -> int -> obj -> Result<'T, string list>` | Validate and apply; returns `Ok` or `Error` with messages |
+| `validate` | `Migration<obj, obj> list -> string list` | Validate migration chain; empty list means valid |
 
 #### `Serialization`
 
@@ -459,7 +459,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainBatch.choose<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR option>) -> Task<'TR list>` | Fan-out; filters out None results |
 | `GrainBatch.partition<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list * exn list>` | Fan-out; separates successes from failures |
 
-> **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and compiles to the same `Task.WhenAll` pattern. Use `GrainBatch` when the number of grains is dynamic.
+> **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and starts every bound call before awaiting any of them, exactly as these do. Use `GrainBatch` when the number of grains is dynamic.
 
 #### Other modules
 
@@ -491,7 +491,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `unsubscribe<'T>` | `StreamSubscription<'T> -> Task<unit>` | Cancel subscription |
 | `getSubscriptions<'T>` | `StreamRef<'T> -> Task<StreamSubscription<'T> list>` | List subscriptions |
 | `resumeAll<'T>` | `StreamRef<'T> -> ('T -> Task<unit>) -> Task<unit>` | Resume all subscriptions |
-| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | Get current token |
+| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | **Always `None`** — a permanent stub, because `StreamSubscriptionHandle` does not expose the token. Read `context.streamSequenceToken` in an `onStream` hook instead |
 
 A functional definition consumes a stream declaratively with `onStream` instead; see
 [Streaming](streaming.md) and [Functional grains](functional-grains.md), "Implicit subscriptions".

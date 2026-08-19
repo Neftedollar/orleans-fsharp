@@ -244,10 +244,12 @@ carries identity. With a **derived** grain type there is no such string -- the b
 worse, storage identity out from under any persisted state or durable reminder registered under
 the old name.
 
-That is why a definition which attaches `stateFrom`, `usePersistentState`, or declares
-`onReminder` requires its contract to carry an **explicit** `grainType` -- enforced both when the
-definition seals and again, redundantly, at silo registration. Ephemeral definitions (none of the
-three) have nothing durable to orphan, so they may rely on the derived default:
+That is why a definition which attaches `stateFrom`, `usePersistentState`, or
+`transactionalStateFrom`, or declares `onReminder`, requires its contract to carry an **explicit**
+`grainType` -- enforced both when the definition seals and again, redundantly, at silo
+registration. A journaled definition requires one unconditionally, because the grain type name is
+part of the storage key of its journal. Ephemeral definitions (none of the four attachments) have
+nothing durable to orphan, so they may rely on the derived default:
 
 ```fsharp
 // Fine: ephemeral, so an accidental brand rename can never orphan anything durable.
@@ -406,7 +408,8 @@ call means the handler ran, not that anything was persisted.
 This one bites, and it is stock Orleans behaviour rather than anything the functional runtime adds.
 `ClearStateAsync()` deletes the stored record **and** re-seeds the holder's in-memory `State` with a
 *fresh uninitialized instance* of the stored type — the same
-`RuntimeHelpers.GetUninitializedObject` call described above. For an F# record that means every
+`RuntimeHelpers.GetUninitializedObject` call described in
+[What a stored type may be](#what-a-stored-type-may-be) below. For an F# record that means every
 reference field comes back **`null`**, and `null` is not a value of an F# `list`, `map`, `set`,
 record or union:
 
@@ -430,9 +433,9 @@ storage.State <- reseeded
 return reseeded, ()
 ```
 
-The runtime deliberately does **not** re-initialize for you: the specification forbids hidden state
-writes and replacements, and only the application knows what an empty room is. What it does do is
-fail *legibly*. Writing a record with a null in a field whose type has no null names the field, the
+The runtime deliberately does **not** re-initialize for you: hidden state writes and replacements
+are not part of this model, and only the application knows what an empty room is. What it does do
+is fail *legibly*. Writing a record with a null in a field whose type has no null names the field, the
 record, and this cause:
 
 ```text
@@ -658,6 +661,9 @@ there is deliberately no `context.streamProvider`. A named provider is a **keyed
 resolve it by its provider name:
 
 ```fsharp
+open Orleans.Streams              // IStreamProvider
+open Orleans.FSharp.Streaming     // the Stream module
+
 handle (_.publish) (fun context state (text: string) ->
     task {
         let provider =
@@ -828,6 +834,12 @@ form (`_.onMessage`), and the diagnostics are the ones you already know. The sin
 observer-specific rule: a push operation that returns anything but `Task<unit>` fails contract
 construction -- an observer never returns data. There is no key operation either; an observer is
 addressed by the reference inside its handle, not by a domain key.
+
+The **derived** `observerType` carries the same restriction a derived
+[`grainType`](#optional-graintype-when-the-derived-default-is-safe) does: the brand must be a
+simple, non-generic, non-nested CLR type. A brand declared inside an F# `module` rather than a
+`namespace` is nested, and contract construction refuses to derive a name from it -- declare
+`observerType` explicitly there.
 
 ### Subscribing
 
@@ -1063,7 +1075,7 @@ and always `None` for `onBroadcast` (a channel has no cursor). **The runtime nev
 it**: a fresh activation resumes at the subscription's current position. It is exposed so an
 application can checkpoint or de-duplicate, which matters because delivery is at-least-once: an
 `onStream` hook that throws makes Orleans **redeliver the same item** with backoff for up to
-`StreamPullingAgentOptions.MaxEventDeliveryTime` (30 seconds by default), after which the item is
+`StreamPullingAgentOptions.MaxEventDeliveryTime` (one minute by default), after which the item is
 dropped and the stream continues. An implicit subscription is never faulted by a delivery failure.
 
 `onBroadcast` is not retried at all -- a publish is a direct fan-out grain call. A throwing hook is
@@ -1240,7 +1252,7 @@ leave the activation half-updated.
 `readOnly` composes: a transaction started by a `readOnly` transactional operation is started
 read-only, and the transactional facade refuses every update.
 
-### Re-execution semantics (normative)
+### Re-execution semantics
 
 **Orleans does not re-execute a handler when a transaction aborts.** There is no retry loop in
 `TransactionRequestBase.Invoke`, and `ReaderWriterLock.EnterLock` invokes the read or update
@@ -1443,7 +1455,7 @@ deployment -- there is no in-place rename operation.
 
 ## The `FunctionalGrain` static-class inference rule
 
-The spec's point-free binding --
+The point-free binding --
 
 ```fsharp
 let ref = FunctionalGrain.ref contract
@@ -1489,7 +1501,8 @@ let api = FunctionalGrain.ref RoomApi.contract (factory :> IGrainFactory) key
 
 `FunctionalGrain.rawRef` follows the identical rule and returns the typed
 `FunctionalGrainRef<'Actor, 'Key, 'Api>` wrapper (`key`, the cached `api` record, selector-based
-`call`, and `callCancellable`) instead of the bare API record.
+`call` and `callCancellable`, and their streaming counterparts `stream` and `streamCancellable`)
+instead of the bare API record.
 
 ## Running a silo from a standalone F# process
 
@@ -1582,20 +1595,20 @@ let api = MyApi.ref handle.GrainFactory someKey
 
 It returns the same `Scripting.SiloHandle`, so `Scripting.getGrain` and `Scripting.shutdown` work
 unchanged against it. It is a separate module from `Scripting` rather than an overload of
-`startOnPorts` itself: `AddFunctionalGrain` and `FunctionalGrainDefinition` live one assembly
-layer above `Orleans.FSharp` (in `Orleans.FSharp.Runtime`), which cannot depend back on it, so
-`Scripting.startOnPorts` cannot take a functional-definition parameter no matter how it is
-shaped. See `samples/quickstart-functional.fsx` for the full runnable script.
+`startOnPorts` itself: `Scripting` lives in `Orleans.FSharp`, while `AddFunctionalGrain` lives one
+assembly layer above it in `Orleans.FSharp.Runtime`, which references `Orleans.FSharp` and cannot
+be referenced back from it -- so `Scripting.startOnPorts` cannot apply a functional definition no
+matter how its parameters are shaped. See `samples/quickstart-functional.fsx` for the full runnable script.
 
-## Wire validation diagnostics (stricter since the fix-wave hardening pass)
+## Wire validation diagnostics
 
-The F# binary codec now validates every wire-supplied length, element count, union case tag, and
+The F# binary codec validates every wire-supplied length, element count, union case tag, and
 record/POCO arity **against the bytes actually remaining in the stream and the real shape of the
-target type**, before allocating or indexing anything. A malformed or truncated payload now fails
-with a protocol diagnostic naming the stage and the field, instead of an `IndexOutOfRangeException`,
+target type**, before allocating or indexing anything. A malformed or truncated payload fails
+with a protocol diagnostic naming the stage and the field, rather than an `IndexOutOfRangeException`,
 an oversized allocation attempt, or (for a short POCO field count) a silent partial read. The binary
-format was never version-tolerant across arity changes -- this closes a failure mode, it does not add
-one; nothing that decoded correctly before is affected.
+format is not version-tolerant across arity changes, and this validation does not make it so -- it
+turns an unhelpful failure into a legible one.
 
 Two more validations that are user-visible if you hit them:
 
@@ -1612,7 +1625,7 @@ None of this changes any documented public API -- it changes what a malformed or
 receives back, from an unhelpful low-level exception to a diagnostic that names the stage and the
 field.
 
-## Migrating from the grain { } CE (Task 8 deprecation pass)
+## Migrating from the grain { } CE
 
 The universal message-passing surface built on the `grain { }` CE -- the builder itself, the
 `GrainDefinition`/`GrainContext` types it produces, `FSharpGrainAttribute`,
@@ -1677,10 +1690,9 @@ Before/after mapping:
 
 `grain { }`'s `onLifecycleStage` operation let a grain hook an *arbitrary* `GrainLifecycleStage`
 (`First`/`SetupState`/`Activate`/`Last`/any other int) with a `CancellationToken -> Task<unit>`
-callback. `grainFor { }` now has `onLifecycle` for the closed set of
+callback. `grainFor { }` has `onLifecycle` for the closed set of
 documented Orleans stages -- see [Lifecycle-stage hooks](#lifecycle-stage-hooks-onlifecycle)
-below for the resolved design, including why the hook carries no state at any stage and the
-verified activation ordering. A grain that genuinely needs an *undocumented* numbered stage
+above for why the hook carries no state at any stage, and for the verified activation ordering. A grain that genuinely needs an *undocumented* numbered stage
 (outside `First`/`SetupState`/`Activate`/`Last`) still has no functional-runtime equivalent and
 must stay on the `grain { }` CE, or hook the stage on a class grain directly via
 `ILifecycleParticipant<IGrainLifecycle>` -- that residual gap is deliberately narrow: Orleans
@@ -1730,6 +1742,8 @@ application filter cannot write `context.Request :? FunctionalRequest` — that 
 outside the library. The supported test is on **argument 0**, which is the public read-only view:
 
 ```fsharp
+open System
+open System.Threading.Tasks
 open Orleans
 open Orleans.FSharp
 
@@ -1770,7 +1784,6 @@ carries `[<Obsolete>]`.
   examples are drawn from
 - [Event Sourcing](event-sourcing.md) -- `journaledGrainFor`, the journaled definition kind
 - [Server-Streaming Replies](streaming-replies.md) -- the `IAsyncEnumerable<'Item>` field kind
-- `specs/003-functional-grain-runtime/spec.md` -- the full normative specification
 
 ## A build note for contributors: codegen and cold caches
 

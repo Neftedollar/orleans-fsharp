@@ -375,8 +375,8 @@ one. F# callers keep the direct route through the bound API record and pay none 
 A facade is not a second transport. `FunctionalGrainInterop.For` binds the contract exactly as an
 F# caller does and installs, per interface member, the **same preclosed API-record field
 closure** — so a facade call produces the same envelope: same grain type, same contract version,
-same stable operation ID, same protocol token, same admission flags. Two consequences are worth
-naming, because both features they touch are decided on the target side from that envelope:
+same stable operation ID, same protocol token, same admission flags. Four consequences are worth
+naming, because every feature they touch is decided on the target side from that envelope:
 
 - **Interleaving.** Whether a call may enter a busy activation is decided by Orleans from the
   message, using the `reentrant` property or the `mayInterleave` predicate the contract declared.

@@ -141,6 +141,24 @@ clientConfig {
 
 ---
 
+## Serialization
+
+Opt the client into the F# codecs. Both are already registered for you by
+`AddFunctionalGrainClient` and by the universal grain pattern; declare them when the client talks
+to per-grain C# CodeGen grains instead:
+
+```fsharp
+clientConfig {
+    useLocalhostClustering
+    useFSharpBinarySerialization   // F# records, unions, lists, maps, options
+    useJsonFallbackSerialization   // System.Text.Json for the rest
+}
+```
+
+The client's serialization must match the silo's -- see [Serialization](serialization.md).
+
+---
+
 ## Custom DI Services
 
 Register services on the client's DI container:
@@ -152,6 +170,29 @@ clientConfig {
         services.AddSingleton<IMyService, MyService>() |> ignore)
 }
 ```
+
+---
+
+## Calling a functional grain from a client-only process
+
+`clientConfig { }` configures the connection; the functional transport is installed separately, on
+the `IClientBuilder`, with `AddFunctionalGrainClient()`. A process that also hosts the definition
+needs nothing extra -- `AddFunctionalGrain` on the silo builder installs the client transport too.
+
+```fsharp
+open Orleans.FSharp
+
+builder.UseOrleansClient(fun clientBuilder ->
+    clientBuilder.AddFunctionalGrainClient() |> ignore)
+|> ignore
+
+// Then bind the typed API record against the connected client.
+let api = CounterApi.ref client "my-counter"
+```
+
+The call is idempotent, and it fails at configuration time with a diagnostic naming
+`IGrainReferenceActivatorProvider` if it runs before Orleans has installed its own reference
+activators. See [Functional Grain Runtime](functional-grains.md).
 
 ---
 

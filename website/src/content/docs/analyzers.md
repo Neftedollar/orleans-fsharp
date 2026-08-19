@@ -17,13 +17,15 @@ dotnet add package Orleans.FSharp.Analyzers
 
 ---
 
+<a id="OF0001"></a>
+
 ## OF0001 — Use `task { }` instead of `async { }`
 
 ### Description
 
 `async { }` computation expressions are **banned in Orleans.FSharp grain code**. Orleans is built on .NET `Task`-based concurrency. Using `async { }` requires an unnecessary `Async.AwaitTask` / `Async.StartAsTask` conversion at every grain boundary, adds overhead, and is incompatible with Orleans's `CancellationToken` propagation model.
 
-Use `task { }` (from `IcedTasks` or .NET 6+) instead. It compiles directly to a `Task<'T>` and is fully compatible with Orleans grain handlers.
+Use `task { }` instead — the computation expression FSharp.Core has shipped since F# 6 (`IcedTasks` adds cancellable and resumable variants on top of it). It compiles directly to a `Task<'T>` and is fully compatible with Orleans grain handlers.
 
 ### Example (warning)
 

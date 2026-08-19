@@ -120,6 +120,8 @@ definition; see the persistence model in [functional-grains.md](functional-grain
 ## Step 4: Configure the silo
 
 ```fsharp
+open Orleans.FSharp.Runtime
+
 let config = siloConfig {
     useLocalhostClustering
 }
@@ -178,7 +180,7 @@ no intermediate handle type and no boxed reply to unwrap.
 | `grainContract<'Actor,'Key,'Api>() { }` | Computation expression defining the contract: identity, key codec, per-operation policies |
 | `grainFor contract { }` | Computation expression defining state, handlers, persistence, lifecycle hooks, timers, reminders |
 | `FunctionalGrain.ref` | Bind a typed API record: `IGrainFactory -> 'Key -> 'Api` |
-| `FunctionalGrain.rawRef` | Bind the typed `FunctionalGrainRef` wrapper (`key`, `api`, `call`, `callCancellable`) |
+| `FunctionalGrain.rawRef` | Bind the typed `FunctionalGrainRef` wrapper (`key`, `api`, `call`, `callCancellable`, `stream`, `streamCancellable`) |
 | `AddFunctionalGrain` | Register a `grainFor` definition on the silo builder |
 | `AddFunctionalGrainClient` | Register the client-side transport on a client-only process |
 | `siloConfig { }` | Computation expression to configure the silo |
@@ -388,7 +390,7 @@ open Orleans.FSharp
 // Drive the grain handler directly — no silo, instant feedback.
 let applyViaHandler (state: CounterState) cmd =
     let h = GrainDefinition.getHandler counter
-    fst (h state cmd).GetAwaiter().GetResult()
+    fst ((h state cmd).GetAwaiter().GetResult())
 
 [<Property>]
 let ``Count equals net of Increments minus Decrements`` (commands: CounterCommand list) =
@@ -420,10 +422,10 @@ dotnet test
 | Guide | Description |
 |---|---|
 | [Functional Grain Runtime](functional-grains.md) | The complete guide to the current authoring model |
-| [Grain Definition](grain-definition.md) | Complete `grain { }` CE reference — all 31 keywords (deprecated model, kept for reference) |
+| [Grain Definition](grain-definition.md) | Complete `grain { }` CE reference — all 27 keywords (deprecated model, kept for reference) |
 | [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
 | [Serialization](serialization.md) | FSharpBinaryCodec, JSON fallback, Orleans native |
 | [Streaming](streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](event-sourcing.md) | CQRS with `eventSourcedGrain { }` |
+| [Event Sourcing](event-sourcing.md) | `journaledGrainFor { }` — state as the fold of an event journal (and the superseded `eventSourcedGrain { }` CE) |
 | [Testing](testing.md) | TestHarness, GrainMock, property tests, and testing functional grains |
 | [API Reference](api-reference.md) | All public modules and functions |

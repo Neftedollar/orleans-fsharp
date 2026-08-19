@@ -228,14 +228,13 @@ let refillTokens (state: TokenBucketState) (now: System.DateTimeOffset) =
     { state with Tokens = newTokens; LastRefill = now }
 
 let rateLimiterGrain = grain {
-    name "RateLimiter"
-    state {
+    defaultState {
         Tokens = 100.0
         MaxTokens = 100.0
         RefillRate = 10.0  // 10 tokens per second
         LastRefill = System.DateTimeOffset.UtcNow
     }
-    handle (fun ctx state msg ->
+    handleTyped (fun state msg ->
         task {
             let now = System.DateTimeOffset.UtcNow
             let refilled = refillTokens state now
@@ -245,18 +244,19 @@ let rateLimiterGrain = grain {
                 let needed = float count
                 if refilled.Tokens >= needed then
                     let newState = { refilled with Tokens = refilled.Tokens - needed }
-                    return Ok newState
+                    return newState, Allowed newState.Tokens
                 else
                     // Calculate when enough tokens will be available
                     let deficit = needed - refilled.Tokens
                     let waitSeconds = deficit / refilled.RefillRate
-                    return Ok refilled  // State unchanged, caller gets Denied
+                    return refilled, Denied waitSeconds   // state unchanged, caller gets Denied
 
             | GetRemaining ->
-                return Ok refilled
+                return refilled, Allowed refilled.Tokens
 
             | Reset ->
-                return Ok { refilled with Tokens = refilled.MaxTokens }
+                let reset = { refilled with Tokens = refilled.MaxTokens }
+                return reset, Allowed reset.Tokens
         })
 }
 ```
