@@ -130,10 +130,13 @@ let accountDef: TransactionalGrainDefinition<AccountState> =
 
 Use `TransactionOption.CreateOrJoin` on methods that should work both standalone and inside an ATM transaction:
 
+`[<Transaction(...)>]` takes **Orleans' own `Orleans.TransactionOption` enum**. Do not open
+`Orleans.FSharp.Transactions` in the same file: its `TransactionOption` union shares the simple
+name, shadows the enum, and the attribute then fails to compile.
+
 ```fsharp
 open Orleans
 open Orleans.Transactions
-open Orleans.FSharp.Transactions
 
 type IAccountGrain =
     inherit IGrainWithStringKey
@@ -582,7 +585,7 @@ task {
 }
 ```
 
-`and!` compiles to `Task.WhenAll` under the hood and is the idiomatic F# way to express parallel fan-out for a known set of grain references.
+`and!` goes through the task builder's `MergeSources`, which starts every bound task before awaiting any of them — three 400 ms calls take about 400 ms, not 1,200. It is the idiomatic F# way to express parallel fan-out for a known set of grain references.
 
 ### `GrainBatch` — dynamic collections of grains
 
@@ -769,61 +772,72 @@ let! result =
 
 ## Scripting / REPL
 
-The `Scripting` module starts a local in-process silo from an F# script (`.fsx` file), letting
-you iterate on grain logic without a full project setup.
+The scripting helpers start a local in-process silo from an F# script (`.fsx` file), letting you
+iterate on grain logic without a full project setup.
 
-### Quick start
+`Scripting.startOnPorts` builds and starts its host internally and takes no configuration
+callback, so it can host only what its fixed recipe already registers — it cannot be handed a
+grain definition. `FunctionalScripting.startOnPorts` (in `Orleans.FSharp.Runtime`) is the one that
+takes definitions, so a script that wants to call its own grain uses the functional runtime:
 
 ```fsharp
 #r "nuget: Orleans.FSharp"
 #r "nuget: Orleans.FSharp.Runtime"
 
+open System.Threading.Tasks
 open Orleans.FSharp
-open Orleans.FSharp.Runtime
 
-// Define a grain inline
-type PingState = { Count: int }
-type PingCmd = Ping | GetCount
+// Define a grain inline: an API record, a contract, and a definition
+type PingActor = private PingActor of unit
 
-let pingGrain =
-    grain {
-        defaultState { Count = 0 }
-        handle (fun state cmd -> task {
-            match cmd with
-            | Ping     -> return { Count = state.Count + 1 }, box (state.Count + 1)
-            | GetCount -> return state, box state.Count
-        })
+[<NoEquality; NoComparison>]
+type PingApi =
+    { ping: unit -> Task<int>
+      count: unit -> Task<int> }
+
+let pingContract =
+    grainContract<PingActor, string, PingApi> () {
+        grainType "scripting.ping"
+        stringKey
     }
 
-// Start an in-process silo on the given ports (localhost clustering + in-memory storage)
-let! silo = Scripting.startOnPorts 11111 30000
+let pingDefinition =
+    grainFor pingContract {
+        defaultState (fun () -> 0)
+        handle (_.ping) (fun _ n () -> task { return n + 1, n + 1 })
+        handle (_.count) (fun _ n () -> task { return n, n })
+    }
 
-// Register and call the grain
-silo.Host.Services
-    .AddFSharpGrain<PingState, PingCmd>(pingGrain)
-    |> ignore
+// Start an in-process silo on the given ports, hosting that definition
+let! silo =
+    FunctionalScripting.startOnPorts 11111 30000 [ FunctionalGrainRegistration.of' pingDefinition ]
 
-let handle = FSharpGrain.ref<PingState, PingCmd> silo.GrainFactory "ping-1"
-let! s1 = handle |> FSharpGrain.send Ping
-printfn "Count: %d" s1.Count
+// Call it — the API record is the call site
+let api = FunctionalGrain.ref pingContract silo.GrainFactory "ping-1"
+let! n = api.ping ()
+printfn "Count: %d" n
 
 // Shut down when done
 do! Scripting.shutdown silo
 ```
 
+`samples/quickstart-functional.fsx` is this script, runnable.
+
 ### API
 
 | Function | Description |
 |---|---|
-| `Scripting.startOnPorts siloPort gatewayPort` | Start a silo on specific ports (useful when running multiple silos) |
-| `Scripting.getGrain<'T> handle key` | Get a grain reference by `int64` key |
+| `Scripting.startOnPorts siloPort gatewayPort` | Start a silo on specific ports, with the fixed recipe only |
+| `FunctionalScripting.startOnPorts siloPort gatewayPort registrations` | The same silo, hosting the given functional grain definitions (`Orleans.FSharp.Runtime`) |
+| `FunctionalGrainRegistration.of' definition` | Erase a definition's type parameters so a heterogeneous list can be passed |
+| `Scripting.getGrain<'T> handle key` | Get a C# CodeGen grain reference by `int64` key |
 | `Scripting.shutdown handle` | Stop the silo and release resources |
 
-The `SiloHandle` returned by `startOnPorts` exposes `.Host`, `.Client`, and `.GrainFactory` for
-direct access when you need lower-level control.
+Both entry points return the same `SiloHandle`, which exposes `.Host`, `.Client`, and
+`.GrainFactory` for direct access when you need lower-level control.
 
-The silo is pre-configured with in-memory storage (`Default` and `PubSubStore`),
-an in-memory stream provider (`StreamProvider`), and in-memory reminders.
+The silo is pre-configured with in-memory storage (the default store plus `Default` and
+`PubSubStore`), an in-memory stream provider (`StreamProvider`), and in-memory reminders.
 
 ---
 

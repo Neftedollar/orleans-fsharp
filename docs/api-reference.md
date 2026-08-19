@@ -408,10 +408,10 @@ codegen-free equivalent see [Observers](#observers) above.
 
 | Function | Signature | Description |
 |---|---|---|
-| `migration<'TOld, 'TNew>` | `int -> int -> ('TOld -> 'TNew) -> Migration<'TOld, 'TNew>` | Define a migration |
-| `applyMigrations<'T>` | `Migration list -> int -> obj -> 'T` | Apply migration chain (throws on invalid chain) |
-| `tryApplyMigrations<'T>` | `Migration list -> int -> obj -> Result<'T, string list>` | Validate and apply; returns `Ok` or `Error` with messages |
-| `validate` | `Migration list -> string list` | Validate migration chain; empty list means valid |
+| `migration<'TOld, 'TNew>` | `int -> int -> ('TOld -> 'TNew) -> Migration<obj, obj>` | Define a migration. The result is erased to `Migration<obj, obj>` so a chain over several state versions is one homogeneous list |
+| `applyMigrations<'T>` | `Migration<obj, obj> list -> int -> obj -> 'T` | Apply migration chain (throws on invalid chain) |
+| `tryApplyMigrations<'T>` | `Migration<obj, obj> list -> int -> obj -> Result<'T, string list>` | Validate and apply; returns `Ok` or `Error` with messages |
+| `validate` | `Migration<obj, obj> list -> string list` | Validate migration chain; empty list means valid |
 
 #### `Serialization`
 
