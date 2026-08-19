@@ -161,6 +161,11 @@ let auditFilter =
 | `FilterContext.interfaceType ctx` | `Type` | The grain interface type |
 | `FilterContext.grainInstance ctx` | `obj option` | The grain instance if available |
 
+A filter sees a [functional grain](functional-grains.md) call as an ordinary Orleans call, but
+`FilterContext.methodName` reports the transport's own method rather than your operation. To
+authorize per operation there, match argument 0 against `IFunctionalRequestMetadata` — see
+[Functional Grain Runtime](functional-grains.md), "Call filters over a functional grain".
+
 ---
 
 ## Request Context
@@ -346,17 +351,35 @@ the same cluster**. It is NOT designed to deserialize untrusted input from:
 - Third-party message queues outside your cluster
 - Any source that an attacker could control
 
-### What happens on untrusted input
+### What the codec already refuses
 
-If an attacker can inject crafted bytes into the Orleans message stream, they could:
-1. Embed arbitrary type names in the serialized data
-2. Force the codec to instantiate unexpected types via `Type.GetType()`
-3. Manipulate grain state through carefully constructed payloads
+A wire-supplied type name is checked **before** any assembly load, not after resolution:
+
+- **An assembly allow-list**, matched on whole dotted segments. Only `Orleans.FSharp`, `System`,
+  `Microsoft.FSharp`, `FSharp.Core`, `mscorlib`, `netstandard` and `TypeShape` (and namespaces
+  beneath them) pass — so `Orleans.FSharpHostile` is refused despite the shared prefix. The check
+  covers a generic's arguments as well as its own qualifier, because `Type.GetType` loads every
+  one of them.
+- **A cap on distinct wire-resolved type names** (512 per process), so a stream of unique names
+  cannot grow the type and codec caches without bound. A rejected name is never cached.
+- **A length cap on the type name itself**, which also bounds the qualifier scan's nesting depth.
+- **Bounds checks on every wire-supplied length, element count, union case tag, and record or
+  POCO arity**, against the bytes actually remaining and the real shape of the target type.
+
+A rejection is an `InvalidOperationException` naming the offending assembly or field, not an
+`IndexOutOfRangeException` or an oversized allocation.
+
+### What it still does not defend against
+
+The allow-list bounds *which* assemblies a payload can name; it does not make an arbitrary
+attacker-chosen graph inside those assemblies safe. Crafted bytes that clear every check above can
+still set your own grain state to values the application never intended. Treat the codec as
+in-cluster infrastructure, not as an input parser.
 
 ### Mitigation
 
-**At the network layer** (recommended): Orleans already encrypts silo-to-silo
-communication when TLS is configured. Ensure TLS is enabled in production:
+**At the network layer** (the one that matters): Orleans encrypts silo-to-silo communication when
+TLS is configured. Ensure TLS is enabled in production:
 
 ```fsharp
 let config = siloConfig {
@@ -364,14 +387,11 @@ let config = siloConfig {
 }
 ```
 
-**At the codec layer** (defense-in-depth): If you need to deserialize bytes from
-an untrusted source, use `deserializeWithType` with an explicit `hintType` parameter
-so the type name from the bytes is ignored:
-
-```fsharp
-// Safe: hintType is known at compile time, type name in bytes is ignored
-let result = FSharpBinaryFormat.deserializeWithType bytes typeof<MyKnownType>
-```
+**Do not point the codec at external input.** The F# binary format has no public
+decode-with-a-known-type entry point — `FSharpBinaryFormat` is `internal` — precisely because
+there is no supported way to use it as a parser for bytes from outside the cluster. Parse
+untrusted input with a format designed for it (`System.Text.Json` and the `Serialization` module's
+F# converters, for example), and let the codec see only what Orleans itself produced.
 
 ---
 
