@@ -56,6 +56,7 @@ Every grain definition requires at minimum:
 | `handleTypedWithContextCancellable` | `GrainContext -> 'S -> 'M -> CancellationToken -> Task<'S * 'R>` | Context + cancellation, typed result |
 
 Aliases: `handleWithServices` = `handleWithContext`, `handleStateWithServices` = `handleStateWithContext`,
+`handleTypedWithServices` = `handleTypedWithContext`,
 `handleWithServicesCancellable` = `handleWithContextCancellable`,
 `handleStateWithServicesCancellable` = `handleStateWithContextCancellable`,
 `handleTypedWithServicesCancellable` = `handleTypedWithContextCancellable`.
@@ -457,8 +458,7 @@ grain {
 
 Hooks into Orleans grain lifecycle stages for fine-grained control. Standard stages
 (`Orleans.Runtime.GrainLifecycleStage`; verified by reflection against Orleans 10.1.0 and 10.2.2,
-identical on both — corrected here, the values below previously did not match the real Orleans
-constants):
+identical on both):
 
 | Stage | Value | Description |
 |---|---|---|
@@ -623,18 +623,18 @@ open System
 open System.Threading.Tasks
 open Orleans.FSharp
 
-[<GenerateSerializer>]
+// Plain F# types -- `FSharpBinaryCodec` serializes them, so no `[<GenerateSerializer>]`
+// or `[<Id>]` attributes are needed.
 type ChatState =
-    | [<Id(0u)>] Empty
-    | [<Id(1u)>] Active of messages: string list * participants: Set<string>
+    | Empty
+    | Active of messages: string list * participants: Set<string>
 
-[<GenerateSerializer>]
 type ChatCommand =
-    | [<Id(0u)>] Join of user: string
-    | [<Id(1u)>] Leave of user: string
-    | [<Id(2u)>] Send of user: string * text: string
-    | [<Id(3u)>] GetHistory
-    | [<Id(4u)>] GetParticipants
+    | Join of user: string
+    | Leave of user: string
+    | Send of user: string * text: string
+    | GetHistory
+    | GetParticipants
 
 let chatRoom =
     grain {
@@ -655,7 +655,10 @@ let chatRoom =
                     else
                         return Active(msgs, remaining), box true
                 | Active(msgs, users), Send(user, text) ->
-                    let entry = $"[{DateTime.UtcNow:HH:mm}] {user}: {text}"
+                    // F# interpolation cannot carry a format specifier containing ':', so the
+                    // timestamp is formatted first.
+                    let stamp = DateTime.UtcNow.ToString "HH:mm"
+                    let entry = $"[{stamp}] {user}: {text}"
                     return Active(entry :: msgs, users), box entry
                 | _, GetHistory ->
                     let msgs = match state with Active(m, _) -> m | _ -> []

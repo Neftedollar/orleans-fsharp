@@ -1495,7 +1495,8 @@ let api = FunctionalGrain.ref RoomApi.contract (factory :> IGrainFactory) key
 
 `FunctionalGrain.rawRef` follows the identical rule and returns the typed
 `FunctionalGrainRef<'Actor, 'Key, 'Api>` wrapper (`key`, the cached `api` record, selector-based
-`call`, and `callCancellable`) instead of the bare API record.
+`call` and `callCancellable`, and their streaming counterparts `stream` and `streamCancellable`)
+instead of the bare API record.
 
 ## Running a silo from a standalone F# process
 
