@@ -87,7 +87,7 @@ Akkling provides an idiomatic F# API for Akka.NET — a port of the JVM Akka act
 | State persistence | `persist "ProviderName"` keyword | Manual `Akka.Persistence` integration |
 | Failure handling | Automatic reactivation on another silo | Supervision trees (manual configuration) |
 | Location transparency | Built-in grain directory | Akka.Cluster + shard regions |
-| Stream processing | `Stream.getRef` + `Stream.publish` | Akka.Streams |
+| Stream processing | `Stream.getStream` + `Stream.publish` | Akka.Streams |
 | Concurrency model | Single-threaded turns (with optional reentrancy) | Mailbox processing |
 
 ### When to choose Akkling
@@ -135,27 +135,34 @@ Proto.Actor is a cross-platform actor framework supporting both virtual and clas
 
 | Feature | Orleans.FSharp | C# Orleans | Akkling | Proto.Actor |
 |---------|---------------|-----------|---------|------------|
-| F# computation expressions | Yes (85 keywords) | No | Yes | No |
+| F# computation expressions | Yes (137 operations across 8 builders) | No | Yes | No |
 | DU state machines | Yes | No | Partial | No |
 | Property-based testing | GrainArbitrary | No | No | No |
 | Grain timers | `onTimer` keyword | `RegisterTimer` | Scheduler | Manual |
 | Grain reminders | `onReminder` keyword | `IRemindable` | N/A | N/A |
-| Event sourcing | `eventSourcedGrain {}` | `JournaledGrain` | `Akka.Persistence` | Manual |
-| Transactions | `TransactionalState` wrapper | `TransactionalState` | Saga pattern | Manual |
-| Streaming | `Stream` module | `IAsyncStream` | Akka.Streams | N/A |
+| Event sourcing | `journaledGrainFor { }` | `JournaledGrain` | `Akka.Persistence` | Manual |
+| Transactions | `transactional` + `transactionalStateFrom` | `[Transaction]` + `TransactionalState` | Saga pattern | Manual |
+| Streaming | `Stream` module, `onStream` / `onBroadcast` | `IAsyncStream` | Akka.Streams | N/A |
 | TLS/mTLS | `useTls` keyword | Manual config | Akka.Remote TLS | gRPC TLS |
 | Kubernetes | `useKubernetesClustering` | `Kubernetes` package | Akka.Discovery | Kubernetes provider |
-| Dashboard | `enableDashboard` keyword | OrleansDashboard | Petabridge.Cmd | N/A |
+| Dashboard | `addDashboard` keyword | OrleansDashboard | Petabridge.Cmd | N/A |
 | Health checks | `enableHealthChecks` keyword | Manual registration | N/A | gRPC health |
-| OpenTelemetry | `enableOpenTelemetry` keyword | Manual registration | Phobos | Manual |
+| OpenTelemetry | Orleans' own activity sources and meter | Manual registration | Phobos | Manual |
 
 ## Performance
 
-Orleans.FSharp adds no measurable overhead to Microsoft Orleans. The computation expressions are evaluated at build time by the code generator — at runtime, the generated code is identical to hand-written C# Orleans grains.
+Orleans.FSharp runs on the Orleans runtime unchanged; it adds a dispatch layer, not a second
+transport.
 
-- **Grain call overhead**: ~8 nanoseconds (CE evaluation, not grain call latency)
-- **Network latency**: Dominates all real-world scenarios (microseconds to milliseconds)
-- **Memory**: Same as C# Orleans (no additional allocations per grain)
+- **Where the work happens**: a contract and a definition are sealed once, when the module that
+  declares them initialises — not per call. An API shape is built once per record type and cached
+  process-wide, and each operation's argument and reply closures are precomputed at that point.
+- **Per call**: one dictionary lookup and one preclosed delegate call on top of the Orleans call
+  itself. The repository's own dispatch benchmark holds that below 5% of calling the handler
+  function directly, over 1,000,000 iterations.
+- **Network latency**: dominates all real-world scenarios (microseconds to milliseconds).
+- **C# facade callers** additionally pay `DispatchProxy`'s per-call boxing — see
+  [Calling from C#](/orleans-fsharp/calling-from-csharp/).
 
 ## Recommendation summary
 
