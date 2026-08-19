@@ -78,3 +78,22 @@ Each item is grounded in a verified finding; pointers name the evidence.
     recorded unattributed rather than pinned on this family: without the name
     that would be a guess. It does raise the priority of the hardening ticket —
     and of always capturing full test output on a verification run.
+12. **`GrainResilience.withTimeout` cannot honour its own contract** (docs
+    proofread pass, 2026-08-20, measured twice): the protected operation is
+    `unit -> Task<'T>`, so `execute` starts the call before Polly's pipeline
+    runs and the timeout token reaches nothing — a 100 ms timeout over an
+    800 ms call returns the result after ~810 ms with no exception. The
+    timeout only bounds Polly's inter-retry delays, and `AddTimeout` is
+    outermost (spans the whole retry sequence), contradicting the
+    "per-attempt" XML doc. Fix candidates: take `CancellationToken ->
+    Task<'T>` and thread Polly's token, or retire the member. Docs already
+    state the measured behaviour. Note: backlog item 11's flaky
+    `withTimeout` test gains a new reading — it exercises a timeout that
+    does not time out.
+13. **The classic `Stream` module cannot produce a stream cursor** (same
+    pass): `Stream.getSequenceToken` is a permanent `None` stub AND
+    `subscribe`/`subscribeFrom` discard the token their Orleans callback
+    receives — so the module's own `subscribeFrom` rewind entry point is
+    unreachable from within the module. Fix candidates: a handler overload
+    receiving the token, or documenting Orleans' own `SubscribeAsync` as
+    the path (docs already point there).
