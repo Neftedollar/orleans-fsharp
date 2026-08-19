@@ -15,7 +15,7 @@ description: "Polly v8 retry, circuit-breaker, and timeout patterns for grain ca
 ## What you'll learn
 
 - How to retry transient grain failures automatically
-- How to add per-call timeouts to grain calls
+- What a Polly timeout over a grain call can and cannot cancel
 - How to protect a downstream service with a circuit breaker
 - How to compose multiple strategies into a single reusable pipeline
 
@@ -49,7 +49,8 @@ let! inventory =
     GrainResilience.retry<int> 3 (TimeSpan.FromMilliseconds 200) (fun () ->
         inventoryGrain.HandleMessage(GetStock itemId))
 
-// 2. Per-call timeout — fail fast if the grain takes > 2 seconds
+// 2. Timeout — caps the pipeline's own waiting, not an in-flight call
+//    (see "What the timeout can and cannot cancel" below)
 let! price =
     GrainResilience.withTimeout<decimal> (TimeSpan.FromSeconds 2) (fun () ->
         pricingGrain.HandleMessage(GetPrice itemId))
@@ -86,10 +87,12 @@ type ResilienceOptions =
         /// Open the circuit after this many consecutive failures. None = disabled.
         CircuitBreakerThreshold: int option
 
-        /// How long the circuit stays open before attempting a probe call. Default: 30 s.
+        /// How long the circuit stays open before attempting a probe call. None falls back
+        /// to 30 s, and is only consulted when CircuitBreakerThreshold is set.
         CircuitBreakerDuration: TimeSpan option
 
-        /// Per-attempt deadline. None = no timeout.
+        /// Deadline over the whole protected operation. None = no timeout.
+        /// Read "What the timeout can and cannot cancel" below before relying on it.
         Timeout: TimeSpan option
     }
 
@@ -105,7 +108,7 @@ let defaultOptions: ResilienceOptions =
 
 ### `GrainResilience.retry`
 
-Retries the grain call up to `maxAttempts` times before giving up.
+Retries the grain call up to `maxAttempts` further times after the initial one, so `retry 3` makes at most four calls.
 
 ```fsharp
 val retry<'T>
@@ -123,7 +126,8 @@ let! count =
 
 ### `GrainResilience.withTimeout`
 
-Enforces a hard deadline on a single grain call. Throws `Polly.Timeout.TimeoutRejectedException` when the deadline is exceeded.
+Applies a Polly timeout strategy around the protected operation, with no retry and no circuit
+breaker.
 
 ```fsharp
 val withTimeout<'T>
@@ -141,6 +145,25 @@ try
 with :? Polly.Timeout.TimeoutRejectedException ->
     log.Warning("Snapshot timed out — skipping")
 ```
+
+#### What the timeout can and cannot cancel
+
+**It does not abort a grain call that is merely slow.** The protected operation is a
+`unit -> Task<'T>`, which takes no `CancellationToken`, so the call has already started by the time
+Polly's timeout is armed and nothing can interrupt it. A three-second timeout over a call that
+takes eight seconds returns that call's result after eight seconds — no
+`TimeoutRejectedException` is raised.
+
+What the timeout does cut short is the waiting the pipeline itself controls: the delay between
+retry attempts. So under `execute` with retries a `TimeoutRejectedException` is a real outcome
+(it fires while the pipeline is sleeping between attempts), and under `withTimeout` alone — where
+there are no retries and therefore no waiting of Polly's own — it effectively never fires.
+
+For a real deadline on a slow grain, use Orleans' own mechanisms instead: shorten
+`SiloMessagingOptions.ResponseTimeout` / `ClientMessagingOptions.ResponseTimeout` (30 seconds by
+default), or make the operation cancellable and drive it with
+`FunctionalGrainRef.callCancellable` from the [functional grain runtime](/orleans-fsharp/functional-grains/),
+whose token reaches the handler through `context.cancellationToken`.
 
 ### `GrainResilience.execute`
 
@@ -217,7 +240,9 @@ request
 ```
 
 This means:
-- The timeout applies to the total time including all retries.
+- The timeout spans the whole attempt sequence, not one attempt — but only over the waiting the
+  pipeline itself does; it cannot interrupt an in-flight grain call (see
+  [What the timeout can and cannot cancel](#what-the-timeout-can-and-cannot-cancel)).
 - The circuit breaker opens only after the retry strategy has given up.
 - A single Polly `TimeoutRejectedException` or `BrokenCircuitException` bypasses the retry.
 
@@ -233,13 +258,21 @@ let! data =
         dataGrain.HandleMessage(Fetch key))
 ```
 
-### Fail fast on slow grains
+### Bound the time spent retrying
 
 ```fsharp
-let! result =
-    GrainResilience.withTimeout<Result> (TimeSpan.FromSeconds 2) (fun () ->
-        slowGrain.HandleMessage query)
+// The timeout caps the retry sequence, including the delays between attempts.
+let bounded =
+    { GrainResilience.defaultOptions with
+        MaxRetryAttempts = 5
+        RetryDelay = TimeSpan.FromMilliseconds 500
+        Timeout = Some(TimeSpan.FromSeconds 2) }
+
+let! result = GrainResilience.execute<Result> bounded (fun () -> flakyGrain.HandleMessage query)
 ```
+
+It does **not** make a single slow call fail fast — see
+[What the timeout can and cannot cancel](#what-the-timeout-can-and-cannot-cancel).
 
 ### Protect a shared downstream resource
 
@@ -295,7 +328,7 @@ test <@ result = 42 @>
 test <@ attempts = 3 @>
 ```
 
-For integration tests with a real `TestCluster`, use a grain that tracks its own call count and fails on the first N calls — see `FlakyGrain` in `tests/Orleans.FSharp.Integration/ClusterFixture.fs`.
+For integration tests with a real `TestCluster`, use a grain that tracks its own call count and fails on the first N calls — see `flakyGrain` (over `FlakyState` / `FlakyCommand`) in `tests/Orleans.FSharp.Integration/ClusterFixture.fs`, driven by `GrainResilienceIntegrationTests.fs`.
 
 ---
 
