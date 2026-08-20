@@ -237,21 +237,24 @@ let ``withTimeout raises TimeoutRejectedException for a call that never complete
     }
 
 [<Fact>]
-let ``withTimeout raises TimeoutRejectedException for a call that ignores the deadline`` () =
+let ``withTimeout abandons the call rather than cancelling it`` () =
     task {
-        // The measured 4.0.0 defect: a plain slow Task returned the result long after the budget
-        // and never raised. The call still runs to completion in the background — the deadline
-        // abandons it, it does not cancel it.
-        let ran = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        // The deadline discards the result; the call keeps running with its effects. Written with
+        // a gate rather than a slow Task on purpose: the first version of this test raced an
+        // 800 ms call against a 50 ms budget and lost once under full-suite load — the exact
+        // wall-clock shape this work is removing. Here the call cannot finish until the test lets
+        // it, so the deadline is the only thing that can end the wait.
+        let gate = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let ran = TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)
 
         let slow () =
             task {
-                do! Task.Delay(TimeSpan.FromMilliseconds(800.0))
-                ran.TrySetResult() |> ignore
+                do! gate.Task
+                ran.TrySetResult 7 |> ignore
                 return 7
             }
 
-        let! ex =
+        let guarded =
             task {
                 try
                     let! _ = GrainResilience.withTimeout (TimeSpan.FromMilliseconds(50.0)) slow
@@ -260,11 +263,18 @@ let ``withTimeout raises TimeoutRejectedException for a call that ignores the de
                     return unwrapAggregate ex
             }
 
+        let! finished = Task.WhenAny(guarded, Task.Delay(TimeSpan.FromSeconds(30.0)))
+        test <@ Object.ReferenceEquals(finished, guarded) @>
+
+        let! ex = guarded
         test <@ not (isNull ex) @>
         test <@ ex :? TimeoutRejectedException @>
 
-        // The abandoned call is still alive; awaiting it here also keeps the test from leaving
-        // work running past its own end.
+        // Abandoned, not cancelled: the call had not run its effect when the caller gave up, and
+        // it still runs it once the gate opens.
+        test <@ not ran.Task.IsCompleted @>
+        gate.TrySetResult() |> ignore
+
         let! completed = Task.WhenAny(ran.Task, Task.Delay(TimeSpan.FromSeconds(30.0)))
         test <@ Object.ReferenceEquals(completed, ran.Task) @>
     }
@@ -331,7 +341,9 @@ let ``withTimeoutCancellable cancels the operation at the deadline`` () =
                             (fun ct ->
                                 task {
                                     try
-                                        do! Task.Delay(TimeSpan.FromSeconds(30.0), ct)
+                                        // Far longer than the 30 s net below, so a pass cannot be
+                                        // the operation finishing on its own in a tie.
+                                        do! Task.Delay(TimeSpan.FromMinutes(5.0), ct)
                                         return 0
                                     with :? OperationCanceledException ->
                                         observedCancellation.TrySetResult true |> ignore
