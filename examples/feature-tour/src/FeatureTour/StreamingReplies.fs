@@ -87,7 +87,7 @@ module TickerApi =
     let GrainType = "tour.ticker"
 
     let contract =
-        grainContract<TickerActor, string, TickerApi> () {
+        grainContract<TickerActor, string, TickerApi> {
             grainType GrainType
             version 1
             stringKey

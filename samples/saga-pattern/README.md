@@ -57,7 +57,7 @@ type SagaApi =
 [<RequireQualifiedAccess>]
 module SagaApi =
     let contract =
-        grainContract<SagaActor, string, SagaApi> () {
+        grainContract<SagaActor, string, SagaApi> {
             grainType "saga.orchestrator"
             version 1
             stringKey
@@ -93,7 +93,7 @@ type InventoryApi =
 [<RequireQualifiedAccess>]
 module InventoryApi =
     let contract =
-        grainContract<InventoryActor, string, InventoryApi> () {
+        grainContract<InventoryActor, string, InventoryApi> {
             grainType "saga.inventory"
             version 1
             stringKey
@@ -133,7 +133,7 @@ type PaymentApi =
 [<RequireQualifiedAccess>]
 module PaymentApi =
     let contract =
-        grainContract<PaymentActor, string, PaymentApi> () {
+        grainContract<PaymentActor, string, PaymentApi> {
             grainType "saga.payment"
             version 1
             stringKey

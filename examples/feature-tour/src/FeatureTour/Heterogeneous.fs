@@ -48,14 +48,14 @@ module WhereApi =
     /// integration fixture uses for its heterogeneous arm.
     /// </summary>
     let everywhere =
-        grainContract<EverywhereActor, string, WhereApi> () {
+        grainContract<EverywhereActor, string, WhereApi> {
             grainType Cluster.EverywhereGrainType
             version 1
             stringKey
         }
 
     let regional =
-        grainContract<RegionalActor, string, WhereApi> () {
+        grainContract<RegionalActor, string, WhereApi> {
             grainType Cluster.RegionalGrainType
             version 1
             stringKey

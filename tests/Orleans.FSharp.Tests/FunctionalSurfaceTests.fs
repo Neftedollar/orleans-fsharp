@@ -29,7 +29,7 @@ type SurfaceApi =
 type SurfaceState = { count: int }
 
 let private contract =
-    grainContract<SurfaceActor, string, SurfaceApi> () {
+    grainContract<SurfaceActor, string, SurfaceApi> {
         grainType "surface.test"
         stringKey
     }
@@ -425,7 +425,7 @@ let ``silo registration returns the builder and registers the definition once`` 
 [<Fact>]
 let ``policy order does not matter`` () =
     let interleaveFirst =
-        grainContract<SurfaceActor, string, SurfaceApi> () {
+        grainContract<SurfaceActor, string, SurfaceApi> {
             grainType "surface.order"
             stringKey
             alwaysInterleave (_.second)
@@ -433,7 +433,7 @@ let ``policy order does not matter`` () =
         }
 
     let oneWayFirst =
-        grainContract<SurfaceActor, string, SurfaceApi> () {
+        grainContract<SurfaceActor, string, SurfaceApi> {
             grainType "surface.order"
             stringKey
             oneWay (_.second)
@@ -501,7 +501,7 @@ let ``concurrent shape construction yields one cached instance`` () =
 [<Fact>]
 let ``two contracts over the same API share one cached shape`` () =
     let other =
-        grainContract<SurfaceActor, string, SurfaceApi> () {
+        grainContract<SurfaceActor, string, SurfaceApi> {
             grainType "surface.other"
             stringKey
         }
@@ -544,14 +544,71 @@ let ``the builders module exposes exactly the specified entry points`` () =
 
     test <@ actual = expected @>
 
+/// <summary>The observer brand and handler record the freshness pin below pushes through.</summary>
+type SurfaceObserver = private SurfaceObserver of unit
+
+[<NoEquality; NoComparison>]
+type SurfaceObserverApi = { onSurface: int -> Task<unit> }
+
+[<Fact>]
+let ``each entry point mention yields its own builder`` () =
+    // grainContract / contract / observerContract are TYPE FUNCTIONS (generic values), not
+    // functions: `grainContract<A, K, Api>` takes no argument. A generic value is re-evaluated
+    // at every mention, so each contract expression starts from its own builder instance. Were
+    // the compiler to cache one instance per instantiation instead, every contract expression
+    // over the same type arguments would share it -- and this file's two `grainContract<
+    // SurfaceActor, string, SurfaceApi>` mentions would be handing the same object to two CEs.
+    let first = grainContract<SurfaceActor, string, SurfaceApi>
+    let second = grainContract<SurfaceActor, string, SurfaceApi>
+    test <@ not (obj.ReferenceEquals(first, second)) @>
+
+    // Qualified, because this module's own `contract` binding shadows the AutoOpen'd entry
+    // point -- see "the contract short form brands the contract with its own API record".
+    let firstShort = FunctionalGrainBuilders.contract<string, SurfaceApi>
+    let secondShort = FunctionalGrainBuilders.contract<string, SurfaceApi>
+    test <@ not (obj.ReferenceEquals(firstShort, secondShort)) @>
+
+    let firstObserver = observerContract<SurfaceObserver, SurfaceObserverApi>
+    let secondObserver = observerContract<SurfaceObserver, SurfaceObserverApi>
+    test <@ not (obj.ReferenceEquals(firstObserver, secondObserver)) @>
+
+[<Fact>]
+let ``two contract expressions over one entry point stay independent`` () =
+    // The consequence the identity pin above exists for, asserted on observable metadata rather
+    // than on object identity: two expressions off the same entry point must not see each
+    // other's declarations. GrainContractBuilder is itself stateless today (every custom
+    // operation returns a fresh draft), so a shared builder would not actually leak -- this pin
+    // is what would catch a future builder that starts carrying state, at which point sharing
+    // one instance across expressions becomes a real cross-contract bug.
+    let left =
+        grainContract<SurfaceActor, string, SurfaceApi> {
+            grainType "surface.independent.left"
+            version 2
+            stringKey
+            readOnly (_.first)
+        }
+
+    let right =
+        grainContract<SurfaceActor, string, SurfaceApi> {
+            grainType "surface.independent.right"
+            stringKey
+        }
+
+    test <@ left.GrainTypeName = "surface.independent.left" @>
+    test <@ right.GrainTypeName = "surface.independent.right" @>
+    test <@ left.Version = 2 @>
+    test <@ right.Version = 1 @>
+    test <@ left.Operations |> Array.exists (fun operation -> operation.IsReadOnly) @>
+    test <@ right.Operations |> Array.forall (fun operation -> not operation.IsReadOnly) @>
+
 [<Fact>]
 let ``the contract short form brands the contract with its own API record`` () =
     // contract<'Key, 'Api> is grainContract<'Api, 'Key, 'Api>: the record IS the brand. Qualified
     // access here because this file's own module-level `contract` binding shadows the AutoOpen'd
-    // function -- which is itself worth demonstrating: user code that names a local binding
+    // type function -- which is itself worth demonstrating: user code that names a local binding
     // `contract` keeps working unchanged.
     let shortForm =
-        FunctionalGrainBuilders.contract<string, SurfaceApi> () {
+        FunctionalGrainBuilders.contract<string, SurfaceApi> {
             grainType "surface.short-form"
             version 1
             stringKey
@@ -707,7 +764,7 @@ let ``FunctionalGrain.streamId and channelId carry the contract's own grain-key 
 
     // The int64 codec is where the naive overload and the contract disagree.
     let numeric =
-        grainContract<SurfaceActor, int64, SurfaceApi> () {
+        grainContract<SurfaceActor, int64, SurfaceApi> {
             grainType "surface.numeric"
             int64Key
         }

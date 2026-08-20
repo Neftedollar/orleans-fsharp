@@ -51,7 +51,7 @@ type CounterApi =
       value: unit -> Task<int> }
 
 let counterContract =
-    contract<string, CounterApi> () {
+    contract<string, CounterApi> {
         grainType "counter"
         version 1
         stringKey

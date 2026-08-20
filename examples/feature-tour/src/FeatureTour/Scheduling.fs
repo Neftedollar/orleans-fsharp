@@ -37,7 +37,7 @@ type SchedulerApi =
 [<RequireQualifiedAccess>]
 module SchedulerApi =
     let contract =
-        grainContract<SchedulerActor, string, SchedulerApi> () {
+        grainContract<SchedulerActor, string, SchedulerApi> {
             // Explicit grainType is required for any definition declaring onReminder: the durable
             // registration lives in Orleans' reminder table under this exact name.
             grainType "tour.scheduler"

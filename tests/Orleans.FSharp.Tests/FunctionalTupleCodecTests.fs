@@ -66,7 +66,7 @@ type ShapeApi =
       twoArguments: (int option * int option) -> Task<int option> }
 
 let private shapeContract =
-    grainContract<TupleActor, string, ShapeApi> () {
+    grainContract<TupleActor, string, ShapeApi> {
         grainType "tuple.shapes"
         version 1
         stringKey
@@ -195,7 +195,7 @@ type ProbeApi =
       probeArrayPair: (TupleProbe array * TupleProbe array) -> Task<TupleProbe array * TupleProbe array> }
 
 let private probeContract =
-    grainContract<ProbeActor, string, ProbeApi> () {
+    grainContract<ProbeActor, string, ProbeApi> {
         grainType "tuple.probes"
         version 1
         stringKey

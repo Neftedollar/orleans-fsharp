@@ -26,7 +26,7 @@ type TodoApi =
 [<RequireQualifiedAccess>]
 module TodoApi =
     let contract =
-        grainContract<TodoActor, string, TodoApi> () {
+        grainContract<TodoActor, string, TodoApi> {
             grainType "fable-fullstack.todos.functional"
             version 1
             stringKey

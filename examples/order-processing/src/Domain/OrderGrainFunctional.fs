@@ -52,7 +52,7 @@ type OrderApi =
 [<RequireQualifiedAccess>]
 module OrderApi =
     let contract =
-        grainContract<OrderActor, string, OrderApi> () {
+        grainContract<OrderActor, string, OrderApi> {
             grainType "order-processing.order.functional"
             version 1
             stringKey

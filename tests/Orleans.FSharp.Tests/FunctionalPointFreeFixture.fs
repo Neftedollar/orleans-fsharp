@@ -27,7 +27,7 @@ type LobbyApi =
 [<RequireQualifiedAccess>]
 module Lobby =
     let contract =
-        grainContract<LobbyActor, LobbyId, LobbyApi> () {
+        grainContract<LobbyActor, LobbyId, LobbyApi> {
             grainType "chat.lobby"
             version 1
             stringKeyMapped LobbyId.value LobbyId

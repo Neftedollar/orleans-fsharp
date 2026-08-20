@@ -74,7 +74,7 @@ type CounterApi =
 [<RequireQualifiedAccess>]
 module CounterApi =
     let contract =
-        grainContract<CounterActor, string, CounterApi> () {
+        grainContract<CounterActor, string, CounterApi> {
             grainType "counter"
             version 1
             stringKey
@@ -182,7 +182,7 @@ no intermediate handle type and no boxed reply to unwrap.
 
 | Name | Purpose |
 |---|---|
-| `grainContract<'Actor,'Key,'Api>() { }` | Computation expression defining the contract: identity, key codec, per-operation policies |
+| `grainContract<'Actor,'Key,'Api> { }` | Computation expression defining the contract: identity, key codec, per-operation policies |
 | `grainFor contract { }` | Computation expression defining state, handlers, persistence, lifecycle hooks, timers, reminders |
 | `FunctionalGrain.ref` | Bind a typed API record: `IGrainFactory -> 'Key -> 'Api` |
 | `FunctionalGrain.rawRef` | Bind the typed `FunctionalGrainRef` wrapper (`key`, `api`, `call`, `callCancellable`, `stream`, `streamCancellable`) |

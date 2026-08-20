@@ -33,7 +33,7 @@ let private throws (action: unit -> unit) =
     Assert.Throws<InvalidOperationException>(action)
 
 let private mixedContract () =
-    grainContract<StreamActor, string, MixedApi> () {
+    grainContract<StreamActor, string, MixedApi> {
         grainType "stream.mixed"
         stringKey
     }
@@ -193,7 +193,7 @@ let ``the same policies on a unary field are accepted`` () =
 [<Fact>]
 let ``operationId and sinceVersion apply to a streaming field`` () =
     let contract =
-        grainContract<StreamActor, string, MixedApi> () {
+        grainContract<StreamActor, string, MixedApi> {
             grainType "stream.mixed"
             version 3
             acceptsVersions (BackwardCompatible 1)
@@ -212,7 +212,7 @@ let ``operationId and sinceVersion apply to a streaming field`` () =
 let ``a dead sinceVersion on a streaming field is rejected exactly as on a unary one`` () =
     let error =
         throws (fun () ->
-            grainContract<StreamActor, string, MixedApi> () {
+            grainContract<StreamActor, string, MixedApi> {
                 grainType "stream.mixed"
                 version 2
                 stringKey

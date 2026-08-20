@@ -360,7 +360,7 @@ let ``re-registering the same grain type is silent and the newer predicate wins`
     test <@ FunctionalInterleavingGrainMarker<RebindActor>.MayInterleave admitted @>
 
 let private conflictContract (grainTypeName: string) =
-    grainContract<ConflictActor, string, InterleaveProbeApi> () {
+    grainContract<ConflictActor, string, InterleaveProbeApi> {
         grainType grainTypeName
         version 1
         stringKey

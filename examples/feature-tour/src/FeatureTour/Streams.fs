@@ -65,7 +65,7 @@ type ProducerApi =
 [<RequireQualifiedAccess>]
 module ProducerApi =
     let contract =
-        grainContract<ProducerActor, string, ProducerApi> () {
+        grainContract<ProducerActor, string, ProducerApi> {
             grainType "tour.stream.producer"
             version 1
             stringKey
@@ -128,7 +128,7 @@ type ConsumerApi =
 [<RequireQualifiedAccess>]
 module ConsumerApi =
     let contract =
-        grainContract<ConsumerActor, string, ConsumerApi> () {
+        grainContract<ConsumerActor, string, ConsumerApi> {
             grainType "tour.stream.consumer"
             version 1
             stringKey

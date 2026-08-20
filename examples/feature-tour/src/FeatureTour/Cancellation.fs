@@ -32,7 +32,7 @@ type SlowApi =
 [<RequireQualifiedAccess>]
 module SlowApi =
     let contract =
-        grainContract<SlowActor, string, SlowApi> () {
+        grainContract<SlowActor, string, SlowApi> {
             grainType "tour.slow"
             version 1
             stringKey

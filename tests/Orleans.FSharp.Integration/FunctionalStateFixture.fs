@@ -294,7 +294,7 @@ let detachedState =
     PersistentState.create<AuditState> "detached" FunctionalStateProviders.Audit
 
 let ledgerContract =
-    grainContract<LedgerActor, string, LedgerApi> () {
+    grainContract<LedgerActor, string, LedgerApi> {
         grainType FunctionalStateGrainTypes.Ledger
         version 1
         stringKey
@@ -671,7 +671,7 @@ let ledgerDefinition =
 type EphemeralActor = private EphemeralActor of unit
 
 let ephemeralContract =
-    grainContract<EphemeralActor, string, LedgerApi> () {
+    grainContract<EphemeralActor, string, LedgerApi> {
         grainType FunctionalStateGrainTypes.Ephemeral
         version 1
         stringKey

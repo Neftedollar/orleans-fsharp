@@ -58,7 +58,7 @@ type RateLimiterApi =
 [<RequireQualifiedAccess>]
 module RateLimiterApi =
     let contract =
-        grainContract<RateLimiterActor, string, RateLimiterApi> () {
+        grainContract<RateLimiterActor, string, RateLimiterApi> {
             grainType "rate-limiter.token-bucket"
             version 1
             stringKey

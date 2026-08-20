@@ -162,7 +162,7 @@ let accountLedger =
     TransactionalState.create<Ledger> "ledger" PhaseDStorage.Transactional
 
 let accountContract =
-    grainContract<AccountActor, string, AccountApi> () {
+    grainContract<AccountActor, string, AccountApi> {
         grainType PhaseDGrainTypes.Account
         version 1
         stringKey
@@ -336,7 +336,7 @@ type AtmApi =
       callNotAllowed: string -> Task<string> }
 
 let atmContract =
-    grainContract<AtmActor, string, AtmApi> () {
+    grainContract<AtmActor, string, AtmApi> {
         grainType PhaseDGrainTypes.Atm
         version 1
         stringKey
@@ -451,7 +451,7 @@ let mixedNotes =
     PersistentState.create<string list> "notes" PhaseDStorage.Persistent
 
 let mixedContract =
-    grainContract<MixedActor, string, MixedApi> () {
+    grainContract<MixedActor, string, MixedApi> {
         grainType PhaseDGrainTypes.Mixed
         version 1
         stringKey

@@ -32,7 +32,7 @@ type LedgerEvent =
     | Reset
 
 let private contract =
-    grainContract<LedgerActor, string, LedgerApi> () {
+    grainContract<LedgerActor, string, LedgerApi> {
         grainType "journal.ledger"
         stringKey
     }
@@ -196,7 +196,7 @@ let ``a journaled definition over a contract with a derived grain type is reject
     // the contract layer refuses to derive a grain type from one at all — which would make this
     // test pass for the wrong reason.
     let derived =
-        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, LedgerApi> () { stringKey }
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, LedgerApi> { stringKey }
 
     let error =
         throws (fun () ->
@@ -219,7 +219,7 @@ let ``a journaled definition over a contract with a derived grain type is reject
 [<Fact>]
 let ``a journaled definition over a transactional contract is rejected`` () =
     let transactional =
-        grainContract<TransactionalLedgerActor, string, LedgerApi> () {
+        grainContract<TransactionalLedgerActor, string, LedgerApi> {
             grainType "journal.transactional"
             stringKey
             transactional Orleans.TransactionOption.CreateOrJoin (_.credit)

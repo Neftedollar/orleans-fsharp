@@ -70,7 +70,7 @@ type AnnouncerApi =
 [<RequireQualifiedAccess>]
 module AnnouncerApi =
     let contract =
-        grainContract<AnnouncerActor, string, AnnouncerApi> () {
+        grainContract<AnnouncerActor, string, AnnouncerApi> {
             grainType "tour.announcer"
             version 1
             stringKey

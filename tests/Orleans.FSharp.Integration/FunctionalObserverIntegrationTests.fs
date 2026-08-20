@@ -52,7 +52,7 @@ type private ObserverRoomState =
 
 module ObserverRoomContract =
     let contract =
-        grainContract<ObserverRoomActor, string, ObserverRoomApi> () {
+        grainContract<ObserverRoomActor, string, ObserverRoomApi> {
             grainType "functional.observer.room"
             version 1
             stringKey

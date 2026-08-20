@@ -63,7 +63,7 @@ type LedgerApi =
 [<RequireQualifiedAccess>]
 module LedgerApi =
     let contract =
-        grainContract<LedgerActor, string, LedgerApi> () {
+        grainContract<LedgerActor, string, LedgerApi> {
             // Explicit grainType is REQUIRED here, not stylistic: a definition that attaches
             // stateFrom / usePersistentState / onReminder may not rely on the derived default,
             // because renaming the brand would silently move the durable record.

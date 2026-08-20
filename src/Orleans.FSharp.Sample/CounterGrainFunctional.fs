@@ -24,7 +24,7 @@ type CounterApi =
 module CounterApi =
     /// <summary>The counter's functional grain contract: type, version, and int64 key mapping.</summary>
     let contract =
-        grainContract<CounterActor, int64, CounterApi> () {
+        grainContract<CounterActor, int64, CounterApi> {
             grainType "counter.functional"
             version 1
             int64Key

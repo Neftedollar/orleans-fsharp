@@ -26,7 +26,7 @@ module VersionedApi =
 
     /// <summary>The contract the silo hosts, and the one a matching caller binds.</summary>
     let v1 =
-        grainContract<VersionedActor, string, VersionedApi> () {
+        grainContract<VersionedActor, string, VersionedApi> {
             grainType GrainType
             version 1
             stringKey
@@ -39,7 +39,7 @@ module VersionedApi =
     /// than negotiating down.
     /// </summary>
     let v2 =
-        grainContract<VersionedActor, string, VersionedApi> () {
+        grainContract<VersionedActor, string, VersionedApi> {
             grainType GrainType
             version 2
             stringKey
@@ -81,7 +81,7 @@ module RollingApi =
     /// still the ones this definition declares — nothing converts between shapes.
     /// </summary>
     let v3 =
-        grainContract<RollingActor, string, RollingApi> () {
+        grainContract<RollingActor, string, RollingApi> {
             grainType GrainType
             version 3
             stringKey
@@ -91,7 +91,7 @@ module RollingApi =
 
     /// <summary>What the previous release still sends during a rolling deploy.</summary>
     let v2 =
-        grainContract<RollingActor, string, RollingApi> () {
+        grainContract<RollingActor, string, RollingApi> {
             grainType GrainType
             version 2
             stringKey
@@ -99,7 +99,7 @@ module RollingApi =
 
     /// <summary>One release older still — below the admitted floor.</summary>
     let v1 =
-        grainContract<RollingActor, string, RollingApi> () {
+        grainContract<RollingActor, string, RollingApi> {
             grainType GrainType
             version 1
             stringKey

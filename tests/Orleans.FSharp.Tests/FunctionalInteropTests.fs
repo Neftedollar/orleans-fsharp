@@ -40,7 +40,7 @@ type FacadeApi =
       typing: (string * bool) -> Task<unit> }
 
 let private contract =
-    grainContract<InteropActor, string, FacadeApi> () {
+    grainContract<InteropActor, string, FacadeApi> {
         grainType "interop.room"
         version 2
         stringKey
@@ -60,7 +60,7 @@ type AmbiguousApi =
       Say: string -> Task<int> }
 
 let private ambiguousContract =
-    grainContract<AmbiguousActor, string, AmbiguousApi> () {
+    grainContract<AmbiguousActor, string, AmbiguousApi> {
         grainType "interop.ambiguous"
         stringKey
     }
@@ -584,7 +584,7 @@ let ``creating a facade is where the per-member generic closing happens`` () =
     // The counterweight to the test above: if planning closed no generics either, the zero there
     // would say nothing about where the work moved to.
     let counterweightContract =
-        grainContract<CounterweightActor, string, CounterweightApi> () {
+        grainContract<CounterweightActor, string, CounterweightApi> {
             grainType "interop.counterweight"
             stringKey
         }
@@ -630,7 +630,7 @@ type ExtraApi =
       notify: string -> Task<unit> }
 
 let private extraContract =
-    grainContract<ExtraActor, string, ExtraApi> () {
+    grainContract<ExtraActor, string, ExtraApi> {
         grainType "interop.extra"
         stringKey
         oneWay (_.notify)

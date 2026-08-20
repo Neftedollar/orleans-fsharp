@@ -165,7 +165,7 @@ let private gateDefinition (contract: GrainContract<'Actor, string, GateApi>) =
     }
 
 let reentrantContract =
-    grainContract<ReentrantActor, string, GateApi> () {
+    grainContract<ReentrantActor, string, GateApi> {
         grainType PhaseCGrainTypes.Reentrant
         version 1
         stringKey
@@ -174,7 +174,7 @@ let reentrantContract =
     }
 
 let plainContract =
-    grainContract<PlainActor, string, GateApi> () {
+    grainContract<PlainActor, string, GateApi> {
         grainType PhaseCGrainTypes.Plain
         version 1
         stringKey
@@ -195,7 +195,7 @@ type ReentrantWorkerActor = private ReentrantWorkerActor of unit
 /// worker, so a second call has nowhere else to go: it either interleaves on that worker or waits.
 /// </summary>
 let reentrantWorkerContract =
-    grainContract<ReentrantWorkerActor, string, GateApi> () {
+    grainContract<ReentrantWorkerActor, string, GateApi> {
         grainType PhaseCGrainTypes.ReentrantWorker
         version 1
         stringKey
@@ -244,7 +244,7 @@ type SelectiveApi =
 /// request currently executing.
 /// </summary>
 let selectiveContract =
-    grainContract<SelectiveActor, string, SelectiveApi> () {
+    grainContract<SelectiveActor, string, SelectiveApi> {
         grainType PhaseCGrainTypes.Selective
         version 1
         stringKey
@@ -281,7 +281,7 @@ type ThrowingApi =
       boom: unit -> Task<string> }
 
 let throwingContract =
-    grainContract<ThrowingActor, string, ThrowingApi> () {
+    grainContract<ThrowingActor, string, ThrowingApi> {
         grainType PhaseCGrainTypes.Throwing
         version 1
         stringKey
@@ -331,7 +331,7 @@ type VersionedApi =
 
 /// <summary>The hosted contract: version 4, admitting 3 and 4, with one v4-only operation.</summary>
 let tolerantV4 =
-    grainContract<TolerantActor, string, VersionedApi> () {
+    grainContract<TolerantActor, string, VersionedApi> {
         grainType PhaseCGrainTypes.Tolerant
         version 4
         stringKey
@@ -347,7 +347,7 @@ let tolerantV4 =
 /// expectation — is a genuine v3 request and not a v4 one with a field overwritten.
 /// </summary>
 let tolerantV3 =
-    grainContract<TolerantActor, string, VersionedApi> () {
+    grainContract<TolerantActor, string, VersionedApi> {
         grainType PhaseCGrainTypes.Tolerant
         version 3
         stringKey
@@ -361,7 +361,7 @@ let tolerantV3 =
 /// exactly what "accepting a version asserts wire compatibility" is about.
 /// </summary>
 let tolerantV3Reflagged =
-    grainContract<TolerantActor, string, VersionedApi> () {
+    grainContract<TolerantActor, string, VersionedApi> {
         grainType PhaseCGrainTypes.Tolerant
         version 3
         stringKey
@@ -369,7 +369,7 @@ let tolerantV3Reflagged =
 
 /// <summary>One version below the admitted floor.</summary>
 let tolerantV2 =
-    grainContract<TolerantActor, string, VersionedApi> () {
+    grainContract<TolerantActor, string, VersionedApi> {
         grainType PhaseCGrainTypes.Tolerant
         version 2
         stringKey
@@ -389,7 +389,7 @@ let tolerantDefinition = versionedHandlers tolerantV4
 
 /// <summary>The same shape at version 4 on the DEFAULT policy, so the old rejection is pinned.</summary>
 let strictV4 =
-    grainContract<StrictActor, string, VersionedApi> () {
+    grainContract<StrictActor, string, VersionedApi> {
         grainType PhaseCGrainTypes.Strict
         version 4
         stringKey
@@ -397,7 +397,7 @@ let strictV4 =
     }
 
 let strictV3 =
-    grainContract<StrictActor, string, VersionedApi> () {
+    grainContract<StrictActor, string, VersionedApi> {
         grainType PhaseCGrainTypes.Strict
         version 3
         stringKey

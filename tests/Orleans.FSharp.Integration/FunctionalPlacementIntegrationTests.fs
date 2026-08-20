@@ -37,7 +37,7 @@ module FunctionalPlacementDomain =
         let GrainType = "placement.worker"
 
         let contract =
-            grainContract<PlacementWorkerActor, string, PlacementWorkerApi> () {
+            grainContract<PlacementWorkerActor, string, PlacementWorkerApi> {
                 grainType GrainType
                 version 1
                 stringKey
@@ -79,7 +79,7 @@ module FunctionalPlacementDomain =
         let GrainType = "placement.preferlocal"
 
         let contract =
-            grainContract<PlacementPreferLocalActor, string, PlacementPreferLocalApi> () {
+            grainContract<PlacementPreferLocalActor, string, PlacementPreferLocalApi> {
                 grainType GrainType
                 version 1
                 stringKey
@@ -124,7 +124,7 @@ module FunctionalPlacementDomain =
         let GrainType = "placement.caller"
 
         let contract =
-            grainContract<PlacementCallerActor, string, PlacementCallerApi> () {
+            grainContract<PlacementCallerActor, string, PlacementCallerApi> {
                 grainType GrainType
                 version 1
                 stringKey
@@ -181,7 +181,7 @@ module FunctionalPlacementDomain =
         let GrainType = "placement.lifecycleprobe"
 
         let contract =
-            grainContract<PlacementLifecycleProbeActor, string, PlacementLifecycleProbeApi> () {
+            grainContract<PlacementLifecycleProbeActor, string, PlacementLifecycleProbeApi> {
                 grainType GrainType
                 version 1
                 stringKey

@@ -123,7 +123,7 @@ type AccountApi =
 [<RequireQualifiedAccess>]
 module AccountApi =
     let contract =
-        grainContract<AccountActor, string, AccountApi> () {
+        grainContract<AccountActor, string, AccountApi> {
             grainType "account"
             version 1
             stringKey

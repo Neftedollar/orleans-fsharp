@@ -40,7 +40,7 @@ type DashboardApi =
 [<RequireQualifiedAccess>]
 module DashboardApi =
     let contract =
-        grainContract<DashboardActor, string, DashboardApi> () {
+        grainContract<DashboardActor, string, DashboardApi> {
             grainType "signalr-realtime.dashboard.functional"
             version 1
             stringKey

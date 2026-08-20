@@ -700,6 +700,10 @@ module ObserverContractBuilders =
 
     /// <summary>
     /// The <c>observerContract</c> computation expression: seal one observer type's push
-    /// operations from a handler record whose every field is <c>'Msg -&gt; Task&lt;unit&gt;</c>.
+    /// operations from a handler record whose every field is <c>'Msg -&gt; Task&lt;unit&gt;</c>,
+    /// for example <c>observerContract&lt;RoomObserver, RoomObserverApi&gt; { ... }</c>. Like
+    /// <c>grainContract</c>, this is a type function: naming it takes no argument and yields a
+    /// fresh builder every time.
     /// </summary>
-    let observerContract<'Brand, 'Api> () = ObserverContractBuilder<'Brand, 'Api>()
+    let observerContract<'Brand, 'Api> : ObserverContractBuilder<'Brand, 'Api> =
+        ObserverContractBuilder<'Brand, 'Api>()

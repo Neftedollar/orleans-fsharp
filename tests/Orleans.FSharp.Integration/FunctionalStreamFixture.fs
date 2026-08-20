@@ -193,7 +193,7 @@ type PoisonState = { acceptedItems: string list }
 type PoisonApi = { accepted: unit -> Task<string list> }
 
 let sinkContract =
-    grainContract<SinkActor, string, SinkApi> () {
+    grainContract<SinkActor, string, SinkApi> {
         grainType StreamGrainTypes.Sink
         version 1
         stringKey
@@ -204,7 +204,7 @@ let sinkContract =
     }
 
 let poisonContract =
-    grainContract<PoisonActor, string, PoisonApi> () {
+    grainContract<PoisonActor, string, PoisonApi> {
         grainType StreamGrainTypes.Poison
         version 1
         stringKey
@@ -276,7 +276,7 @@ let sinkDefinition =
     }
 
 let counterContract =
-    grainContract<CounterActor, int64, CounterApi> () {
+    grainContract<CounterActor, int64, CounterApi> {
         grainType StreamGrainTypes.Counter
         version 1
         int64Key
@@ -301,7 +301,7 @@ let counterDefinition =
     }
 
 let workerContract =
-    grainContract<WorkerActor, string, WorkerApi> () {
+    grainContract<WorkerActor, string, WorkerApi> {
         grainType "functional.streamworker"
         version 1
         stringKey

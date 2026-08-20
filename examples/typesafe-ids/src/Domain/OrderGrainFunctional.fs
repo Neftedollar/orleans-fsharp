@@ -35,7 +35,7 @@ type OrderApi =
 [<RequireQualifiedAccess>]
 module OrderApi =
     let contract =
-        grainContract<OrderActor, int64<OrderId>, OrderApi> () {
+        grainContract<OrderActor, int64<OrderId>, OrderApi> {
             grainType "typesafe-ids.order.functional"
             version 1
             int64KeyMapped rawId orderId

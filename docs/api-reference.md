@@ -30,11 +30,11 @@ handlers to it. See [Functional Grain Runtime](functional-grains.md) for the ful
 
 | Function | Signature | Description |
 |---|---|---|
-| `grainContract<'Actor, 'Key, 'Api> ()` | `unit -> GrainContractBuilder<'Actor,'Key,'Api>` | Opens the contract CE |
-| `contract<'Key, 'Api> ()` | `unit -> GrainContractBuilder<'Api,'Key,'Api>` | Short form: the API record is its own actor brand ([details](functional-grains.md#the-short-form-the-api-record-as-its-own-brand)) |
+| `grainContract<'Actor, 'Key, 'Api>` | `unit -> GrainContractBuilder<'Actor,'Key,'Api>` | Opens the contract CE |
+| `contract<'Key, 'Api>` | `unit -> GrainContractBuilder<'Api,'Key,'Api>` | Short form: the API record is its own actor brand ([details](functional-grains.md#the-short-form-the-api-record-as-its-own-brand)) |
 | `grainFor contract` | `GrainContract<...> -> FunctionalGrainDefinitionBuilder<...>` | Opens the definition CE |
 | `journaledGrainFor contract` | `GrainContract<...> -> FunctionalJournaledGrainDefinitionBuilder<...>` | Opens the journaled definition CE ([Event Sourcing](event-sourcing.md)) |
-| `observerContract<'Brand, 'Api> ()` | `unit -> ObserverContractBuilder<'Brand,'Api>` | Opens the observer contract CE |
+| `observerContract<'Brand, 'Api>` | `unit -> ObserverContractBuilder<'Brand,'Api>` | Opens the observer contract CE |
 | `FunctionalGrain.ref` | `contract -> IGrainFactory -> 'Key -> 'Api` | Binds a typed API record |
 | `FunctionalGrain.rawRef` | `contract -> IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor,'Key,'Api>` | Binds the typed wrapper |
 | `FunctionalGrain.streamId` | `contract -> string -> 'Key -> StreamId` | Stream id whose key is the contract's own grain-key bytes |
@@ -44,7 +44,7 @@ handlers to it. See [Functional Grain Runtime](functional-grains.md) for the ful
 application generalize -- see [Functional grains](functional-grains.md), "The `FunctionalGrain`
 static-class inference rule".
 
-### Contract builder — `grainContract<'Actor, 'Key, 'Api> () { }`
+### Contract builder — `grainContract<'Actor, 'Key, 'Api> { }`
 
 | Keyword | Signature | Description |
 |---|---|---|
@@ -211,7 +211,7 @@ A handler record whose every field is `'Msg -> Task<unit>`. Push to a client-hos
 no application code generation; see [Functional grains](functional-grains.md), "Push to clients:
 functional observers".
 
-#### `observerContract<'Brand, 'Api> () { }`
+#### `observerContract<'Brand, 'Api> { }`
 
 | Keyword | Signature | Description |
 |---|---|---|

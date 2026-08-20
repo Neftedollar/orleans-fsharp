@@ -45,7 +45,7 @@ type BindApi =
       typing: bool -> Task<unit> }
 
 let private contract =
-    grainContract<BindActor, string, BindApi> () {
+    grainContract<BindActor, string, BindApi> {
         grainType "bind.test"
         version 3
         stringKey
@@ -66,7 +66,7 @@ type PreflightActor = private PreflightActor of unit
 type PreflightApi = { send: Unserializable -> Task<int> }
 
 let private preflightContract =
-    grainContract<PreflightActor, string, PreflightApi> () {
+    grainContract<PreflightActor, string, PreflightApi> {
         grainType "bind.preflight"
         stringKey
     }
@@ -479,7 +479,7 @@ type IsolationApi =
       blob: byte[] -> Task<byte[]> }
 
 let private isolationContract =
-    grainContract<IsolationActor, string, IsolationApi> () {
+    grainContract<IsolationActor, string, IsolationApi> {
         grainType "bind.isolation"
         stringKey
     }
@@ -632,7 +632,7 @@ let ``sealing a contract is where reflection, selectors, and generic closing hap
     let counters = FunctionalInstrumentation.start ()
 
     try
-        grainContract<PreflightActor, string, PreflightApi> () {
+        grainContract<PreflightActor, string, PreflightApi> {
             grainType "bind.instrumented"
             stringKey
         }
@@ -824,7 +824,7 @@ type ShapeApi =
       lookup: string option -> Task<Result<int, string>> }
 
 let private shapeContract =
-    grainContract<ShapeActor, string, ShapeApi> () {
+    grainContract<ShapeActor, string, ShapeApi> {
         grainType "bind.shape"
         stringKey
     }
@@ -872,7 +872,7 @@ let ``unit arguments, unit replies, options, and results cross the byte boundary
 type DerivedGrainTypeApi = { ping: string -> Task<string> }
 
 let private derivedGrainTypeContract =
-    grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, DerivedGrainTypeApi> () {
+    grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, DerivedGrainTypeApi> {
         stringKey
     }
 

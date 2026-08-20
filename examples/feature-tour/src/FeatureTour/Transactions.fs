@@ -69,7 +69,7 @@ module AccountApi =
     let ledger = TransactionalState.create<Ledger> "ledger" Storage
 
     let contract =
-        grainContract<AccountActor, string, AccountApi> () {
+        grainContract<AccountActor, string, AccountApi> {
             grainType GrainType
             version 1
             stringKey
@@ -186,7 +186,7 @@ module TellerApi =
     /// grain has.
     /// </summary>
     let contract =
-        grainContract<TellerActor, string, TellerApi> () {
+        grainContract<TellerActor, string, TellerApi> {
             grainType GrainType
             version 1
             stringKey

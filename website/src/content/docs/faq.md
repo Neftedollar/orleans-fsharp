@@ -77,7 +77,7 @@ type CounterApi =
 [<RequireQualifiedAccess>]
 module CounterApi =
     let contract =
-        grainContract<CounterActor, string, CounterApi> () {
+        grainContract<CounterActor, string, CounterApi> {
             grainType "counter"
             version 1
             stringKey

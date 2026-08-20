@@ -37,7 +37,7 @@ type CounterApi =
 
 // 2. The contract: stable wire identity — grain type, version, key encoding
 let counterContract =
-    contract<string, CounterApi> () {
+    contract<string, CounterApi> {
         grainType "counter"
         version 1
         stringKey

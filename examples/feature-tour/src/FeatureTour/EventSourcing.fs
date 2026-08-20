@@ -75,7 +75,7 @@ module BalanceApi =
     let StateGrainType = "tour.journal.state"
 
     let logContract =
-        grainContract<LogJournalActor, string, BalanceApi> () {
+        grainContract<LogJournalActor, string, BalanceApi> {
             grainType LogGrainType
             version 1
             stringKey
@@ -84,7 +84,7 @@ module BalanceApi =
         }
 
     let stateContract =
-        grainContract<StateJournalActor, string, BalanceApi> () {
+        grainContract<StateJournalActor, string, BalanceApi> {
             grainType StateGrainType
             version 1
             stringKey

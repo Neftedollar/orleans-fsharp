@@ -48,7 +48,7 @@ type ExpiringApi =
 type ExpiringActor = private ExpiringActor of unit
 
 let expiringContract =
-    grainContract<ExpiringActor, string, ExpiringApi> () {
+    grainContract<ExpiringActor, string, ExpiringApi> {
         grainType ExpiringGrainType
         version 1
         stringKey
