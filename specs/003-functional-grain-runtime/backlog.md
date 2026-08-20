@@ -137,3 +137,10 @@ Each item is grounded in a verified finding; pointers name the evidence.
     documented in resilience.md and pinned by a test. A validating smart
     constructor over `ResilienceOptions` would move the failure to where the
     values are written, but that is a surface addition.
+16. **`GrainResilience.execute`'s circuit breaker can never trip** (found
+    during the item-12 fix, 2026-08-20, measured 5/5): each call builds a
+    fresh pipeline, so breaker state never accumulates — and the breaker
+    sits outside retry, seeing one outcome per execution. A reused
+    `buildPipeline` opens on call 3 as configured. Docs now state this and
+    tests pin it; changing `execute` to share breaker state is a semantic
+    (and surprising) change deliberately left for an explicit decision.
