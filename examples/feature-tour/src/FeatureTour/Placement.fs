@@ -76,7 +76,7 @@ module WorkerApi =
     let MaxLocalWorkers = 4
 
     let contract =
-        grainContract<WorkerActor, string, WorkerApi> () {
+        grainContract<WorkerActor, string, WorkerApi> {
             grainType GrainType
             version 1
             stringKey

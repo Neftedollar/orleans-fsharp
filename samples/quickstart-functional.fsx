@@ -24,7 +24,7 @@ type HelloApi = { sayHello: string -> Task<string> }
 [<RequireQualifiedAccess>]
 module HelloApi =
     let contract =
-        grainContract<HelloActor, int64, HelloApi> () {
+        grainContract<HelloActor, int64, HelloApi> {
             grainType "quickstart.hello.functional"
             version 1
             int64Key

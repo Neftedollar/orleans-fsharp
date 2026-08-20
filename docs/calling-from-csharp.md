@@ -90,7 +90,7 @@ type RoomApi = { join: string -> Task<unit>; ... }   // the record
 
 [<RequireQualifiedAccess>]
 module RoomApi =                                      // compiled as RoomApiModule
-    let contract = grainContract<RoomActor, string, RoomApi> () { ... }
+    let contract = grainContract<RoomActor, string, RoomApi> { ... }
 ```
 
 ```csharp

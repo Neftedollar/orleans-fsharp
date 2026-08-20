@@ -52,7 +52,7 @@ type RuntimeState = { last: string }
 let private runtimeState = PersistentState.create<RuntimeState> "state" "Default"
 
 let private contractFor<'Actor> (name: string) =
-    grainContract<'Actor, string, RuntimeApi> () {
+    grainContract<'Actor, string, RuntimeApi> {
         grainType name
         stringKey
         readOnly (_.read)
@@ -111,7 +111,7 @@ type TinyApi = { touch: unit -> Task<unit> }
 type TinyState = { touched: bool }
 
 let private collectionAgeContract =
-    grainContract<CollectionAgeActor, string, TinyApi> () {
+    grainContract<CollectionAgeActor, string, TinyApi> {
         grainType "runtime.collectionage"
         stringKey
     }
@@ -131,7 +131,7 @@ type StatelessWorkerActor = private StatelessWorkerActor of unit
 type PreferLocalActor = private PreferLocalActor of unit
 
 let private statelessWorkerContract =
-    grainContract<StatelessWorkerActor, string, TinyApi> () {
+    grainContract<StatelessWorkerActor, string, TinyApi> {
         grainType "runtime.statelessworker"
         stringKey
     }
@@ -349,7 +349,7 @@ let ``the registry rejects registration after the freeze`` () =
 [<Fact>]
 let ``an ephemeral definition with a derived grain type seals and registers`` () =
     let contract =
-        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, TinyApi> () { stringKey }
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, TinyApi> { stringKey }
 
     let definition =
         grainFor contract {
@@ -374,12 +374,12 @@ let ``an ephemeral definition with a derived grain type seals and registers`` ()
 [<Fact>]
 let ``the registry rejects two derived grain types whose actor brands collide on CLR simple name`` () =
     let contractOne =
-        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.CollisionOne.CounterActor, string, TinyApi> () {
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.CollisionOne.CounterActor, string, TinyApi> {
             stringKey
         }
 
     let contractTwo =
-        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.CollisionTwo.CounterActor, string, TinyApi> () {
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.CollisionTwo.CounterActor, string, TinyApi> {
             stringKey
         }
 
@@ -618,7 +618,7 @@ let ``placement publishes exactly what the matching live Orleans placement attri
     let actor = typeof<PreferLocalActor> // a stand-in marker CLR type; only the grain-type match matters here
 
     let contract =
-        grainContract<PreferLocalActor, string, TinyApi> () {
+        grainContract<PreferLocalActor, string, TinyApi> {
             grainType grainTypeName
             stringKey
         }
@@ -657,7 +657,7 @@ let private streamBindingHook _ state (_: string) = task { return state }
 
 let private streamBindingDefinition =
     let contract =
-        grainContract<StreamBindingActor, string, TinyApi> () {
+        grainContract<StreamBindingActor, string, TinyApi> {
             grainType "runtime.binding.stream"
             stringKey
         }
@@ -670,7 +670,7 @@ let private streamBindingDefinition =
 
 let private channelBindingDefinition =
     let contract =
-        grainContract<ChannelBindingActor, string, TinyApi> () {
+        grainContract<ChannelBindingActor, string, TinyApi> {
             grainType "runtime.binding.channel"
             stringKey
         }
@@ -684,7 +684,7 @@ let private channelBindingDefinition =
 /// <summary>The same namespace declared on two providers: one binding group, not two.</summary>
 let private twoProviderDefinition =
     let contract =
-        grainContract<TwoProviderActor, string, TinyApi> () {
+        grainContract<TwoProviderActor, string, TinyApi> {
             grainType "runtime.binding.twoproviders"
             stringKey
         }
@@ -1311,7 +1311,7 @@ type PreflightApi = { store: SiloOnlyPayload -> Task<SiloOnlyPayload> }
 
 let private preflightDefinition =
     let contract =
-        grainContract<PreflightActor, string, PreflightApi> () {
+        grainContract<PreflightActor, string, PreflightApi> {
             grainType "preflight.probe"
             stringKey
         }

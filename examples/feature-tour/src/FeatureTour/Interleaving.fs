@@ -90,7 +90,7 @@ module GateApi =
 
     /// <summary>One operation on the contract makes the whole activation reentrant.</summary>
     let reentrant =
-        grainContract<ReentrantActor, string, GateApi> () {
+        grainContract<ReentrantActor, string, GateApi> {
             grainType ReentrantGrainType
             version 1
             stringKey
@@ -100,7 +100,7 @@ module GateApi =
 
     /// <summary>The identical contract WITHOUT it: the negative control.</summary>
     let serial =
-        grainContract<SerialActor, string, GateApi> () {
+        grainContract<SerialActor, string, GateApi> {
             grainType SerialGrainType
             version 1
             stringKey
@@ -177,7 +177,7 @@ module SelectiveApi =
     let GrainType = "tour.selective"
 
     let contract =
-        grainContract<SelectiveActor, string, SelectiveApi> () {
+        grainContract<SelectiveActor, string, SelectiveApi> {
             grainType GrainType
             version 1
             stringKey

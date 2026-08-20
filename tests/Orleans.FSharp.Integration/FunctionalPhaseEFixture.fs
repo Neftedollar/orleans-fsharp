@@ -389,7 +389,7 @@ type LogAccountActor = private LogAccountActor of unit
 type StateAccountActor = private StateAccountActor of unit
 
 let logAccountContract =
-    grainContract<LogAccountActor, string, AccountApi> () {
+    grainContract<LogAccountActor, string, AccountApi> {
         grainType PhaseEGrainTypes.LogAccount
         version 1
         stringKey
@@ -402,7 +402,7 @@ let logAccountContract =
     }
 
 let stateAccountContract =
-    grainContract<StateAccountActor, string, AccountApi> () {
+    grainContract<StateAccountActor, string, AccountApi> {
         grainType PhaseEGrainTypes.StateAccount
         version 1
         stringKey
@@ -454,7 +454,7 @@ type CounterApi =
       recycle: unit -> Task<unit> }
 
 let counterContract =
-    grainContract<CounterActor, int64, CounterApi> () {
+    grainContract<CounterActor, int64, CounterApi> {
         grainType PhaseEGrainTypes.Counter
         version 1
         int64Key

@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Orleans.FSharp" Version="3.*" />
+    <PackageReference Include="Orleans.FSharp" Version="4.*" />
     <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0" />
   </ItemGroup>
 

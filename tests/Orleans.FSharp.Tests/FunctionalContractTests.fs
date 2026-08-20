@@ -34,7 +34,7 @@ module LongFieldApi =
     let longFieldName = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 let private baseContract () =
-    grainContract<ChatActor, string, ChatApi> () {
+    grainContract<ChatActor, string, ChatApi> {
         grainType "chat.room"
         stringKey
     }
@@ -63,6 +63,30 @@ let ``a contract keeps grain type, default version, and declaration order`` () =
             contract.Operations |> Array.map (fun op -> op.OperationId) = [| "join"; "say"; "history"; "typing" |]
         @>
 
+/// <summary>
+/// An API record declared WITHOUT <c>[&lt;NoEquality; NoComparison&gt;]</c>. Every other fixture in
+/// the suite carries the attribute and the docs show it on every example, which reads as a
+/// requirement; the runtime never compares an API record, so it is not one. This fixture exists
+/// to keep that true -- if the shape rules ever start demanding it, this file stops compiling.
+/// </summary>
+type PlainApi =
+    { ping: string -> Task<int>
+      pong: unit -> Task<unit> }
+
+type PlainActor = private PlainActor of unit
+
+[<Fact>]
+let ``an API record needs no equality attributes`` () =
+    let contract =
+        grainContract<PlainActor, string, PlainApi> {
+            grainType "chat.plain"
+            stringKey
+            readOnly (_.ping)
+        }
+
+    test <@ contract.Operations |> Array.map (fun op -> op.FieldName) = [| "ping"; "pong" |] @>
+    test <@ contract.Operations.[0].IsReadOnly @>
+
 [<Fact>]
 let ``a contract records the exact argument and reply types`` () =
     let contract = baseContract ()
@@ -74,7 +98,7 @@ let ``a contract records the exact argument and reply types`` () =
 [<Fact>]
 let ``an explicit version is kept`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             version 7
             stringKey
@@ -89,7 +113,7 @@ let ``an explicit version is kept`` () =
 [<Fact>]
 let ``an omitted grain type derives the actor brand's CLR simple name`` () =
     let contract =
-        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, ChatApi> () { stringKey }
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, ChatApi> { stringKey }
 
     test <@ contract.GrainTypeName = "DerivableActor" @>
 
@@ -102,7 +126,7 @@ let ``an omitted grain type derives the actor brand's CLR simple name`` () =
 let ``a missing grain type on a nested actor brand fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () { stringKey } |> ignore)
+            grainContract<ChatActor, string, ChatApi> { stringKey } |> ignore)
 
     test <@ error.Message.Contains "nested" @>
     test <@ error.Message.Contains "explicit 'grainType'" @>
@@ -111,7 +135,7 @@ let ``a missing grain type on a nested actor brand fails contract construction``
 let ``a missing grain type on a generic actor brand fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.GenericActor<int>, string, ChatApi> () {
+            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.GenericActor<int>, string, ChatApi> {
                 stringKey
             }
             |> ignore)
@@ -131,7 +155,7 @@ let ``a missing grain type on a generic actor brand fails contract construction`
 let ``an over-length derived grain type fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``, string, ChatApi> () { stringKey }
+            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``, string, ChatApi> { stringKey }
             |> ignore)
 
     test <@ error.Message.Contains "the 'grainType' derived from actor brand" @>
@@ -141,7 +165,7 @@ let ``an over-length derived grain type fails contract construction`` () =
 let ``a blank grain type fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "   "
                 stringKey
             }
@@ -153,7 +177,7 @@ let ``a blank grain type fails contract construction`` () =
 let ``a NUL-containing grain type fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat\000room"
                 stringKey
             }
@@ -165,7 +189,7 @@ let ``a NUL-containing grain type fails contract construction`` () =
 let ``a newline-carrying grain type fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat\nroom"
                 stringKey
             }
@@ -179,7 +203,7 @@ let ``an over-length grain type fails contract construction with the transport's
 
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType tooLong
                 stringKey
             }
@@ -193,7 +217,7 @@ let ``a grain type at exactly the transport's bound is accepted`` () =
     let atLimit = String.replicate 512 "a"
 
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType atLimit
             stringKey
         }
@@ -211,7 +235,7 @@ let ``a grain type at exactly the transport's bound is accepted`` () =
 let ``an over-length derived operation ID from a double-backtick field name fails contract construction, naming the field`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, LongFieldApi> () {
+            grainContract<ChatActor, string, LongFieldApi> {
                 grainType "chat.room"
                 stringKey
             }
@@ -225,7 +249,7 @@ let ``an over-length derived operation ID from a double-backtick field name fail
 let ``a repeated grain type fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 grainType "chat.other"
                 stringKey
@@ -238,7 +262,7 @@ let ``a repeated grain type fails contract construction`` () =
 let ``a non-positive version fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 0
                 stringKey
@@ -251,7 +275,7 @@ let ``a non-positive version fails contract construction`` () =
 let ``a repeated version fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 2
                 version 3
@@ -269,7 +293,7 @@ let ``a repeated version fails contract construction`` () =
 let ``a missing key operation fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () { grainType "chat.room" } |> ignore)
+            grainContract<ChatActor, string, ChatApi> { grainType "chat.room" } |> ignore)
 
     test <@ error.Message.Contains "exactly one native or mapped key operation" @>
 
@@ -277,7 +301,7 @@ let ``a missing key operation fails contract construction`` () =
 let ``a repeated key operation fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 stringKeyMapped id id
@@ -293,7 +317,7 @@ let ``a repeated key operation fails contract construction`` () =
 [<Fact>]
 let ``an operation ID override replaces only that field's ID`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             operationId "enter" (_.join)
@@ -310,7 +334,7 @@ let ``an operation ID override replaces only that field's ID`` () =
 [<Fact>]
 let ``operation IDs are case-sensitive ordinal strings`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             operationId "JOIN" (_.join)
@@ -323,7 +347,7 @@ let ``operation IDs are case-sensitive ordinal strings`` () =
 let ``a duplicate final operation ID fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 operationId "say" (_.join)
@@ -336,7 +360,7 @@ let ``a duplicate final operation ID fails contract construction`` () =
 let ``a blank operation ID fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 operationId " " (_.join)
@@ -349,7 +373,7 @@ let ``a blank operation ID fails contract construction`` () =
 let ``a NUL-containing operation ID fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 operationId "jo\000in" (_.join)
@@ -362,7 +386,7 @@ let ``a NUL-containing operation ID fails contract construction`` () =
 let ``a newline-carrying operation ID fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 operationId "jo\nin" (_.join)
@@ -377,7 +401,7 @@ let ``an over-length operation ID fails contract construction with the transport
 
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 operationId tooLong (_.join)
@@ -392,7 +416,7 @@ let ``an operation ID at exactly the transport's bound is accepted`` () =
     let atLimit = String.replicate 512 "a"
 
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             operationId atLimit (_.join)
@@ -404,7 +428,7 @@ let ``an operation ID at exactly the transport's bound is accepted`` () =
 let ``a repeated operation ID override on one field fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 operationId "enter" (_.join)
@@ -421,7 +445,7 @@ let ``a repeated operation ID override on one field fails contract construction`
 [<Fact>]
 let ``policies land on the selected fields only`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             readOnly (_.history)
@@ -440,7 +464,7 @@ let ``policies land on the selected fields only`` () =
 [<Fact>]
 let ``readOnly plus alwaysInterleave is accepted`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             readOnly (_.history)
@@ -453,7 +477,7 @@ let ``readOnly plus alwaysInterleave is accepted`` () =
 let ``a repeated policy of the same kind on one field fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 readOnly (_.history)
@@ -467,7 +491,7 @@ let ``a repeated policy of the same kind on one field fails contract constructio
 let ``oneWay combined with readOnly fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 oneWay (_.typing)
@@ -481,7 +505,7 @@ let ``oneWay combined with readOnly fails contract construction`` () =
 let ``alwaysInterleave without readOnly or oneWay fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 alwaysInterleave (_.say)
@@ -540,7 +564,7 @@ let ``a changed grain type changes the grain identity`` () =
     let first = baseContract ()
 
     let second =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.lobby"
             stringKey
         }
@@ -552,7 +576,7 @@ let ``a changed key codec changes the grain identity`` () =
     let plain = baseContract ()
 
     let prefixed =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKeyMapped (fun key -> "room:" + key) (fun native -> native.Substring 5)
         }
@@ -567,7 +591,7 @@ let ``contract identity is independent of CLR and module names`` () =
     let first = baseContract ()
 
     let second =
-        grainContract<FunctionalShapeTests.SampleApi, string, FunctionalShapeTests.SampleApi> () {
+        grainContract<FunctionalShapeTests.SampleApi, string, FunctionalShapeTests.SampleApi> {
             grainType "chat.room"
             stringKey
         }
@@ -588,7 +612,7 @@ let ``a contract is not reentrant and declares no interleave predicate by defaul
 [<Fact>]
 let ``reentrant marks the whole contract`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             reentrant
@@ -599,7 +623,7 @@ let ``reentrant marks the whole contract`` () =
 [<Fact>]
 let ``mayInterleave stores the declared predicate`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             mayInterleave (fun metadata -> metadata.OperationId = "history")
@@ -611,7 +635,7 @@ let ``mayInterleave stores the declared predicate`` () =
 let ``reentrant is rejected twice`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 reentrant
@@ -625,7 +649,7 @@ let ``reentrant is rejected twice`` () =
 let ``mayInterleave is rejected twice`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 mayInterleave (fun _ -> true)
@@ -639,7 +663,7 @@ let ``mayInterleave is rejected twice`` () =
 let ``mayInterleave rejects a null predicate`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 mayInterleave (Unchecked.defaultof<IFunctionalRequestMetadata -> bool>)
@@ -652,7 +676,7 @@ let ``mayInterleave rejects a null predicate`` () =
 let ``reentrant and mayInterleave are mutually exclusive`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 reentrant
@@ -666,7 +690,7 @@ let ``reentrant and mayInterleave are mutually exclusive`` () =
 let ``reentrant rejects alwaysInterleave on an operation`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 reentrant
@@ -681,7 +705,7 @@ let ``reentrant rejects alwaysInterleave on an operation`` () =
 let ``mayInterleave rejects alwaysInterleave on an operation`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 mayInterleave (fun _ -> true)
@@ -699,7 +723,7 @@ let ``mayInterleave rejects alwaysInterleave on an operation`` () =
 [<Fact>]
 let ``reentrant keeps readOnly and oneWay legal`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             reentrant
@@ -726,7 +750,7 @@ let ``a contract accepts its own version exactly by default`` () =
 [<Fact>]
 let ``acceptsVersions BackwardCompatible lowers the admitted floor`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             version 4
             stringKey
@@ -740,7 +764,7 @@ let ``acceptsVersions BackwardCompatible lowers the admitted floor`` () =
 let ``acceptsVersions is rejected twice`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 4
                 stringKey
@@ -755,7 +779,7 @@ let ``acceptsVersions is rejected twice`` () =
 let ``a non-positive backward-compatible floor is rejected`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 4
                 stringKey
@@ -769,7 +793,7 @@ let ``a non-positive backward-compatible floor is rejected`` () =
 let ``a backward-compatible floor above the contract version is rejected`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 2
                 stringKey
@@ -782,7 +806,7 @@ let ``a backward-compatible floor above the contract version is rejected`` () =
 [<Fact>]
 let ``sinceVersion is recorded on the selected operation only`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             version 4
             stringKey
@@ -800,7 +824,7 @@ let ``sinceVersion is recorded on the selected operation only`` () =
 let ``sinceVersion is rejected twice on one operation`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 4
                 stringKey
@@ -816,7 +840,7 @@ let ``sinceVersion is rejected twice on one operation`` () =
 let ``a non-positive sinceVersion is rejected`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 4
                 stringKey
@@ -831,7 +855,7 @@ let ``a non-positive sinceVersion is rejected`` () =
 let ``a sinceVersion above the contract version is rejected`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 4
                 stringKey
@@ -851,7 +875,7 @@ let ``a sinceVersion above the contract version is rejected`` () =
 let ``a sinceVersion that can never reject is refused under the default policy`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 4
                 stringKey
@@ -866,7 +890,7 @@ let ``a sinceVersion that can never reject is refused under the default policy``
 let ``a sinceVersion at the backward-compatible floor is refused`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 version 4
                 stringKey
@@ -885,14 +909,14 @@ let ``a sinceVersion at the backward-compatible floor is refused`` () =
 [<Fact>]
 let ``a version policy changes neither operation IDs nor grain identity`` () =
     let strict =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             version 4
             stringKey
         }
 
     let tolerant =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             version 4
             stringKey
@@ -916,7 +940,7 @@ let ``a version policy changes neither operation IDs nor grain identity`` () =
 [<Fact>]
 let ``transactional stores the declared option and encodes it in the admission byte`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             transactional Orleans.TransactionOption.CreateOrJoin (_.join)
@@ -941,7 +965,7 @@ let ``transaction-scoped is exactly Create, CreateOrJoin, and Join`` () =
     // is true. Supported forwards a caller's context but starts none, so it is not scoped.
     let scopedFor (option: Orleans.TransactionOption) =
         let contract =
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 transactional option (_.join)
@@ -961,7 +985,7 @@ let ``transaction-scoped is exactly Create, CreateOrJoin, and Join`` () =
 let ``transactional is rejected twice on one operation`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 transactional Orleans.TransactionOption.Create (_.join)
@@ -975,7 +999,7 @@ let ``transactional is rejected twice on one operation`` () =
 let ``transactional rejects an undefined option value`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 transactional (enum<Orleans.TransactionOption> 99) (_.join)
@@ -988,7 +1012,7 @@ let ``transactional rejects an undefined option value`` () =
 let ``transactional rejects oneWay`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 oneWay (_.typing)
@@ -1002,7 +1026,7 @@ let ``transactional rejects oneWay`` () =
 let ``transactional rejects alwaysInterleave`` () =
     let error =
         throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> () {
+            grainContract<ChatActor, string, ChatApi> {
                 grainType "chat.room"
                 stringKey
                 readOnly (_.history)
@@ -1016,7 +1040,7 @@ let ``transactional rejects alwaysInterleave`` () =
 [<Fact>]
 let ``transactional composes with readOnly`` () =
     let contract =
-        grainContract<ChatActor, string, ChatApi> () {
+        grainContract<ChatActor, string, ChatApi> {
             grainType "chat.room"
             stringKey
             readOnly (_.history)

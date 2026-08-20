@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — `grainContract`, `contract` and `observerContract` are type functions; drop the
+  `()`.** The three computation-expression entry points are now explicit generic *values* of
+  their builder type rather than functions of `unit`, so a contract expression reads
+  `grainContract<RoomActor, RoomId, RoomApi> { ... }` and `observerContract<RoomObserver,
+  RoomObserverApi> { ... }` — the type arguments are followed by the braces directly. Migration is
+  one mechanical edit: delete the `()` between the type arguments and the `{`; nothing else about
+  the surface, the sealed contract, or the wire changes. F# re-evaluates a type function at every
+  mention, so each expression still opens on its own builder.
+  **This is a source-breaking change shipped as a non-major version by explicit owner decision.**
+  It lands one day after 4.0.0 (2026-08-19) and the same day as 4.0.1, while adoption of the
+  functional runtime is still nil, and the owner would rather pay the syntax cost now than pin the
+  parenthesis into the API for a major cycle. It is source-breaking only: the compiled IL is
+  unchanged (both forms emit the same zero-argument generic static method), so an assembly built
+  against 4.0.x keeps running against this version without recompiling — it is F# *source* that
+  must drop the parens.
+
 ## [4.0.1] - 2026-08-20
 
 A correctness release driven by the post-4.0.0 documentation verification pass: the
@@ -67,6 +85,10 @@ operations that can honour a token), and the classic `Stream` module gained a re
   first under a 30 s net, which no machine load can turn red.
 
 ## [4.0.0] - 2026-08-19
+
+> Code snippets in this section show the entry points with `()` — the syntax as of 4.0.0.
+> The parenthesis-less form arrived later; see the Unreleased/4.1 notes above.
+
 
 The functional-era release: everything specs 003 and 004 delivered, in one version.
 Highlights — the functional grain runtime (`grainContract` / `grainFor` / `journaledGrainFor`,

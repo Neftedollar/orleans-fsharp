@@ -38,7 +38,7 @@ type RoomObserverApi =
       onClosed: string -> Task<unit> }
 
 let roomObserverContract =
-    observerContract<RoomObserver, RoomObserverApi> () { observerType "push.room.observer" }
+    observerContract<RoomObserver, RoomObserverApi> { observerType "push.room.observer" }
 
 /// <summary>A SECOND observer brand, so the open-generic handle codec is closed twice.</summary>
 type TickObserver = private TickObserver of unit
@@ -47,7 +47,7 @@ type TickObserver = private TickObserver of unit
 type TickObserverApi = { onTick: int -> Task<unit> }
 
 let tickObserverContract =
-    observerContract<TickObserver, TickObserverApi> () { observerType "push.tick.observer" }
+    observerContract<TickObserver, TickObserverApi> { observerType "push.tick.observer" }
 
 // ── The functional grain that pushes ─────────────────────────────────────────
 
@@ -75,7 +75,7 @@ type private PushRoomState =
 let private managerExpiry = TimeSpan.FromSeconds 2.0
 
 let pushRoomContract =
-    grainContract<PushRoomActor, string, PushRoomApi> () {
+    grainContract<PushRoomActor, string, PushRoomApi> {
         grainType "push.room"
         version 1
         stringKey

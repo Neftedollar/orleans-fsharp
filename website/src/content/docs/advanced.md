@@ -801,7 +801,7 @@ type PingApi =
       count: unit -> Task<int> }
 
 let pingContract =
-    grainContract<PingActor, string, PingApi> () {
+    grainContract<PingActor, string, PingApi> {
         grainType "scripting.ping"
         stringKey
     }

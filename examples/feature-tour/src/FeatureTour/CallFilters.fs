@@ -116,7 +116,7 @@ type GatewayApi =
 [<RequireQualifiedAccess>]
 module GatewayApi =
     let contract =
-        grainContract<GatewayActor, string, GatewayApi> () {
+        grainContract<GatewayActor, string, GatewayApi> {
             grainType "tour.gateway"
             version 1
             stringKey

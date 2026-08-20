@@ -164,7 +164,7 @@ type TickerApi =
 type TickerActor = private TickerActor of unit
 
 let tickerContract =
-    grainContract<TickerActor, string, TickerApi> () {
+    grainContract<TickerActor, string, TickerApi> {
         grainType PhaseFGrainTypes.Ticker
         version 1
         stringKey
@@ -261,7 +261,7 @@ type RelayApi =
 type RelayActor = private RelayActor of unit
 
 let relayContract =
-    grainContract<RelayActor, string, RelayApi> () {
+    grainContract<RelayActor, string, RelayApi> {
         grainType PhaseFGrainTypes.Relay
         version 1
         stringKey
@@ -345,7 +345,7 @@ type VersionedActor = private VersionedActor of unit
 
 /// The hosted contract: version 2, admitting version 1 as well.
 let versionedContract =
-    grainContract<VersionedActor, string, VersionedApi> () {
+    grainContract<VersionedActor, string, VersionedApi> {
         grainType PhaseFGrainTypes.Versioned
         version 2
         acceptsVersions (BackwardCompatible 1)
@@ -356,7 +356,7 @@ let versionedContract =
 /// The same grain type as a version-1 caller sees it. Its stream-request token is computed at
 /// version 1, which is exactly the token the version-tolerant host expects for a version-1 call.
 let versionedV1Contract =
-    grainContract<VersionedActor, string, VersionedApi> () {
+    grainContract<VersionedActor, string, VersionedApi> {
         grainType PhaseFGrainTypes.Versioned
         version 1
         stringKey
@@ -394,7 +394,7 @@ type PlacedApi =
 type PlacedActor = private PlacedActor of unit
 
 let placedContract =
-    grainContract<PlacedActor, string, PlacedApi> () {
+    grainContract<PlacedActor, string, PlacedApi> {
         grainType PhaseFGrainTypes.Placed
         version 1
         stringKey
@@ -450,7 +450,7 @@ type SelectiveActor = private SelectiveActor of unit
 /// exists to make that a test rather than an assumption.
 /// </summary>
 let selectiveContract =
-    grainContract<SelectiveActor, string, SelectiveApi> () {
+    grainContract<SelectiveActor, string, SelectiveApi> {
         grainType PhaseFGrainTypes.Selective
         version 1
         stringKey
@@ -499,7 +499,7 @@ type LedgerApi =
 type LedgerActor = private LedgerActor of unit
 
 let ledgerContract =
-    grainContract<LedgerActor, string, LedgerApi> () {
+    grainContract<LedgerActor, string, LedgerApi> {
         grainType PhaseFGrainTypes.Ledger
         version 1
         stringKey

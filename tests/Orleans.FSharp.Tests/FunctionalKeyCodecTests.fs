@@ -462,31 +462,31 @@ type KeyApi = { ping: unit -> System.Threading.Tasks.Task<unit> }
 [<Fact>]
 let ``all five native key operations compile and encode the stock representation`` () =
     let stringContract =
-        grainContract<KeyActor, string, KeyApi> () {
+        grainContract<KeyActor, string, KeyApi> {
             grainType "keys.string"
             stringKey
         }
 
     let guidContract =
-        grainContract<KeyActor, Guid, KeyApi> () {
+        grainContract<KeyActor, Guid, KeyApi> {
             grainType "keys.guid"
             guidKey
         }
 
     let int64Contract =
-        grainContract<KeyActor, int64, KeyApi> () {
+        grainContract<KeyActor, int64, KeyApi> {
             grainType "keys.int64"
             int64Key
         }
 
     let guidCompoundContract =
-        grainContract<KeyActor, Guid * string, KeyApi> () {
+        grainContract<KeyActor, Guid * string, KeyApi> {
             grainType "keys.guidCompound"
             guidCompoundKey
         }
 
     let int64CompoundContract =
-        grainContract<KeyActor, int64 * string, KeyApi> () {
+        grainContract<KeyActor, int64 * string, KeyApi> {
             grainType "keys.int64Compound"
             int64CompoundKey
         }
@@ -505,32 +505,32 @@ let ``all five native key operations compile and encode the stock representation
 [<Fact>]
 let ``all five mapped key operations preserve the domain key type`` () =
     let stringContract =
-        grainContract<KeyActor, RoomId, KeyApi> () {
+        grainContract<KeyActor, RoomId, KeyApi> {
             grainType "keys.mapped.string"
             stringKeyMapped RoomId.value RoomId
         }
 
     let guidContract =
-        grainContract<KeyActor, SessionId, KeyApi> () {
+        grainContract<KeyActor, SessionId, KeyApi> {
             grainType "keys.mapped.guid"
             guidKeyMapped SessionId.value SessionId
         }
 
     let int64Contract =
-        grainContract<KeyActor, OrderId, KeyApi> () {
+        grainContract<KeyActor, OrderId, KeyApi> {
             grainType "keys.mapped.int64"
             int64KeyMapped OrderId.value OrderId
         }
 
     let guidCompoundContract =
-        grainContract<KeyActor, TenantItem, KeyApi> () {
+        grainContract<KeyActor, TenantItem, KeyApi> {
             grainType "keys.mapped.guidCompound"
             guidCompoundKeyMapped (fun item -> item.tenant, item.item) (fun tenant item ->
                 { tenant = tenant; item = item })
         }
 
     let int64CompoundContract =
-        grainContract<KeyActor, struct (int64 * string), KeyApi> () {
+        grainContract<KeyActor, struct (int64 * string), KeyApi> {
             grainType "keys.mapped.int64Compound"
             int64CompoundKeyMapped (fun (struct (value, ext)) -> value, ext) (fun value ext -> struct (value, ext))
         }
@@ -548,13 +548,13 @@ let ``all five mapped key operations preserve the domain key type`` () =
 [<Fact>]
 let ``equal keys under different grain types produce distinct grain identities`` () =
     let first =
-        grainContract<KeyActor, string, KeyApi> () {
+        grainContract<KeyActor, string, KeyApi> {
             grainType "keys.first"
             stringKey
         }
 
     let second =
-        grainContract<KeyActor, string, KeyApi> () {
+        grainContract<KeyActor, string, KeyApi> {
             grainType "keys.second"
             stringKey
         }

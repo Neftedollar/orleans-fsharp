@@ -83,7 +83,7 @@ type InboxApi =
 [<RequireQualifiedAccess>]
 module InboxApi =
     let contract =
-        grainContract<InboxActor, string, InboxApi> () {
+        grainContract<InboxActor, string, InboxApi> {
             grainType "tour.implicit.inbox"
             version 1
             stringKey
@@ -169,7 +169,7 @@ type MailerApi =
 [<RequireQualifiedAccess>]
 module MailerApi =
     let contract =
-        grainContract<MailerActor, string, MailerApi> () {
+        grainContract<MailerActor, string, MailerApi> {
             grainType "tour.implicit.mailer"
             version 1
             stringKey

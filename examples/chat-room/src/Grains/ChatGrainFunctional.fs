@@ -109,7 +109,7 @@ module RoomObserverApi =
     /// operation's wire ID is always its field name.
     /// </summary>
     let contract =
-        observerContract<RoomObserver, RoomObserverApi> () {
+        observerContract<RoomObserver, RoomObserverApi> {
             observerType "chat-room.room.observer"
             version 1
         }
@@ -117,7 +117,7 @@ module RoomObserverApi =
 [<RequireQualifiedAccess>]
 module RoomApi =
     let contract =
-        grainContract<RoomActor, string, RoomApi> () {
+        grainContract<RoomActor, string, RoomApi> {
             grainType "chat-room.room.functional"
             version 1
             stringKey

@@ -185,7 +185,7 @@ module FunctionalLimits =
     let Silo = 65536
 
 let private contractFor<'Actor> (name: string) =
-    grainContract<'Actor, ProbeId, ProbeApi> () {
+    grainContract<'Actor, ProbeId, ProbeApi> {
         grainType name
         version 1
         stringKeyMapped ProbeId.value ProbeId.create

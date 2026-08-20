@@ -62,13 +62,13 @@ type RoomState = { count: int }
 type OtherState = { total: int64 }
 
 let roomContract =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.room"
         stringKeyMapped RoomId.value RoomId
     }
 
 let otherContract =
-    grainContract<OtherActor, string, OtherApi> () {
+    grainContract<OtherActor, string, OtherApi> {
         grainType "chat.other"
         stringKey
     }
@@ -160,7 +160,7 @@ let ``a native key operation requires its exact native key type`` () =
     let accepted =
         """
 let ok =
-    grainContract<RoomActor, string, RoomApi> () {
+    grainContract<RoomActor, string, RoomApi> {
         grainType "chat.native"
         stringKey
     }
@@ -169,7 +169,7 @@ let ok =
     let rejected =
         """
 let bad =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.native"
         stringKey
     }
@@ -182,25 +182,25 @@ let ``every native key operation rejects a mismatched key type`` () =
     let accepted =
         """
 let okGuid =
-    grainContract<RoomActor, Guid, RoomApi> () {
+    grainContract<RoomActor, Guid, RoomApi> {
         grainType "k.guid"
         guidKey
     }
 
 let okInt =
-    grainContract<RoomActor, int64, RoomApi> () {
+    grainContract<RoomActor, int64, RoomApi> {
         grainType "k.int"
         int64Key
     }
 
 let okGuidCompound =
-    grainContract<RoomActor, Guid * string, RoomApi> () {
+    grainContract<RoomActor, Guid * string, RoomApi> {
         grainType "k.guidc"
         guidCompoundKey
     }
 
 let okIntCompound =
-    grainContract<RoomActor, int64 * string, RoomApi> () {
+    grainContract<RoomActor, int64 * string, RoomApi> {
         grainType "k.intc"
         int64CompoundKey
     }
@@ -209,7 +209,7 @@ let okIntCompound =
     let rejected =
         """
 let badGuid =
-    grainContract<RoomActor, string, RoomApi> () {
+    grainContract<RoomActor, string, RoomApi> {
         grainType "k.guid"
         guidKey
     }
@@ -222,7 +222,7 @@ let ``an int64 compound key operation rejects a Guid compound key type`` () =
     let accepted =
         """
 let ok =
-    grainContract<RoomActor, int64 * string, RoomApi> () {
+    grainContract<RoomActor, int64 * string, RoomApi> {
         grainType "k.intc"
         int64CompoundKey
     }
@@ -231,7 +231,7 @@ let ok =
     let rejected =
         """
 let bad =
-    grainContract<RoomActor, Guid * string, RoomApi> () {
+    grainContract<RoomActor, Guid * string, RoomApi> {
         grainType "k.intc"
         int64CompoundKey
     }
@@ -244,7 +244,7 @@ let ``a mapped key operation rejects a reversed conversion pair`` () =
     let accepted =
         """
 let ok =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.mapped"
         stringKeyMapped RoomId.value RoomId
     }
@@ -253,7 +253,7 @@ let ok =
     let rejected =
         """
 let bad =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.mapped"
         stringKeyMapped RoomId RoomId.value
     }
@@ -266,7 +266,7 @@ let ``a mapped key operation rejects a conversion into the wrong native space`` 
     let accepted =
         """
 let ok =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.mapped"
         stringKeyMapped RoomId.value RoomId
     }
@@ -275,7 +275,7 @@ let ok =
     let rejected =
         """
 let bad =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.mapped"
         int64KeyMapped RoomId.value RoomId
     }
@@ -288,7 +288,7 @@ let ``a mapped compound key operation requires a curried decoder`` () =
     let accepted =
         """
 let ok =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.compound"
         guidCompoundKeyMapped (fun (RoomId value) -> Guid.Empty, value) (fun _ value -> RoomId value)
     }
@@ -297,7 +297,7 @@ let ok =
     let rejected =
         """
 let bad =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.compound"
         guidCompoundKeyMapped (fun (RoomId value) -> Guid.Empty, value) (fun (_, value) -> RoomId value)
     }
@@ -314,7 +314,7 @@ let ``oneWay rejects a field whose reply is not Task of unit`` () =
     let accepted =
         """
 let ok =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.room"
         stringKeyMapped RoomId.value RoomId
         oneWay (_.typing)
@@ -324,7 +324,7 @@ let ok =
     let rejected =
         """
 let bad =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.room"
         stringKeyMapped RoomId.value RoomId
         oneWay (_.say)
@@ -338,7 +338,7 @@ let ``a selector from another API record fails to compile`` () =
     let accepted =
         """
 let ok =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.room"
         stringKeyMapped RoomId.value RoomId
         readOnly (_.history)
@@ -348,7 +348,7 @@ let ok =
     let rejected =
         """
 let bad =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.room"
         stringKeyMapped RoomId.value RoomId
         readOnly (fun (api: OtherApi) -> api.ping)
@@ -679,12 +679,12 @@ let ``the definition preamble used by the handler fixtures compiles`` () =
 
 [<Fact>]
 let ``the specification's exact grainContract spelling compiles`` () =
-    // The spec writes `grainContract<RoomActor, RoomId, RoomApi>() { ... }` with no space
+    // The spec writes `grainContract<RoomActor, RoomId, RoomApi> { ... }` with no space
     // before the unit argument; the repo's formatter writes `... > () { ... }`. Both must work.
     let noSpace =
         """
 let tight =
-    grainContract<RoomActor, RoomId, RoomApi>() {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.tight"
         stringKeyMapped RoomId.value RoomId
     }
@@ -693,7 +693,7 @@ let tight =
     let withSpace =
         """
 let spaced =
-    grainContract<RoomActor, RoomId, RoomApi> () {
+    grainContract<RoomActor, RoomId, RoomApi> {
         grainType "chat.spaced"
         stringKeyMapped RoomId.value RoomId
     }
@@ -928,7 +928,7 @@ type TupledApi =
 type TupledActor = private TupledActor of unit
 
 let tupledContract =
-    grainContract<TupledActor, string, TupledApi> () {
+    grainContract<TupledActor, string, TupledApi> {
         grainType "chat.tupled"
         stringKey
         readOnly (_.tag)
@@ -944,7 +944,7 @@ type CurriedApi =
 type CurriedActor = private CurriedActor of unit
 
 let curriedContract =
-    grainContract<CurriedActor, string, CurriedApi> () {
+    grainContract<CurriedActor, string, CurriedApi> {
         grainType "chat.curried"
         stringKey
         readOnly (_.tag)

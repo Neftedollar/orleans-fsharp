@@ -53,7 +53,7 @@ let private rejects (body: unit -> unit) =
 [<Fact>]
 let ``an observer contract seals its observer type and version`` () =
     let contract =
-        observerContract<RoomObserver, RoomObserverApi> () {
+        observerContract<RoomObserver, RoomObserverApi> {
             observerType "chat.room.observer"
             version 3
         }
@@ -67,7 +67,7 @@ let ``an observer type is derived on exactly the terms a grain type is`` () =
     // and cannot be derived from — the same rule, and the same diagnostic shape, grainContract
     // applies to an actor brand. Deriving happens in a namespace; this file is a module.
     let error =
-        rejects (fun () -> observerContract<TickObserver, RoomObserverApi> () { version 1 } |> ignore)
+        rejects (fun () -> observerContract<TickObserver, RoomObserverApi> { version 1 } |> ignore)
 
     test <@ error.Message.Contains "is a nested type" @>
     test <@ error.Message.Contains "Declare an explicit 'observerType'" @>
@@ -84,7 +84,7 @@ let ``an observer type is derived on exactly the terms a grain type is`` () =
 let ``an over-length derived observer type fails contract construction`` () =
     let error =
         rejects (fun () ->
-            observerContract<Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``, RoomObserverApi> () { version 1 }
+            observerContract<Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``, RoomObserverApi> { version 1 }
             |> ignore)
 
     test <@ error.Message.Contains "the 'observerType' derived from observer brand" @>
@@ -92,7 +92,7 @@ let ``an over-length derived observer type fails contract construction`` () =
 
 [<Fact>]
 let ``an observer version defaults to one`` () =
-    let contract = observerContract<RoomObserver, RoomObserverApi> () { observerType "chat.room.observer" }
+    let contract = observerContract<RoomObserver, RoomObserverApi> { observerType "chat.room.observer" }
 
     test <@ contract.Version = 1 @>
 
@@ -101,7 +101,7 @@ let ``a push operation that returns data fails contract construction`` () =
     // The one rule that is observer-specific: everything else is the grain API-shape rule.
     let error =
         rejects (fun () ->
-            observerContract<RoomObserver, ReplyingObserverApi> () { observerType "chat.asking.observer" }
+            observerContract<RoomObserver, ReplyingObserverApi> { observerType "chat.asking.observer" }
             |> ignore)
 
     test <@ error.Message.Contains "an observer never returns data" @>
@@ -110,13 +110,13 @@ let ``a push operation that returns data fails contract construction`` () =
 [<Fact>]
 let ``a blank or repeated observer type is rejected`` () =
     let blank =
-        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> () { observerType "  " } |> ignore)
+        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> { observerType "  " } |> ignore)
 
     test <@ blank.Message.Contains "'observerType' requires a non-blank value" @>
 
     let repeated =
         rejects (fun () ->
-            observerContract<RoomObserver, RoomObserverApi> () {
+            observerContract<RoomObserver, RoomObserverApi> {
                 observerType "one"
                 observerType "two"
             }
@@ -127,7 +127,7 @@ let ``a blank or repeated observer type is rejected`` () =
 [<Fact>]
 let ``a newline-carrying observer type fails contract construction`` () =
     let error =
-        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> () { observerType "chat\nroom" } |> ignore)
+        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> { observerType "chat\nroom" } |> ignore)
 
     test <@ error.Message.Contains "control character" @>
 
@@ -136,7 +136,7 @@ let ``an over-length observer type fails contract construction with the transpor
     let tooLong = String.replicate 513 "a"
 
     let error =
-        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> () { observerType tooLong } |> ignore)
+        rejects (fun () -> observerContract<RoomObserver, RoomObserverApi> { observerType tooLong } |> ignore)
 
     test <@ error.Message.Contains "at most 512 characters" @>
     test <@ error.Message.Contains "513 were supplied" @>
@@ -144,7 +144,7 @@ let ``an over-length observer type fails contract construction with the transpor
 [<Fact>]
 let ``an observer type at exactly the transport's bound is accepted`` () =
     let atLimit = String.replicate 512 "a"
-    let contract = observerContract<RoomObserver, RoomObserverApi> () { observerType atLimit }
+    let contract = observerContract<RoomObserver, RoomObserverApi> { observerType atLimit }
 
     test <@ contract.ObserverTypeName = atLimit @>
 
@@ -161,7 +161,7 @@ let ``an over-length derived push operation ID from a double-backtick field name
     =
     let error =
         rejects (fun () ->
-            observerContract<RoomObserver, LongPushFieldApi> () { observerType "chat.room.observer" } |> ignore)
+            observerContract<RoomObserver, LongPushFieldApi> { observerType "chat.room.observer" } |> ignore)
 
     test <@ error.Message.Contains "the operation ID for push field" @>
     test <@ error.Message.Contains LongPushFieldApi.longFieldName @>
@@ -204,7 +204,7 @@ let ``a rejected observer type creates no Orleans object reference before create
     // (F2's other half), so the only way to hand createFrom one is to reuse a validly-sealed
     // contract's Shape/Operations -- both internal, reachable from this project -- with the
     // offending name substituted directly through the internal constructor.
-    let valid = observerContract<RoomObserver, RoomObserverApi> () { observerType "chat.room.observer" }
+    let valid = observerContract<RoomObserver, RoomObserverApi> { observerType "chat.room.observer" }
 
     let badContract =
         ObserverContract<RoomObserver, RoomObserverApi>("bad\nobserver", valid.Version, valid.Shape, valid.Operations)
@@ -274,7 +274,7 @@ let ``a state record carrying observer handles cannot be serialized`` () =
 let ``an observer contract cannot be serialized`` () =
     // Contracts are configuration, never wire data — the same guarantee, and the same mechanism,
     // grain contracts have.
-    let contract = observerContract<RoomObserver, RoomObserverApi> () { observerType "chat.room.observer" }
+    let contract = observerContract<RoomObserver, RoomObserverApi> { observerType "chat.room.observer" }
 
     let error =
         rejects (fun () -> FSharpBinaryFormat.serialize (box contract) (contract.GetType()) |> ignore)
@@ -470,7 +470,7 @@ let ``an oversized notify is rejected at the caller notify send boundary before 
 [<Fact>]
 let ``an oversized hand-built envelope is rejected at the observer receive boundary before the handler runs`` () =
     let contract =
-        observerContract<RoomObserver, RoomObserverApi> () { observerType "chat.room.observer" }
+        observerContract<RoomObserver, RoomObserverApi> { observerType "chat.room.observer" }
 
     let mutable handlerRan = false
 

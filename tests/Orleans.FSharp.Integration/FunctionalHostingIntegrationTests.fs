@@ -101,7 +101,7 @@ let private validatorStore =
 
 let private validatorDefinition =
     let contract =
-        grainContract<ValidatorActor, string, ValidatorApi> () {
+        grainContract<ValidatorActor, string, ValidatorApi> {
             grainType "functional.validator"
             stringKey
         }
@@ -159,7 +159,7 @@ type TooFastReminderState = { ticks: int }
 
 let private tooFastReminderDefinition =
     let contract =
-        grainContract<TooFastReminderActor, string, TooFastReminderApi> () {
+        grainContract<TooFastReminderActor, string, TooFastReminderApi> {
             grainType "functional.toofastreminder"
             stringKey
         }
@@ -211,7 +211,7 @@ let private SubscriberChannelProvider = "SubscriberChannels"
 
 let private streamSubscriberDefinition =
     let contract =
-        grainContract<SubscriberActor, string, SubscriberApi> () {
+        grainContract<SubscriberActor, string, SubscriberApi> {
             grainType "functional.streamsubscriber"
             stringKey
         }
@@ -229,7 +229,7 @@ type ChannelSubscriberActor = private ChannelSubscriberActor of unit
 
 let private channelSubscriberDefinition =
     let contract =
-        grainContract<ChannelSubscriberActor, string, SubscriberApi> () {
+        grainContract<ChannelSubscriberActor, string, SubscriberApi> {
             grainType "functional.channelsubscriber"
             stringKey
         }
@@ -540,7 +540,7 @@ let private txHostState =
     TransactionalState.create<TxHostState> "ledger" TxHostStorage
 
 let private txHostContract =
-    grainContract<TxHostActor, string, TxHostApi> () {
+    grainContract<TxHostActor, string, TxHostApi> {
         grainType TxHostGrainType
         stringKey
         transactional Orleans.TransactionOption.CreateOrJoin (_.bump)

@@ -42,7 +42,7 @@ type FeedApi =
       tail: int -> IAsyncEnumerable<Entry> }
 
 let feedContract =
-    grainContract<FeedActor, string, FeedApi> () {
+    grainContract<FeedActor, string, FeedApi> {
         grainType "chat.feed"
         version 1
         stringKey

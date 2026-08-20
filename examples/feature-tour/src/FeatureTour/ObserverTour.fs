@@ -28,7 +28,7 @@ type NotifierApi =
 [<RequireQualifiedAccess>]
 module NotifierApi =
     let contract =
-        grainContract<NotifierActor, string, NotifierApi> () {
+        grainContract<NotifierActor, string, NotifierApi> {
             grainType "tour.notifier"
             version 1
             stringKey

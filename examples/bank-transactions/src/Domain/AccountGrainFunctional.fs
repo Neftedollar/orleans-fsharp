@@ -94,7 +94,7 @@ module AccountApi =
     let ledger = TransactionalState.create<AccountBalance> StateName Storage
 
     let contract =
-        grainContract<AccountActor, string, AccountApi> () {
+        grainContract<AccountActor, string, AccountApi> {
             grainType "bank-transactions.account.functional"
             version 1
             stringKey
@@ -115,7 +115,7 @@ module AccountApi =
 module AtmApi =
 
     let contract =
-        grainContract<AtmActor, string, AtmApi> () {
+        grainContract<AtmActor, string, AtmApi> {
             grainType "bank-transactions.atm.functional"
             version 1
             stringKey

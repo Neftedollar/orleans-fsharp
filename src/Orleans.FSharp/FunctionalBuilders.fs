@@ -6,21 +6,24 @@ module FunctionalGrainBuilders =
 
     /// <summary>
     /// Start a contract expression for an actor brand, a domain key type, and an API record type,
-    /// for example <c>grainContract&lt;RoomActor, RoomId, RoomApi&gt;() { ... }</c>.
+    /// for example <c>grainContract&lt;RoomActor, RoomId, RoomApi&gt; { ... }</c>. This is a type
+    /// function, not a function: naming it takes no argument and yields a fresh builder every
+    /// time, so each contract expression starts from empty metadata.
     /// </summary>
-    let grainContract<'Actor, 'Key, 'Api> () : GrainContractBuilder<'Actor, 'Key, 'Api> =
+    let grainContract<'Actor, 'Key, 'Api> : GrainContractBuilder<'Actor, 'Key, 'Api> =
         GrainContractBuilder<'Actor, 'Key, 'Api>()
 
     /// <summary>
     /// Start a contract expression for a domain key type and an API record type, with the API
     /// record itself serving as the actor brand -- the short form for the common case where one
-    /// record belongs to exactly one grain type. <c>contract&lt;RoomId, RoomApi&gt;() { ... }</c>
-    /// is the same contract as <c>grainContract&lt;RoomApi, RoomId, RoomApi&gt;() { ... }</c>;
+    /// record belongs to exactly one grain type. <c>contract&lt;RoomId, RoomApi&gt; { ... }</c>
+    /// is the same contract as <c>grainContract&lt;RoomApi, RoomId, RoomApi&gt; { ... }</c>;
     /// declare a separate brand (and use <c>grainContract</c>) when several grain types share one
     /// API record, or when the record type must be replaceable without moving the grain's
-    /// transport identity.
+    /// transport identity. Like <c>grainContract</c>, this is a type function: every mention
+    /// yields a fresh builder.
     /// </summary>
-    let contract<'Key, 'Api> () : GrainContractBuilder<'Api, 'Key, 'Api> =
+    let contract<'Key, 'Api> : GrainContractBuilder<'Api, 'Key, 'Api> =
         GrainContractBuilder<'Api, 'Key, 'Api>()
 
     /// <summary>Start a server-definition expression for a sealed contract.</summary>

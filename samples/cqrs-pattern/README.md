@@ -65,7 +65,7 @@ type OrderCommandApi =
 [<RequireQualifiedAccess>]
 module OrderCommandApi =
     let contract =
-        grainContract<OrderCommandActor, string, OrderCommandApi> () {
+        grainContract<OrderCommandActor, string, OrderCommandApi> {
             grainType "cqrs.order-command"
             version 1
             stringKey
@@ -115,7 +115,7 @@ type OrderQueryApi =
 [<RequireQualifiedAccess>]
 module OrderQueryApi =
     let contract =
-        grainContract<OrderQueryActor, string, OrderQueryApi> () {
+        grainContract<OrderQueryActor, string, OrderQueryApi> {
             grainType "cqrs.order-query"
             version 1
             stringKey

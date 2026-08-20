@@ -88,7 +88,7 @@ module AccountApi =
     let LogProvider = "LogStorage"
 
     let contract =
-        grainContract<AccountActor, string, AccountApi> () {
+        grainContract<AccountActor, string, AccountApi> {
             grainType "bank-account.account.functional"
             version 1
             stringKey

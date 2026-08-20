@@ -25,7 +25,7 @@ type UserApi =
 [<RequireQualifiedAccess>]
 module UserApi =
     let contract =
-        grainContract<UserActor, int64<UserId>, UserApi> () {
+        grainContract<UserActor, int64<UserId>, UserApi> {
             grainType "typesafe-ids.user.functional"
             version 1
             int64KeyMapped rawId userId

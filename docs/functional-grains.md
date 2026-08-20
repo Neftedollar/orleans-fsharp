@@ -43,7 +43,7 @@ type RoomApi =
 [<RequireQualifiedAccess>]
 module RoomApi =
     let contract =
-        grainContract<RoomActor, RoomId, RoomApi> () {
+        grainContract<RoomActor, RoomId, RoomApi> {
             grainType "chat.room"
             version 1
             stringKeyMapped RoomId.value RoomId.create
@@ -56,6 +56,12 @@ module RoomApi =
     let ref = FunctionalGrain.ref contract
     let rawRef = FunctionalGrain.rawRef contract
 ```
+
+`[<NoEquality; NoComparison>]` on the API record is optional -- a habit worth keeping, because it
+turns "two grain APIs compared for equality" into a compile error instead of a runtime one, but the
+runtime never compares an API record and a plain `type RoomApi = { ... }` seals exactly the same
+contract (pinned by `tests/Orleans.FSharp.Tests/FunctionalContractTests.fs`, "an API record needs no
+equality attributes"). The examples on this page carry it; the README's quick start does not.
 
 Server-side, a `grainFor` definition attaches handlers and persistent state to the contract, and
 `AddFunctionalGrain` / `AddFunctionalGrainClient` register it on the silo / client builders. See
@@ -149,7 +155,7 @@ unconstrained, and any CLR type identity works -- including the API record's own
 
 ```fsharp
 let counterContract =
-    contract<string, CounterApi> () {
+    contract<string, CounterApi> {
         grainType "counter"
         version 1
         stringKey
@@ -256,7 +262,7 @@ nothing durable to orphan, so they may rely on the derived default:
 type CounterActor = private CounterActor of unit
 
 let counterContract =
-    grainContract<CounterActor, string, CounterApi> () { stringKey }  // grainType = "CounterActor"
+    grainContract<CounterActor, string, CounterApi> { stringKey }  // grainType = "CounterActor"
 
 // Rejected at definition sealing: stateFrom needs an explicit grainType above, because renaming
 // CounterActor later would silently point every existing activation at a different (empty)
@@ -283,7 +289,7 @@ handler's *source field* would otherwise silently change every caller's wire ID 
 `operationId` decouples the two, so a refactor of the F# field name never touches the wire:
 
 ```fsharp
-grainContract<RoomActor, RoomId, RoomApi> () {
+grainContract<RoomActor, RoomId, RoomApi> {
     grainType "chat.room"
     // the record field is `enter`, but the wire ID stays "join" across the rename
     operationId "join" (_.enter)
@@ -311,7 +317,7 @@ A host can opt out of the exact rule and admit older callers as well, which is w
 mixed-version rolling deployment of one contract possible:
 
 ```fsharp
-grainContract<LedgerActor, string, LedgerApi> () {
+grainContract<LedgerActor, string, LedgerApi> {
     grainType "billing.ledger"
     version 3
     stringKey
@@ -708,7 +714,7 @@ of ours.
 one:
 
 ```fsharp
-grainContract<GatewayActor, string, GatewayApi> () {
+grainContract<GatewayActor, string, GatewayApi> {
     grainType "api.gateway"
     stringKey
     reentrant
@@ -737,7 +743,7 @@ lost update as part of its transcript, so it is evidence and not a warning.)
 **`mayInterleave` — per request.** A predicate decides, from the request's own protocol metadata:
 
 ```fsharp
-grainContract<GatewayActor, string, GatewayApi> () {
+grainContract<GatewayActor, string, GatewayApi> {
     grainType "api.gateway"
     stringKey
     mayInterleave (fun metadata -> metadata.OperationId = "cancel" || metadata.IsReadOnly)
@@ -823,7 +829,7 @@ type RoomObserverApi =
       onClosed: string -> Task<unit> }
 
 let roomObserverContract =
-    observerContract<RoomObserver, RoomObserverApi> () {
+    observerContract<RoomObserver, RoomObserverApi> {
         observerType "chat.room.observer"   // defaults to the brand's simple name
         version 1                           // defaults to 1
     }
@@ -1157,7 +1163,7 @@ Two declarations are involved.
 
 ```fsharp
 let account =
-    grainContract<AccountActor, string, AccountApi> () {
+    grainContract<AccountActor, string, AccountApi> {
         grainType "bank.account"
         stringKey
         transactional Orleans.TransactionOption.CreateOrJoin (_.deposit)
@@ -1674,7 +1680,7 @@ Before/after mapping:
 | Old (`grain { }` CE) | New (functional runtime) |
 |---|---|
 | `grain { defaultState ...; handle ...; persist "Default" }` | `grainFor contract { defaultState (fun () -> ...); handle (_.op) handler; usePersistentState ... }` |
-| `GrainDefinition<'State,'Message>` / hand-written grain interface | `grainContract<'Actor,'Key,'Api> () { grainType ...; version ...; <key op> }` defining an `'Api` record of functions |
+| `GrainDefinition<'State,'Message>` / hand-written grain interface | `grainContract<'Actor,'Key,'Api> { grainType ...; version ...; <key op> }` defining an `'Api` record of functions |
 | `[<FSharpGrain>]` + `AddFSharpGrainsFromAssembly` | `AddFunctionalGrain definition` (no attribute-scan step) |
 | `AddFSharpGrain<'State,'Message>(definition)` | `AddFunctionalGrain definition` on the silo builder; `AddFunctionalGrainClient` on a client-only process |
 | `FSharpGrain.ref<'State,'Message> factory key` + `FSharpGrain.send/post/ask` | `FunctionalGrain.ref contract factory key`, then call the typed API record's function directly |

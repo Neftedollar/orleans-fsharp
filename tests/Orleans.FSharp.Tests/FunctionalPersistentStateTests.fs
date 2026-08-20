@@ -190,7 +190,7 @@ type PrimaryState = { count: int }
 type AuditState = { total: int64 }
 
 let private stateContract =
-    grainContract<StateActor, string, StateApi> () {
+    grainContract<StateActor, string, StateApi> {
         grainType "state.probe"
         stringKey
     }

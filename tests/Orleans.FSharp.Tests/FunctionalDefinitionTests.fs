@@ -25,7 +25,7 @@ type RoomState = { count: int }
 type AuditState = { total: int64 }
 
 let private contract =
-    grainContract<RoomActor, string, RoomApi> () {
+    grainContract<RoomActor, string, RoomApi> {
         grainType "def.room"
         stringKey
     }
@@ -891,7 +891,7 @@ let ``a duplicate timer name fails definition sealing`` () =
 type private DerivedExtraState = { total: int64 }
 
 let private derivedContract =
-    grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, RoomApi> () { stringKey }
+    grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, RoomApi> { stringKey }
 
 let private derivedPrimary = PersistentState.create<RoomState> "derived-state" "Default"
 let private derivedExtra = PersistentState.create<DerivedExtraState> "derived-extra" "Default"
@@ -1039,27 +1039,27 @@ let ``binding without a grain factory fails with a binding diagnostic`` () =
 type TxState = { total: int64 }
 
 let private txContract =
-    grainContract<RoomActor, string, RoomApi> () {
+    grainContract<RoomActor, string, RoomApi> {
         grainType "def.room.tx"
         stringKey
         transactional Orleans.TransactionOption.CreateOrJoin (_.join)
     }
 
 let private plainContract =
-    grainContract<RoomActor, string, RoomApi> () {
+    grainContract<RoomActor, string, RoomApi> {
         grainType "def.room.plain"
         stringKey
     }
 
 let private supportedOnlyContract =
-    grainContract<RoomActor, string, RoomApi> () {
+    grainContract<RoomActor, string, RoomApi> {
         grainType "def.room.supported"
         stringKey
         transactional Orleans.TransactionOption.Supported (_.join)
     }
 
 let private suppressOnlyContract =
-    grainContract<RoomActor, string, RoomApi> () {
+    grainContract<RoomActor, string, RoomApi> {
         grainType "def.room.suppress"
         stringKey
         transactional Orleans.TransactionOption.Suppress (_.join)
@@ -1210,7 +1210,7 @@ let ``transactionalStateFrom on a derived grain type fails definition sealing`` 
     // protocol AND of the storage key, so a grain type that moves when the brand is renamed would
     // orphan it exactly as it orphans persistent state.
     let derived =
-        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, RoomApi> () {
+        grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, RoomApi> {
             stringKey
             transactional Orleans.TransactionOption.CreateOrJoin (_.join)
         }

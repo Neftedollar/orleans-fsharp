@@ -708,7 +708,7 @@ let ``the transport type filter claims no contract, facade, selector, or service
     let filter = FunctionalTransportTypeFilter() :> ITypeFilter
 
     let contract =
-        grainContract<CodecActor, string, CodecApi> () {
+        grainContract<CodecActor, string, CodecApi> {
             grainType "codec.filter"
             stringKey
         }

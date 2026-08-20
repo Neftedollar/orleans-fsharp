@@ -47,7 +47,7 @@ type AccountApi =
       balance: unit -> Task<decimal> }
 
 let accountContract =
-    grainContract<AccountActor, string, AccountApi> () {
+    grainContract<AccountActor, string, AccountApi> {
         grainType "bank.account"
         version 1
         stringKey

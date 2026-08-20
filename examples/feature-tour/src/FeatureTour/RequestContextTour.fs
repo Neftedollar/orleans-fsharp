@@ -41,7 +41,7 @@ type DownstreamApi =
 [<RequireQualifiedAccess>]
 module DownstreamApi =
     let contract =
-        grainContract<DownstreamActor, string, DownstreamApi> () {
+        grainContract<DownstreamActor, string, DownstreamApi> {
             grainType "tour.context.downstream"
             version 1
             stringKey
@@ -85,7 +85,7 @@ type FrontApi =
 [<RequireQualifiedAccess>]
 module FrontApi =
     let contract =
-        grainContract<FrontActor, string, FrontApi> () {
+        grainContract<FrontActor, string, FrontApi> {
             grainType "tour.context.front"
             version 1
             stringKey

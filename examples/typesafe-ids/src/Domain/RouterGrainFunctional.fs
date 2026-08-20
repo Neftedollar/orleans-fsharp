@@ -23,7 +23,7 @@ type RouterApi =
 [<RequireQualifiedAccess>]
 module RouterApi =
     let contract =
-        grainContract<RouterActor, string, RouterApi> () {
+        grainContract<RouterActor, string, RouterApi> {
             grainType "typesafe-ids.router.functional"
             version 1
             stringKey

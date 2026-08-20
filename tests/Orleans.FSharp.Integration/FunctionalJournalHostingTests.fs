@@ -65,25 +65,25 @@ let private noteDefinition (contract: GrainContract<'Actor, string, NoteApi>) (p
     }
 
 let private stockContract =
-    grainContract<StockNoteActor, string, NoteApi> () {
+    grainContract<StockNoteActor, string, NoteApi> {
         grainType "journalhosting.stock"
         stringKey
     }
 
 let private customContract =
-    grainContract<CustomNoteActor, string, NoteApi> () {
+    grainContract<CustomNoteActor, string, NoteApi> {
         grainType "journalhosting.custom"
         stringKey
     }
 
 let private missingProviderContract =
-    grainContract<MissingProviderActor, string, NoteApi> () {
+    grainContract<MissingProviderActor, string, NoteApi> {
         grainType "journalhosting.missingprovider"
         stringKey
     }
 
 let private missingStorageContract =
-    grainContract<MissingStorageActor, string, NoteApi> () {
+    grainContract<MissingStorageActor, string, NoteApi> {
         grainType "journalhosting.missingstorage"
         stringKey
     }

@@ -386,7 +386,7 @@ module Phase5Timing =
     let TimerPeriod = TimeSpan.FromMilliseconds 200.0
 
 let private reminderContract =
-    grainContract<ReminderActor, string, ReminderApi> () {
+    grainContract<ReminderActor, string, ReminderApi> {
         grainType Phase5GrainTypes.Reminder
         stringKey
         readOnly (_.ticks)
@@ -457,7 +457,7 @@ type StaleReminderApi =
 type StaleReminderState = { pings: int }
 
 let private staleReminderContract =
-    grainContract<StaleReminderActor, string, StaleReminderApi> () {
+    grainContract<StaleReminderActor, string, StaleReminderApi> {
         grainType Phase5GrainTypes.StaleReminder
         stringKey
         readOnly (_.registeredNames)
@@ -534,7 +534,7 @@ type TimerActor = private TimerActor of unit
 type TimerKeepAliveActor = private TimerKeepAliveActor of unit
 
 let private timerContract =
-    grainContract<TimerActor, string, TimerApi> () {
+    grainContract<TimerActor, string, TimerApi> {
         grainType Phase5GrainTypes.Timer
         stringKey
         readOnly (_.snapshot)
@@ -573,7 +573,7 @@ let private timerDefinition =
     }
 
 let private timerKeepAliveContract =
-    grainContract<TimerKeepAliveActor, string, TimerApi> () {
+    grainContract<TimerKeepAliveActor, string, TimerApi> {
         grainType Phase5GrainTypes.TimerKeepAlive
         stringKey
         readOnly (_.snapshot)
@@ -618,7 +618,7 @@ type CollectionApi =
 type CollectionState = { marker: string }
 
 let private collectionContract =
-    grainContract<CollectionActor, string, CollectionApi> () {
+    grainContract<CollectionActor, string, CollectionApi> {
         grainType Phase5GrainTypes.Collection
         stringKey
         readOnly (_.snapshot)
@@ -658,7 +658,7 @@ let private collectionDefinition =
 type CollectionEphemeralActor = private CollectionEphemeralActor of unit
 
 let private collectionEphemeralContract =
-    grainContract<CollectionEphemeralActor, string, CollectionApi> () {
+    grainContract<CollectionEphemeralActor, string, CollectionApi> {
         grainType Phase5GrainTypes.CollectionEphemeral
         stringKey
         readOnly (_.snapshot)
@@ -700,7 +700,7 @@ type ContextApi =
 type ContextState = { touched: bool }
 
 let private contextContract =
-    grainContract<ContextActor, string, ContextApi> () {
+    grainContract<ContextActor, string, ContextApi> {
         grainType Phase5GrainTypes.Context
         stringKey
         readOnly (_.clock)

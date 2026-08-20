@@ -74,7 +74,7 @@ type RoomApi =
 module RoomApi =
     /// <summary>The room's functional grain contract: type, version, key mapping, and call policies.</summary>
     let contract =
-        grainContract<RoomActor, RoomId, RoomApi> () {
+        grainContract<RoomActor, RoomId, RoomApi> {
             grainType "chat.room"
             version 1
             stringKeyMapped RoomId.value RoomId.create
