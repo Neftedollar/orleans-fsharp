@@ -86,6 +86,10 @@ operations that can honour a token), and the classic `Stream` module gained a re
 
 ## [4.0.0] - 2026-08-19
 
+> Code snippets in this section show the entry points with `()` — the syntax as of 4.0.0.
+> The parenthesis-less form arrived later; see the Unreleased/4.1 notes above.
+
+
 The functional-era release: everything specs 003 and 004 delivered, in one version.
 Highlights — the functional grain runtime (`grainContract` / `grainFor` / `journaledGrainFor`,
 API records instead of interfaces, no code generation), full Orleans parity as first-class

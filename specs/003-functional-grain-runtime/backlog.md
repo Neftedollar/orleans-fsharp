@@ -144,3 +144,9 @@ Each item is grounded in a verified finding; pointers name the evidence.
     `buildPipeline` opens on call 3 as configured. Docs now state this and
     tests pin it; changing `execute` to share breaker state is a semantic
     (and surprising) change deliberately left for an explicit decision.
+17. **`templates/orleans-fsharp` has no CI coverage** (parenless pass,
+    2026-08-20): no job builds the template's projects, so a stale package
+    pin (it sat at `3.*` two majors behind) or a syntax drift in its
+    sources is invisible until a user scaffolds. Pin raised to `4.*`;
+    candidate: a CI step that `dotnet new install`s the packed template,
+    scaffolds, and builds the result against the freshly packed nupkgs.
