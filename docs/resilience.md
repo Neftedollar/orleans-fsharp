@@ -10,7 +10,7 @@
 ## What you'll learn
 
 - How to retry transient grain failures automatically
-- What a Polly timeout over a grain call can and cannot cancel
+- What a timeout over a grain call enforces, and what it cannot cancel
 - How to protect a downstream service with a circuit breaker
 - How to compose multiple strategies into a single reusable pipeline
 
@@ -44,8 +44,9 @@ let! inventory =
     GrainResilience.retry<int> 3 (TimeSpan.FromMilliseconds 200) (fun () ->
         inventoryGrain.HandleMessage(GetStock itemId))
 
-// 2. Timeout — caps the pipeline's own waiting, not an in-flight call
-//    (see "What the timeout can and cannot cancel" below)
+// 2. Timeout — a deadline the caller can rely on: after 2 seconds this raises
+//    TimeoutRejectedException and abandons the call
+//    (see "What the deadline does and does not do" below)
 let! price =
     GrainResilience.withTimeout<decimal> (TimeSpan.FromSeconds 2) (fun () ->
         pricingGrain.HandleMessage(GetPrice itemId))
@@ -80,14 +81,17 @@ type ResilienceOptions =
         RetryDelay: TimeSpan
 
         /// Open the circuit after this many consecutive failures. None = disabled.
+        /// Circuit state lives in the pipeline object and `execute` builds a fresh one per
+        /// call — see "Circuit state is per pipeline object" below.
         CircuitBreakerThreshold: int option
 
         /// How long the circuit stays open before attempting a probe call. None falls back
         /// to 30 s, and is only consulted when CircuitBreakerThreshold is set.
         CircuitBreakerDuration: TimeSpan option
 
-        /// Deadline over the whole protected operation. None = no timeout.
-        /// Read "What the timeout can and cannot cancel" below before relying on it.
+        /// Deadline over the whole protected operation — every attempt plus the delays
+        /// between them, not one attempt. None = no timeout.
+        /// Read "What the deadline does and does not do" below before relying on it.
         Timeout: TimeSpan option
     }
 
@@ -141,24 +145,59 @@ with :? Polly.Timeout.TimeoutRejectedException ->
     log.Warning("Snapshot timed out — skipping")
 ```
 
-#### What the timeout can and cannot cancel
+#### What the deadline does and does not do
 
-**It does not abort a grain call that is merely slow.** The protected operation is a
-`unit -> Task<'T>`, which takes no `CancellationToken`, so the call has already started by the time
-Polly's timeout is armed and nothing can interrupt it. A three-second timeout over a call that
-takes eight seconds returns that call's result after eight seconds — no
-`TimeoutRejectedException` is raised.
+**The deadline always fires for the caller.** When it passes, `withTimeout` raises
+`TimeoutRejectedException` and stops waiting — measured, a 100 ms budget over an 800 ms call
+raises at ~101 ms. (Before 4.0.1 it did not: that same call returned its result after ~810 ms and
+raised nothing, because the pipeline was handed a task it could only await.)
 
-What the timeout does cut short is the waiting the pipeline itself controls: the delay between
-retry attempts. So under `execute` with retries a `TimeoutRejectedException` is a real outcome
-(it fires while the pipeline is sleeping between attempts), and under `withTimeout` alone — where
-there are no retries and therefore no waiting of Polly's own — it effectively never fires.
+**It does not cancel the call.** The protected operation is a `unit -> Task<'T>`, which takes no
+`CancellationToken`, so nothing can interrupt the work itself. The in-flight call is *abandoned*:
+it keeps running to completion on the silo, its effects land, and only its result is discarded.
+A deadline here bounds how long you wait, not what the system does — cancellation without
+rollback is this library's documented stance everywhere else too.
 
-For a real deadline on a slow grain, use Orleans' own mechanisms instead: shorten
+For an operation that can honour a token, use `withTimeoutCancellable` / `executeCancellable`
+below: the deadline's token is handed to the operation, so it can stop rather than be abandoned.
+Beyond that, the other real deadlines available are Orleans' own —
 `SiloMessagingOptions.ResponseTimeout` / `ClientMessagingOptions.ResponseTimeout` (30 seconds by
-default), or make the operation cancellable and drive it with
-`FunctionalGrainRef.callCancellable` from the [functional grain runtime](functional-grains.md),
-whose token reaches the handler through `context.cancellationToken`.
+default), and `FunctionalGrainRef.callCancellable` from the
+[functional grain runtime](functional-grains.md), whose token reaches the handler through
+`context.cancellationToken`.
+
+### `GrainResilience.withTimeoutCancellable`
+
+The same deadline, handed to an operation that takes the token.
+
+```fsharp
+val withTimeoutCancellable<'T>
+    : timeout : TimeSpan
+    -> f      : (CancellationToken -> Task<'T>)
+    -> Task<'T>
+```
+
+```fsharp
+let! rows =
+    GrainResilience.withTimeoutCancellable<Row list> (TimeSpan.FromSeconds 3) (fun ct ->
+        reportGrain.RunQuery(query, ct))
+```
+
+The token is cancelled when the deadline passes. An `OperationCanceledException` raised in
+response is reported to the caller as `TimeoutRejectedException`, so both entry points fail the
+same way. An operation that ignores the token is still abandoned exactly as under `withTimeout`,
+so the deadline holds either way.
+
+To honour a caller's own token as well, link it inside `f`:
+
+```fsharp
+GrainResilience.withTimeoutCancellable timeout (fun deadlineToken ->
+    use linked = CancellationTokenSource.CreateLinkedTokenSource(deadlineToken, context.cancellationToken)
+    grain.RunQuery(query, linked.Token))
+```
+
+A cancel that arrives through your own token surfaces as `OperationCanceledException`, not as
+`TimeoutRejectedException` — Polly only rebrands a cancellation it caused itself.
 
 ### `GrainResilience.execute`
 
@@ -178,6 +217,26 @@ let myOpts =
         Timeout = Some(TimeSpan.FromSeconds 10) }
 
 let! result = GrainResilience.execute<string> myOpts (fun () -> grain.HandleMessage cmd)
+```
+
+Every attempt re-invokes `f`, so `MaxRetryAttempts = 2` calls it at most three times.
+
+### `GrainResilience.executeCancellable`
+
+`execute` for an operation that takes the deadline's token — the full-options counterpart of
+`withTimeoutCancellable`.
+
+```fsharp
+val executeCancellable<'T>
+    : options : ResilienceOptions
+    -> f      : (CancellationToken -> Task<'T>)
+    -> Task<'T>
+```
+
+```fsharp
+let! result =
+    GrainResilience.executeCancellable<Report> myOpts (fun ct ->
+        reportGrain.Build(spec, ct))
 ```
 
 ### `GrainResilience.buildPipeline`
@@ -235,11 +294,48 @@ request
 ```
 
 This means:
-- The timeout spans the whole attempt sequence, not one attempt — but only over the waiting the
-  pipeline itself does; it cannot interrupt an in-flight grain call (see
-  [What the timeout can and cannot cancel](#what-the-timeout-can-and-cannot-cancel)).
-- The circuit breaker opens only after the retry strategy has given up.
+- The timeout is a deadline over the whole attempt sequence, not over one attempt: it covers every
+  attempt and every delay between them. One attempt that hangs therefore consumes the entire
+  budget and the retries never happen — that is the deliberate trade of a total deadline, and it
+  is the guarantee the caller can actually reason about (see
+  [What the deadline does and does not do](#what-the-deadline-does-and-does-not-do)).
+- For a *per-attempt* deadline, nest the two: `retry` on the outside, `withTimeout` inside the
+  function it retries.
+
+  ```fsharp
+  GrainResilience.retry<int> 3 (TimeSpan.FromMilliseconds 200) (fun () ->
+      GrainResilience.withTimeout<int> (TimeSpan.FromSeconds 1) (fun () ->
+          grain.HandleMessage cmd))
+  ```
+
+- The circuit breaker sits between them, so it sees one outcome per execution — the retry
+  strategy's final verdict, not each attempt.
 - A single Polly `TimeoutRejectedException` or `BrokenCircuitException` bypasses the retry.
+
+### Circuit state is per pipeline object
+
+`execute` builds a fresh pipeline on every call. Circuit-breaker state lives *in* the pipeline
+object, so a breaker configured through `ResilienceOptions` starts cold each time: five failing
+`execute` calls with `CircuitBreakerThreshold = Some 2` all raise the underlying exception and the
+circuit never opens. `MaxRetryAttempts` does not change that either — the breaker sees the retry
+strategy's single final outcome, not each attempt.
+
+For a breaker that actually trips, keep one pipeline and reuse it:
+
+```fsharp
+// Service-scoped: one object, one circuit
+let private pipeline =
+    GrainResilience.buildPipeline<int>
+        { GrainResilience.defaultOptions with
+            CircuitBreakerThreshold = Some 5
+            CircuitBreakerDuration = Some(TimeSpan.FromSeconds 30) }
+
+member _.Query(cmd) =
+    pipeline.ExecuteAsync(fun _ -> ValueTask<_>(grain.HandleMessage cmd)).AsTask()
+```
+
+or use `GrainResilience.circuitBreaker`, which exists for exactly this and is non-generic.
+Both are pinned by tests: `execute` does not share circuit state, a reused `buildPipeline` does.
 
 ---
 
@@ -266,8 +362,9 @@ let bounded =
 let! result = GrainResilience.execute<Result> bounded (fun () -> flakyGrain.HandleMessage query)
 ```
 
-It does **not** make a single slow call fail fast — see
-[What the timeout can and cannot cancel](#what-the-timeout-can-and-cannot-cancel).
+After two seconds the caller gets `TimeoutRejectedException` whatever the sequence is doing —
+mid-attempt or mid-delay. What it does **not** do is stop the attempt that was in flight; see
+[What the deadline does and does not do](#what-the-deadline-does-and-does-not-do).
 
 ### Protect a shared downstream resource
 
@@ -321,6 +418,29 @@ let! result =
 
 test <@ result = 42 @>
 test <@ attempts = 3 @>
+```
+
+To test a deadline, do not assert that it fired within some number of milliseconds — that is a
+wall-clock budget, and a loaded machine will fail it eventually. Gate the protected call on a
+`TaskCompletionSource` that the test never releases inside the timed region, so the call cannot
+finish on its own, and assert *which* task completed first under a net so generous it carries no
+information about speed:
+
+```fsharp
+let gate = TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+let guarded =
+    task {
+        try
+            let! _ = GrainResilience.withTimeout (TimeSpan.FromMilliseconds 50.0) (fun () -> gate.Task)
+            return null :> exn
+        with ex -> return ex
+    }
+
+let! finished = Task.WhenAny(guarded, Task.Delay(TimeSpan.FromSeconds 30.0))
+test <@ Object.ReferenceEquals(finished, guarded) @>
+let! ex = guarded
+test <@ ex :? Polly.Timeout.TimeoutRejectedException @>
 ```
 
 For integration tests with a real `TestCluster`, use a grain that tracks its own call count and fails on the first N calls — see `flakyGrain` (over `FlakyState` / `FlakyCommand`) in `tests/Orleans.FSharp.Integration/ClusterFixture.fs`, driven by `GrainResilienceIntegrationTests.fs`.
