@@ -2,6 +2,62 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`GrainResilience.executeCancellable` / `GrainResilience.withTimeoutCancellable`.** The same
+  pipelines with a `CancellationToken -> Task<'T>` operation instead of `unit -> Task<'T>`: the
+  deadline's token reaches the call, so an operation that can honour it stops rather than being
+  abandoned. An `OperationCanceledException` raised in response still surfaces as
+  `TimeoutRejectedException`, so both entry points fail the same way. Link a caller's own token
+  inside the operation with `CancellationTokenSource.CreateLinkedTokenSource` — a cancel through
+  that path stays an `OperationCanceledException` and is not rebranded as a timeout.
+- **`Stream.subscribeWithToken` and `Stream.subscribeFromWithToken`.** The classic `Stream`
+  module could not produce the cursor its own `subscribeFrom` requires: `subscribe` and
+  `subscribeFrom` discarded the `StreamSequenceToken` their Orleans callback receives. Both new
+  entry points take `'T -> StreamSequenceToken option -> Task<unit>` and hand the handler the
+  cursor of the event it is processing — `Some` on a rewindable provider, `None` on one that
+  supplies no cursor, matching how `context.streamSequenceToken` already reports it on the
+  functional grain runtime. `subscribeFromWithToken` is the rewind that keeps checkpointing.
+  Two behaviours are now documented from measurement rather than assumed: the rewind is
+  **inclusive** of the checkpointed event, and a resumed subscription's backlog is delivered on
+  the next delivery cycle for the stream (an idle one received nothing for 30 s; one further
+  publish flushed the whole backlog).
+
+### Deprecated
+
+- **`Stream.getSequenceToken`** now carries `[<Obsolete>]` (a warning, not an error) and still
+  returns `None`, so existing callers keep compiling and behaving identically. It was never a
+  lookup — `StreamSubscriptionHandle` exposes no cursor — so the replacement is
+  `Stream.subscribeWithToken` / `subscribeFromWithToken`, or `context.streamSequenceToken` inside
+  an `onStream` hook.
+
+### Fixed
+
+- **A `GrainResilience` timeout now actually fires.** `execute` handed Polly an already-started
+  `Task`, and Polly's timeout strategy can only await such a task: a 100 ms budget over an 800 ms
+  call returned the result after ~810 ms and raised nothing. The in-flight task is now awaited
+  under the pipeline's own cancellation token, so the deadline raises `TimeoutRejectedException`
+  for the caller — ~101 ms for that same call. The deadline **abandons** the call rather than
+  cancelling it: a `unit -> Task<'T>` takes no token, so the work runs to completion with its
+  effects intact and only the result is discarded. An abandoned task that faults afterwards would
+  raise `TaskScheduler.UnobservedTaskException`, so the abandoned task now carries a fault
+  observer.
+  Retry was never affected: each attempt re-invokes the operation (three invocations for
+  `MaxRetryAttempts = 2`), now pinned by a test.
+- **Two documentation claims about `GrainResilience` corrected.** `ResilienceOptions.Timeout` was
+  described as a "per-attempt timeout" while `buildPipeline` adds it outermost: it is a deadline
+  over the whole sequence — every attempt plus the delays between them — and one hung attempt
+  therefore consumes the entire budget. For a per-attempt deadline, nest `withTimeout` inside the
+  function passed to `retry`. Separately, `execute` builds a fresh pipeline on every call, so a
+  circuit breaker configured through `ResilienceOptions` holds no state across calls and cannot
+  trip; `buildPipeline` (built once and reused) or `circuitBreaker` is the shared-state path.
+  Both facts are now pinned by tests as well as documented.
+- **Two flaky wall-clock timeout tests replaced** (spec-003 backlog item 11). They asserted that a
+  50 ms Polly budget was met, and drove a hand-built Polly pipeline rather than
+  `GrainResilience` — so they passed while `withTimeout` could not time anything out. The
+  replacements gate the protected call on a `TaskCompletionSource` and assert which task completed
+  first under a 30 s net, which no machine load can turn red.
+
 ## [4.0.0] - 2026-08-19
 
 The functional-era release: everything specs 003 and 004 delivered, in one version.

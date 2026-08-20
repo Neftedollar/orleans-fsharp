@@ -441,10 +441,12 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | Function | Signature | Description |
 |---|---|---|
 | `GrainResilience.defaultOptions` | `ResilienceOptions` | 3 retries · 1s delay · no circuit breaker · no timeout |
-| `GrainResilience.retry<'T>` | `int -> TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Retry N times with delay |
-| `GrainResilience.withTimeout<'T>` | `TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Enforce per-call deadline |
-| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout |
-| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Build reusable Polly pipeline |
+| `GrainResilience.retry<'T>` | `int -> TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Retry N times with delay; each attempt re-invokes the call |
+| `GrainResilience.withTimeout<'T>` | `TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Deadline on one call — raises `TimeoutRejectedException` and abandons the in-flight call (does not cancel it) |
+| `GrainResilience.withTimeoutCancellable<'T>` | `TimeSpan -> (CancellationToken -> Task<'T>) -> Task<'T>` | Same deadline, handed to the operation as a token so it can stop instead of being abandoned |
+| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout. The timeout spans the whole sequence; the pipeline is rebuilt per call, so circuit state is not shared |
+| `GrainResilience.executeCancellable<'T>` | `ResilienceOptions -> (CancellationToken -> Task<'T>) -> Task<'T>` | Full options for an operation that takes the deadline's token |
+| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Build reusable Polly pipeline — the way to get shared circuit state |
 | `GrainResilience.circuitBreaker` | `int -> TimeSpan -> ResiliencePipeline` | Shared circuit breaker (non-generic, long-lived) |
 
 #### `GrainBatch` — concurrent fan-out
@@ -486,12 +488,14 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `getStream<'T>` | `IStreamProvider -> string -> string -> StreamRef<'T>` | Get stream reference |
 | `publish<'T>` | `StreamRef<'T> -> 'T -> Task<unit>` | Publish event |
 | `subscribe<'T>` | `StreamRef<'T> -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe with callback |
+| `subscribeWithToken<'T>` | `StreamRef<'T> -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe with the event's cursor — the way to checkpoint for `subscribeFrom` |
 | `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption |
-| `subscribeFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe from token |
+| `subscribeFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe from token (rewind is inclusive of that event) |
+| `subscribeFromWithToken<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Rewind and keep checkpointing |
 | `unsubscribe<'T>` | `StreamSubscription<'T> -> Task<unit>` | Cancel subscription |
 | `getSubscriptions<'T>` | `StreamRef<'T> -> Task<StreamSubscription<'T> list>` | List subscriptions |
 | `resumeAll<'T>` | `StreamRef<'T> -> ('T -> Task<unit>) -> Task<unit>` | Resume all subscriptions |
-| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | **Always `None`** — a permanent stub, because `StreamSubscriptionHandle` does not expose the token. Read `context.streamSequenceToken` in an `onStream` hook instead |
+| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | **Deprecated** — carries `[<Obsolete>]` (a warning, not an error) and still returns **always `None`**: `StreamSubscriptionHandle` exposes no token, so there was never anything to return. Replacement: `subscribeWithToken` / `subscribeFromWithToken`, or `context.streamSequenceToken` in an `onStream` hook |
 
 A functional definition consumes a stream declaratively with `onStream` instead; see
 [Streaming](streaming.md) and [Functional grains](functional-grains.md), "Implicit subscriptions".

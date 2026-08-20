@@ -77,6 +77,10 @@ do! Stream.unsubscribe subscription
 
 The subscription is durable and persists beyond grain deactivation.
 
+`Stream.subscribeWithToken` is the same subscribe with a handler that also receives each event's
+sequence token — the cursor you need to checkpoint; see
+[Rewinding / Resuming](#rewinding--resuming).
+
 ---
 
 ## Consuming as TaskSeq (Pull-based)
@@ -112,13 +116,54 @@ let! subscription =
 This works on any rewindable stream provider — Orleans' in-memory streams and Event Hubs both
 are; a non-rewindable provider rejects the token.
 
-**Where `savedToken` comes from is your problem, and deliberately so.** The `Stream` module's
-handler shape is `'T -> Task<unit>`, so it does not hand you the cursor of each item, and
-`Stream.getSequenceToken` always returns `None` — `StreamSubscriptionHandle` does not expose the
-token, so it is a permanent stub rather than a lookup. To checkpoint, subscribe through Orleans'
-own `IAsyncStream<'T>.SubscribeAsync` overload whose `onNext` carries the token, or — on the
-[functional grain runtime](/orleans-fsharp/functional-grains/) — read `context.streamSequenceToken` inside an
-`onStream` hook, which does carry the cursor of the delivered item.
+### Getting the cursor to save
+
+`subscribeWithToken` is the subscribe whose handler receives each event's own sequence token —
+that token *is* the checkpoint:
+
+```fsharp
+let mutable checkpoint : StreamSequenceToken option = None
+
+let! subscription =
+    Stream.subscribeWithToken stream (fun event token ->
+        task {
+            processEvent event
+            checkpoint <- token   // save it wherever you keep your position
+        })
+```
+
+The token is `Some` on a rewindable provider and `None` on one that supplies no cursor — the same
+reading as `context.streamSequenceToken` on the [functional grain runtime](/orleans-fsharp/functional-grains/).
+Save it *after* the event is processed: the token belongs to the event you just handled.
+
+To resume and keep checkpointing, use `subscribeFromWithToken`, which is `subscribeFrom` with the
+cursor-carrying handler:
+
+```fsharp
+let! resumed =
+    Stream.subscribeFromWithToken stream savedToken (fun event token ->
+        task {
+            processEvent event
+            checkpoint <- token
+        })
+```
+
+Two behaviours are worth knowing before you rely on this, both measured against Orleans' memory
+streams in `tests/Orleans.FSharp.Integration/StreamingIntegrationTests.fs`:
+
+- **The rewind is inclusive.** The event that produced `savedToken` is delivered again, so a
+  handler that resumes from its last processed event will see that event twice. Checkpoint what
+  you have completed and make the handler idempotent, or save the token before processing if
+  at-most-once is what you want.
+- **The backlog arrives with the next delivery cycle, not immediately.** A resumed subscription
+  that then sits idle received nothing at all for 30 seconds; a single further publish to the
+  stream flushed the whole backlog from the checkpoint plus the new event. On a live stream this
+  is invisible; in a test, publish rather than sleep.
+
+`Stream.getSequenceToken` is **deprecated** (`[<Obsolete>]` — a warning, not an error) and still
+returns `None`. It was never a lookup: `StreamSubscriptionHandle` carries no cursor, so there was
+nothing for it to return. Use `subscribeWithToken` / `subscribeFromWithToken`, or — on the
+functional grain runtime — read `context.streamSequenceToken` inside an `onStream` hook.
 
 ---
 

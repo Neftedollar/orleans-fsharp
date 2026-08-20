@@ -86,6 +86,39 @@ module Stream =
         }
 
     /// <summary>
+    /// Subscribes to a stream with a handler that also receives each event's sequence token.
+    /// This is how you obtain a cursor to checkpoint and later hand to <c>subscribeFrom</c>:
+    /// the token belongs to the delivered event, so store it after the event is processed and
+    /// resume from it.
+    /// </summary>
+    /// <remarks>
+    /// The token is <c>Some</c> on a rewindable provider — Orleans' in-memory streams and Event
+    /// Hubs both are — and <c>None</c> on a provider that supplies no cursor, matching how
+    /// <c>context.streamSequenceToken</c> reports it on the functional grain runtime.
+    /// The subscription is durable and persists beyond grain deactivation.
+    /// </remarks>
+    /// <param name="stream">The stream reference to subscribe to.</param>
+    /// <param name="handler">
+    /// A function called for each event with the event and its sequence token.
+    /// </param>
+    /// <typeparam name="'T">The type of events on the stream.</typeparam>
+    /// <returns>A Task containing the stream subscription, which can be used to unsubscribe.</returns>
+    let subscribeWithToken<'T>
+        (stream: StreamRef<'T>)
+        (handler: 'T -> StreamSequenceToken option -> Task<unit>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+
+            let onNext =
+                Func<'T, StreamSequenceToken, Task>(fun item token ->
+                    task { do! handler item (Option.ofObj token) })
+
+            let! handle = asyncStream.SubscribeAsync(onNext)
+            return { Handle = handle }
+        }
+
+    /// <summary>
     /// Consumes a stream as a TaskSeq (pull-based).
     /// Uses a bounded Channel with capacity 1000 to bridge the push-based Orleans subscription
     /// to a pull-based TaskSeq. BoundedChannelFullMode.Wait provides backpressure when
@@ -142,8 +175,13 @@ module Stream =
     /// <summary>
     /// Subscribes to a stream starting from a specific sequence token (rewind/resume).
     /// This allows resuming event processing from a previously checkpointed position.
-    /// Only supported by rewindable stream providers (e.g., Event Hubs).
+    /// Rewindable providers only — Orleans' in-memory streams and Event Hubs both are; a
+    /// provider that is not rewindable rejects the token.
     /// </summary>
+    /// <remarks>
+    /// Use <c>subscribeWithToken</c> to obtain the cursor this takes, or
+    /// <c>subscribeFromWithToken</c> to resume and keep checkpointing in one step.
+    /// </remarks>
     /// <param name="stream">The stream reference to subscribe to.</param>
     /// <param name="token">The sequence token to start consuming from.</param>
     /// <param name="handler">A function called for each event received on the stream.</param>
@@ -166,6 +204,37 @@ module Stream =
         }
 
     /// <summary>
+    /// Subscribes from a checkpoint <b>and</b> keeps handing the handler each event's own
+    /// sequence token, so the consumer can go on checkpointing after a rewind.
+    /// </summary>
+    /// <remarks>
+    /// The delivered token is <c>Some</c> on a rewindable provider and <c>None</c> on a provider
+    /// that supplies no cursor, exactly as in <c>subscribeWithToken</c>.
+    /// </remarks>
+    /// <param name="stream">The stream reference to subscribe to.</param>
+    /// <param name="token">The sequence token to start consuming from.</param>
+    /// <param name="handler">
+    /// A function called for each event with the event and its sequence token.
+    /// </param>
+    /// <typeparam name="'T">The type of events on the stream.</typeparam>
+    /// <returns>A Task containing the stream subscription, which can be used to unsubscribe.</returns>
+    let subscribeFromWithToken<'T>
+        (stream: StreamRef<'T>)
+        (token: StreamSequenceToken)
+        (handler: 'T -> StreamSequenceToken option -> Task<unit>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+
+            let onNext =
+                Func<'T, StreamSequenceToken, Task>(fun item itemToken ->
+                    task { do! handler item (Option.ofObj itemToken) })
+
+            let! handle = asyncStream.SubscribeAsync(onNext, token)
+            return { Handle = handle }
+        }
+
+    /// <summary>
     /// Always returns <c>None</c>: <c>StreamSubscriptionHandle</c> does not expose the sequence
     /// token directly, so this is a permanent stub rather than a lookup. The token is delivered
     /// with each event via the <c>onNext</c> callback and must be tracked by the consumer.
@@ -173,6 +242,8 @@ module Stream =
     /// <param name="sub">The stream subscription to query.</param>
     /// <typeparam name="'T">The type of events on the subscribed stream.</typeparam>
     /// <returns>Always <c>None</c>.</returns>
+    [<Obsolete("Stream.getSequenceToken can only ever return None -- a subscription handle carries no cursor. Subscribe with Stream.subscribeWithToken (or Stream.subscribeFromWithToken after a rewind), whose handler receives each event's own StreamSequenceToken; on the functional grain runtime read context.streamSequenceToken inside an onStream hook. See docs/streaming.md, \"Rewinding / Resuming\".",
+              false)>]
     let getSequenceToken<'T> (sub: StreamSubscription<'T>) : StreamSequenceToken option =
         // StreamSubscriptionHandle does not directly expose the token;
         // the token is delivered with each event via the onNext callback.

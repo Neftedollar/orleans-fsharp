@@ -79,6 +79,36 @@ let ``execute succeeds after transient failures within retry budget`` () =
     }
 
 [<Fact>]
+let ``execute re-invokes the call once per attempt`` () =
+    task {
+        // Pins the Step-0 truth behind the timeout fix: the callback handed to Polly invokes `f`
+        // itself, so every attempt is a fresh invocation — retries are not repeated awaits of one
+        // already-started task.
+        let invocations = ref 0
+
+        let f () =
+            task {
+                System.Threading.Interlocked.Increment(invocations) |> ignore
+                raise (InvalidOperationException("always fails"))
+                return 0
+            }
+
+        try
+            let! _ =
+                GrainResilience.execute
+                    { GrainResilience.defaultOptions with
+                        MaxRetryAttempts = 2
+                        RetryDelay = TimeSpan.Zero }
+                    f
+
+            ()
+        with _ ->
+            ()
+
+        test <@ !invocations = 3 @>
+    }
+
+[<Fact>]
 let ``execute throws when all retry attempts are exhausted`` () =
     task {
         let f = failThenSucceed 10 0
@@ -172,70 +202,81 @@ let ``retry shorthand throws after exceeding maxAttempts`` () =
 // withTimeout shorthand
 // ---------------------------------------------------------------------------
 
-[<Fact>]
-let ``withTimeout raises TimeoutRejectedException when deadline exceeded`` () =
-    task {
-        // Build a pipeline directly so we can forward the cancellation token,
-        // which is required for Polly v8 timeout to propagate TimeoutRejectedException.
-        let pipeline =
-            ResiliencePipelineBuilder<int>()
-                .AddTimeout(TimeSpan.FromMilliseconds(50.0))
-                .Build()
+// These replace two wall-clock tests that asserted a 50 ms Polly budget was met (backlog item
+// 11's flake family) and that never called GrainResilience at all — they drove a hand-built Polly
+// pipeline, so they passed while `withTimeout` itself could not time anything out.
+//
+// The shape here asserts an OUTCOME under a deadline that only the pipeline can end: the
+// protected call is gated on a TaskCompletionSource that is never released inside the timed
+// region, so if the deadline does not fire the call cannot finish on its own. The 30 s net
+// decides WHICH task completed first, not how fast the timeout was — a loaded machine slows the
+// timeout, it does not stop it.
 
-        let! ex =
+[<Fact>]
+let ``withTimeout raises TimeoutRejectedException for a call that never completes`` () =
+    task {
+        let gate = TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        let guarded =
             task {
                 try
-                    let! result =
-                        pipeline
-                            .ExecuteAsync(fun ct ->
-                                System.Threading.Tasks.ValueTask<int>(
-                                    task {
-                                        // Respect the cancellation token so Polly can cancel us
-                                        do! Task.Delay(TimeSpan.FromSeconds(2.0), ct)
-                                        return 0
-                                    }))
-                            .AsTask()
-
+                    let! _ = GrainResilience.withTimeout (TimeSpan.FromMilliseconds(50.0)) (fun () -> gate.Task)
                     return null :> exn
                 with ex ->
                     return unwrapAggregate ex
             }
 
+        let! finished = Task.WhenAny(guarded, Task.Delay(TimeSpan.FromSeconds(30.0)))
+        test <@ Object.ReferenceEquals(finished, guarded) @>
+
+        let! ex = guarded
         test <@ not (isNull ex) @>
         test <@ ex :? TimeoutRejectedException @>
+
+        gate.TrySetResult 0 |> ignore
     }
 
 [<Fact>]
-let ``withTimeout pipeline helper raises TimeoutRejectedException for CT-aware slow call`` () =
+let ``withTimeout abandons the call rather than cancelling it`` () =
     task {
-        // Polly v8 timeout strategy cancels the CancellationToken it passes to the
-        // inner callback. When the inner task respects that token and raises
-        // OperationCanceledException, Polly converts it to TimeoutRejectedException.
-        let pipeline =
-            ResiliencePipelineBuilder<int>()
-                .AddTimeout(TimeSpan.FromMilliseconds(50.0))
-                .Build()
+        // The deadline discards the result; the call keeps running with its effects. Written with
+        // a gate rather than a slow Task on purpose: the first version of this test raced an
+        // 800 ms call against a 50 ms budget and lost once under full-suite load — the exact
+        // wall-clock shape this work is removing. Here the call cannot finish until the test lets
+        // it, so the deadline is the only thing that can end the wait.
+        let gate = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let ran = TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)
 
-        let! ex =
+        let slow () =
+            task {
+                do! gate.Task
+                ran.TrySetResult 7 |> ignore
+                return 7
+            }
+
+        let guarded =
             task {
                 try
-                    let! _ =
-                        pipeline
-                            .ExecuteAsync(fun ct ->
-                                System.Threading.Tasks.ValueTask<int>(
-                                    task {
-                                        do! Task.Delay(TimeSpan.FromSeconds(2.0), ct)
-                                        return 0
-                                    }))
-                            .AsTask()
-
+                    let! _ = GrainResilience.withTimeout (TimeSpan.FromMilliseconds(50.0)) slow
                     return null :> exn
                 with ex ->
                     return unwrapAggregate ex
             }
 
+        let! finished = Task.WhenAny(guarded, Task.Delay(TimeSpan.FromSeconds(30.0)))
+        test <@ Object.ReferenceEquals(finished, guarded) @>
+
+        let! ex = guarded
         test <@ not (isNull ex) @>
         test <@ ex :? TimeoutRejectedException @>
+
+        // Abandoned, not cancelled: the call had not run its effect when the caller gave up, and
+        // it still runs it once the gate opens.
+        test <@ not ran.Task.IsCompleted @>
+        gate.TrySetResult() |> ignore
+
+        let! completed = Task.WhenAny(ran.Task, Task.Delay(TimeSpan.FromSeconds(30.0)))
+        test <@ Object.ReferenceEquals(completed, ran.Task) @>
     }
 
 [<Fact>]
@@ -244,6 +285,125 @@ let ``withTimeout completes successfully when call is fast`` () =
         let! result = GrainResilience.withTimeout (TimeSpan.FromSeconds(5.0)) (fun () -> task { return 7 })
 
         test <@ result = 7 @>
+    }
+
+[<Fact>]
+let ``execute enforces the deadline over the whole sequence and does not re-invoke a hung call`` () =
+    task {
+        // The timeout is the outermost strategy: a hung attempt consumes the whole budget, so the
+        // retry strategy never gets a second attempt. This pins the composition, not a duration.
+        let gate = TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let invocations = ref 0
+
+        let guarded =
+            task {
+                try
+                    let! _ =
+                        GrainResilience.execute
+                            { GrainResilience.defaultOptions with
+                                MaxRetryAttempts = 3
+                                RetryDelay = TimeSpan.Zero
+                                Timeout = Some(TimeSpan.FromMilliseconds(50.0)) }
+                            (fun () ->
+                                System.Threading.Interlocked.Increment(invocations) |> ignore
+                                gate.Task)
+
+                    return null :> exn
+                with ex ->
+                    return unwrapAggregate ex
+            }
+
+        let! finished = Task.WhenAny(guarded, Task.Delay(TimeSpan.FromSeconds(30.0)))
+        test <@ Object.ReferenceEquals(finished, guarded) @>
+
+        let! ex = guarded
+        test <@ ex :? TimeoutRejectedException @>
+        test <@ !invocations = 1 @>
+
+        gate.TrySetResult 0 |> ignore
+    }
+
+// ---------------------------------------------------------------------------
+// executeCancellable / withTimeoutCancellable
+// ---------------------------------------------------------------------------
+
+[<Fact>]
+let ``withTimeoutCancellable cancels the operation at the deadline`` () =
+    task {
+        let observedCancellation = TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        let guarded =
+            task {
+                try
+                    let! _ =
+                        GrainResilience.withTimeoutCancellable
+                            (TimeSpan.FromMilliseconds(50.0))
+                            (fun ct ->
+                                task {
+                                    try
+                                        // Far longer than the 30 s net below, so a pass cannot be
+                                        // the operation finishing on its own in a tie.
+                                        do! Task.Delay(TimeSpan.FromMinutes(5.0), ct)
+                                        return 0
+                                    with :? OperationCanceledException ->
+                                        observedCancellation.TrySetResult true |> ignore
+                                        return raise (OperationCanceledException(ct))
+                                })
+
+                    return null :> exn
+                with ex ->
+                    return unwrapAggregate ex
+            }
+
+        let! finished = Task.WhenAny(guarded, Task.Delay(TimeSpan.FromSeconds(30.0)))
+        test <@ Object.ReferenceEquals(finished, guarded) @>
+
+        let! ex = guarded
+        test <@ ex :? TimeoutRejectedException @>
+
+        let! observed = observedCancellation.Task
+        test <@ observed @>
+    }
+
+[<Fact>]
+let ``executeCancellable passes a token that cannot fire when no timeout is configured`` () =
+    task {
+        let canBeCanceled = ref true
+
+        let! result =
+            GrainResilience.executeCancellable
+                { GrainResilience.defaultOptions with
+                    MaxRetryAttempts = 0 }
+                (fun ct ->
+                    canBeCanceled.Value <- ct.CanBeCanceled
+                    Task.FromResult 5)
+
+        test <@ result = 5 @>
+        test <@ not !canBeCanceled @>
+    }
+
+[<Fact>]
+let ``executeCancellable re-invokes the operation on each retry attempt`` () =
+    task {
+        let invocations = ref 0
+
+        let! result =
+            GrainResilience.executeCancellable
+                { GrainResilience.defaultOptions with
+                    MaxRetryAttempts = 3
+                    RetryDelay = TimeSpan.Zero }
+                (fun _ct ->
+                    task {
+                        let n = System.Threading.Interlocked.Increment(invocations)
+
+                        if n <= 2 then
+                            raise (InvalidOperationException("transient"))
+
+                        return 42
+                    })
+
+        test <@ result = 42 @>
+        test <@ !invocations = 3 @>
     }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +443,72 @@ let ``circuitBreaker opens after threshold failures`` () =
         test <@ ex :? BrokenCircuitException @>
     }
 
+[<Fact>]
+let ``execute builds a fresh pipeline per call so circuit state is not shared`` () =
+    task {
+        // Not a wish, a measurement: `execute` calls buildPipeline on every invocation, so the
+        // breaker configured in ResilienceOptions starts cold each time and the circuit never
+        // opens across calls. Documented in resilience.md; this test is what keeps the docs true.
+        let opts =
+            { GrainResilience.defaultOptions with
+                MaxRetryAttempts = 0
+                CircuitBreakerThreshold = Some 2
+                CircuitBreakerDuration = Some(TimeSpan.FromSeconds(30.0)) }
+
+        let boom () =
+            task {
+                raise (InvalidOperationException("boom"))
+                return 0
+            }
+
+        let observed = ResizeArray<exn>()
+
+        for _ in 1..5 do
+            try
+                let! _ = GrainResilience.execute opts boom
+                ()
+            with ex ->
+                observed.Add(unwrapAggregate ex)
+
+        test <@ observed.Count = 5 @>
+        test <@ observed |> Seq.forall (fun ex -> ex :? InvalidOperationException) @>
+        test <@ observed |> Seq.forall (fun ex -> not (ex :? BrokenCircuitException)) @>
+    }
+
+[<Fact>]
+let ``a reused buildPipeline opens the circuit after the threshold`` () =
+    task {
+        // The counterpart of the test above: shared circuit state is available, it just has to be
+        // asked for by keeping one pipeline object.
+        let pipeline =
+            GrainResilience.buildPipeline<int>
+                { GrainResilience.defaultOptions with
+                    MaxRetryAttempts = 0
+                    CircuitBreakerThreshold = Some 2
+                    CircuitBreakerDuration = Some(TimeSpan.FromSeconds(30.0)) }
+
+        let observed = ResizeArray<exn>()
+
+        for _ in 1..5 do
+            try
+                let! _ =
+                    pipeline
+                        .ExecuteAsync(fun _ct ->
+                            ValueTask<int>(
+                                task {
+                                    raise (InvalidOperationException("boom"))
+                                    return 0
+                                }))
+                        .AsTask()
+
+                ()
+            with ex ->
+                observed.Add(unwrapAggregate ex)
+
+        test <@ observed.Count = 5 @>
+        test <@ observed |> Seq.exists (fun ex -> ex :? BrokenCircuitException) @>
+    }
+
 // ---------------------------------------------------------------------------
 // options composition
 // ---------------------------------------------------------------------------
@@ -303,6 +529,38 @@ let ``options can compose circuit breaker threshold and timeout together`` () =
 let ``buildPipeline returns a non-null pipeline`` () =
     let pipeline = GrainResilience.buildPipeline<int> GrainResilience.defaultOptions
     test <@ not (isNull (box pipeline)) @>
+
+[<Fact>]
+let ``buildPipeline rejects options outside the bounds Polly validates`` () =
+    // These bounds are documented in resilience.md, so they need a test rather than a memory:
+    // Polly throws at BUILD time, i.e. from inside the execute / withTimeout call. If a Polly
+    // upgrade moves a bound, this test fails and the documented numbers get corrected with it.
+    let builds (options: ResilienceOptions) =
+        try
+            GrainResilience.buildPipeline<int> options |> ignore
+            true
+        with :? System.ComponentModel.DataAnnotations.ValidationException ->
+            false
+
+    let withTimeoutOf ms =
+        { GrainResilience.defaultOptions with
+            Timeout = Some(TimeSpan.FromMilliseconds(ms: float)) }
+
+    let withThreshold n =
+        { GrainResilience.defaultOptions with
+            CircuitBreakerThreshold = Some n }
+
+    // Timeout: [10 ms, 24 h]
+    test <@ not (builds (withTimeoutOf 9.0)) @>
+    test <@ builds (withTimeoutOf 10.0) @>
+    test <@ not (builds { GrainResilience.defaultOptions with Timeout = Some TimeSpan.Zero }) @>
+
+    test
+        <@ not (builds { GrainResilience.defaultOptions with Timeout = Some(TimeSpan.FromHours 25.0) }) @>
+
+    // CircuitBreakerThreshold maps to MinimumThroughput, which starts at 2
+    test <@ not (builds (withThreshold 1)) @>
+    test <@ builds (withThreshold 2) @>
 
 // ---------------------------------------------------------------------------
 // Property tests
