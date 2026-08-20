@@ -45,7 +45,6 @@ type CounterGrain() =
 ### Orleans.FSharp — the functional grain runtime
 
 ```fsharp
-[<NoEquality; NoComparison>]
 type CounterApi =
     { increment: unit -> Task<int>
       value: unit -> Task<int> }

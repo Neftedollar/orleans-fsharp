@@ -30,7 +30,6 @@ open System.Threading.Tasks
 open Orleans.FSharp
 
 // 1. The API record IS the grain's surface — and its type identity
-[<NoEquality; NoComparison>]
 type CounterApi =
     { increment: unit -> Task<int>
       value: unit -> Task<int> }
@@ -75,6 +74,33 @@ grain's identity? Declare a dedicated brand type and use the full form,
 `grainContract<'Actor, 'Key, 'Api>` — see
 [the actor brand](docs/functional-grains.md#why-the-actor-brand).
 
+### Typed grain ids
+
+The key type is your domain's, not Orleans'. A unit of measure plus a mapped key codec makes the
+grain key an `int64<UserId>` all the way to the call site, so handing it an order id is a compile
+error and costs nothing at run time:
+
+```fsharp
+[<Measure>] type UserId
+
+let userId (raw: int64) : int64<UserId> = raw * 1L<UserId>
+let rawId (id: int64<UserId>) : int64 = int64 id
+
+let userContract =
+    contract<int64<UserId>, UserApi> {
+        grainType "user"
+        int64KeyMapped rawId userId
+    }
+
+// int64<UserId> is what this reference takes; 42L<OrderId> is error FS0001, not a 3am incident
+let user = FunctionalGrain.ref userContract factory (userId 42L)
+```
+
+The same holds for any domain key type — `stringKeyMapped` / `guidKeyMapped` and the compound
+forms. See [`examples/typesafe-ids`](examples/typesafe-ids) for the full example and
+[key-codec identity rules](docs/functional-grains.md#key-codec-identity-rules) for what a codec has
+to guarantee.
+
 > **Older authoring models.** The original `grain { }` CE (shown further below) still compiles
 > and runs, but its public surface (`grain { }`, `GrainDefinition`, the old `GrainContext`,
 > `[<FSharpGrain>]`, `AddFSharpGrain`, `FSharpGrain.*`, `Timers`, `Reminder`) carries
@@ -91,7 +117,7 @@ Everything Orleans offers, as contract or definition operations — no attribute
 
 | Where | Operations |
 |---|---|
-| `grainContract { }` | `grainType` (optional for ephemeral grains), `version`, key codecs (`stringKey` / `guidKey` / `int64Key`, compound + mapped forms), per-operation `readOnly` / `oneWay` / `alwaysInterleave` / `operationId` / `sinceVersion` / `transactional`, whole-grain `reentrant` / `mayInterleave`, `acceptsVersions` |
+| `contract<'Key, 'Api> { }` / `grainContract<'Actor, 'Key, 'Api> { }` | `grainType` (optional for ephemeral grains), `version`, key codecs (`stringKey` / `guidKey` / `int64Key`, compound + mapped forms), per-operation `readOnly` / `oneWay` / `alwaysInterleave` / `operationId` / `sinceVersion` / `transactional`, whole-grain `reentrant` / `mayInterleave`, `acceptsVersions` |
 | `grainFor { }` | `defaultState` / `initialState` / `stateFrom`, `usePersistentState`, `transactionalStateFrom`, `onActivate` / `onDeactivate` / `onLifecycle`, `onTimer` / `onReminder`, `onStream` / `onBroadcast` (implicit subscriptions), `statelessWorker` / `placement`, `collectionAge`, `handle` / `handleStream` |
 | `journaledGrainFor { }` | event sourcing over Orleans' own log-consistency providers: `initialEventState`, pure `apply` fold, handlers that raise events — see [Event Sourcing](docs/event-sourcing.md) |
 | API field shapes | `'Arg -> Task<'Reply>` and `'Arg -> IAsyncEnumerable<'Item>` ([streaming replies](docs/streaming-replies.md)) |

@@ -62,6 +62,12 @@ module RoomApi =
     let rawRef = FunctionalGrain.rawRef contract
 ```
 
+`[<NoEquality; NoComparison>]` on the API record is optional -- a habit worth keeping, because it
+turns "two grain APIs compared for equality" into a compile error instead of a runtime one, but the
+runtime never compares an API record and a plain `type RoomApi = { ... }` seals exactly the same
+contract (pinned by `tests/Orleans.FSharp.Tests/FunctionalContractTests.fs`, "an API record needs no
+equality attributes"). The examples on this page carry it; the README's quick start does not.
+
 Server-side, a `grainFor` definition attaches handlers and persistent state to the contract, and
 `AddFunctionalGrain` / `AddFunctionalGrainClient` register it on the silo / client builders. See
 `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` for the complete, runnable version of this

@@ -63,6 +63,30 @@ let ``a contract keeps grain type, default version, and declaration order`` () =
             contract.Operations |> Array.map (fun op -> op.OperationId) = [| "join"; "say"; "history"; "typing" |]
         @>
 
+/// <summary>
+/// An API record declared WITHOUT <c>[&lt;NoEquality; NoComparison&gt;]</c>. Every other fixture in
+/// the suite carries the attribute and the docs show it on every example, which reads as a
+/// requirement; the runtime never compares an API record, so it is not one. This fixture exists
+/// to keep that true -- if the shape rules ever start demanding it, this file stops compiling.
+/// </summary>
+type PlainApi =
+    { ping: string -> Task<int>
+      pong: unit -> Task<unit> }
+
+type PlainActor = private PlainActor of unit
+
+[<Fact>]
+let ``an API record needs no equality attributes`` () =
+    let contract =
+        grainContract<PlainActor, string, PlainApi> {
+            grainType "chat.plain"
+            stringKey
+            readOnly (_.ping)
+        }
+
+    test <@ contract.Operations |> Array.map (fun op -> op.FieldName) = [| "ping"; "pong" |] @>
+    test <@ contract.Operations.[0].IsReadOnly @>
+
 [<Fact>]
 let ``a contract records the exact argument and reply types`` () =
     let contract = baseContract ()
