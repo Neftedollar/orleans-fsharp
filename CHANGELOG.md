@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-08-20
+
+A correctness release driven by the post-4.0.0 documentation verification pass: the
+resilience deadline now actually fires (`TimeoutRejectedException`, with the in-flight call
+abandoned — not cancelled — and new `withTimeoutCancellable` / `executeCancellable` for
+operations that can honour a token), and the classic `Stream` module gained a real cursor
+(`subscribeWithToken`; `getSequenceToken` deprecated). Details below.
+
 ### Added
 
 - **`GrainResilience.executeCancellable` / `GrainResilience.withTimeoutCancellable`.** The same
@@ -721,7 +729,8 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 - 3 sample patterns: CQRS, Saga, Rate Limiter
 - Complete API reference
 
-[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.1...HEAD
+[4.0.1]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v3.0.2...v4.0.0
 [2.0.0-alpha.1]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v2.0.0-alpha.1
 [1.0.0]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v1.0.0
