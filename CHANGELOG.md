@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-08-20
+
+The parenthesis-less release: `contract`, `grainContract`, and `observerContract` are now type
+functions — `contract<string, CounterApi> { ... }`, no `()`. Source-breaking (drop the parens,
+one mechanical edit) but **binary-compatible**, verified by running a consumer compiled against
+4.0.1 on the new assemblies. Shipped as a patch by explicit owner decision, days after 4.0.0,
+while adoption is nil. Also: the typed-grain-id teaser and trimmed hero examples in the README,
+and template package pins raised to 4.x. Details below.
+
 ### Changed
 
 - **BREAKING — `grainContract`, `contract` and `observerContract` are type functions; drop the
@@ -87,7 +96,7 @@ operations that can honour a token), and the classic `Stream` module gained a re
 ## [4.0.0] - 2026-08-19
 
 > Code snippets in this section show the entry points with `()` — the syntax as of 4.0.0.
-> The parenthesis-less form arrived later; see the Unreleased/4.1 notes above.
+> The parenthesis-less form arrived in 4.0.2; see that section above.
 
 
 The functional-era release: everything specs 003 and 004 delivered, in one version.
@@ -751,7 +760,8 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 - 3 sample patterns: CQRS, Saga, Rate Limiter
 - Complete API reference
 
-[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.1...HEAD
+[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.2...HEAD
+[4.0.2]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.1...v4.0.2
 [4.0.1]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v3.0.2...v4.0.0
 [2.0.0-alpha.1]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v2.0.0-alpha.1
