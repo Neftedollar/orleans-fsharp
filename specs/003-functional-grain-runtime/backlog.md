@@ -117,11 +117,23 @@ Each item is grounded in a verified finding; pointers name the evidence.
     deprecated with `[<Obsolete>]` (warning) and unchanged behaviour, and the
     full rewind loop is covered by an integration test over the fixture's
     memory streams.
-14. **`Stream.resumeAll` still discards the cursor** (found while fixing
-    item 13, not fixed): the reactivation path re-attaches a
-    `'T -> Task<unit>` handler, so a durable subscription that resumes after
-    deactivation loses the ability to checkpoint that `subscribeWithToken`
-    now gives a fresh subscription. Cost of closing it: one more public
-    function (`resumeAllWithToken`, ~12 lines), an api-reference row, a doc
-    paragraph, and one integration test. Left out of the 4.0.1 fix on scope
-    grounds — the surface addition is the owner's call.
+14. **Two more `Stream` entry points still discard the cursor** (found while
+    fixing item 13, not fixed): `resumeAll` re-attaches a `'T -> Task<unit>`
+    handler, so a durable subscription resumed after deactivation loses the
+    checkpointing that `subscribeWithToken` now gives a fresh subscription;
+    and `asTaskSeq` yields bare `'T`, so a pull-based consumer cannot
+    checkpoint at all. Cost of closing both: two public functions
+    (`resumeAllWithToken`, and an `asTaskSeqWithToken` yielding
+    `'T * StreamSequenceToken option`, ~12 and ~20 lines), two api-reference
+    rows, a doc paragraph each, and one test each. Left out of the 4.0.1 fix
+    on scope grounds — the surface additions are the owner's call.
+15. **Two `ResilienceOptions` values throw from inside the call** (found
+    while fixing item 12, documented not fixed): Polly validates its strategy
+    options with data annotations at pipeline-build time, so
+    `Timeout = Some t` outside [10 ms, 24 h] — `TimeSpan.Zero` included — and
+    `CircuitBreakerThreshold = Some 0 | Some 1` raise
+    `System.ComponentModel.DataAnnotations.ValidationException` from
+    `execute` / `withTimeout` rather than at configuration time. Now
+    documented in resilience.md and pinned by a test. A validating smart
+    constructor over `ResilienceOptions` would move the failure to where the
+    values are written, but that is a surface addition.

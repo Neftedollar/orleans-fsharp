@@ -110,6 +110,16 @@ let defaultOptions: ResilienceOptions =
     }
 ```
 
+**Two bounds Polly enforces**, and it enforces them by throwing
+`System.ComponentModel.DataAnnotations.ValidationException` (Polly validates its options with
+data annotations) when the pipeline is built — that is, from inside the `execute` / `withTimeout`
+call itself, not at configuration time:
+
+- `Timeout` must be between **10 ms and 24 hours**. `TimeSpan.Zero` is not "no timeout"; use
+  `None` for that.
+- `CircuitBreakerThreshold` must be **at least 2** (it maps to Polly's `MinimumThroughput`).
+  `Some 1` and `Some 0` both throw.
+
 ### `GrainResilience.retry`
 
 Retries the grain call up to `maxAttempts` further times after the initial one, so `retry 3` makes at most four calls.

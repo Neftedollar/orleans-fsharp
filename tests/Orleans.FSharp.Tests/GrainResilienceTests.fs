@@ -518,6 +518,38 @@ let ``buildPipeline returns a non-null pipeline`` () =
     let pipeline = GrainResilience.buildPipeline<int> GrainResilience.defaultOptions
     test <@ not (isNull (box pipeline)) @>
 
+[<Fact>]
+let ``buildPipeline rejects options outside the bounds Polly validates`` () =
+    // These bounds are documented in resilience.md, so they need a test rather than a memory:
+    // Polly throws at BUILD time, i.e. from inside the execute / withTimeout call. If a Polly
+    // upgrade moves a bound, this test fails and the documented numbers get corrected with it.
+    let builds (options: ResilienceOptions) =
+        try
+            GrainResilience.buildPipeline<int> options |> ignore
+            true
+        with :? System.ComponentModel.DataAnnotations.ValidationException ->
+            false
+
+    let withTimeoutOf ms =
+        { GrainResilience.defaultOptions with
+            Timeout = Some(TimeSpan.FromMilliseconds(ms: float)) }
+
+    let withThreshold n =
+        { GrainResilience.defaultOptions with
+            CircuitBreakerThreshold = Some n }
+
+    // Timeout: [10 ms, 24 h]
+    test <@ not (builds (withTimeoutOf 9.0)) @>
+    test <@ builds (withTimeoutOf 10.0) @>
+    test <@ not (builds { GrainResilience.defaultOptions with Timeout = Some TimeSpan.Zero }) @>
+
+    test
+        <@ not (builds { GrainResilience.defaultOptions with Timeout = Some(TimeSpan.FromHours 25.0) }) @>
+
+    // CircuitBreakerThreshold maps to MinimumThroughput, which starts at 2
+    test <@ not (builds (withThreshold 1)) @>
+    test <@ builds (withThreshold 2) @>
+
 // ---------------------------------------------------------------------------
 // Property tests
 // ---------------------------------------------------------------------------
