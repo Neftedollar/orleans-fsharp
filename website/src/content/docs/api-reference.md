@@ -33,17 +33,24 @@ handlers to it. See [Functional Grain Runtime](/orleans-fsharp/functional-grains
 
 ### Entry points
 
-| Function | Signature | Description |
+| Entry point | Signature | Description |
 |---|---|---|
-| `grainContract<'Actor, 'Key, 'Api>` | `unit -> GrainContractBuilder<'Actor,'Key,'Api>` | Opens the contract CE |
-| `contract<'Key, 'Api>` | `unit -> GrainContractBuilder<'Api,'Key,'Api>` | Short form: the API record is its own actor brand ([details](/orleans-fsharp/functional-grains/#the-short-form-the-api-record-as-its-own-brand)) |
+| `grainContract<'Actor, 'Key, 'Api>` | `GrainContractBuilder<'Actor,'Key,'Api>` — a value, not a function | Opens the contract CE |
+| `contract<'Key, 'Api>` | `GrainContractBuilder<'Api,'Key,'Api>` — a value, not a function | Short form: the API record is its own actor brand ([details](/orleans-fsharp/functional-grains/#the-short-form-the-api-record-as-its-own-brand)) |
 | `grainFor contract` | `GrainContract<...> -> FunctionalGrainDefinitionBuilder<...>` | Opens the definition CE |
 | `journaledGrainFor contract` | `GrainContract<...> -> FunctionalJournaledGrainDefinitionBuilder<...>` | Opens the journaled definition CE ([Event Sourcing](/orleans-fsharp/event-sourcing/)) |
-| `observerContract<'Brand, 'Api>` | `unit -> ObserverContractBuilder<'Brand,'Api>` | Opens the observer contract CE |
+| `observerContract<'Brand, 'Api>` | `ObserverContractBuilder<'Brand,'Api>` — a value, not a function | Opens the observer contract CE |
 | `FunctionalGrain.ref` | `contract -> IGrainFactory -> 'Key -> 'Api` | Binds a typed API record |
 | `FunctionalGrain.rawRef` | `contract -> IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor,'Key,'Api>` | Binds the typed wrapper |
 | `FunctionalGrain.streamId` | `contract -> string -> 'Key -> StreamId` | Stream id whose key is the contract's own grain-key bytes |
 | `FunctionalGrain.channelId` | `contract -> string -> 'Key -> ChannelId` | The same for a broadcast channel |
+
+The three contract entry points are **type functions** -- generic values, not functions of `unit`.
+`grainContract<RoomActor, RoomId, RoomApi>` *is* the builder, so the CE braces follow the type
+arguments directly and there is no `()` to write. F# re-evaluates a type function at every mention,
+so each contract expression opens on its own builder instance (pinned by
+`tests/Orleans.FSharp.Tests/FunctionalSurfaceTests.fs`, "each entry point mention yields its own
+builder"). The other four rows are ordinary functions and take their argument as usual.
 
 `FunctionalGrain` is a static class, so `ref`/`rawRef` generalize only where F# lets a static-class
 application generalize -- see [Functional grains](/orleans-fsharp/functional-grains/), "The `FunctionalGrain`
