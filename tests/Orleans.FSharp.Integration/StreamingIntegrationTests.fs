@@ -135,6 +135,162 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
             test <@ items = [ 1..eventCount ] @>
         }
 
+    // -----------------------------------------------------------------------
+    // Cursors: subscribeWithToken / subscribeFromWithToken over a rewindable provider
+    // -----------------------------------------------------------------------
+    //
+    // The fixture's provider is AddMemoryStreams, and Orleans' memory streams are rewindable, so
+    // these run against a provider that really does hand out cursors. Timing follows the
+    // asTaskSeq test's discipline: a sentinel is re-published until the subscription is proven
+    // live (memory streams do not replay for a late subscriber), and every wait is a poll with a
+    // generous deadline rather than a guessed sleep.
+
+    /// Re-publishes a 0 sentinel until the subscription observes something, then returns.
+    member private _.ProveSubscriptionLive(streamRef: StreamRef<int>, seen: unit -> bool) =
+        task {
+            let deadline = DateTime.UtcNow.AddSeconds 30.0
+
+            while not (seen ()) && DateTime.UtcNow < deadline do
+                do! Stream.publish streamRef 0
+                do! Task.Delay 100
+
+            test <@ seen () @>
+        }
+
+    member private _.WaitUntil(condition: unit -> bool) =
+        task {
+            let deadline = DateTime.UtcNow.AddSeconds 30.0
+
+            while not (condition ()) && DateTime.UtcNow < deadline do
+                do! Task.Delay 100
+
+            test <@ condition () @>
+        }
+
+    /// <summary>
+    /// Publishes <paramref name="nudge"/> until <paramref name="condition"/> holds.
+    /// A rewound subscription's backlog is delivered on the pulling agent's next cycle for the
+    /// stream, and that cycle is driven by new data: measured on this fixture, a resumed
+    /// subscription saw nothing at all for 30 s of idling, and one further publish flushed the
+    /// whole backlog from the checkpoint plus the new event. So the wake-up is published rather
+    /// than waited for — the same publish-until-observed rule the sentinel above follows.
+    /// </summary>
+    member private _.NudgeUntil(streamRef: StreamRef<int>, nudge: int, condition: unit -> bool) =
+        task {
+            let deadline = DateTime.UtcNow.AddSeconds 30.0
+
+            while not (condition ()) && DateTime.UtcNow < deadline do
+                do! Stream.publish streamRef nudge
+                do! Task.Delay 100
+
+            test <@ condition () @>
+        }
+
+    [<Fact>]
+    member this.``subscribeWithToken yields a cursor that subscribeFrom resumes from`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let key = Guid.NewGuid().ToString()
+            let streamRef = Stream.getStream<int> streamProvider "cursor-ns" key
+            let received = ConcurrentQueue<int * StreamSequenceToken option>()
+
+            let! sub =
+                Stream.subscribeWithToken streamRef (fun item token ->
+                    task { received.Enqueue(item, token) })
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> not received.IsEmpty)
+
+            for i in 1..5 do
+                do! Stream.publish streamRef i
+
+            let payload () =
+                received |> Seq.filter (fun (i, _) -> i > 0) |> Seq.toList
+
+            do! this.WaitUntil(fun () -> payload () |> List.map fst |> List.distinct |> List.length = 5)
+
+            // The whole point of the member: the cursor exists and is not a stub.
+            test <@ payload () |> List.forall (fun (_, token) -> Option.isSome token) @>
+
+            let checkpoint = payload () |> List.find (fun (i, _) -> i = 3) |> snd
+            test <@ checkpoint.IsSome @>
+
+            do! Stream.unsubscribe sub
+
+            // Resume a fresh subscription from that cursor. Without a token a new subscriber sees
+            // nothing already published, so any of 4/5 arriving proves the rewind took effect;
+            // 1/2 never arriving proves it rewound TO the checkpoint and not to the start.
+            let resumed = ConcurrentQueue<int>()
+
+            let! resumedSub =
+                Stream.subscribeFrom streamRef checkpoint.Value (fun item -> task { resumed.Enqueue item })
+
+            do! this.NudgeUntil(streamRef, 6, fun () -> Seq.contains 4 resumed && Seq.contains 5 resumed)
+
+            // Rewind is inclusive: the event that produced the checkpoint is delivered again.
+            test <@ Seq.contains 3 resumed @>
+            test <@ not (Seq.contains 1 resumed) @>
+            test <@ not (Seq.contains 2 resumed) @>
+
+            do! Stream.unsubscribe resumedSub
+        }
+
+    [<Fact>]
+    member this.``subscribeFromWithToken resumes from a checkpoint and keeps handing out cursors`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let key = Guid.NewGuid().ToString()
+            let streamRef = Stream.getStream<int> streamProvider "cursor-resume-ns" key
+            let received = ConcurrentQueue<int * StreamSequenceToken option>()
+
+            let! sub =
+                Stream.subscribeWithToken streamRef (fun item token ->
+                    task { received.Enqueue(item, token) })
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> not received.IsEmpty)
+
+            for i in 1..5 do
+                do! Stream.publish streamRef i
+
+            let payload () =
+                received |> Seq.filter (fun (i, _) -> i > 0) |> Seq.toList
+
+            do! this.WaitUntil(fun () -> payload () |> List.map fst |> List.distinct |> List.length = 5)
+
+            let checkpoint = payload () |> List.find (fun (i, _) -> i = 3) |> snd
+            test <@ checkpoint.IsSome @>
+
+            do! Stream.unsubscribe sub
+
+            let resumed = ConcurrentQueue<int * StreamSequenceToken option>()
+
+            let! resumedSub =
+                Stream.subscribeFromWithToken streamRef checkpoint.Value (fun item token ->
+                    task { resumed.Enqueue(item, token) })
+
+            do! this.NudgeUntil(
+                streamRef,
+                6,
+                fun () ->
+                    let items = resumed |> Seq.map fst |> Seq.toList
+                    List.contains 4 items && List.contains 5 items
+            )
+
+            let resumedItems = resumed |> Seq.map fst |> Seq.toList
+            test <@ List.contains 3 resumedItems @>
+            test <@ not (List.contains 1 resumedItems) @>
+            test <@ not (List.contains 2 resumedItems) @>
+
+            // Checkpointing survives the rewind: the resumed subscription still carries cursors,
+            // so a consumer can keep saving its position after resuming.
+            test <@ resumed |> Seq.forall (fun (_, token) -> Option.isSome token) @>
+
+            let secondCheckpoint = resumed |> Seq.find (fun (i, _) -> i = 5) |> snd
+            test <@ secondCheckpoint.IsSome @>
+            test <@ secondCheckpoint.Value.CompareTo(checkpoint.Value) > 0 @>
+
+            do! Stream.unsubscribe resumedSub
+        }
+
     [<Fact>]
     member _.``Multiple subscribers on same stream each receive all events`` () =
         task {
