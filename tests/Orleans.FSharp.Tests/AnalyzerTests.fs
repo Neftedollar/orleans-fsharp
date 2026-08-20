@@ -86,6 +86,28 @@ let g () = query { for x in [1;2;3] do select x }
 """
     test <@ asyncCount src = 0 @>
 
+[<Fact>]
+let ``detects async inside a parenthesis-less generic CE body`` () =
+    // The contract entry points are type functions, so `name<T1, T2> { ... }` parses as
+    // App(TypeApp(Ident, args), ComputationExpr) -- one App fewer than the `name<T1, T2> () { ... }`
+    // shape it replaced. The walker has no SynExpr.TypeApp case (it falls to the atom branch), so
+    // this pins that the CE body is still reached through the application's argument and an
+    // `async { }` inside a contract or definition expression is still reported.
+    let parenless =
+        """
+module M
+let c = builder<int, string> { thing (async { return 1 }) }
+"""
+
+    let withParens =
+        """
+module M
+let c = builder<int, string> () { thing (async { return 1 }) }
+"""
+
+    test <@ asyncCount parenless = 1 @>
+    test <@ asyncCount withParens = 1 @>
+
 // ──────────────────────────────────────────────────────────────────────────────
 // AllowAsync attribute suppression
 // ──────────────────────────────────────────────────────────────────────────────
