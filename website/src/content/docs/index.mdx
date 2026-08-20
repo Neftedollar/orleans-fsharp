@@ -45,15 +45,13 @@ type CounterGrain() =
 ### Orleans.FSharp — the functional grain runtime
 
 ```fsharp
-type CounterActor = private CounterActor of unit
-
 [<NoEquality; NoComparison>]
 type CounterApi =
     { increment: unit -> Task<int>
       value: unit -> Task<int> }
 
-let contract =
-    grainContract<CounterActor, string, CounterApi> () {
+let counterContract =
+    contract<string, CounterApi> () {
         grainType "counter"
         version 1
         stringKey
@@ -61,7 +59,7 @@ let contract =
     }
 
 let counter =
-    grainFor contract {
+    grainFor counterContract {
         defaultState (fun () -> 0)
         handle (_.increment) (fun _ctx n () -> task { return n + 1, n + 1 })
         handle (_.value)     (fun _ctx n () -> task { return n, n })
@@ -71,7 +69,7 @@ let counter =
 And the call site is the record itself — no proxy interface, no cast:
 
 ```fsharp
-let api = FunctionalGrain.ref contract factory "my-counter"
+let api = FunctionalGrain.ref counterContract factory "my-counter"
 let! n = api.increment ()
 ```
 

@@ -29,17 +29,15 @@ no code generation:
 open System.Threading.Tasks
 open Orleans.FSharp
 
-// 1. The API record IS the grain's surface, and here also its type identity (the brand)
-type CounterActor = private CounterActor of unit
-
+// 1. The API record IS the grain's surface — and its type identity
 [<NoEquality; NoComparison>]
 type CounterApi =
     { increment: unit -> Task<int>
       value: unit -> Task<int> }
 
 // 2. The contract: stable wire identity — grain type, version, key encoding
-let contract =
-    grainContract<CounterActor, string, CounterApi> () {
+let counterContract =
+    contract<string, CounterApi> () {
         grainType "counter"
         version 1
         stringKey
@@ -48,7 +46,7 @@ let contract =
 
 // 3. The definition: pure state -> reply handlers; storage is written only when you say so
 let counter =
-    grainFor contract {
+    grainFor counterContract {
         defaultState (fun () -> 0)
         handle (_.increment) (fun _ctx n () -> task { return n + 1, n + 1 })
         handle (_.value)     (fun _ctx n () -> task { return n, n })
@@ -68,12 +66,14 @@ builder.UseOrleans(fun siloBuilder ->
     siloBuilder.AddFunctionalGrain(counter) |> ignore)
 
 // Client or another grain — no proxy interface, no cast
-let api = FunctionalGrain.ref contract factory "my-counter"
+let api = FunctionalGrain.ref counterContract factory "my-counter"
 let! n = api.increment ()
 ```
 
-Prefer an even shorter contract? `contract<'Key, 'Api>` uses the API record itself as the brand —
-see [the short form](docs/functional-grains.md#the-short-form-the-api-record-as-its-own-brand).
+Need two grain types over one API record, or a record type you can swap without moving the
+grain's identity? Declare a dedicated brand type and use the full form,
+`grainContract<'Actor, 'Key, 'Api>` — see
+[the actor brand](docs/functional-grains.md#why-the-actor-brand).
 
 > **Older authoring models.** The original `grain { }` CE (shown further below) still compiles
 > and runs, but its public surface (`grain { }`, `GrainDefinition`, the old `GrainContext`,
