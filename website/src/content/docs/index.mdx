@@ -30,16 +30,23 @@ Orleans.FSharp keeps full Orleans power while giving you a functional-first auth
 ### C# Orleans from F#
 
 ```fsharp
+type ICounterGrain =
+    inherit IGrainWithStringKey
+    abstract Increment: unit -> Task<int>
+    abstract Value: unit -> Task<int>
+
+// ...plus a C# shim project in the solution, because Orleans'
+// proxy source generator does not run on F# projects.
 type CounterGrain() =
-    inherit Grain<int>()
+    inherit Grain()
+    let mutable count = 0
 
-    override this.OnActivateAsync(ct) =
-        this.State <- 0
-        Task.CompletedTask
+    interface ICounterGrain with
+        member _.Increment() =
+            count <- count + 1
+            Task.FromResult count
 
-    member this.Increment() =
-        this.State <- this.State + 1
-        this.WriteStateAsync()
+        member _.Value() = Task.FromResult count
 ```
 
 ### Orleans.FSharp — the functional grain runtime
@@ -72,7 +79,7 @@ let api = FunctionalGrain.ref counterContract factory "my-counter"
 let! n = api.increment ()
 ```
 
-State transitions are explicit values, the compiler checks the whole surface, and storage is written only when you say so.
+Same two operations, same reply types — but state transitions are explicit values, the compiler checks every handler against the record's field types, and sealing the definition verifies that each operation has exactly one handler. No interface, no shim project, no proxy generation.
 
 :::note[Older authoring models]
 The original `grain { }` computation expression still compiles and runs, but its public surface

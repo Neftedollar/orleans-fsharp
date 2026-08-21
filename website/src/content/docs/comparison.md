@@ -5,19 +5,14 @@ description: Comparison of Orleans.FSharp, raw C# Microsoft Orleans, Akkling (Ak
 
 **Choosing an actor framework for F# distributed systems?** This page compares Orleans.FSharp with the main alternatives: using Microsoft Orleans directly from C#/F#, Akkling (F# API for Akka.NET), and Proto.Actor.
 
-> **Note.** The `grain { }` CE used in the F#-API comparisons below now carries `[<Obsolete>]`
-> (warning, not error); the current grain authoring model is the functional grain runtime described
-> in [functional-grains.md](/orleans-fsharp/functional-grains/). Both ship in the same packages, so the
-> package-level comparison is unchanged.
-
 ## Quick comparison
 
 | | Orleans.FSharp | C# Orleans (from F#) | Akkling (Akka.NET) | Proto.Actor |
 |---|---|---|---|---|
 | **Actor model** | Virtual actors | Virtual actors | Classic actors | Virtual + classic |
 | **F# API** | Functional runtime (`grainContract`/`grainFor`, current) + native CEs (`siloConfig {}`; `grain {}` deprecated) | Manual interop (class inheritance) | Native CEs (`actorOf`, `spawnAnonymous`) | None (C# API) |
-| **State persistence** | Automatic (CE keyword) | Automatic (attribute) | Manual | Manual |
-| **Type safety** | DU state machines, compile-time checks | Runtime errors | Typed messages | Runtime errors |
+| **State persistence** | Typed facets (`usePersistentState`) | Automatic (attribute) | Manual | Manual |
+| **Type safety** | Compile-time checked API records, DU state | Runtime errors | Typed messages | Runtime errors |
 | **Clustering** | Built-in (Redis, Azure, Kubernetes) | Built-in | Akka.Cluster | Built-in |
 | **.NET version** | .NET 10 | .NET 10 | .NET 6+ | .NET 6+ |
 | **Testing** | GrainArbitrary + FsCheck | Manual mocking | TestKit | Manual mocking |
@@ -32,8 +27,9 @@ You can use Microsoft Orleans directly from F# — but you end up writing C#-sty
 
 | Aspect | C# Orleans from F# | Orleans.FSharp |
 |--------|-------------------|---------------|
-| Grain definition | `type MyGrain() = inherit Grain<MyState>()` | `grain { defaultState Zero; handle fn; persist "Default" }` |
-| State transitions | Mutable `this.State` property | Pure functions returning new state |
+| Grain definition | Hand-written interface + `inherit Grain()` class | `contract<string, CounterApi> { ... }` + `grainFor` |
+| State transitions | Mutable fields / `this.State` | Pure handlers returning `newState, reply` |
+| Client proxies | C# source generator (needs a C# shim project) | Precompiled in the package — nothing to generate |
 | Configuration | `builder.UseOrleans(fun siloBuilder -> ...)` | `siloConfig { useLocalhostClustering; addMemoryStorage "Default" }` |
 | Serialization | Manual `[<GenerateSerializer>]` on classes | Same attribute, but on DUs — the natural F# choice |
 | Testing | Write C#-style mocks | `GrainArbitrary.forCommands<'Cmd>()` + FsCheck |
@@ -43,37 +39,51 @@ You can use Microsoft Orleans directly from F# — but you end up writing C#-sty
 **C# Orleans from F# (class inheritance):**
 
 ```fsharp
+type ICounterGrain =
+    inherit IGrainWithStringKey
+    abstract Increment: unit -> Task<int>
+    abstract Value: unit -> Task<int>
+
+// ...plus a C# shim project in the solution, because Orleans'
+// proxy source generator does not run on F# projects.
 type CounterGrain() =
-    inherit Grain<int>()
+    inherit Grain()
+    let mutable count = 0
 
-    override this.OnActivateAsync(ct) =
-        this.State <- 0
-        Task.CompletedTask
+    interface ICounterGrain with
+        member _.Increment() =
+            count <- count + 1
+            Task.FromResult count
 
-    member this.Increment() =
-        this.State <- this.State + 1
-        this.WriteStateAsync()
-
-    member this.GetValue() =
-        Task.FromResult(this.State)
+        member _.Value() = Task.FromResult count
 ```
 
-**Orleans.FSharp (computation expression):**
+**Orleans.FSharp (functional grain runtime):**
 
 ```fsharp
-let counter = grain {
-    defaultState 0
-    handle (fun state cmd ->
-        task {
-            match cmd with
-            | Increment -> return state + 1, box(state + 1)
-            | GetValue -> return state, box state
-        })
-    persist "Default"
-}
+type CounterApi =
+    { increment: unit -> Task<int>
+      value: unit -> Task<int> }
+
+let counterContract =
+    contract<string, CounterApi> {
+        grainType "counter"
+        version 1
+        stringKey
+        readOnly (_.value)
+    }
+
+let counter =
+    grainFor counterContract {
+        defaultState (fun () -> 0)
+        handle (_.increment) (fun _ctx n () -> task { return n + 1, n + 1 })
+        handle (_.value)     (fun _ctx n () -> task { return n, n })
+    }
 ```
 
-The Orleans.FSharp version is shorter, immutable, and the F# compiler checks exhaustive pattern matching on commands.
+Same two operations on both sides. The functional version is immutable, the compiler checks every
+handler against `CounterApi`'s field types, and sealing the definition verifies each operation has
+exactly one handler — with no proxy-generation step anywhere.
 
 ## Orleans.FSharp vs Akkling (Akka.NET)
 
@@ -84,7 +94,7 @@ Akkling provides an idiomatic F# API for Akka.NET — a port of the JVM Akka act
 | Aspect | Orleans.FSharp | Akkling (Akka.NET) |
 |--------|---------------|-------------------|
 | Actor lifecycle | Virtual — always exists, activated on demand | Explicit — must spawn, supervise, and restart |
-| State persistence | `persist "ProviderName"` keyword | Manual `Akka.Persistence` integration |
+| State persistence | `usePersistentState` facets | Manual `Akka.Persistence` integration |
 | Failure handling | Automatic reactivation on another silo | Supervision trees (manual configuration) |
 | Location transparency | Built-in grain directory | Akka.Cluster + shard regions |
 | Stream processing | `Stream.getStream` + `Stream.publish` | Akka.Streams |
@@ -115,7 +125,7 @@ Proto.Actor is a cross-platform actor framework supporting both virtual and clas
 | F# API | Native computation expressions | C# API only |
 | Virtual actors | Yes (Microsoft Orleans) | Yes (Proto.Cluster) |
 | Serialization | F# DUs with `[<GenerateSerializer>]` | Protobuf (code generation) |
-| State persistence | `persist "ProviderName"` keyword | Manual provider integration |
+| State persistence | `usePersistentState` facets | Manual provider integration |
 | Ecosystem | Microsoft Orleans ecosystem (Azure, Dashboard) | Standalone (gRPC-based) |
 | Testing | GrainArbitrary + FsCheck | Manual |
 
