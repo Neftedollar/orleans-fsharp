@@ -37,6 +37,14 @@ open System.Collections.Generic
 open System.Threading.Tasks
 open Orleans.FSharp
 
+[<Struct>]
+type RoomId = private RoomId of string
+
+[<RequireQualifiedAccess>]
+module RoomId =
+    let create value = RoomId value
+    let value (RoomId value) = value
+
 type RoomActor = private RoomActor of unit
 
 [<NoEquality; NoComparison>]
