@@ -369,6 +369,74 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
                 Handlers = draft.Handlers.Add(operation.Index, box handler) }
 
     /// <summary>
+    /// Bind one <b>query</b> handler -- reply only, no events -- to the operation identified by the
+    /// selector. The operation must be declared <c>readOnly</c> in the contract.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Sugar over <c>handle</c>, and nothing more: the handler is wrapped into an ordinary
+    /// <see cref="T:Orleans.FSharp.JournaledHandler`6"/> that raises the empty event list, stored
+    /// in the same handler map, and dispatched down the same path. What it removes is the
+    /// <c>return ([]: 'Event list), reply</c> ceremony -- including the type annotation the empty
+    /// list needs when nothing else in the handler mentions the event type -- from an operation
+    /// that was never going to append anything.
+    /// </para>
+    /// <para>
+    /// <b>Why <c>readOnly</c> is required.</b> A journaled operation changes the grain only by
+    /// raising events, so a handler that cannot raise any is an operation that cannot change the
+    /// grain. On a read-only operation that is already the rule the runtime enforces -- it refuses
+    /// the append outright, because such an operation may run beside another turn and its events
+    /// could be ordered against nothing -- so the sugar states what was true anyway. Anywhere else
+    /// it would silently turn a write into a no-op. The rule is strict on purpose: relaxing it
+    /// later is additive, tightening it later would break every definition that had leaned on the
+    /// looser form.
+    /// </para>
+    /// </remarks>
+    /// <param name="selector">The API field to bind the handler to.</param>
+    /// <param name="handler">The query handler to run for the operation; it returns the reply only.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; when that field already has a handler; when
+    /// <paramref name="handler"/> is null; or when the resolved operation is not declared
+    /// <c>readOnly</c> in the contract.
+    /// </exception>
+    [<CustomOperation("handleQuery")>]
+    member _.HandleQuery<'State, 'Event, 'Argument, 'Reply>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            selector: OperationSelector<'Api, 'Argument, 'Reply>,
+            handler: QueryHandler<'Actor, 'Key, 'State, 'Argument, 'Reply>
+        ) =
+        let draft = state.State
+        let operation = draft.Contract.Resolve("handleQuery", selector)
+
+        if draft.Handlers.ContainsKey operation.Index then
+            fail
+                DefinitionStage
+                $"API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' already has a handler."
+
+        if obj.ReferenceEquals(handler, null) then
+            fail
+                DefinitionStage
+                $"'handleQuery' for API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' requires a handler."
+
+        if not operation.IsReadOnly then
+            fail
+                DefinitionStage
+                $"'handleQuery' binds API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}', which is not declared 'readOnly'. A query handler raises no events, and a journaled operation changes the grain only by raising them, so this operation could never change anything. Declare the operation 'readOnly' in the contract, or use 'handle' and return the events explicitly."
+
+        let wrapped: JournaledHandler<'Actor, 'Key, 'State, 'Event, 'Argument, 'Reply> =
+            fun context current argument ->
+                task {
+                    let! reply = handler context current argument
+                    return ([]: 'Event list), reply
+                }
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                Handlers = draft.Handlers.Add(operation.Index, box wrapped) }
+
+    /// <summary>
     /// Bind one <b>streaming</b> handler to the operation identified by the selector. Spec 004
     /// item 6.
     /// </summary>

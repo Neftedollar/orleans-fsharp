@@ -681,6 +681,73 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 Handlers = draft.Handlers.Add(operation.Index, box handler) }
 
     /// <summary>
+    /// Bind one <b>query</b> handler -- reply only, no replacement state -- to the operation
+    /// identified by the selector. The operation must be declared <c>readOnly</c> in the contract.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Sugar over <c>handle</c>, and nothing more: the handler is wrapped into an ordinary
+    /// <see cref="T:Orleans.FSharp.Handler`5"/> that returns the state it was given, stored in the
+    /// same handler map, and dispatched down the same path. What it removes is the <c>return
+    /// state, reply</c> ceremony of an operation that was never going to change the state --
+    /// a read-only invocation's replacement is discarded by the runtime anyway, so writing it out
+    /// was dead weight that still had to be read as if it meant something.
+    /// </para>
+    /// <para>
+    /// <b>Why <c>readOnly</c> is required.</b> On a non-read-only operation the returned state is
+    /// published, so a handler that cannot return one would freeze that operation's state rather
+    /// than leave it unchanged by declaration -- and it would do so silently, at every call. The
+    /// declaration is what makes "no replacement state" a property of the contract, visible to the
+    /// caller in the admission flags, instead of an accident of how the handler was bound. The rule
+    /// is strict on purpose: relaxing it later is additive, tightening it later would break every
+    /// definition that had leaned on the looser form.
+    /// </para>
+    /// </remarks>
+    /// <param name="selector">The API field to bind the handler to.</param>
+    /// <param name="handler">The query handler to run for the operation; it returns the reply only.</param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when <paramref name="selector"/> is null, invoking it throws, or it does not resolve
+    /// to one of the contract's own API fields; when that field already has a handler; when
+    /// <paramref name="handler"/> is null; or when the resolved operation is not declared
+    /// <c>readOnly</c> in the contract.
+    /// </exception>
+    [<CustomOperation("handleQuery")>]
+    member _.HandleQuery<'State, 'Argument, 'Reply>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            selector: OperationSelector<'Api, 'Argument, 'Reply>,
+            handler: QueryHandler<'Actor, 'Key, 'State, 'Argument, 'Reply>
+        ) =
+        let draft = state.State
+        let operation = draft.Contract.Resolve("handleQuery", selector)
+
+        if draft.Handlers.ContainsKey operation.Index then
+            fail
+                DefinitionStage
+                $"API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' already has a handler."
+
+        if obj.ReferenceEquals(handler, null) then
+            fail
+                DefinitionStage
+                $"'handleQuery' for API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}' requires a handler."
+
+        if not operation.IsReadOnly then
+            fail
+                DefinitionStage
+                $"'handleQuery' binds API field '{operation.FieldName}' of grain type '{draft.Contract.GrainTypeName}', which is not declared 'readOnly'. A query handler returns no replacement state, so this operation would silently publish the state it was given on every call instead of the one it should have produced. Declare the operation 'readOnly' in the contract, or use 'handle' and return the replacement state explicitly."
+
+        let wrapped: Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
+            fun context current argument ->
+                task {
+                    let! reply = handler context current argument
+                    return current, reply
+                }
+
+        DefinitionDraft.withState
+            { draft with
+                Handlers = draft.Handlers.Add(operation.Index, box wrapped) }
+
+    /// <summary>
     /// Bind one <b>streaming</b> handler to the operation identified by the selector. Spec 004
     /// item 6.
     /// </summary>

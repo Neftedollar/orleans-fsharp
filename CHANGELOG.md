@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`handleQuery` on both definition builders — a reply-only handler for `readOnly` operations.**
+  `grainFor` and `journaledGrainFor` gain `handleQuery selector handler`, where the handler has the
+  new `QueryHandler<'Actor,'Key,'State,'Argument,'Reply>` shape
+  (`context -> 'State -> 'Argument -> Task<'Reply>`) and returns the reply alone — no replacement
+  state, no event list. A `readOnly` invocation is already state-neutral (the runtime discards its
+  replacement state and its persistent-state facades reject the setter), so `return n, n` was dead
+  weight that still had to be read as if it meant something; the journaled form additionally drops
+  the annotated empty event list (`return ([]: 'Event list), reply`). One alias serves both
+  builders, because a query has nothing of its own to add to either return type.
+  **The operation must be declared `readOnly` in the contract**, and the definition refuses to seal
+  otherwise, naming both exits: declare it `readOnly`, or use `handle` and return the replacement
+  state (or the events) explicitly. On a non-read-only operation the returned state *is* published,
+  so a handler that cannot return one would silently freeze that operation's state instead of
+  leaving it unchanged by declaration. The rule is strict deliberately — relaxing it later is
+  additive, tightening it later would break every definition that had leaned on the looser form.
+  Purely additive otherwise: `handleQuery` is sugar over `handle`, storing a wrapped handler in the
+  same handler map, so it counts towards the "exactly one handler per API field" coverage rule, it
+  collides with `handle` on the same field as the ordinary duplicate-handler error, and nothing on
+  the dispatch path or the wire changes.
+
 ## [4.0.2] - 2026-08-20
 
 The parenthesis-less release: `contract`, `grainContract`, and `observerContract` are now type

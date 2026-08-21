@@ -273,6 +273,7 @@ no journal.
 | Operation | On a journaled definition | Why |
 |---|---|---|
 | `handle` | **yes**, with the events-and-reply shape | the whole point |
+| `handleQuery` | **yes**, on a `readOnly` operation | reply-only sugar over `handle`; it raises nothing, which is already the rule a `readOnly` operation is held to, so the declaration is required and anywhere else it would turn a write into a silent no-op |
 | `onActivate` / `onDeactivate` | **yes**, returning `unit` | the journal is the state, so there is nothing to replace; `onActivate` runs after the replay has completed |
 | `collectionAge` | **yes** | activation lifetime is orthogonal to the journal |
 | `placement` | **yes** | placement is orthogonal; the journal is addressed by grain identity |

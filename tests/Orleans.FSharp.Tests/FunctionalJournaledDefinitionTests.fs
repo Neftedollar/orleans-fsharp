@@ -303,3 +303,109 @@ let ``a repeated handler for one API field is rejected`` () =
             |> ignore)
 
     test <@ error.Message.Contains "already has a handler" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// handleQuery — a reply-only handler, admitted only on a readOnly operation
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// `total` is the readOnly operation; `credit` is deliberately left ordinary, so the same contract
+/// carries both arms of the rule.
+let private queryContract =
+    grainContract<LedgerActor, string, LedgerApi> {
+        grainType "journal.ledger.query"
+        stringKey
+        readOnly (_.total)
+    }
+
+let private totalQuery _ (state: LedgerState) () = task { return state.total }
+
+/// The reference definition the rejections below differ from in exactly one respect.
+let private queried () =
+    journaledGrainFor queryContract {
+        initialEventState (fun (_: string) -> { total = 0m })
+        apply fold
+        logProvider "LogStorage"
+        handle (_.credit) creditHandler
+        handleQuery (_.total) totalQuery
+    }
+
+/// <summary>
+/// The stored handler is read back as an ordinary <c>JournaledHandler</c> and invoked, because that
+/// -- not the map count -- is what proves the wrapper is the shape the dispatch path unboxes, and
+/// that the event list it raises is empty. The context is null: the wrapper forwards it untouched
+/// and `totalQuery` ignores it.
+/// </summary>
+[<Fact>]
+let ``handleQuery on a readOnly field stores a handler that replies and raises nothing`` () =
+    let definition = queried ()
+
+    test <@ definition.Handlers.Count = 2 @>
+
+    let handler =
+        definition.Handlers.[1]
+        |> unbox<JournaledHandler<LedgerActor, string, LedgerState, LedgerEvent, unit, decimal>>
+
+    let events, reply =
+        handler Unchecked.defaultof<FunctionalGrainContext<LedgerActor, string>> { total = 12m } ()
+        |> _.GetAwaiter().GetResult()
+
+    test <@ events = ([]: LedgerEvent list) @>
+    test <@ reply = 12m @>
+
+[<Fact>]
+let ``handleQuery on a field that is not readOnly is rejected`` () =
+    let error =
+        throws (fun () ->
+            journaledGrainFor queryContract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                handleQuery (_.credit) (fun _ (_: LedgerState) (_: decimal) -> task { return () })
+                handleQuery (_.total) totalQuery
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'handleQuery' binds API field 'credit'" @>
+    test <@ error.Message.Contains "'journal.ledger.query'" @>
+    test <@ error.Message.Contains "is not declared 'readOnly'" @>
+    test <@ error.Message.Contains "Declare the operation 'readOnly' in the contract" @>
+    test <@ error.Message.Contains "use 'handle' and return the events explicitly" @>
+    // The control seals: `total` differs from `credit` only by carrying the readOnly declaration.
+    test <@ (queried ()).Handlers.Count = 2 @>
+
+[<Fact>]
+let ``handle and handleQuery on the same field collide as a duplicate handler`` () =
+    let error =
+        throws (fun () ->
+            journaledGrainFor queryContract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+                handleQuery (_.total) totalQuery
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "API field 'total'" @>
+    test <@ error.Message.Contains "already has a handler" @>
+
+/// <remarks>
+/// Coverage is the seal-time rule `handleQuery` must not slip past: it stores into the same handler
+/// map `handle` does, so a field bound by it is covered. The negative arm removes only that binding.
+/// </remarks>
+[<Fact>]
+let ``handleQuery counts towards handler coverage`` () =
+    test <@ (queried ()).Handlers.ContainsKey 1 @>
+
+    let error =
+        throws (fun () ->
+            journaledGrainFor queryContract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                handle (_.credit) creditHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "has no handler for API field(s) total" @>

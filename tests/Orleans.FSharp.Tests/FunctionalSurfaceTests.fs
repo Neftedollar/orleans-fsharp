@@ -656,6 +656,9 @@ let ``the definition builder declares exactly the specified custom operations`` 
         [| "collectionAge"
            "defaultState"
            "handle"
+           // Reply-only sugar over 'handle', admitted only on a readOnly operation. A SEPARATE
+           // operation for the same reason 'handleStream' is one, below.
+           "handleQuery"
            // Spec 004 item 6: a SEPARATE operation rather than an overload of 'handle'. An
            // overloaded 'handle' makes F# resolve the handler lambda before the selector, which
            // breaks record-field inference inside existing handler bodies.
@@ -689,6 +692,11 @@ let ``the journaled definition builder declares exactly the specified custom ope
         [| "apply"
            "collectionAge"
            "handle"
+           // Reply-only sugar over 'handle', admitted only on a readOnly operation. It takes the
+           // same QueryHandler shape the ordinary builder's does: a query raises no events and
+           // replaces no state, so neither builder has anything of its own to add to the return
+           // type.
+           "handleQuery"
            // Spec 004 item 6: a journaled definition streams too. Its streaming handler has the
            // ordinary StreamHandler shape and raises no events, for the same reason it publishes
            // no replacement state.

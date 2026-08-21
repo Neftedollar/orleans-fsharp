@@ -508,6 +508,36 @@ type FunctionalPhaseFTests(fixture: FunctionalPhaseFFixture) =
             test <@ count = 3 @>
         }
 
+    /// <summary>
+    /// <c>handleQuery</c> end to end, on both definition kinds at once: the ticker's
+    /// <c>current</c> and the ledger's <c>count</c> are the only two operations bound with it, so a
+    /// correct reply from each proves the wrapped handler is the shape the dispatch path unboxes
+    /// and that the reply still serializes. The writes interleaved between the reads are what make
+    /// this more than a constant: a query that had frozen or published state would answer the same
+    /// number twice.
+    /// </summary>
+    [<Fact>]
+    member _.``handleQuery replies over a live cluster on both definition kinds``() =
+        task {
+            let key = unique ()
+
+            let! _ = (ticker key).bump 3
+            let! first = (ticker key).current ()
+            let! _ = (ticker key).bump 4
+            let! second = (ticker key).current ()
+
+            test <@ first = 3 @>
+            test <@ second = 7 @>
+
+            let! _ = (ledger key).record 10
+            let! afterOne = (ledger key).count ()
+            let! _ = (ledger key).record 20
+            let! afterTwo = (ledger key).count ()
+
+            test <@ afterOne = 1 @>
+            test <@ afterTwo = 2 @>
+        }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Batching
     // ──────────────────────────────────────────────────────────────────────────

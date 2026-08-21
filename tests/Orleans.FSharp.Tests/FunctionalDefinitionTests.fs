@@ -1259,3 +1259,100 @@ let ``a transactional facet coexists with a persistent one`` () =
     test <@ definition.Primary.IsSome @>
     test <@ definition.Additional.Length = 1 @>
     test <@ definition.TransactionalFacets.Length = 1 @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// handleQuery — a reply-only handler, admitted only on a readOnly operation
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// `say` is the readOnly operation; `join` is deliberately left ordinary, so the same contract
+/// carries both arms of the rule and every rejection below is a one-change mutation of `queried`.
+let private queryContract =
+    grainContract<RoomActor, string, RoomApi> {
+        grainType "def.room.query"
+        stringKey
+        readOnly (_.say)
+    }
+
+let private sayQuery _ (_: RoomState) (_: string) = task { return 2L }
+
+/// The reference definition the rejections below differ from in exactly one respect.
+let private queried () =
+    grainFor queryContract {
+        defaultState (fun () -> { count = 0 })
+        handle (_.join) joinHandler
+        handleQuery (_.say) sayQuery
+    }
+
+/// <summary>
+/// The stored handler is read back as an ordinary <c>Handler</c> and invoked, because that -- not
+/// the map count -- is what proves the wrapper is the shape the dispatch path unboxes. The context
+/// is null: the wrapper forwards it untouched and `sayQuery` ignores it, so a real one would only
+/// add the ability to pass for a different reason.
+/// </summary>
+[<Fact>]
+let ``handleQuery on a readOnly field stores a handler that replies without replacing the state`` () =
+    let definition = queried ()
+
+    test <@ definition.Handlers.Count = 2 @>
+
+    let handler =
+        definition.Handlers.[1] |> unbox<Handler<RoomActor, string, RoomState, string, int64>>
+
+    let state, reply =
+        handler Unchecked.defaultof<FunctionalGrainContext<RoomActor, string>> { count = 7 } "hi"
+        |> _.GetAwaiter().GetResult()
+
+    test <@ state = { count = 7 } @>
+    test <@ reply = 2L @>
+
+[<Fact>]
+let ``handleQuery on a field that is not readOnly is rejected`` () =
+    let error =
+        throws (fun () ->
+            grainFor queryContract {
+                defaultState (fun () -> { count = 0 })
+                handleQuery (_.join) (fun _ (_: RoomState) (_: string) -> task { return () })
+                handleQuery (_.say) sayQuery
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'handleQuery' binds API field 'join'" @>
+    test <@ error.Message.Contains "'def.room.query'" @>
+    test <@ error.Message.Contains "is not declared 'readOnly'" @>
+    test <@ error.Message.Contains "Declare the operation 'readOnly' in the contract" @>
+    test <@ error.Message.Contains "use 'handle' and return the replacement state explicitly" @>
+    // The control seals: `say` differs from `join` only by carrying the readOnly declaration.
+    test <@ (queried ()).Handlers.Count = 2 @>
+
+[<Fact>]
+let ``handle and handleQuery on the same field collide as a duplicate handler`` () =
+    let error =
+        throws (fun () ->
+            grainFor queryContract {
+                defaultState (fun () -> { count = 0 })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+                handleQuery (_.say) sayQuery
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "API field 'say'" @>
+    test <@ error.Message.Contains "already has a handler" @>
+
+/// <remarks>
+/// Coverage is the seal-time rule `handleQuery` must not slip past: it stores into the same handler
+/// map `handle` does, so a field bound by it is covered. The negative arm removes only that binding.
+/// </remarks>
+[<Fact>]
+let ``handleQuery counts towards handler coverage`` () =
+    test <@ (queried ()).Handlers.ContainsKey 1 @>
+
+    let error =
+        throws (fun () ->
+            grainFor queryContract {
+                defaultState (fun () -> { count = 0 })
+                handle (_.join) joinHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "no handler for API field(s) say" @>

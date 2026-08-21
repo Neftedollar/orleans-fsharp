@@ -220,3 +220,49 @@ module Usage =
             do! lobby.join (UserId.create "carol")
             return raw.key, raw.api
         }
+
+/// <summary>
+/// The documented <c>handleQuery</c> example, compiled with <b>no annotation anywhere</b> in the
+/// query handlers -- which is the whole claim: the state, argument, and reply types of
+/// <c>fun _ctx n () -> task { return n }</c> have to be inferred from the selector and the draft,
+/// exactly as they are for <c>handle</c>. An annotation here would hide the very failure this
+/// fixture exists to catch, so there is none.
+/// </summary>
+namespace Counter.Contracts
+
+open System.Threading.Tasks
+open Orleans.FSharp
+
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { increment: int -> Task<int>
+      value: unit -> Task<int> }
+
+type CounterEvent = Added of int
+
+module CounterFixture =
+
+    let counterContract =
+        contract<string, CounterApi> {
+            grainType "counter"
+            stringKey
+            readOnly (_.value)
+        }
+
+    let counterDefinition =
+        grainFor counterContract {
+            defaultState (fun () -> 0)
+
+            handle (_.increment) (fun _ctx n by -> task { return n + by, n + by })
+            handleQuery (_.value) (fun _ctx n () -> task { return n })
+        }
+
+    let journaledCounterDefinition =
+        journaledGrainFor counterContract {
+            initialEventState (fun _ -> 0)
+            apply (fun n (Added by) -> n + by)
+            logProvider "LogStorage"
+
+            handle (_.increment) (fun _ctx n by -> task { return [ Added by ], n + by })
+            handleQuery (_.value) (fun _ctx n () -> task { return n })
+        }

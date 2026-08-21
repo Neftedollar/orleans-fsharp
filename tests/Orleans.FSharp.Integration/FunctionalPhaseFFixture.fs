@@ -235,7 +235,11 @@ let tickerDefinition =
             let next = { state with counter = state.counter + amount }
             task { return next, next.counter })
 
-        handle (_.current) (fun _ state () -> task { return state, state.counter })
+        // `current` is declared readOnly, so its reply is all the runtime keeps -- bound with
+        // `handleQuery`, which is the same dispatch path with the discarded state left unwritten.
+        // `whereAmI` next door stays on `handle` over a readOnly operation, so both bindings of the
+        // same declaration are exercised on a live cluster.
+        handleQuery (_.current) (fun _ state () -> task { return state.counter })
 
         handle (_.whereAmI) (fun context state () ->
             task {
@@ -529,7 +533,9 @@ let ledgerDefinition =
                     yield entry
             })
 
-        handle (_.count) (fun _ state () -> task { return ([]: LedgerEvent list), List.length state.entries })
+        // Journaled `handleQuery`: `count` is readOnly, so it could never have appended anything
+        // anyway, and the empty annotated event list it used to return is left unwritten.
+        handleQuery (_.count) (fun _ state () -> task { return List.length state.entries })
     }
 
 // ──────────────────────────────────────────────────────────────────────────────

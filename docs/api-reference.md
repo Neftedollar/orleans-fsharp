@@ -85,6 +85,7 @@ Every API field takes exactly one argument; a multi-input operation groups its i
 | `defaultState` | `unit -> 'State` | Ephemeral state factory, called once per activation |
 | `initialState` | `'Key -> 'State` | Key-aware ephemeral state factory |
 | `handle` | `selector` + `Handler<'Actor,'Key,'State,'Arg,'Reply>` | Attach a handler to one API operation |
+| `handleQuery` | `selector` + `QueryHandler<'Actor,'Key,'State,'Arg,'Reply>` | Attach a reply-only handler; the operation must be declared `readOnly` |
 | `handleStream` | `streamSelector` + `StreamHandler<'Actor,'Key,'State,'Arg,'Item>` | Attach a handler to one server-streaming operation ([Streaming replies](streaming-replies.md)) |
 | `stateFrom` | `PersistentStateRef<'State>` | Attach the primary persistent-state holder |
 | `usePersistentState` | `PersistentStateRef<'S>` + `('Key -> 'S)` | Attach an additional named persistent-state facet (repeatable) |
@@ -114,6 +115,7 @@ cannot be shared by the many activations of a stateless worker. See
 | `logProvider` | `string` | The registered log-consistency provider. **Required** |
 | `journalStorage` | `string` | The grain storage the provider writes through; defaults to the silo's default `IGrainStorage` |
 | `handle` | `selector` + `JournaledHandler<'Actor,'Key,'State,'Event,'Arg,'Reply>` | A handler returning `events, reply` |
+| `handleQuery` | `selector` + `QueryHandler<'Actor,'Key,'State,'Arg,'Reply>` | A reply-only handler that raises nothing; the operation must be declared `readOnly` |
 | `handleStream` | `streamSelector` + `StreamHandler<...>` | A streaming operation; raises no events |
 | `onActivate` | `JournaledActivateHook<'Actor,'Key,'State>` | Runs after replay; returns no state |
 | `onDeactivate` | `JournaledDeactivateHook<'Actor,'Key,'State>` | Deactivation hook |
@@ -165,6 +167,7 @@ definition.
 | Type | Definition |
 |---|---|
 | `Handler<'Actor,'Key,'State,'Argument,'Reply>` | `context -> 'State -> 'Argument -> Task<'State * 'Reply>` |
+| `QueryHandler<'Actor,'Key,'State,'Argument,'Reply>` | `context -> 'State -> 'Argument -> Task<'Reply>` -- what `handleQuery` binds, on both definition builders |
 | `StreamHandler<'Actor,'Key,'State,'Argument,'Item>` | `context -> 'State -> 'Argument -> IAsyncEnumerable<'Item>` |
 | `JournaledHandler<'Actor,'Key,'State,'Event,'Argument,'Reply>` | `context -> 'State -> 'Argument -> Task<'Event list * 'Reply>` |
 | `ActivateHook<'Actor,'Key,'State>` | `context -> 'State -> Task<'State>` |

@@ -328,6 +328,32 @@ type Handler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
     FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> Task<'State * 'Reply>
 
 /// <summary>
+/// A handler for one <b>query</b> API operation: it receives the invocation context, the current
+/// state, and the exact argument, and returns the exact reply only. There is no replacement state
+/// and no event list.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is the shape <c>handleQuery</c> binds, on the ordinary definition builder and on the
+/// journaled one alike -- hence one alias for both. A query changes nothing, so neither builder has
+/// anything of its own to add to the return type: the ordinary form's <c>'State</c> and the
+/// journaled form's <c>'Event list</c> are both fixed by the operation being a query, and only the
+/// reply is left for the handler to produce.
+/// </para>
+/// <para>
+/// <c>handleQuery</c> requires the operation to be declared <c>readOnly</c> in the contract,
+/// because that declaration is what makes the discarded state honest: the runtime already throws a
+/// read-only invocation's replacement state away and rejects its persistent-state setter
+/// (<c>FunctionalDispatch.dispatch</c>). Binding this shape to an operation that is <i>not</i>
+/// read-only would silently freeze that operation's state instead, which is why the definition
+/// builder refuses it. Use <see cref="T:Orleans.FSharp.Handler`5"/> (or
+/// <see cref="T:Orleans.FSharp.JournaledHandler`6"/>) and say what changes, instead.
+/// </para>
+/// </remarks>
+type QueryHandler<'Actor, 'Key, 'State, 'Argument, 'Reply> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Argument -> Task<'Reply>
+
+/// <summary>
 /// A handler for one <b>server-streaming</b> API operation. Spec 004 item 6. It receives the
 /// invocation context, the current primary state, and the exact argument, and returns the sequence
 /// of exact items.

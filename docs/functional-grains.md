@@ -28,6 +28,7 @@ record** -- and a **contract** that gives it a stable wire identity:
 namespace Chat.Contracts
 
 open System
+open System.Collections.Generic
 open System.Threading.Tasks
 open Orleans.FSharp
 
@@ -38,7 +39,8 @@ type RoomApi =
     { join: UserId -> Task<unit>
       say: PostMessage -> Task<Result<int64, PostError>>
       history: HistoryRequest -> Task<ChatMessage list>
-      typing: Typing -> Task<unit> }
+      typing: Typing -> Task<unit>
+      tail: int -> IAsyncEnumerable<ChatMessage> }
 
 [<RequireQualifiedAccess>]
 module RoomApi =
@@ -65,30 +67,36 @@ equality attributes"). The examples on this page carry it; the README's quick st
 
 Server-side, a `grainFor` definition attaches handlers and persistent state to the contract, and
 `AddFunctionalGrain` / `AddFunctionalGrainClient` register it on the silo / client builders. See
-`src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` for the complete, runnable version of this
-example (contract, definition, registration, and a driven call sequence).
+`src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` for the runnable chat-room baseline (contract,
+definition, registration, and a driven call sequence). The `tail` streaming extension is defined
+on this page and covered end to end in [Server-Streaming Replies](streaming-replies.md).
 
 ## One operation, one argument
 
-An API field takes exactly one argument. A multi-input operation groups its inputs in a tuple:
+An API field takes exactly one argument. When that argument has several domain values, group them
+in one domain type. `RoomApi.typing` uses the `Typing` record declared by the chat contract:
 
 ```fsharp
-{ typing: (UserId * bool) -> Task<unit> }
+{ typing: Typing -> Task<unit> }
 ```
 
-That tuple is the operation's wire argument type, and the handler destructures it:
+`Typing` is the operation's wire argument type all the way through the caller and handler:
 
 ```fsharp
 // caller
-do! room.typing (userId, true)
+do! room.typing { user = userId; isTyping = true }
 
 // silo
-handle (_.typing) (fun context state (user, isTyping) ->
+handle (_.typing) (fun context state typing ->
     task {
-        context.logger.LogDebug("{User} typing={IsTyping}", user, isTyping)
+        context.logger.LogDebug("{User} typing={IsTyping}", typing.user, typing.isTyping)
         return state, ()
     })
 ```
+
+A tuple such as `UserId * bool` is also one argument, but it is a different wire shape. If an API
+declares that tuple, its caller passes `(userId, true)` and its handler destructures the pair. Do
+not switch between the tuple and `Typing` without changing the API contract.
 
 A field spelled curried (`UserId -> bool -> Task<unit>`) is **not** an operation and fails
 contract construction: every API field must have the shape `'Argument -> Task<'Reply>` or
@@ -105,12 +113,15 @@ produces items over time and the caller receives each one as it is produced. It 
 `handleStream` instead of `handle`, and the handler returns items only, with no replacement state:
 
 ```fsharp
-{ tail: int -> IAsyncEnumerable<Entry> }
+open System.Collections.Generic
+open FSharp.Control
 
-handleStream (_.tail) (fun context state (count: int) ->
+{ tail: int -> IAsyncEnumerable<ChatMessage> }
+
+handleStream (_.tail) (fun _context state (count: int) ->
     taskSeq {
-        for entry in state |> List.truncate count do
-            yield entry
+        for message in state.messages |> List.truncate (max 0 count) |> List.rev do
+            yield message
     })
 ```
 
@@ -119,6 +130,74 @@ ordinary call to the same activation, disposing the enumerator cancels the produ
 abandoned enumerator is collected by Orleans. A streaming handler is state-neutral, and none of the
 four admission policies compose with it. The full rules are in
 [Server-Streaming Replies](streaming-replies.md).
+
+### Reply-only handlers: `handleQuery`
+
+An operation declared `readOnly` is **state-neutral**: the runtime discards whatever replacement
+state its handler returned, and that handler's persistent-state facades reject the setter (see
+[Delivery semantics](#delivery-semantics)). Writing a state out of such a handler is therefore dead
+weight that still has to be read as if it meant something. `handleQuery` binds the honest shape --
+the reply alone:
+
+```fsharp
+type CounterApi =
+    { increment: int -> Task<int>
+      value: unit -> Task<int> }
+
+let counterContract =
+    contract<string, CounterApi> {
+        grainType "counter"
+        stringKey
+        readOnly (_.value)        // required by handleQuery
+    }
+
+grainFor counterContract {
+    defaultState (fun () -> 0)
+
+    handle (_.increment) (fun _ctx n (by: int) -> task { return n + by, n + by })
+    handleQuery (_.value) (fun _ctx n () -> task { return n })
+}
+```
+
+`handleQuery` is sugar over `handle` and nothing else: the handler is wrapped into an ordinary
+`Handler` that returns the state it was given, stored in the same handler map, and dispatched down
+the same path. So it counts towards the "exactly one handler per API field" coverage rule, and
+binding both `handle` and `handleQuery` to one field is the ordinary duplicate-handler error.
+
+**The `readOnly` declaration is required, and the definition refuses to seal without it.** On an
+ordinary operation the returned state *is* published, so a handler that cannot return one would
+freeze that operation's state rather than leave it unchanged by declaration -- silently, at every
+call. The declaration is what makes "no replacement state" a property of the contract, visible to
+the caller in the admission flags, instead of an accident of how the handler happened to be bound.
+The error names both exits:
+
+```text
+'handleQuery' binds API field 'increment' of grain type 'counter', which is not declared
+'readOnly'. A query handler returns no replacement state, so this operation would silently
+publish the state it was given on every call instead of the one it should have produced.
+Declare the operation 'readOnly' in the contract, or use 'handle' and return the replacement
+state explicitly.
+```
+
+The rule is strict on purpose: relaxing it later is additive, tightening it later would break every
+definition that had leaned on the looser form.
+
+`journaledGrainFor` has the same operation under the journal's version of the same rule -- a query
+handler raises no events, and a journaled operation changes the grain only by raising them, so
+anywhere but a `readOnly` operation it would turn a write into a silent no-op. On a `readOnly` one
+the runtime already refuses an append (it may run beside another turn, so its events could be
+ordered against nothing), and the sugar states what was true anyway:
+
+```fsharp
+journaledGrainFor counterContract {
+    initialEventState (fun _ -> 0)
+    apply (fun n (Added by) -> n + by)          // type CounterEvent = Added of int
+    logProvider "LogStorage"
+
+    handle (_.increment) (fun _ctx n (by: int) -> task { return [ Added by ], n + by })
+    handleQuery (_.value) (fun _ctx n () -> task { return n })
+}
+```
 
 ## Why the actor brand
 
@@ -289,7 +368,10 @@ handler's *source field* would otherwise silently change every caller's wire ID 
 `operationId` decouples the two, so a refactor of the F# field name never touches the wire:
 
 ```fsharp
-grainContract<RoomActor, RoomId, RoomApi> {
+// Minimal API excerpt after the source-level rename.
+type RoomApiV2 = { enter: UserId -> Task<unit> }
+
+grainContract<RoomActor, RoomId, RoomApiV2> {
     grainType "chat.room"
     // the record field is `enter`, but the wire ID stays "join" across the rename
     operationId "join" (_.enter)
