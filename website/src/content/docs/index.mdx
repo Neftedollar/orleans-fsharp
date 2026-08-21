@@ -18,6 +18,7 @@ hero:
 ---
 
 import { Card, CardGrid, Badge, LinkCard } from '@astrojs/starlight/components';
+import FeatureCard from '../../components/FeatureCard.astro';
 
 ## Why Orleans.FSharp
 
@@ -93,24 +94,24 @@ hosting CEs are current and unaffected.
 ## Features
 
 <CardGrid>
-  <Card title="Functional grain runtime" icon="puzzle">
+  <FeatureCard title="Functional grain runtime" icon="puzzle" href="/orleans-fsharp/functional-grains/">
     The current authoring model: API record contracts, explicit key codecs, immutable state, and a fixed wire protocol with precompiled proxies — no C# CodeGen interfaces anywhere.
-  </Card>
-  <Card title="Full Orleans parity, functionally" icon="zap">
+  </FeatureCard>
+  <FeatureCard title="Full Orleans parity, functionally" icon="zap" href="/orleans-fsharp/functional-grains/">
     Distributed ACID transactions, event sourcing over Orleans' own log-consistency providers, implicit stream subscriptions, `IAsyncEnumerable` streaming replies, reentrancy policies, and version-tolerant contracts — all as contract or definition operations.
-  </Card>
-  <Card title="siloConfig { } CE" icon="gear">
+  </FeatureCard>
+  <FeatureCard title="siloConfig { } CE" icon="gear" href="/orleans-fsharp/silo-configuration/">
     Configure clustering, storage, streaming, TLS, health checks, and runtime services without extension-method boilerplate.
-  </Card>
-  <Card title="FSharpBinaryCodec" icon="file-code">
+  </FeatureCard>
+  <FeatureCard title="FSharpBinaryCodec" icon="file-code" href="/orleans-fsharp/serialization/">
     Serialize F# DUs, records, options, lists, and maps with minimal ceremony and predictable behavior for mixed cluster scenarios.
-  </Card>
-  <Card title="2,500+ Tests" icon="check-circle">
+  </FeatureCard>
+  <FeatureCard title="2,500+ Tests" icon="check-circle" href="/orleans-fsharp/testing/">
     2,500+ unit and integration tests on a dual-version Orleans CI matrix, including property-based verification with FsCheck and a 16-feature live tour.
-  </Card>
-  <Card title="Callable from C#" icon="seti:c-sharp">
+  </FeatureCard>
+  <FeatureCard title="Callable from C#" icon="seti:c-sharp" href="/orleans-fsharp/calling-from-csharp/">
     A typed facade over any functional contract: ordinary awaited calls and `await foreach` over streaming operations, generated at runtime with no build step.
-  </Card>
+  </FeatureCard>
 </CardGrid>
 
 ## By the Numbers
