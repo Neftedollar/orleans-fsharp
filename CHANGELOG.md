@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-08-21
+
 ### Added
 
 - **`handleQuery` on both definition builders — a reply-only handler for `readOnly` operations.**
@@ -782,7 +784,8 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 - 3 sample patterns: CQRS, Saga, Rate Limiter
 - Complete API reference
 
-[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.2...HEAD
+[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.1.0...HEAD
+[4.1.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.2...v4.1.0
 [4.0.2]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.1...v4.0.2
 [4.0.1]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v3.0.2...v4.0.0

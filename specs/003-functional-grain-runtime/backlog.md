@@ -74,6 +74,12 @@ Each item is grounded in a verified finding; pointers name the evidence.
     apply once` (a 3 s hold against a 2 s LockAcquireTimeout), and the
     pre-existing `TemplateTests.template generated tests all pass` (shells
     out to `dotnet new`; failed once under full-suite load, passes alone).
+    New member (2026-08-21, CI at `bfc8ab6` — a docs-only commit — Orleans
+    10.2.2 leg only): `FunctionalStateRestartTests.explicitly written state
+    reloads on a silo which never saw the write`, a 30 s response timeout on a
+    `ReadOnly` request right after the cluster is recreated; the floor leg of
+    the same run and the next commit's run were green, so it is load-shaped,
+    not tree-shaped.
     Phase E observation (2026-08-18): one full-suite run at Orleans 10.2.2
     reported a single failure whose name was NOT captured (only the tail was
     read), and it did not reproduce in 6 subsequent full-suite runs (4 at
