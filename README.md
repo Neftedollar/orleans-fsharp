@@ -47,8 +47,8 @@ let counterContract =
 let counter =
     grainFor counterContract {
         defaultState (fun () -> 0)
-        handle (_.increment) (fun _ctx n () -> task { return n + 1, n + 1 })
-        handle (_.value)     (fun _ctx n () -> task { return n, n })
+        handle      (_.increment) (fun _ctx n () -> task { return n + 1, n + 1 })
+        handleQuery (_.value)     (fun _ctx n () -> task { return n })
     }
 ```
 
