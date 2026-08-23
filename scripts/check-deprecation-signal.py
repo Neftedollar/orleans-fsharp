@@ -37,8 +37,8 @@ SIG = re.compile(r'functional-grains|FunctionalGrain|AddFunctionalGrain|grainCon
 
 PATTERNS = [
     'README.md', 'DEVGUIDE.md', 'QUICK-REFERENCE.md', 'CONTRIBUTING.md',
-    'docs/*.md',
-    'website/src/content/docs/*.md', 'website/src/content/docs/*.mdx',
+    'docs/**/*.md',
+    'website/src/content/docs/**/*.md', 'website/src/content/docs/**/*.mdx',
     'website/public/llms*.txt',
     'src/*/README.md', 'examples/*/README.md', 'samples/*/README.md',
     'testbed/README.md',
@@ -47,6 +47,7 @@ PATTERNS = [
 # CHANGELOG.md is exempt by design: it records what shipped in each release verbatim,
 # and rewriting history to add forward references would make it a worse changelog.
 EXEMPT = {'CHANGELOG.md'}
+EXEMPT_PREFIXES = {'docs/superpowers/'}  # local, gitignored planning artifacts
 
 
 def main() -> int:
@@ -55,7 +56,7 @@ def main() -> int:
     scanned = 0
     for path in targets:
         rel = path.relative_to(ROOT).as_posix()
-        if rel in EXEMPT:
+        if rel in EXEMPT or any(rel.startswith(prefix) for prefix in EXEMPT_PREFIXES):
             continue
         scanned += 1
         text = path.read_text(encoding='utf-8')

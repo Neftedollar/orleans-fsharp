@@ -1,4 +1,9 @@
-# Redis Example: Shopping Cart Service
+---
+title: "Legacy: Redis Example"
+description: "Shopping cart example using the deprecated grain authoring model."
+---
+
+# Legacy: Redis Example — Shopping Cart Service
 
 **End-to-end guide — Redis storage, clustering, and reminders for a real-world shopping cart.**
 
@@ -6,7 +11,7 @@
 > `FSharpGrain.ref`/`send`/`post`/`ask` handle module, which now carry `[<Obsolete>]` (warning, not
 > error) -- the example still compiles and runs exactly as described. The Redis storage and
 > clustering configuration is unaffected. For the current grain authoring model see
-> [functional-grains.md](functional-grains.md).
+> [functional-grains.md](/orleans-fsharp/functional-grains/).
 
 ## What you'll build
 
@@ -351,7 +356,7 @@ let cartGrain = grain {
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md) — complete `siloConfig { }` CE reference
-- [Client Configuration](client-configuration.md) — complete `clientConfig { }` CE reference
-- [Advanced](advanced.md) — transactions, OpenTelemetry, graceful shutdown, state migration
-- [Security](security.md) — TLS, mTLS, filters, secrets management
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) — complete `siloConfig { }` CE reference
+- [Client Configuration](/orleans-fsharp/client-configuration/) — complete `clientConfig { }` CE reference
+- [Advanced](/orleans-fsharp/advanced/) — transactions, OpenTelemetry, graceful shutdown, state migration
+- [Security](/orleans-fsharp/security/) — TLS, mTLS, filters, secrets management

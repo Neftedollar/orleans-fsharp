@@ -42,6 +42,21 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
         let options = services.GetRequiredService<IOptions<GrainTypeOptions>>().Value
         let snapshot = registry.Snapshot
 
+        let snapshotOptions =
+            services.GetRequiredService<IOptions<FunctionalJournalSnapshotOptions>>().Value
+
+        if obj.ReferenceEquals(snapshotOptions.Policy, null) then
+            fail SiloStage "the silo-wide functional journal snapshot policy cannot be null."
+
+        match snapshotOptions.Policy with
+        | FunctionalJournalSnapshotDefault.Every eventCount when eventCount <= 0 ->
+            fail
+                SiloStage
+                $"the silo-wide functional journal snapshot policy Every requires a positive event count, but {eventCount} was configured."
+        | FunctionalJournalSnapshotDefault.When predicate when obj.ReferenceEquals(predicate, null) ->
+            fail SiloStage "the silo-wide functional journal snapshot policy When requires a predicate."
+        | _ -> ()
+
         let openInterface = typedefof<IFunctionalGrainTarget<_>>
 
         let openMarkers =
@@ -217,6 +232,20 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                             $"grain type '{entry.GrainTypeName}' is a journaled definition naming log-consistency provider '{journal.ProviderName}', which is not registered on this silo. Add it (for example AddLogStorageBasedLogConsistencyProvider \"{journal.ProviderName}\" or AddStateStorageBasedLogConsistencyProvider \"{journal.ProviderName}\") to every silo which hosts this definition."
                     | value -> value
 
+                let isCustomStorageProvider =
+                    factory :? Orleans.EventSourcing.CustomStorage.LogConsistencyProvider
+
+                match journal.CustomStorage, isCustomStorageProvider with
+                | Some _, false ->
+                    fail
+                        StartupStage
+                        $"grain type '{entry.GrainTypeName}' declares 'customStorage', but log-consistency provider '{journal.ProviderName}' is '{factory.GetType().FullName}' rather than Orleans.EventSourcing.CustomStorage.LogConsistencyProvider. Register AddCustomStorageBasedLogConsistencyProvider under that name."
+                | None, true ->
+                    fail
+                        StartupStage
+                        $"grain type '{entry.GrainTypeName}' uses Orleans CustomStorage log-consistency provider '{journal.ProviderName}' but declares no 'customStorage' implementation."
+                | _ -> ()
+
                 if
                     isNull (box (services.GetService<Factory<IGrainContext, ILogConsistencyProtocolServices>>()))
                 then
@@ -359,6 +388,8 @@ module internal FunctionalSiloServices =
             // An application-provided clock stays authoritative.
             services.TryAddSingleton<TimeProvider>(TimeProvider.System)
 
+            services.AddOptions<FunctionalJournalSnapshotOptions>() |> ignore
+
             services.AddSingleton<ILifecycleParticipant<ISiloLifecycle>, FunctionalSiloStartupValidator>()
             |> ignore
 
@@ -413,6 +444,37 @@ module internal FunctionalDurableIdentityGuard =
 /// </summary>
 [<AbstractClass; Sealed; Extension>]
 type FunctionalGrainSiloHostingExtensions =
+
+    /// <summary>
+    /// Configure the silo-wide snapshot rule inherited by functional journals which declare
+    /// <c>customStorage</c> and do not override it with <c>snapshotPolicy</c>.
+    /// </summary>
+    [<Extension>]
+    static member ConfigureFunctionalJournalSnapshots
+        (builder: ISiloBuilder, configure: Action<FunctionalJournalSnapshotOptions>)
+        : ISiloBuilder =
+        if isNull (box builder) then
+            fail SiloStage "ConfigureFunctionalJournalSnapshots requires a silo builder."
+
+        if isNull configure then
+            fail SiloStage "ConfigureFunctionalJournalSnapshots requires a configure action."
+
+        builder.ConfigureServices(fun services -> services.Configure(configure) |> ignore)
+        |> ignore
+
+        builder
+
+    /// <summary>Use a fixed positive event-count interval as the silo-wide snapshot default.</summary>
+    [<Extension>]
+    static member UseFunctionalJournalSnapshots(builder: ISiloBuilder, every: int) : ISiloBuilder =
+        if every <= 0 then
+            fail SiloStage $"UseFunctionalJournalSnapshots requires every > 0, but {every} was supplied."
+
+        FunctionalGrainSiloHostingExtensions.ConfigureFunctionalJournalSnapshots(
+            builder,
+            Action<FunctionalJournalSnapshotOptions>(fun options ->
+                options.Policy <- FunctionalJournalSnapshotDefault.Every every)
+        )
 
     /// <summary>
     /// Register a hosted JOURNALED definition: the grain's state is the fold of an event journal

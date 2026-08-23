@@ -12,12 +12,14 @@ open Orleans.FSharp.FunctionalDiagnostics
 /// and stored CLR type. Lookup and attachment validation compare this triple.
 /// </summary>
 type internal PersistentStateDescriptor =
-    { /// The Orleans state name of this facet.
-      StateName: string
-      /// The Orleans storage provider name of this facet.
-      ProviderName: string
-      /// The exact stored CLR type of this facet.
-      StoredType: Type }
+    {
+        /// The Orleans state name of this facet.
+        StateName: string
+        /// The Orleans storage provider name of this facet.
+        ProviderName: string
+        /// The exact stored CLR type of this facet.
+        StoredType: Type
+    }
 
 /// <summary>
 /// An immutable logical descriptor of one named persistent state facet.
@@ -110,12 +112,14 @@ module internal StoredStateType =
         if isNull stored then
             None
         elif stored.IsArray then
-            Some $"{Activator}; that method cannot create array instances, so an array type is not a usable stored state type"
+            Some
+                $"{Activator}; that method cannot create array instances, so an array type is not a usable stored state type"
         elif stored = typeof<string> then
             Some
                 $"{Activator}; that method rejects System.String ('Uninitialized Strings cannot be created'), so string is not a usable stored state type. Wrap the value in a record or another class"
         elif typeof<Delegate>.IsAssignableFrom stored then
-            Some $"{Activator}; that method cannot create delegate instances, so a delegate type is not a usable stored state type"
+            Some
+                $"{Activator}; that method cannot create delegate instances, so a delegate type is not a usable stored state type"
         elif stored.IsInterface then
             Some
                 $"{Activator}; that method cannot create an instance of an interface, so an interface is not a usable stored state type. Use the concrete stored type"
@@ -157,8 +161,8 @@ type internal TransactionalAccess =
 /// <summary>
 /// The lifetime and mutability guard shared by every state facade handed to one callback. A
 /// facade is bound to its invocation: once the callback's task has completed the facade rejects
-/// every member, and in a <c>readOnly</c> or <c>alwaysInterleave</c> callback it permits getters
-/// while rejecting the <c>State</c> setter and both overloads of <c>ReadStateAsync</c>,
+/// every member, and in any state-neutral callback it permits getters while rejecting the
+/// <c>State</c> setter and both overloads of <c>ReadStateAsync</c>,
 /// <c>WriteStateAsync</c>, and <c>ClearStateAsync</c>. The transactional axis is separate:
 /// see <see cref="T:Orleans.FSharp.TransactionalAccess"/>.
 /// </summary>
@@ -168,23 +172,32 @@ type internal FunctionalStateScope
         grainTypeName: string,
         callbackName: string,
         allowsMutation: bool,
-        transactionalAccess: TransactionalAccess
+        transactionalAccess: TransactionalAccess,
+        allowsJournalSnapshot: bool
     ) =
 
     let mutable expired = 0
+    let mutable snapshotRequested = 0
+
+    /// <summary>The ordinary scope of a callback which may request a journal snapshot.</summary>
+    new(grainTypeName: string, callbackName: string, allowsMutation: bool, transactionalAccess: TransactionalAccess) =
+        FunctionalStateScope(grainTypeName, callbackName, allowsMutation, transactionalAccess, true)
 
     /// <summary>The ordinary scope of a callback which can never carry a transaction context.</summary>
     /// <param name="grainTypeName">The grain type name to name in facade diagnostics.</param>
     /// <param name="callbackName">The callback name to name in facade diagnostics.</param>
     /// <param name="allowsMutation">Whether the callback may mutate state or issue storage calls.</param>
     new(grainTypeName: string, callbackName: string, allowsMutation: bool) =
-        FunctionalStateScope(grainTypeName, callbackName, allowsMutation, Unavailable)
+        FunctionalStateScope(grainTypeName, callbackName, allowsMutation, Unavailable, true)
 
     /// <summary>True once the owning callback has completed.</summary>
     member _.IsExpired = Volatile.Read(&expired) = 1
 
     /// <summary>Expire every facade of this callback. Idempotent.</summary>
     member _.Expire() = Volatile.Write(&expired, 1)
+
+    /// <summary>Whether this callback requested a snapshot before it completed.</summary>
+    member _.SnapshotRequested = Volatile.Read(&snapshotRequested) = 1
 
     /// <summary>Describe one facet for a diagnostic; never includes the stored value.</summary>
     /// <param name="descriptor">The facet identity to describe.</param>
@@ -221,7 +234,7 @@ type internal FunctionalStateScope
                 JournalStage
                 $"the journal of grain type '{grainTypeName}' was used through '{memberName}' after the '{callbackName}' callback which resolved it had already completed. A journal facade is bound to its invocation."
 
-    /// <summary>Reject a journal append from a callback which may run beside another turn.</summary>
+    /// <summary>Reject a journal append from a callback whose contract forbids mutation.</summary>
     /// <param name="memberName">The journal member being used.</param>
     /// <exception cref="System.InvalidOperationException">
     /// The callback which resolved this journal has already completed, or this callback is
@@ -233,7 +246,18 @@ type internal FunctionalStateScope
         if not allowsMutation then
             fail
                 JournalStage
-                $"the journal of grain type '{grainTypeName}' rejects '{memberName}' in the '{callbackName}' callback, which is state-neutral. A 'readOnly' or 'alwaysInterleave' operation may run while another turn of this activation is in flight, so its appends could not be ordered against that turn's."
+                $"the journal of grain type '{grainTypeName}' rejects '{memberName}' in the '{callbackName}' callback, which is state-neutral. A 'readOnly' or transaction-scoped operation cannot append journal events."
+
+    /// <summary>Request a snapshot owned by this callback.</summary>
+    member this.RequestJournalSnapshot() =
+        this.EnsureJournalAppend "snapshotNow"
+
+        if not allowsJournalSnapshot then
+            fail
+                JournalStage
+                $"the journal of grain type '{grainTypeName}' rejects 'snapshotNow' in the '{callbackName}' notification. Snapshot writes are asynchronous and cannot be started from a synchronous journal notification; request one from a handler or lifecycle, reminder, timer, stream, or broadcast callback instead."
+
+        Volatile.Write(&snapshotRequested, 1)
 
     /// <summary>Reject a mutating member in a read-only or state-neutral interleaved callback.</summary>
     /// <param name="descriptor">The facet identity to describe if rejected.</param>
@@ -414,13 +438,13 @@ module internal FunctionalFacet =
             FunctionalPersistentStateConfiguration(descriptor.StateName, descriptor.ProviderName)
             :> IPersistentStateConfiguration
 
-        let facet (instance: obj) = unbox<IPersistentState<'StoredState>> instance
+        let facet (instance: obj) =
+            unbox<IPersistentState<'StoredState>> instance
 
         { Descriptor = descriptor
           Create = fun factory context -> box (factory.Create<'StoredState>(context, configuration))
           Facade =
-            fun instance scope ->
-                box (FunctionalPersistentStateFacade<'StoredState>(facet instance, descriptor, scope))
+            fun instance scope -> box (FunctionalPersistentStateFacade<'StoredState>(facet instance, descriptor, scope))
           GetState = fun instance -> box (facet instance).State
           SetState = fun instance value -> (facet instance).State <- unbox<'StoredState> value
           RecordExists = fun instance -> (facet instance).RecordExists

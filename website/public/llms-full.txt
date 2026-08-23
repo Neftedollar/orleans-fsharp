@@ -8,26 +8,23 @@ License: MIT
 
 ## Summary
 Orleans.FSharp provides an idiomatic F# developer surface over Microsoft Orleans.
-It emphasizes computation-expression based authoring (`siloConfig {}`, `clientConfig {}`, `eventSourcedGrain {}`),
-immutable state transitions, typed message flows, and reduced C# boilerplate.
+The current authoring model uses typed F# API records, `grainContract`, `grainFor`,
+`journaledGrainFor`, immutable state transitions, and precompiled Orleans proxies with no
+application-owned C# bridge.
 
-Grain authoring has two models. The current one is the functional grain runtime
-(`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`).
-The original `grain {}` computation expression and its `FSharpGrain.*` handle module still compile
-and run, but their public surface now carries `[<Obsolete>]` (warning, not error); new code should
-use the functional runtime. See https://neftedollar.com/orleans-fsharp/functional-grains/ for the
-before/after mapping of every deprecated entry point.
+Maintenance documentation for earlier authoring models is isolated under:
+https://neftedollar.com/orleans-fsharp/legacy/
 
 ## Key Claims
 - Orleans 10 parity
-- 1500+ tests (unit and integration)
+- 2,500+ tests (unit and integration)
 - Support for serialization, streaming, event sourcing, reentrancy, placement, transactions, TLS/mTLS, health checks, OpenTelemetry, and Kubernetes clustering
 
 ## Recommended Navigation
 1. Getting Started: https://neftedollar.com/orleans-fsharp/getting-started/
 2. Functional Grain Runtime (current grain authoring model): https://neftedollar.com/orleans-fsharp/functional-grains/
-3. Grain Definition (deprecated `grain {}` model): https://neftedollar.com/orleans-fsharp/grain-definition/
-4. Silo Configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
+3. Silo Configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
+4. Orleans Dashboard: https://neftedollar.com/orleans-fsharp/dashboard/
 5. Client Configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
 6. Serialization: https://neftedollar.com/orleans-fsharp/serialization/
 7. Streaming: https://neftedollar.com/orleans-fsharp/streaming/
@@ -36,6 +33,7 @@ before/after mapping of every deprecated entry point.
 10. Calling from C# (the C#-callable facade over a functional grain): https://neftedollar.com/orleans-fsharp/calling-from-csharp/
 11. API Reference: https://neftedollar.com/orleans-fsharp/api-reference/
 12. FAQ: https://neftedollar.com/orleans-fsharp/faq/
+13. Legacy API: https://neftedollar.com/orleans-fsharp/legacy/
 
 ## External Links
 - GitHub repository: https://github.com/Neftedollar/orleans-fsharp

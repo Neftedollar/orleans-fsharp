@@ -25,10 +25,14 @@
     <PackageVersion Include="Microsoft.Orleans.Transactions"                 Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.EventSourcing"                Version="$(OrleansVersion)" />
+    <PackageVersion Include="Microsoft.Orleans.Dashboard"                    Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.TestingHost"                  Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Clustering.Redis"             Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Persistence.Redis"            Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Persistence.Memory"           Version="$(OrleansVersion)" />
+    <!-- Dashboard 10.1.0 depends on vulnerable OpenTelemetry.Api 1.15.0, while
+         Dashboard 10.2.2 requires >= 1.16.0. Keep one patched version for both. -->
+    <PackageVersion Include="OpenTelemetry.Api"                              Version="1.16.0" />
 
     <!-- Microsoft.Extensions / ASP.NET Core
          Previously floated at 10.*; reconciled to highest 10.x in local cache. -->

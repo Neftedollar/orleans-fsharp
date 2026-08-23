@@ -58,7 +58,7 @@ type internal FunctionalOperation =
         IsReadOnly: bool
         /// One-way delivery; the bound task acknowledges the local send only.
         IsOneWay: bool
-        /// Always-interleave admission; valid only with read-only or one-way.
+        /// Always-interleave admission; mutating handlers are supported by journaled definitions.
         IsAlwaysInterleave: bool
         /// The declared Orleans transaction option, when the operation is declared
         /// <c>transactional</c>.
@@ -100,7 +100,8 @@ type internal FunctionalOperation =
     /// options plus <c>Supported</c>, which forwards a caller's context without starting one.
     /// </summary>
     member this.CanCarryTransaction =
-        this.IsTransactionScoped || this.Transaction = Some Orleans.TransactionOption.Supported
+        this.IsTransactionScoped
+        || this.Transaction = Some Orleans.TransactionOption.Supported
 
 /// <summary>
 /// The non-generic view of a sealed contract.
@@ -225,7 +226,8 @@ type GrainContract<'Actor, 'Key, 'Api>
 
     /// <summary>Encode a domain key into the exact Orleans grain identity of this contract.</summary>
     /// <param name="key">The domain key to encode.</param>
-    member internal _.GrainIdOf(key: 'Key) = GrainId.Create(grainType, keyCodec.EncodeKey key)
+    member internal _.GrainIdOf(key: 'Key) =
+        GrainId.Create(grainType, keyCodec.EncodeKey key)
 
     /// <summary>Decode the domain key from an Orleans grain identity.</summary>
     /// <param name="grainId">The Orleans grain identity to decode.</param>
@@ -271,32 +273,34 @@ type GrainContract<'Actor, 'Key, 'Api>
 /// <summary>Accumulated, not yet validated, contract configuration.</summary>
 [<ReferenceEquality>]
 type internal ContractDraftState<'Key> =
-    { /// The reflected API shape for 'Api.
-      Shape: ApiShape
-      /// The explicit 'grainType' value, when declared.
-      GrainTypeName: string option
-      /// The explicit 'version' value, when declared; defaults to 1 at sealing.
-      Version: int option
-      /// The explicit 'acceptsVersions' policy, when declared; defaults to Exact at sealing.
-      AcceptedVersions: VersionPolicy option
-      /// Whether 'reentrant' has been declared.
-      IsReentrant: bool
-      /// The declared 'mayInterleave' predicate, when declared.
-      MayInterleave: (IFunctionalRequestMetadata -> bool) option
-      /// The installed key codec, when a key operation has been declared.
-      KeyCodec: KeyCodec<'Key> option
-      /// API-field indices declared 'readOnly'.
-      ReadOnly: Set<int>
-      /// API-field indices declared 'oneWay'.
-      OneWay: Set<int>
-      /// API-field indices declared 'alwaysInterleave'.
-      AlwaysInterleave: Set<int>
-      /// The declared Orleans transaction option, keyed by API-field index.
-      Transactions: Map<int, Orleans.TransactionOption>
-      /// The declared 'sinceVersion' floor, keyed by API-field index.
-      SinceVersions: Map<int, int>
-      /// The declared 'operationId' override, keyed by API-field index.
-      OperationIds: Map<int, string> }
+    {
+        /// The reflected API shape for 'Api.
+        Shape: ApiShape
+        /// The explicit 'grainType' value, when declared.
+        GrainTypeName: string option
+        /// The explicit 'version' value, when declared; defaults to 1 at sealing.
+        Version: int option
+        /// The explicit 'acceptsVersions' policy, when declared; defaults to Exact at sealing.
+        AcceptedVersions: VersionPolicy option
+        /// Whether 'reentrant' has been declared.
+        IsReentrant: bool
+        /// The declared 'mayInterleave' predicate, when declared.
+        MayInterleave: (IFunctionalRequestMetadata -> bool) option
+        /// The installed key codec, when a key operation has been declared.
+        KeyCodec: KeyCodec<'Key> option
+        /// API-field indices declared 'readOnly'.
+        ReadOnly: Set<int>
+        /// API-field indices declared 'oneWay'.
+        OneWay: Set<int>
+        /// API-field indices declared 'alwaysInterleave'.
+        AlwaysInterleave: Set<int>
+        /// The declared Orleans transaction option, keyed by API-field index.
+        Transactions: Map<int, Orleans.TransactionOption>
+        /// The declared 'sinceVersion' floor, keyed by API-field index.
+        SinceVersions: Map<int, int>
+        /// The declared 'operationId' override, keyed by API-field index.
+        OperationIds: Map<int, string>
+    }
 
 /// <summary>
 /// The intermediate state of a <c>grainContract</c> computation expression.
@@ -398,8 +402,8 @@ module internal ContractDraft =
     /// streaming field combined with 'oneWay', 'readOnly', 'alwaysInterleave', or 'transactional';
     /// 'oneWay' on a field that does not return <c>Task&lt;unit&gt;</c>, or combined with
     /// 'readOnly'; 'transactional' combined with 'oneWay' or 'alwaysInterleave';
-    /// 'alwaysInterleave' without 'readOnly' or 'oneWay', or combined with a contract declared
-    /// 'reentrant' or 'mayInterleave'; a 'sinceVersion' that is non-positive, above the contract
+    /// 'alwaysInterleave' combined with a contract declared 'reentrant' or 'mayInterleave'; a
+    /// 'sinceVersion' that is non-positive, above the contract
     /// version, or unable to ever reject a call given the accepted-versions floor; or two API
     /// fields sharing one operation ID.
     /// </exception>
@@ -549,11 +553,6 @@ module internal ContractDraft =
                         ContractStage
                         $"API field '{field.FieldName}' of '{grainTypeName}' combines 'transactional' with 'alwaysInterleave'. Orleans admits an always-interleave request before any interleaving policy is consulted, so two turns of this activation could hold transactional locks on the same states at once."
 
-                if isAlwaysInterleave && not (isReadOnly || isOneWay) then
-                    fail
-                        ContractStage
-                        $"API field '{field.FieldName}' of '{grainTypeName}' uses 'alwaysInterleave' without 'readOnly' or 'oneWay'."
-
                 // Spec 004 item 5. A contract-level interleaving policy and the per-operation
                 // 'alwaysInterleave' flag are decided in different places and in a fixed order:
                 // Orleans' ActivationData.MayInvokeRequest returns true for an
@@ -601,8 +600,7 @@ module internal ContractDraft =
                         if declared <= minAcceptedVersion then
                             let policy =
                                 match acceptedVersions with
-                                | Exact ->
-                                    $"the default 'acceptsVersions Exact' policy admits version {version} only"
+                                | Exact -> $"the default 'acceptsVersions Exact' policy admits version {version} only"
                                 | BackwardCompatible floor ->
                                     $"'acceptsVersions (BackwardCompatible {floor})' admits versions {floor} through {version}"
 
@@ -671,7 +669,8 @@ module internal ContractDraft =
 type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
 
     /// <summary>Start an empty draft for the API record type.</summary>
-    member _.Yield(_: unit) : GrainContractDraft<'Actor, 'Key, 'Api> = ContractDraft.create<'Actor, 'Key, 'Api> ()
+    member _.Yield(_: unit) : GrainContractDraft<'Actor, 'Key, 'Api> =
+        ContractDraft.create<'Actor, 'Key, 'Api> ()
 
     /// <summary>Validate and seal the draft into an immutable contract.</summary>
     /// <param name="draft">The accumulated draft to validate and seal.</param>
@@ -696,8 +695,12 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         ensureWireText ContractStage "'grainType'" value
 
         match state.State.GrainTypeName with
-        | Some existing -> fail ContractStage $"'grainType' is already set to '{existing}'; it is required exactly once."
-        | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with GrainTypeName = Some value }
+        | Some existing ->
+            fail ContractStage $"'grainType' is already set to '{existing}'; it is required exactly once."
+        | None ->
+            ContractDraft.withState<'Actor, 'Key, 'Api>
+                { state.State with
+                    GrainTypeName = Some value }
 
     /// <summary>Set the application contract version; defaults to <c>1</c>.</summary>
     /// <param name="value">The application contract version; must be positive.</param>
@@ -711,7 +714,10 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
 
         match state.State.Version with
         | Some existing -> fail ContractStage $"'version' is already set to {existing}; it is allowed at most once."
-        | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with Version = Some value }
+        | None ->
+            ContractDraft.withState<'Actor, 'Key, 'Api>
+                { state.State with
+                    Version = Some value }
 
     /// <summary>
     /// Admit request versions other than the hosted contract version; defaults to
@@ -741,7 +747,10 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         match state.State.AcceptedVersions with
         | Some existing ->
             fail ContractStage $"'acceptsVersions' is already set to {existing}; it is allowed at most once."
-        | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with AcceptedVersions = Some policy }
+        | None ->
+            ContractDraft.withState<'Actor, 'Key, 'Api>
+                { state.State with
+                    AcceptedVersions = Some policy }
 
     /// <summary>
     /// Declare the contract version one operation was introduced at, so a call admitted at an
@@ -866,13 +875,18 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
 
         match state.State.MayInterleave with
         | Some _ -> fail ContractStage "'mayInterleave' is declared more than once; it is allowed at most once."
-        | None -> ContractDraft.withState<'Actor, 'Key, 'Api> { state.State with MayInterleave = Some predicate }
+        | None ->
+            ContractDraft.withState<'Actor, 'Key, 'Api>
+                { state.State with
+                    MayInterleave = Some predicate }
 
     /// <summary>Use the native Orleans string key.</summary>
     /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("stringKey")>]
     member _.StringKey(state: GrainContractDraft<'Actor, string, 'Api>) =
-        ContractDraft.withState<'Actor, string, 'Api> (ContractDraft.withKey "stringKey" KeyCodecs.stringKey state.State)
+        ContractDraft.withState<'Actor, string, 'Api> (
+            ContractDraft.withKey "stringKey" KeyCodecs.stringKey state.State
+        )
 
     /// <summary>Map a domain key onto the native Orleans string key.</summary>
     /// <param name="encode">Encodes the domain key as the native Orleans string key.</param>
@@ -954,11 +968,8 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     /// <exception cref="System.InvalidOperationException">Thrown when a key operation is already installed.</exception>
     [<CustomOperation("int64CompoundKeyMapped")>]
     member _.Int64CompoundKeyMapped
-        (
-            state: GrainContractDraft<'Actor, 'Key, 'Api>,
-            encode: 'Key -> int64 * string,
-            decode: int64 -> string -> 'Key
-        ) =
+        (state: GrainContractDraft<'Actor, 'Key, 'Api>, encode: 'Key -> int64 * string, decode: int64 -> string -> 'Key)
+        =
         ContractDraft.withState<'Actor, 'Key, 'Api> (
             ContractDraft.withKey "int64CompoundKeyMapped" (KeyCodecs.int64CompoundKeyMapped encode decode) state.State
         )
@@ -1063,9 +1074,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
             selector: OperationSelector<'Api, 'Argument, 'Reply>
         ) =
         if not (Enum.IsDefined(typeof<Orleans.TransactionOption>, option)) then
-            fail
-                ContractStage
-                $"'transactional' received the undefined Orleans.TransactionOption value {int option}."
+            fail ContractStage $"'transactional' received the undefined Orleans.TransactionOption value {int option}."
 
         let operation = ApiShape.resolve state.State.Shape "transactional" selector
 
@@ -1100,9 +1109,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         let operation = ApiShape.resolve state.State.Shape "operationId" selector
 
         if state.State.OperationIds.ContainsKey operation.Index then
-            fail
-                ContractStage
-                $"'operationId' is applied more than once to API field '{operation.FieldName}'."
+            fail ContractStage $"'operationId' is applied more than once to API field '{operation.FieldName}'."
 
         ContractDraft.withState<'Actor, 'Key, 'Api>
             { state.State with
@@ -1135,9 +1142,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
         let operation = ApiShape.resolveStream state.State.Shape "operationId" selector
 
         if state.State.OperationIds.ContainsKey operation.Index then
-            fail
-                ContractStage
-                $"'operationId' is applied more than once to API field '{operation.FieldName}'."
+            fail ContractStage $"'operationId' is applied more than once to API field '{operation.FieldName}'."
 
         ContractDraft.withState<'Actor, 'Key, 'Api>
             { state.State with

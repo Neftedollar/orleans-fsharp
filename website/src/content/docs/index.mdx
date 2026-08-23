@@ -82,13 +82,9 @@ let! n = api.increment ()
 
 Same two operations, same reply types — but state transitions are explicit values, the compiler checks every handler against the record's field types, and sealing the definition verifies that each operation has exactly one handler. No interface, no shim project, no proxy generation.
 
-:::note[Older authoring models]
-The original `grain { }` computation expression still compiles and runs, but its public surface
-carries `[<Obsolete>]` (warning, not error) — see
-[Functional Grain Runtime](/orleans-fsharp/functional-grains/) for the before/after mapping of
-every deprecated entry point. The classic `eventSourcedGrain { }` model is likewise superseded by
-the functional `journaledGrainFor` and kept documented. The `siloConfig { }` and `clientConfig { }`
-hosting CEs are current and unaffected.
+:::note[Maintaining an existing application?]
+Documentation for earlier Orleans.FSharp authoring models is preserved in the separate
+[Legacy API section](/orleans-fsharp/legacy/). Current guides and examples use only the functional runtime.
 :::
 
 ## Features
@@ -102,6 +98,9 @@ hosting CEs are current and unaffected.
   </FeatureCard>
   <FeatureCard title="siloConfig { } CE" icon="gear" href="/orleans-fsharp/silo-configuration/">
     Configure clustering, storage, streaming, TLS, health checks, and runtime services without extension-method boilerplate.
+  </FeatureCard>
+  <FeatureCard title="Orleans Dashboard" icon="chart" href="/orleans-fsharp/dashboard/">
+    Run Microsoft's Dashboard with functional actors, including a verified example and the exact actor names shown in its activation table.
   </FeatureCard>
   <FeatureCard title="FSharpBinaryCodec" icon="file-code" href="/orleans-fsharp/serialization/">
     Serialize F# DUs, records, options, lists, and maps with minimal ceremony and predictable behavior for mixed cluster scenarios.
@@ -140,7 +139,7 @@ A working Orleans.FSharp solution with a counter grain, FsCheck property tests, 
 
 <CardGrid>
   <Card title="Orleans.FSharp">
-    Core developer surface: the functional grain runtime (`grainContract`/`grainFor`/`journaledGrainFor`), observers, streaming, logging, reminders, timers, serialization, and the deprecated `grain {}` CE.
+    Core developer surface: `grainContract`, `grainFor`, `journaledGrainFor`, observers, streaming, logging, reminders, timers, and serialization.
   </Card>
   <Card title="Orleans.FSharp.Runtime">
     Hosting and client runtime: `AddFunctionalGrain` registration, `siloConfig {}` and `clientConfig {}` builders for production setup.
@@ -149,7 +148,7 @@ A working Orleans.FSharp solution with a counter grain, FsCheck property tests, 
     The fixed functional transport: request envelopes, protocol tokens, and precompiled Orleans proxies — reference it once, generate nothing.
   </Card>
   <Card title="Orleans.FSharp.EventSourcing">
-    The classic `eventSourcedGrain { }` model and its runtime bridge, kept for existing code; new event-sourced grains use `journaledGrainFor` from the core package.
+    Compatibility package for applications covered by the separate Legacy API documentation. Current event-sourced actors use `journaledGrainFor` from the core package.
   </Card>
   <Card title="Orleans.FSharp.Testing">
     TestHarness, WebTestHarness, MockGrainFactory, GrainArbitrary, and log capture utilities.
@@ -169,7 +168,7 @@ Every major Orleans capability, wrapped in idiomatic F#:
 - **Streaming replies**: API record fields returning `IAsyncEnumerable<'T>`, riding Orleans' own extension — `await foreach`-able from C#
 - **Reentrancy & concurrency**: `reentrant` and per-request `mayInterleave` as contract operations; `statelessWorker` as a definition operation
 - **Placement strategies**: `placement` (PreferLocal, ActivationCountBased, ResourceOptimized, Random) as a definition operation
-- **Event sourcing**: `journaledGrainFor` — pure `apply` fold over Orleans' `LogStorage`/`StateStorage` log-consistency providers (classic `eventSourcedGrain { }` kept)
+- **Event sourcing**: `journaledGrainFor` — pure `apply` fold over Orleans' `LogStorage`/`StateStorage` log-consistency providers, with typed custom snapshots
 - **Transactions**: distributed ACID via `transactional` contract operations and `transactionalStateFrom` facets
 - **Contract versioning**: exact by default; opt-in tolerance with `acceptsVersions` and per-operation `sinceVersion`
 - **Observers & filters**: codegen-free functional observers, incoming/outgoing call filters, request context propagation
@@ -182,9 +181,10 @@ Every major Orleans capability, wrapped in idiomatic F#:
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
   <LinkCard title="How To" href="/orleans-fsharp/how-to/" description="Step-by-step distributed system tutorial." />
-  <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-grains/" description="The current grain authoring model, and the map off the deprecated one." />
-  <LinkCard title="Event Sourcing" href="/orleans-fsharp/event-sourcing/" description="journaledGrainFor, confirmation semantics, and the classic model." />
-  <LinkCard title="API Reference" href="/orleans-fsharp/api-reference/" description="Every public module, type, and function — functional surface first." />
+  <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-grains/" description="Typed API records, contracts, handlers, persistence, lifecycle, and concurrency." />
+  <LinkCard title="Event Sourcing" href="/orleans-fsharp/event-sourcing/" description="journaledGrainFor, confirmation semantics, snapshots, and provider behavior." />
+  <LinkCard title="Orleans Dashboard" href="/orleans-fsharp/dashboard/" description="Runnable integration and exact F# actor display names." />
+  <LinkCard title="API Reference" href="/orleans-fsharp/api-reference/" description="The current functional surface and shared Orleans helpers." />
   <LinkCard title="Calling from C#" href="/orleans-fsharp/calling-from-csharp/" description="The typed facade: awaited calls and await foreach from C#." />
   <LinkCard title="Comparison" href="/orleans-fsharp/comparison/" description="Orleans.FSharp vs C# Orleans vs Akkling vs Proto.Actor." />
   <LinkCard title="Security" href="/orleans-fsharp/security/" description="TLS, mTLS, call filters, secrets management." />

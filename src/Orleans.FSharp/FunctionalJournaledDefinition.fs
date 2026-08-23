@@ -1,7 +1,13 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Generic
 open System.Threading.Tasks
+open Orleans.BroadcastChannel
+open Orleans.EventSourcing
+open Orleans.Runtime
+open Orleans.Streams
+open Orleans.Streams.Core
 open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>
@@ -21,27 +27,65 @@ type internal JournalConfiguration =
         StorageName: string option
     }
 
+/// <summary>A declared durable reminder whose successful tick raises an atomic event batch.</summary>
+[<ReferenceEquality>]
+type internal JournaledReminderDeclaration<'Actor, 'Key, 'State, 'Event> =
+    { Name: string
+      DueTime: TimeSpan
+      Period: TimeSpan
+      Hook: JournaledReminderHook<'Actor, 'Key, 'State, 'Event> }
+
+/// <summary>A declared activation-local timer whose successful tick raises an atomic event batch.</summary>
+[<ReferenceEquality>]
+type internal JournaledTimerDeclaration<'Actor, 'Key, 'State, 'Event> =
+    { Name: string
+      DueTime: TimeSpan
+      Period: TimeSpan
+      Interleave: bool
+      KeepAlive: bool
+      Hook: JournaledTimerHook<'Actor, 'Key, 'State, 'Event> }
+
 /// <summary>Accumulated, not yet sealed, journaled-definition configuration.</summary>
 [<ReferenceEquality>]
 type internal JournaledDraftState<'Actor, 'Key, 'Api, 'State, 'Event> =
-    { /// The contract this definition is being built for.
-      Contract: GrainContract<'Actor, 'Key, 'Api>
-      /// The declared initial state, before any event has been folded in.
-      Initial: 'Key -> 'State
-      /// The replay fold.
-      Apply: 'State -> 'Event -> 'State
-      /// The named log-consistency provider and its storage, when 'logProvider' has been declared.
-      Journal: JournalConfiguration option
-      /// The declared idle collection age, when 'collectionAge' has been declared.
-      CollectionAge: TimeSpan option
-      /// The declared activation hook, when 'onActivate' has been declared.
-      OnActivate: JournaledActivateHook<'Actor, 'Key, 'State> option
-      /// The declared deactivation hook, when 'onDeactivate' has been declared.
-      OnDeactivate: JournaledDeactivateHook<'Actor, 'Key, 'State> option
-      /// The declared placement configuration, when 'placement' has been declared.
-      Placement: PlacementConfiguration option
-      /// Boxed handlers keyed by API-record field index.
-      Handlers: Map<int, obj> }
+    {
+        /// The contract this definition is being built for.
+        Contract: GrainContract<'Actor, 'Key, 'Api>
+        /// The declared initial state, before any event has been folded in.
+        Initial: 'Key -> 'State
+        /// The replay fold.
+        Apply: 'State -> 'Event -> 'State
+        /// The named log-consistency provider and its storage, when 'logProvider' has been declared.
+        Journal: JournalConfiguration option
+        /// Resolves the typed storage used by Orleans' CustomStorage provider.
+        CustomStorage: (IServiceProvider -> IFunctionalJournalStorage<'Key, 'State, 'Event>) option
+        /// The per-definition snapshot override; absence inherits the silo default.
+        SnapshotPolicy: FunctionalJournalSnapshotPolicy<'State> option
+        /// The declared idle collection age, when 'collectionAge' has been declared.
+        CollectionAge: TimeSpan option
+        /// The declared activation hook, when 'onActivate' has been declared.
+        OnActivate: JournaledActivateHook<'Actor, 'Key, 'State> option
+        /// The declared deactivation hook, when 'onDeactivate' has been declared.
+        OnDeactivate: JournaledDeactivateHook<'Actor, 'Key, 'State> option
+        /// Declared reminders, in declaration order.
+        Reminders: JournaledReminderDeclaration<'Actor, 'Key, 'State, 'Event> list
+        /// Declared timers, in declaration order.
+        Timers: JournaledTimerDeclaration<'Actor, 'Key, 'State, 'Event> list
+        /// Declared implicit stream and broadcast subscriptions, in declaration order.
+        StreamBindings: FunctionalStreamDeclaration list
+        /// Notification raised when the tentative state may have changed.
+        OnTentativeStateChanged: JournaledStateChangedHook<'Actor, 'Key, 'State> option
+        /// Notification raised when the confirmed state may have changed.
+        OnStateChanged: JournaledStateChangedHook<'Actor, 'Key, 'State> option
+        /// Notification raised when the log-consistency protocol reports a connection issue.
+        OnConnectionIssue: JournaledConnectionIssueHook<'Actor, 'Key, 'State> option
+        /// Notification raised when a reported connection issue is resolved.
+        OnConnectionIssueResolved: JournaledConnectionIssueHook<'Actor, 'Key, 'State> option
+        /// The declared placement configuration, when 'placement' has been declared.
+        Placement: PlacementConfiguration option
+        /// Boxed handlers keyed by API-record field index.
+        Handlers: Map<int, obj>
+    }
 
 /// <summary>
 /// A sealed journaled definition: the contract, the initial state, the replay fold, one handler
@@ -66,6 +110,12 @@ type FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>
     /// <summary>The named log-consistency provider and its storage.</summary>
     member internal _.Journal = state.Journal
 
+    /// <summary>The typed custom-storage resolver, when declared.</summary>
+    member internal _.CustomStorage = state.CustomStorage
+
+    /// <summary>The per-definition snapshot override, when declared.</summary>
+    member internal _.SnapshotPolicy = state.SnapshotPolicy
+
     /// <summary>The configured idle collection age, when present.</summary>
     member internal _.CollectionAge = state.CollectionAge
 
@@ -74,6 +124,27 @@ type FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>
 
     /// <summary>The deactivation hook, when configured.</summary>
     member internal _.OnDeactivate = state.OnDeactivate
+
+    /// <summary>Declared reminders in declaration order.</summary>
+    member internal _.Reminders = state.Reminders
+
+    /// <summary>Declared timers in declaration order.</summary>
+    member internal _.Timers = state.Timers
+
+    /// <summary>Declared implicit stream and broadcast subscriptions in declaration order.</summary>
+    member internal _.StreamBindings = state.StreamBindings
+
+    /// <summary>The tentative-state notification hook, when configured.</summary>
+    member internal _.OnTentativeStateChanged = state.OnTentativeStateChanged
+
+    /// <summary>The confirmed-state notification hook, when configured.</summary>
+    member internal _.OnStateChanged = state.OnStateChanged
+
+    /// <summary>The connection-issue hook, when configured.</summary>
+    member internal _.OnConnectionIssue = state.OnConnectionIssue
+
+    /// <summary>The connection-issue-resolved hook, when configured.</summary>
+    member internal _.OnConnectionIssueResolved = state.OnConnectionIssueResolved
 
     /// <summary>The configured placement, when <c>placement</c> was declared.</summary>
     member internal _.Placement = state.Placement
@@ -182,18 +253,40 @@ module internal JournaledDefinitionDraft =
             fail DefinitionStage $"'logProvider' of grain type '{grainTypeName}' must be a non-blank name."
 
         if containsNul journal.ProviderName then
-            fail
-                DefinitionStage
-                $"'logProvider' of grain type '{grainTypeName}' must not contain a NUL character."
+            fail DefinitionStage $"'logProvider' of grain type '{grainTypeName}' must not contain a NUL character."
 
         match journal.StorageName with
         | Some storageName when isBlank storageName ->
             fail DefinitionStage $"'journalStorage' of grain type '{grainTypeName}' must be a non-blank name."
         | Some storageName when containsNul storageName ->
+            fail DefinitionStage $"'journalStorage' of grain type '{grainTypeName}' must not contain a NUL character."
+        | _ -> ()
+
+        match state.CustomStorage, journal.StorageName with
+        | Some _, Some _ ->
             fail
                 DefinitionStage
-                $"'journalStorage' of grain type '{grainTypeName}' must not contain a NUL character."
+                $"grain type '{grainTypeName}' declares both 'customStorage' and 'journalStorage'. Orleans' CustomStorage log-consistency provider calls the grain-owned storage interface directly and reports UsesStorageProvider = false, so an IGrainStorage name would never be used. Remove 'journalStorage'."
         | _ -> ()
+
+        match state.SnapshotPolicy with
+        | Some policy when obj.ReferenceEquals(policy, null) ->
+            fail DefinitionStage $"'snapshotPolicy' of grain type '{grainTypeName}' cannot be null."
+        | Some(FunctionalJournalSnapshotPolicy.Every eventCount) when eventCount <= 0 ->
+            fail
+                DefinitionStage
+                $"'snapshotPolicy' Every of grain type '{grainTypeName}' requires a positive event count, but {eventCount} was supplied."
+        | Some(FunctionalJournalSnapshotPolicy.When predicate) when obj.ReferenceEquals(predicate, null) ->
+            fail
+                DefinitionStage
+                $"'snapshotPolicy' When of grain type '{grainTypeName}' requires a predicate."
+        | Some _ when state.CustomStorage.IsNone ->
+            fail
+                DefinitionStage
+                $"grain type '{grainTypeName}' declares 'snapshotPolicy' but no 'customStorage'. LogStorage retains the complete event log and StateStorage persists the latest view on every write; an application-controlled snapshot is available only through Orleans' CustomStorage provider. Declare 'customStorage', or remove 'snapshotPolicy'."
+        | Some FunctionalJournalSnapshotPolicy.Inherit
+        | None -> ()
+        | Some _ -> ()
 
         // Spec 004 item 2 meets item 3: an Orleans transaction can abort, and a confirmed journal
         // append cannot be undone. The log-view adaptor is not a transaction participant — it
@@ -210,6 +303,63 @@ module internal JournaledDefinitionDraft =
             fail
                 DefinitionStage
                 $"grain type '{grainTypeName}' is a journaled definition, but its contract declares 'transactional' for operation(s) {names}. An Orleans log-view adaptor is not a transaction participant, so events this operation confirmed would survive an abort of the transaction that raised them. Declare the operation without 'transactional', or keep the transactional state in an ordinary 'grainFor' definition."
+
+        match state.CollectionAge with
+        | Some age when age <= TimeSpan.Zero ->
+            fail
+                DefinitionStage
+                $"'collectionAge' for grain type '{grainTypeName}' must be strictly positive, but {age} was supplied."
+        | _ -> ()
+
+        let seenReminders = HashSet<string>(StringComparer.Ordinal)
+
+        for reminder in state.Reminders do
+            if isBlank reminder.Name then
+                fail DefinitionStage $"a reminder of grain type '{grainTypeName}' has a blank name."
+
+            if not (seenReminders.Add reminder.Name) then
+                fail
+                    DefinitionStage
+                    $"reminder name '{reminder.Name}' is declared more than once for grain type '{grainTypeName}'."
+
+            if reminder.DueTime < TimeSpan.Zero then
+                fail
+                    DefinitionStage
+                    $"reminder '{reminder.Name}' of grain type '{grainTypeName}' requires dueTime >= 0, but {reminder.DueTime} was supplied."
+
+            if reminder.Period <= TimeSpan.Zero then
+                fail
+                    DefinitionStage
+                    $"reminder '{reminder.Name}' of grain type '{grainTypeName}' requires period > 0, but {reminder.Period} was supplied."
+
+        let seenTimers = HashSet<string>(StringComparer.Ordinal)
+
+        for timer in state.Timers do
+            if isBlank timer.Name then
+                fail DefinitionStage $"a timer of grain type '{grainTypeName}' has a blank name."
+
+            if not (seenTimers.Add timer.Name) then
+                fail
+                    DefinitionStage
+                    $"timer name '{timer.Name}' is declared more than once for grain type '{grainTypeName}'."
+
+        let seenBindings = HashSet<struct (bool * string * string)>(HashIdentity.Structural)
+
+        for binding in state.StreamBindings do
+            if isBlank binding.ProviderName then
+                fail
+                    DefinitionStage
+                    $"an '{binding.OperationName}' declaration of grain type '{grainTypeName}' has a blank provider name."
+
+            if isBlank binding.Namespace then
+                fail
+                    DefinitionStage
+                    $"an '{binding.OperationName}' declaration of grain type '{grainTypeName}' (provider '{binding.ProviderName}') has a blank namespace."
+
+            if not (seenBindings.Add(struct (binding.IsStream, binding.ProviderName, binding.Namespace))) then
+                fail
+                    DefinitionStage
+                    $"'{binding.OperationName}' is declared more than once for provider '{binding.ProviderName}' and namespace '{binding.Namespace}' on grain type '{grainTypeName}'. Each (provider, namespace) pair accepts at most one hook."
 
         // Stateless-worker placement means many activations of one grain identity, each with its
         // own log-view adaptor over the same storage key. They would fold the same journal
@@ -241,19 +391,15 @@ module internal JournaledDefinitionDraft =
 /// the operation.
 /// </para>
 /// <para>
-/// The operations an ordinary <c>grainFor</c> definition has and this one deliberately does not:
-/// <c>defaultState</c>/<c>initialState</c> (replaced by <c>initialEventState</c>),
-/// <c>stateFrom</c> and <c>usePersistentState</c> (the journal is the state — a second durable
-/// holder on the same activation would be a second source of truth with no ordering against the
-/// journal), <c>transactionalStateFrom</c> (the adaptor is not a transaction participant),
-/// <c>onStream</c>/<c>onBroadcast</c>/<c>onTimer</c>/<c>onReminder</c> (every one of them is a
-/// whole-state-replacement hook, which a journaled definition has no way to honour), and
-/// <c>statelessWorker</c>. Each is recorded in specs/004-orleans-parity-extensions/spec.md item 3
-/// with the mechanism that rules it out.
+/// Reminder, timer, stream, and broadcast hooks return events instead of replacement state, so
+/// they have the same durable semantics as a journaled request handler. Operations which would
+/// introduce a second source of truth (<c>stateFrom</c>/<c>usePersistentState</c>), an Orleans
+/// transaction participant, or stateless-worker activations remain deliberately unavailable.
 /// </para>
 /// </remarks>
 [<Sealed>]
-type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: GrainContract<'Actor, 'Key, 'Api>) =
+type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api>
+    internal (contract: GrainContract<'Actor, 'Key, 'Api>) =
 
     /// <summary>Start a journaled definition seed for the contract.</summary>
     member _.Yield(_: unit) : FunctionalJournaledSeed<'Actor, 'Key, 'Api> =
@@ -327,9 +473,18 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
               Initial = draft.Initial
               Apply = fold
               Journal = None
+              CustomStorage = None
+              SnapshotPolicy = None
               CollectionAge = None
               OnActivate = None
               OnDeactivate = None
+              Reminders = []
+              Timers = []
+              StreamBindings = []
+              OnTentativeStateChanged = None
+              OnStateChanged = None
+              OnConnectionIssue = None
+              OnConnectionIssueResolved = None
               Placement = None
               Handlers = Map.empty }
 
@@ -538,6 +693,216 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
 
         JournaledDefinitionDraft.withState { draft with Journal = Some journal }
 
+    /// <summary>
+    /// Supply the typed application storage implemented behind Orleans' CustomStorage
+    /// log-consistency provider. The resolver runs once per activation against that activation's
+    /// service provider.
+    /// </summary>
+    /// <remarks>
+    /// Register <c>AddCustomStorageBasedLogConsistencyProvider</c> under the name supplied to
+    /// <c>logProvider</c>. Silo startup rejects a different provider implementation instead of
+    /// leaving Orleans' adaptor cast to fail on first activation.
+    /// </remarks>
+    [<CustomOperation("customStorage")>]
+    member _.CustomStorage<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            resolve: IServiceProvider -> IFunctionalJournalStorage<'Key, 'State, 'Event>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(resolve, null) then
+            fail
+                DefinitionStage
+                $"'customStorage' of grain type '{draft.Contract.GrainTypeName}' requires a service resolver."
+
+        if draft.CustomStorage.IsSome then
+            fail
+                DefinitionStage
+                $"'customStorage' is declared more than once for grain type '{draft.Contract.GrainTypeName}'. A repeated singleton operation is a definition error."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                CustomStorage = Some resolve }
+
+    /// <summary>
+    /// Override the silo-wide snapshot rule for this custom-storage journal. Without this
+    /// operation the definition inherits <c>FunctionalJournalSnapshotOptions.Policy</c>.
+    /// </summary>
+    [<CustomOperation("snapshotPolicy")>]
+    member _.SnapshotPolicy<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            policy: FunctionalJournalSnapshotPolicy<'State>
+        ) =
+        let draft = state.State
+
+        if draft.SnapshotPolicy.IsSome then
+            fail
+                DefinitionStage
+                $"'snapshotPolicy' is declared more than once for grain type '{draft.Contract.GrainTypeName}'. A repeated singleton operation is a definition error."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                SnapshotPolicy = Some policy }
+
+    /// <summary>
+    /// Declare a durable reminder. A successful tick appends and confirms the returned events as
+    /// one atomic batch before Orleans observes completion.
+    /// </summary>
+    [<CustomOperation("onReminder")>]
+    member _.OnReminder<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            name: string,
+            dueTime: TimeSpan,
+            period: TimeSpan,
+            hook: JournaledReminderHook<'Actor, 'Key, 'State, 'Event>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail
+                DefinitionStage
+                $"'onReminder' '{name}' of grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        let declaration =
+            { Name = name
+              DueTime = dueTime
+              Period = period
+              Hook = hook }
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                Reminders = draft.Reminders @ [ declaration ] }
+
+    /// <summary>
+    /// Declare an activation-local timer. Its returned events are appended atomically and
+    /// confirmed. Unlike a whole-state timer, <c>Interleave = true</c> is supported because
+    /// Orleans' log-view adaptor serializes concurrent submissions.
+    /// </summary>
+    [<CustomOperation("onTimer")>]
+    member _.OnTimer<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            name: string,
+            options: GrainTimerCreationOptions,
+            hook: JournaledTimerHook<'Actor, 'Key, 'State, 'Event>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail DefinitionStage $"'onTimer' '{name}' of grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        let declaration =
+            { Name = name
+              DueTime = options.DueTime
+              Period = options.Period
+              Interleave = options.Interleave
+              KeepAlive = options.KeepAlive
+              Hook = hook }
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                Timers = draft.Timers @ [ declaration ] }
+
+    /// <summary>
+    /// Subscribe implicitly to one Orleans stream namespace. A successful delivery appends and
+    /// confirms the returned event batch before acknowledging the item.
+    /// </summary>
+    [<CustomOperation("onStream")>]
+    member _.OnStream<'State, 'Event, 'Item>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            providerName: string,
+            streamNamespace: string,
+            hook: JournaledStreamHook<'Actor, 'Key, 'State, 'Event, 'Item>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail
+                DefinitionStage
+                $"'onStream' for provider '{providerName}' and namespace '{streamNamespace}' on grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        let attach =
+            FunctionalStreamAttach(fun factory delivery ->
+                let handle = factory.Create<'Item>()
+
+                let observer =
+                    { new IAsyncObserver<'Item> with
+                        member _.OnNextAsync(item: 'Item, token: StreamSequenceToken) =
+                            delivery.Invoke(box item, token)
+
+                        member _.OnCompletedAsync() = Task.CompletedTask
+                        member _.OnErrorAsync(_error: exn) = Task.CompletedTask }
+
+                handle.ResumeAsync observer :> Task)
+
+        let adapter =
+            FunctionalStreamHookAdapter(fun key core currentState item ->
+                task {
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    let! events = hook context (unbox<'State> currentState) (unbox<'Item> item)
+                    return box (events |> List.map box)
+                })
+
+        let declaration =
+            { Attachment = StreamAttachment attach
+              ProviderName = providerName
+              Namespace = streamNamespace
+              ItemType = typeof<'Item>
+              Adapter = adapter }
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                StreamBindings = draft.StreamBindings @ [ declaration ] }
+
+    /// <summary>
+    /// Subscribe implicitly to one Orleans broadcast-channel namespace. A successful delivery
+    /// appends and confirms the returned event batch before acknowledging the item.
+    /// </summary>
+    [<CustomOperation("onBroadcast")>]
+    member _.OnBroadcast<'State, 'Event, 'Item>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            providerName: string,
+            channelNamespace: string,
+            hook: JournaledStreamHook<'Actor, 'Key, 'State, 'Event, 'Item>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail
+                DefinitionStage
+                $"'onBroadcast' for provider '{providerName}' and namespace '{channelNamespace}' on grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        let attach =
+            FunctionalChannelAttach(fun subscription delivery ->
+                subscription.Attach<'Item>(
+                    Func<'Item, Task>(fun item -> delivery.Invoke(box item, null)),
+                    Func<exn, Task>(fun error -> Task.FromException error)
+                ))
+
+        let adapter =
+            FunctionalStreamHookAdapter(fun key core currentState item ->
+                task {
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    let! events = hook context (unbox<'State> currentState) (unbox<'Item> item)
+                    return box (events |> List.map box)
+                })
+
+        let declaration =
+            { Attachment = ChannelAttachment attach
+              ProviderName = providerName
+              Namespace = channelNamespace
+              ItemType = typeof<'Item>
+              Adapter = adapter }
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                StreamBindings = draft.StreamBindings @ [ declaration ] }
+
     /// <summary>Set the Orleans idle collection age for this grain type.</summary>
     /// <param name="age">The idle duration after which Orleans may collect an inactive activation.</param>
     /// <exception cref="System.InvalidOperationException">Thrown when 'collectionAge' is already declared for this draft.</exception>
@@ -562,8 +927,7 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
     /// <exception cref="System.InvalidOperationException">Thrown when 'placement' is already declared for this draft.</exception>
     [<CustomOperation("placement")>]
     member _.Placement<'State, 'Event>
-        (state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>, strategy: PlacementStrategy)
-        =
+        (state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>, strategy: Orleans.FSharp.PlacementStrategy) =
         let draft = state.State
 
         JournaledDefinitionDraft.withState
@@ -620,3 +984,91 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (con
             { draft with
                 OnDeactivate =
                     DefinitionDraft.single "onDeactivate" draft.Contract.GrainTypeName draft.OnDeactivate hook }
+
+    /// <summary>
+    /// Run synchronously whenever Orleans reports that the tentative state may have changed.
+    /// The supplied state includes confirmed and unconfirmed events.
+    /// </summary>
+    [<CustomOperation("onTentativeStateChanged")>]
+    member _.OnTentativeStateChanged<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            hook: JournaledStateChangedHook<'Actor, 'Key, 'State>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail
+                DefinitionStage
+                $"'onTentativeStateChanged' of grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                OnTentativeStateChanged =
+                    DefinitionDraft.single
+                        "onTentativeStateChanged"
+                        draft.Contract.GrainTypeName
+                        draft.OnTentativeStateChanged
+                        hook }
+
+    /// <summary>
+    /// Run synchronously whenever Orleans reports that the confirmed state may have changed.
+    /// </summary>
+    [<CustomOperation("onStateChanged")>]
+    member _.OnStateChanged<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            hook: JournaledStateChangedHook<'Actor, 'Key, 'State>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail DefinitionStage $"'onStateChanged' of grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                OnStateChanged =
+                    DefinitionDraft.single "onStateChanged" draft.Contract.GrainTypeName draft.OnStateChanged hook }
+
+    /// <summary>
+    /// Run synchronously when Orleans' log-consistency protocol reports a connection issue. The
+    /// exact Orleans <c>ConnectionIssue</c> is supplied, so the hook can customize its retry delay.
+    /// </summary>
+    [<CustomOperation("onConnectionIssue")>]
+    member _.OnConnectionIssue<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            hook: JournaledConnectionIssueHook<'Actor, 'Key, 'State>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail DefinitionStage $"'onConnectionIssue' of grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                OnConnectionIssue =
+                    DefinitionDraft.single "onConnectionIssue" draft.Contract.GrainTypeName draft.OnConnectionIssue hook }
+
+    /// <summary>Run synchronously when a previously reported connection issue is resolved.</summary>
+    [<CustomOperation("onConnectionIssueResolved")>]
+    member _.OnConnectionIssueResolved<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            hook: JournaledConnectionIssueHook<'Actor, 'Key, 'State>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(hook, null) then
+            fail
+                DefinitionStage
+                $"'onConnectionIssueResolved' of grain type '{draft.Contract.GrainTypeName}' requires a hook."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                OnConnectionIssueResolved =
+                    DefinitionDraft.single
+                        "onConnectionIssueResolved"
+                        draft.Contract.GrainTypeName
+                        draft.OnConnectionIssueResolved
+                        hook }

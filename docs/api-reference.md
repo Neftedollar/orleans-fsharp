@@ -6,12 +6,8 @@ Reference tables, not tutorials. Every section names the guide that carries the 
 there for what a thing *means* and here for what it is *called*.
 
 The [functional grain runtime](#functional-grain-runtime) is the current authoring model and comes
-first. The `grain { }` cluster -- `GrainBuilder`/`grain`, `GrainDefinition`, the old `GrainContext`,
-`AdditionalStateSpec`, `FSharpGrainAttribute`, `IFSharpGrain*`, the `FSharpGrainHandle*` types, the
-`FSharpGrain.*` module, `AddFSharpGrain(sFromAssembly)`, `Timers` and `Reminder` -- carries
-`[<Obsolete>]` (warning, not error) and is kept, in full, in the "Deprecated: the `grain { }`
-cluster" section at the bottom of this page. Everything between the two is neither: it is the
-surface both models share.
+first. Shared Orleans helpers follow it. The superseded authoring surface has its own
+[Legacy API Reference](legacy/api-reference.md).
 
 **Where the names in the functional tables come from.** Every custom-operation name and every
 context member below is pinned by `tests/Orleans.FSharp.Tests/FunctionalSurfaceTests.fs`, which
@@ -103,9 +99,9 @@ Every API field takes exactly one argument; a multi-input operation groups its i
 
 ### Journaled definition builder — `journaledGrainFor contract { }`
 
-A deliberate **subset** of the operations above plus two of its own. Every absence is deliberate: a
-journal cannot honour a whole-state-replacement hook, cannot be a transaction participant, and
-cannot be shared by the many activations of a stateless worker. See
+A journal-aware version of the operations above: request, timer, reminder, stream, and broadcast
+handlers return events instead of replacement state. A journal still cannot be a transaction
+participant or be shared by the many activations of a stateless worker. See
 [Event Sourcing](event-sourcing.md).
 
 | Keyword | Handler signature | Description |
@@ -113,12 +109,22 @@ cannot be shared by the many activations of a stateless worker. See
 | `initialEventState` | `'Key -> 'State` | The seed the journal folds onto. **Required, and first** |
 | `apply` | `'State -> 'Event -> 'State` | The pure fold. **Required, and second** -- it introduces the event type |
 | `logProvider` | `string` | The registered log-consistency provider. **Required** |
-| `journalStorage` | `string` | The grain storage the provider writes through; defaults to the silo's default `IGrainStorage` |
+| `journalStorage` | `string` | The grain storage a built-in provider writes through; defaults to the silo's default `IGrainStorage` and cannot be combined with `customStorage` |
+| `customStorage` | `IServiceProvider -> IFunctionalJournalStorage<'Key,'State,'Event>` | Typed storage bridge for Orleans' `CustomStorage` provider |
+| `snapshotPolicy` | `FunctionalJournalSnapshotPolicy<'State>` | Per-definition `Inherit`, `Disabled`, `Every n`, or `When` override; requires `customStorage` |
 | `handle` | `selector` + `JournaledHandler<'Actor,'Key,'State,'Event,'Arg,'Reply>` | A handler returning `events, reply` |
 | `handleQuery` | `selector` + `QueryHandler<'Actor,'Key,'State,'Arg,'Reply>` | A reply-only handler that raises nothing; the operation must be declared `readOnly` |
 | `handleStream` | `streamSelector` + `StreamHandler<...>` | A streaming operation; raises no events |
 | `onActivate` | `JournaledActivateHook<'Actor,'Key,'State>` | Runs after replay; returns no state |
 | `onDeactivate` | `JournaledDeactivateHook<'Actor,'Key,'State>` | Deactivation hook |
+| `onReminder` | `string` + due/period + `JournaledReminderHook<...>` | A successful tick appends and confirms returned events |
+| `onTimer` | `string` + `GrainTimerCreationOptions` + `JournaledTimerHook<...>` | Appends returned events; `Interleave = true` is supported |
+| `onStream` | provider + namespace + `JournaledStreamHook<...>` | Implicit stream delivery appending returned events |
+| `onBroadcast` | provider + namespace + `JournaledStreamHook<...>` | Implicit broadcast delivery appending returned events |
+| `onTentativeStateChanged` | `JournaledStateChangedHook<...>` | Synchronous tentative-view notification |
+| `onStateChanged` | `JournaledStateChangedHook<...>` | Synchronous confirmed-view notification |
+| `onConnectionIssue` | `JournaledConnectionIssueHook<...>` | Synchronous Orleans connection-issue notification |
+| `onConnectionIssueResolved` | `JournaledConnectionIssueHook<...>` | Synchronous recovery notification |
 | `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
 | `placement` | `PlacementStrategy` | As above. `statelessWorker` has no journaled form at all: many activations of one grain cannot share a journal |
 
@@ -142,14 +148,25 @@ Passed to every handler, hook, timer, reminder, and stream callback.
 | `persistentState(ref)` | `PersistentStateRef<'S> -> IPersistentState<'S>` | Look up an attached persistent-state facet |
 | `transactionalState(ref)` | `TransactionalStateRef<'S> -> FunctionalTransactionalState<'S>` | Look up an attached transactional facet |
 | `journalVersion` | `int` | The confirmed journal length, as it was when the turn started |
+| `journalState<'S>()` | `unit -> 'S` | Current confirmed view |
+| `journalTentativeState<'S>()` | `unit -> 'S` | Confirmed view plus submitted events |
+| `unconfirmedEvents<'E>()` | `unit -> 'E list` | Locally submitted, unconfirmed suffix |
+| `raiseEvent(event)` / `raiseEvents(events)` | `'E -> unit` / `'E list -> unit` | Submit without waiting for confirmation |
+| `confirmEvents()` | `unit -> Task` | Confirm all submitted entries |
+| `snapshotNow()` | `unit -> unit` | Force a custom-storage snapshot after this successful callback's events; overrides disabled automatic rules |
+| `refreshJournal()` | `unit -> Task` | Confirm all submitted events and synchronize the confirmed view with the global journal |
+| `retrieveConfirmedEvents<'E>(from, to)` | `int * int -> Task<'E list>` | Read a provider-supported half-open event segment |
+| `clearJournal()` | `unit -> Task` | Clear the whole log and restore the initial state |
+| `enableJournalStats()` / `disableJournalStats()` | `unit -> unit` | Toggle Orleans log-consistency statistics |
+| `getJournalStats()` | `unit -> LogConsistencyStatistics` | Read collected statistics |
 | `raiseConditional(events)` | `'Event list -> Task<bool>` | Append and confirm *inside* the turn; reports whether it was accepted |
+| `raiseConditionalEvent(event)` | `'Event -> Task<bool>` | Single-event conditional append |
 | `tryGetRequestContext<'T>(name)` | `string -> 'T option` | Typed Orleans request-context read |
 | `setRequestContext(name, value)` | `string -> 'V -> unit` | Request-context write |
 | `removeRequestContext(name)` | `string -> unit` | Request-context removal |
 
-`journalVersion` and `raiseConditional` live on the one context type rather than on a journaled
-variant of it, and both refuse with a definition-stage diagnostic on an ordinary `grainFor`
-definition.
+The journal members live on the one context type rather than on a journaled variant of it, and
+all refuse with a definition-stage diagnostic on an ordinary `grainFor` definition.
 
 ### `FunctionalGrainRef<'Actor, 'Key, 'Api>` — the bound reference
 
@@ -174,6 +191,11 @@ definition.
 | `DeactivateHook<'Actor,'Key,'State>` | `context -> DeactivationReason -> 'State -> Task<unit>` |
 | `JournaledActivateHook<'Actor,'Key,'State>` | `context -> 'State -> Task<unit>` |
 | `JournaledDeactivateHook<'Actor,'Key,'State>` | `context -> DeactivationReason -> 'State -> Task<unit>` |
+| `JournaledReminderHook<'Actor,'Key,'State,'Event>` | `context -> 'State -> TickStatus -> Task<'Event list>` |
+| `JournaledTimerHook<'Actor,'Key,'State,'Event>` | `context -> 'State -> Task<'Event list>` |
+| `JournaledStreamHook<'Actor,'Key,'State,'Event,'Item>` | `context -> 'State -> 'Item -> Task<'Event list>` |
+| `JournaledStateChangedHook<'Actor,'Key,'State>` | `context -> 'State -> unit` |
+| `JournaledConnectionIssueHook<'Actor,'Key,'State>` | `context -> 'State -> ConnectionIssue -> unit` |
 | `ReminderHook<'Actor,'Key,'State>` | `context -> 'State -> TickStatus -> Task<'State>` |
 | `TimerHook<'Actor,'Key,'State>` | `context -> 'State -> Task<'State>` |
 | `StreamHook<'Actor,'Key,'State,'Item>` | `context -> 'State -> 'Item -> Task<'State>` |
@@ -264,6 +286,15 @@ so it must never be part of a persistent state type -- the F# codec refuses one.
 | `GrainContract<'Actor, 'Key, 'Api>` | Sealed result of `grainContract { }` |
 | `FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>` | Sealed result of `grainFor { }` |
 | `FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>` | Sealed result of `journaledGrainFor { }` |
+| `IFunctionalJournalStorage<'Key, 'State, 'Event>` | Typed read/append/clear contract behind Orleans' CustomStorage provider |
+| `FunctionalJournalStorageIdentity<'Key>` | Grain type, complete `GrainId`, and decoded key supplied to custom storage |
+| `FunctionalJournalRead<'State, 'Event>` | Optional snapshot plus the ordered retained event tail |
+| `FunctionalJournalWrite<'State, 'Event>` | CAS version, atomic event batch, and optional resulting snapshot |
+| `FunctionalJournalSnapshot<'State>` | Materialized state plus the event version it represents |
+| `FunctionalJournalSnapshotPolicy<'State>` | Per-definition `Inherit`, `Disabled`, `Every`, or typed `When` rule |
+| `FunctionalJournalSnapshotDefault` | Silo-wide `Disabled`, `Every`, or heterogeneous `When` rule |
+| `FunctionalJournalSnapshotOptions` | Options whose `Policy` is inherited by custom-storage definitions |
+| `FunctionalJournalSnapshotContext` | Boxed identity, version, state type, and state passed to a global `When` rule |
 | `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context (members above) |
 | `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed reference wrapper (members above) |
 | `ObserverContract<'Brand, 'Api>` | Sealed result of `observerContract { }`; exposes `ObserverTypeName` and `Version` |
@@ -283,6 +314,8 @@ so it must never be part of a persistent state type -- the F# codec refuses one.
 |---|---|---|
 | `AddFunctionalGrain` | `ISiloBuilder -> FunctionalGrainDefinition<...> -> ISiloBuilder` | Register a hosted definition (`Orleans.FSharp.Runtime`) |
 | `AddFunctionalJournaledGrain` | `ISiloBuilder -> FunctionalJournaledGrainDefinition<...> -> ISiloBuilder` | Register a hosted journaled definition (`Orleans.FSharp.Runtime`) |
+| `ConfigureFunctionalJournalSnapshots` | `ISiloBuilder * Action<FunctionalJournalSnapshotOptions> -> ISiloBuilder` | Configure the silo-wide rule inherited by custom-storage definitions |
+| `UseFunctionalJournalSnapshots` | `ISiloBuilder * every:int -> ISiloBuilder` | Set a positive fixed event-count default |
 | `AddFunctionalGrainClient` | `IClientBuilder -> IClientBuilder` | Register the client-side transport on a client-only process (`Orleans.FSharp`) |
 
 Both silo registrations install the client transport too, and both are idempotent per definition
@@ -313,8 +346,7 @@ across the boundary. See [Calling from C#](calling-from-csharp.md).
 
 ## Orleans.FSharp (Core)
 
-Surface that is neither part of the functional runtime nor part of the deprecated `grain { }`
-cluster: it serves both models, or the C# CodeGen path.
+Shared Orleans helpers which compose with functional definitions, native Orleans interfaces, or hosting code.
 
 ### Types
 
@@ -663,65 +695,6 @@ Both `applyTo*` entry points force the manifest pre-load a standalone F# host ne
 
 ---
 
-## Orleans.FSharp.EventSourcing
-
-The `eventSourcedGrain { }` CE and its `JournaledGrain` bridge. Not deprecated, and not the same
-thing as the `journaledGrainFor` definition builder above: this one needs a C#-declared grain
-interface and the CodeGen that comes with it. See [Event Sourcing](event-sourcing.md).
-
-### Types
-
-| Type | Description |
-|---|---|
-| `EventSourcedGrainDefinition<'State, 'Event, 'Command>` | Event-sourced grain specification (`DefaultState`, `Apply`, `Handle`, `ConsistencyProvider`, `CustomStorage`, `SnapshotStrategy`) |
-| `SnapshotStrategy<'State>` | `Never`, `Every of int`, `Condition of (int -> 'State -> bool)` |
-| `CustomStorageAdapter` | Boxed read/write pair for a custom log-consistency store |
-| `IEventStoreContext<'Event>` | Event store abstraction for the C# CodeGen bridge (`RaiseEvent`, `ConfirmEvents`, `Version`) |
-| `FSharpEventSourcedGrain<'State,'Event,'Command>` | Generic `JournaledGrain` base bridging a definition to Orleans |
-| `FSharpEventSourcedGrainAttribute` | Binds an implementation to a grain interface |
-
-### Computation expressions
-
-| CE | Builder | Description |
-|---|---|---|
-| `eventSourcedGrain { }` | `EventSourcedGrainBuilder` | Define event-sourced grain behavior |
-
-#### `eventSourcedGrain { }` — keywords
-
-| Keyword | Signature | Description |
-|---|---|---|
-| `defaultState` | `'State` | Initial state value |
-| `apply` | `'State -> 'Event -> 'State` | The pure fold |
-| `handle` | `'State -> 'Command -> 'Event list` | Command handler; an empty list is a refusal |
-| `logConsistencyProvider` | `string` | Named Orleans log-consistency provider |
-| `snapshot` | `SnapshotStrategy<'State>` | Snapshot strategy (honoured only by a custom store) |
-| `customStorage` | `read` + `write` | Custom log-consistency storage pair |
-
-#### `EventSourcedGrainDefinition`
-
-| Function | Signature | Description |
-|---|---|---|
-| `foldEvents` | `definition -> 'State -> 'Event list -> 'State` | Replay events onto state |
-| `handleCommand` | `definition -> 'State -> 'Command -> 'State * 'Event list` | Process a command, returning the folded state and the events |
-
-#### `EventStore`
-
-| Function | Signature | Description |
-|---|---|---|
-| `processCommand` | `definition -> 'State -> 'Command -> 'Event list` | Produce events from a command |
-| `applyEvent` | `definition -> 'State -> 'Event -> 'State` | Apply a single event |
-| `replayEvents` | `definition -> 'State -> 'Event list -> 'State` | Replay an event list |
-| `shouldSnapshot` | `definition -> int -> 'State -> bool` | Evaluate the snapshot strategy |
-
-#### Registration
-
-| Method | Signature | Description |
-|---|---|---|
-| `AddFSharpEventSourcedGrain<'State,'Event,'Command>` | `IServiceCollection -> definition -> IServiceCollection` | Register one definition |
-| `AddFSharpEventSourcedGrainsFromAssembly` | `IServiceCollection -> Assembly -> IServiceCollection` | Register every definition an assembly declares |
-
----
-
 ## Orleans.FSharp.Testing
 
 ### Types
@@ -837,161 +810,6 @@ See [Analyzers guide](analyzers.md) for full documentation.
 
 ---
 
-## Deprecated: the `grain { }` cluster
+## Legacy API
 
-Everything below carries `[<Obsolete>]` (warning, not error) and is kept runnable. The replacement
-for each entry is the [functional grain runtime](#functional-grain-runtime) above; see
-[Functional grains](functional-grains.md), "Migrating from the `grain { }` CE", for the rewrite
-recipe.
-
-### Types
-
-| Type | Description | Replacement |
-|---|---|---|
-| `GrainDefinition<'State, 'Message>` | Immutable record describing a grain's behavior | `FunctionalGrainDefinition<...>` from `grainFor` |
-| `GrainContext` | Grain factory, service provider, and named states | `FunctionalGrainContext<'Actor,'Key>` |
-| `AdditionalStateSpec` | Named additional persistent state specification | `PersistentState.create` + `usePersistentState` |
-| `FSharpGrainAttribute` | Marks a definition for assembly discovery | — (a definition is registered by value) |
-| `FSharpGrainHandle<'S,'M>` | Zero-alloc struct handle for a string-keyed grain | `FunctionalGrain.ref` / `rawRef` |
-| `FSharpGrainGuidHandle<'S,'M>` | Zero-alloc struct handle for a GUID-keyed grain | `FunctionalGrain.ref` / `rawRef` |
-| `FSharpGrainIntHandle<'S,'M>` | Zero-alloc struct handle for an int64-keyed grain | `FunctionalGrain.ref` / `rawRef` |
-
-### Computation expressions
-
-| CE | Builder | Description |
-|---|---|---|
-| `grain { }` | `GrainBuilder` | Define grain behavior declaratively |
-
-#### `grain { }` — key CE keywords
-
-| Keyword | Handler Signature | Description |
-|---|---|---|
-| `defaultState` | `'State` | Initial state value |
-| `handle` | `'State -> 'Msg -> Task<'State * obj>` | Register handler with manual `box` |
-| `handleState` | `'State -> 'Msg -> Task<'State>` | Handler returning only state (no result value) |
-| `handleTyped` | `'State -> 'Msg -> Task<'State * 'R>` | Handler with typed result — no `box` needed |
-| `handleWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * obj>` | Handler with DI/grain-to-grain access |
-| `handleStateWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State>` | Context + state-only return |
-| `handleTypedWithContext` | `GrainContext -> 'State -> 'Msg -> Task<'State * 'R>` | Context + typed result |
-| `handleCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State * obj>` | Cancellation, manual `box` |
-| `handleStateCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State>` | Cancellation, state-only return |
-| `handleTypedCancellable` | `'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Cancellation, typed result |
-| `handleWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * obj>` | Context + cancellation |
-| `handleStateWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State>` | Context + cancellation, state-only return |
-| `handleTypedWithContextCancellable` | `GrainContext -> 'State -> 'Msg -> CancellationToken -> Task<'State * 'R>` | Context + cancellation, typed result |
-| `persist` | `string` | Name of the storage provider for state |
-| `additionalState<'T>` | `string` (name) + `string` (storage) + `'T` (default) | Named additional persistent state |
-| `onActivate` | `'State -> Task<'State>` | Activation hook; may replace the state |
-| `onDeactivate` | `'State -> Task<unit>` | Deactivation hook; cleanup only |
-| `onReminder` | `string` + `('State -> string -> TickStatus -> Task<'State>)` | Named reminder with a stateful handler |
-| `onTimer` | `string` + `TimeSpan` (due) + `TimeSpan` (period) + `('State -> Task<'State>)` | Declarative timer |
-| `onLifecycleStage` | `int` + `(CancellationToken -> Task<unit>)` | Hook a raw Orleans grain-lifecycle stage number |
-| `interleaveMessage` | `System.Type` | Allow a message type to interleave (`interleaveMessage typeof<Query>`) |
-
-Each `handle*` keyword also has a `*WithServices` form (`handleWithServices`,
-`handleStateWithServices`, `handleTypedWithServices`, and their `Cancellable` variants) taking an
-`IServiceProvider` instead of a `GrainContext`. See
-[Grain Definition guide](grain-definition.md) for the full keyword list. Per-grain Orleans
-attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
-`[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
-On the [functional grain runtime](functional-grains.md) they are ordinary contract and definition
-operations instead — `reentrant`, `statelessWorker`, `placement`, `oneWay`, `readOnly`, and
-`onStream` / `onBroadcast` for implicit subscriptions.
-
-### Modules
-
-#### `GrainContext`
-
-| Function | Signature | Description |
-|---|---|---|
-| `getService<'T>` | `GrainContext -> 'T` | Resolve a DI service |
-| `getState<'T>` | `GrainContext -> string -> IPersistentState<'T>` | Get named additional persistent state |
-| `getGrainByString<'T>` | `GrainContext -> string -> GrainRef<'T, string>` | Get grain ref by string key |
-| `getGrainByGuid<'T>` | `GrainContext -> Guid -> GrainRef<'T, Guid>` | Get grain ref by GUID key |
-| `getGrainByInt64<'T>` | `GrainContext -> int64 -> GrainRef<'T, int64>` | Get grain ref by int64 key |
-| `getGrainByGuidCompound<'T>` | `GrainContext -> Guid -> string -> GrainRef<'T, CompoundGuidKey>` | Compound GUID key |
-| `getGrainByIntCompound<'T>` | `GrainContext -> int64 -> string -> GrainRef<'T, CompoundIntKey>` | Compound int64 key |
-| `deactivateOnIdle` | `GrainContext -> unit` | Request grain deactivation when idle |
-| `delayDeactivation` | `GrainContext -> TimeSpan -> unit` | Delay grain deactivation |
-| `grainId` | `GrainContext -> GrainId` | Get the GrainId |
-| `primaryKeyString` | `GrainContext -> string` | Get string primary key |
-| `primaryKeyGuid` | `GrainContext -> Guid` | Get Guid primary key |
-| `primaryKeyInt64` | `GrainContext -> int64` | Get int64 primary key |
-| `empty` | `GrainContext` | Empty context for unit tests (all fields null/None) |
-
-#### `GrainDefinition`
-
-| Function | Signature | Description |
-|---|---|---|
-| `hasAnyHandler` | `GrainDefinition -> bool` | True if any handler is registered |
-| `getHandler` | `GrainDefinition -> 'State -> 'Message -> Task<'State * obj>` | Get plain handler |
-| `getContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> Task<'State * obj>` | Get context-aware handler |
-| `getCancellableContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> CT -> Task<'State * obj>` | Get cancellable context handler |
-| `invokeHandler` | `GrainDefinition -> 'State -> 'Message -> Task<'State * obj>` | Invoke handler (C# interop) |
-| `invokeContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> Task<'State * obj>` | Invoke context handler (C# interop) |
-| `invokeCancellableContextHandler` | `GrainDefinition -> GrainContext -> 'State -> 'Message -> CT -> Task<'State * obj>` | Invoke cancellable (C# interop) |
-| `invokeOnActivate` | `GrainDefinition -> 'State -> Task<'State>` | Run the activation hook directly |
-| `invokeOnDeactivate` | `GrainDefinition -> 'State -> Task` | Run the deactivation hook directly |
-| `invokeReminderHandler` | `GrainDefinition -> 'State -> string -> TickStatus -> Task<'State>` | Run one named reminder handler directly |
-
-#### `Reminder`
-
-| Function | Signature | Description |
-|---|---|---|
-| `register` | `Grain -> string -> TimeSpan -> TimeSpan -> Task<IGrainReminder>` | Register/update reminder |
-| `unregister` | `Grain -> string -> Task<unit>` | Unregister reminder |
-| `get` | `Grain -> string -> Task<IGrainReminder option>` | Get reminder by name |
-
-Replacement: `onReminder` on a functional definition, which reconciles declared reminders on every
-activation.
-
-#### `Timers`
-
-| Function | Signature | Description |
-|---|---|---|
-| `register` | `Grain -> (CT -> Task<unit>) -> TimeSpan -> TimeSpan -> IGrainTimer` | Register timer |
-| `registerWithState<'T>` | `Grain -> ('T -> CT -> Task<unit>) -> 'T -> TimeSpan -> TimeSpan -> IGrainTimer` | Timer with state |
-
-Replacement: `onTimer` on a functional definition.
-
-#### `FSharpGrain` — universal grain pattern
-
-Registered once with `AddFSharpGrain`, called from anywhere with `FSharpGrain.ref`. Replacement:
-`grainContract` + `grainFor` + `FunctionalGrain.ref`, which types the reply per operation instead of
-boxing one message DU.
-
-| Function | Signature | Description |
-|---|---|---|
-| `FSharpGrain.ref<'S,'M>` | `IGrainFactory -> string -> FSharpGrainHandle<'S,'M>` | Handle for string-keyed grain |
-| `FSharpGrain.refGuid<'S,'M>` | `IGrainFactory -> Guid -> FSharpGrainGuidHandle<'S,'M>` | Handle for GUID-keyed grain |
-| `FSharpGrain.refInt<'S,'M>` | `IGrainFactory -> int64 -> FSharpGrainIntHandle<'S,'M>` | Handle for int64-keyed grain |
-| `FSharpGrain.send<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task<'S>` | Send command, return typed state |
-| `FSharpGrain.post<'S,'M>` | `'M -> FSharpGrainHandle<'S,'M> -> Task` | Fire-and-forget command |
-| `FSharpGrain.ask<'S,'M,'R>` | `'M -> FSharpGrainHandle<'S,'M> -> Task<'R>` | Send command, return typed result (can differ from state) |
-| `FSharpGrain.sendGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task<'S>` | Send to GUID-keyed grain |
-| `FSharpGrain.postGuid<'S,'M>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task` | Post to GUID-keyed grain |
-| `FSharpGrain.askGuid<'S,'M,'R>` | `'M -> FSharpGrainGuidHandle<'S,'M> -> Task<'R>` | Ask GUID-keyed grain for typed result |
-| `FSharpGrain.sendInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task<'S>` | Send to int64-keyed grain |
-| `FSharpGrain.postInt<'S,'M>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task` | Post to int64-keyed grain |
-| `FSharpGrain.askInt<'S,'M,'R>` | `'M -> FSharpGrainIntHandle<'S,'M> -> Task<'R>` | Ask int64-keyed grain for typed result |
-
-DI registration (call once per grain definition at silo startup):
-
-```fsharp
-// Automatically registers FSharpBinaryCodec (idempotent)
-services.AddFSharpGrain<CounterState, CounterCommand>(counterGrain) |> ignore
-```
-
-`AddFSharpGrainsFromAssembly` registers every `[<FSharpGrain>]`-marked definition an assembly
-declares.
-
-#### Testing helpers for the deprecated model
-
-| Function | Signature | Description |
-|---|---|---|
-| `GrainMock.withFSharpGrain<'S,'M>` | `string -> GrainDefinition<'S,'M> -> MockGrainFactory -> MockGrainFactory` | Register an F# grain definition as a mock, by string key |
-| `GrainMock.withFSharpGrainGuid<'S,'M>` | `Guid -> GrainDefinition<'S,'M> -> MockGrainFactory -> MockGrainFactory` | The same, by GUID key |
-| `GrainMock.withFSharpGrainInt<'S,'M>` | `int64 -> GrainDefinition<'S,'M> -> MockGrainFactory -> MockGrainFactory` | The same, by int64 key |
-| `TestHarness.getFSharpGrain<'S,'M>` | `TestHarness -> string -> FSharpGrainHandle<'S,'M>` | Handle from a test cluster, by string key |
-| `TestHarness.getFSharpGrainGuid<'S,'M>` | `TestHarness -> Guid -> FSharpGrainGuidHandle<'S,'M>` | The same, by GUID key |
-| `TestHarness.getFSharpGrainInt<'S,'M>` | `TestHarness -> int64 -> FSharpGrainIntHandle<'S,'M>` | The same, by int64 key |
+The original authoring surface is retained in the separate [Legacy API Reference](legacy/api-reference.md).

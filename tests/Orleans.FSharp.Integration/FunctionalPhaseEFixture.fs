@@ -85,6 +85,28 @@ module PhaseECounters =
         let box = cell label
         Volatile.Read(&box.Value)
 
+[<RequireQualifiedAccess>]
+module PhaseEJournalNotifications =
+    let private counts = ConcurrentDictionary<string, StrongBox<int>>()
+    let private balances = ConcurrentDictionary<string, decimal>()
+
+    let private label (kind: string) (provider: string) (key: string) = $"{kind}|{provider}|{key}"
+
+    let private cell (kind: string) (provider: string) (key: string) =
+        counts.GetOrAdd(label kind provider key, fun _ -> StrongBox<int> 0)
+
+    let record (kind: string) (provider: string) (key: string) (balance: decimal) =
+        balances.[label kind provider key] <- balance
+        Interlocked.Increment(&(cell kind provider key).Value) |> ignore
+
+    let count (kind: string) (provider: string) (key: string) =
+        Volatile.Read(&(cell kind provider key).Value)
+
+    let latestBalance (kind: string) (provider: string) (key: string) =
+        match balances.TryGetValue(label kind provider key) with
+        | true, balance -> Some balance
+        | _ -> None
+
 
 /// <summary>
 /// Write faults the journal store injects, per grain identity.
@@ -108,7 +130,8 @@ module PhaseEFaults =
         Volatile.Write(&(cell remaining grainId).Value, count)
 
     /// <summary>How many write attempts this grain's journal has made since it was armed.</summary>
-    let writeAttempts (grainId: string) = Volatile.Read(&(cell attempts grainId).Value)
+    let writeAttempts (grainId: string) =
+        Volatile.Read(&(cell attempts grainId).Value)
 
     /// <summary>Whether this write must fail. Counts the attempt either way.</summary>
     let shouldFail (grainId: string) =
@@ -212,42 +235,70 @@ type AccountEvent =
     /// Folds into an exception, to pin what a failing <c>apply</c> does.
     | Poisoned
 
+type JournalSnapshot =
+    { confirmedBalance: decimal
+      tentativeBalance: decimal
+      unconfirmedCount: int
+      version: int }
+
 [<NoEquality; NoComparison>]
 type AccountApi =
-    { /// Raises Deposited and replies with the balance the handler computed itself.
-      deposit: decimal -> Task<decimal>
-      /// Raises Withdrawn only when the funds are there; replies whether it did.
-      withdraw: decimal -> Task<bool>
-      /// A query: no events at all.
-      balance: unit -> Task<decimal>
-      /// A query over the folded history.
-      history: unit -> Task<string list>
-      /// The journal version the handler was handed.
-      version: unit -> Task<int>
-      /// The version AFTER a deposit in the same turn, to pin when confirmation happens.
-      depositAndReadVersion: decimal -> Task<int * int>
-      /// Raises several events in one atomic batch.
-      batch: decimal list -> Task<int>
-      /// A conditional append; replies whether it was accepted.
-      conditional: decimal -> Task<bool>
-      /// Raises the poison event, whose fold throws.
-      poison: unit -> Task<unit>
-      /// Declared readOnly and yet raises an event: the negative control.
-      readOnlyRaise: unit -> Task<unit>
-      /// Declared readOnly and yet appends conditionally: the second negative control.
-      readOnlyConditional: unit -> Task<string>
-      /// Stashes this invocation's context for a later turn to misuse.
-      escape: unit -> Task<unit>
-      /// Appends through the context an earlier turn stashed; reports what happened.
-      useEscaped: unit -> Task<string>
-      /// The address of the silo this activation lives on.
-      whereAmI: unit -> Task<string>
-      /// Raises an event from a ONE-WAY operation: the caller learns nothing about the outcome.
-      noteOneWay: string -> Task<unit>
-      /// Throws after deciding on an event: nothing may be appended.
-      throwAfterDeciding: unit -> Task<unit>
-      /// Deactivates the activation, so the next call replays from the journal.
-      recycle: unit -> Task<unit> }
+    {
+        /// Raises Deposited and replies with the balance the handler computed itself.
+        deposit: decimal -> Task<decimal>
+        /// Raises Withdrawn only when the funds are there; replies whether it did.
+        withdraw: decimal -> Task<bool>
+        /// A query: no events at all.
+        balance: unit -> Task<decimal>
+        /// A query over the folded history.
+        history: unit -> Task<string list>
+        /// The journal version the handler was handed.
+        version: unit -> Task<int>
+        /// The version AFTER a deposit in the same turn, to pin when confirmation happens.
+        depositAndReadVersion: decimal -> Task<int * int>
+        /// Raises several events in one atomic batch.
+        batch: decimal list -> Task<int>
+        /// A conditional append; replies whether it was accepted.
+        conditional: decimal -> Task<bool>
+        /// A single-event conditional append.
+        conditionalOne: decimal -> Task<bool>
+        /// Raises the poison event, whose fold throws.
+        poison: unit -> Task<unit>
+        /// Declared readOnly and yet raises an event: the negative control.
+        readOnlyRaise: unit -> Task<unit>
+        /// Declared readOnly and yet appends conditionally: the second negative control.
+        readOnlyConditional: unit -> Task<string>
+        /// Stashes this invocation's context for a later turn to misuse.
+        escape: unit -> Task<unit>
+        /// Appends through the context an earlier turn stashed; reports what happened.
+        useEscaped: unit -> Task<string>
+        /// The address of the silo this activation lives on.
+        whereAmI: unit -> Task<string>
+        /// Raises an event from a ONE-WAY operation: the caller learns nothing about the outcome.
+        noteOneWay: string -> Task<unit>
+        /// Throws after deciding on an event: nothing may be appended.
+        throwAfterDeciding: unit -> Task<unit>
+        /// Deactivates the activation, so the next call replays from the journal.
+        recycle: unit -> Task<unit>
+        /// Submits one event without confirming it and reports both views.
+        submitUnconfirmed: decimal -> Task<JournalSnapshot>
+        /// Submits several events one at a time without confirming them and reports both views.
+        submitSequential: decimal list -> Task<JournalSnapshot>
+        /// Submits an event batch without confirming it and reports both views.
+        submitUnconfirmedBatch: decimal list -> Task<JournalSnapshot>
+        /// Confirms all submitted events and reports both views.
+        confirmPending: unit -> Task<JournalSnapshot>
+        /// Forces a global refresh and reports both views.
+        refresh: unit -> Task<JournalSnapshot>
+        /// Retrieves a confirmed event segment.
+        retrieve: int * int -> Task<AccountEvent list>
+        /// Clears the journal and restores the seed.
+        clear: unit -> Task<JournalSnapshot>
+        /// Exercises Orleans' diagnostic collection surface.
+        collectStats: unit -> Task<bool>
+        /// Raises an event from an always-interleaving operation.
+        interleavedDeposit: decimal -> Task<unit>
+    }
 
 /// <summary>
 /// One journaled definition, over any actor brand and any provider. It exists once and is
@@ -287,6 +338,19 @@ let accountDefinitionFor (contract: GrainContract<'Actor, string, AccountApi>) (
         logProvider providerName
         journalStorage PhaseEProviders.JournalStore
 
+        onTentativeStateChanged (fun _ state ->
+            PhaseEJournalNotifications.record "tentative" providerName state.key state.balance)
+
+        onStateChanged (fun _ state ->
+            PhaseEJournalNotifications.record "confirmed" providerName state.key state.balance)
+
+        onConnectionIssue (fun _ state issue ->
+            issue.RetryDelay <- TimeSpan.Zero
+            PhaseEJournalNotifications.record "issue" providerName state.key state.balance)
+
+        onConnectionIssueResolved (fun _ state _ ->
+            PhaseEJournalNotifications.record "resolved" providerName state.key state.balance)
+
         handle (_.deposit) (fun _ state (amount: decimal) ->
             task { return [ Deposited amount ], state.balance + amount })
 
@@ -318,6 +382,12 @@ let accountDefinitionFor (contract: GrainContract<'Actor, string, AccountApi>) (
         handle (_.conditional) (fun context state (amount: decimal) ->
             task {
                 let! accepted = context.raiseConditional [ Deposited amount ]
+                return [], accepted
+            })
+
+        handle (_.conditionalOne) (fun context state (amount: decimal) ->
+            task {
+                let! accepted = context.raiseConditionalEvent (Deposited amount)
                 return [], accepted
             })
 
@@ -383,6 +453,101 @@ let accountDefinitionFor (contract: GrainContract<'Actor, string, AccountApi>) (
                 context.deactivateOnIdle ()
                 return [], ()
             })
+
+        handle (_.submitUnconfirmed) (fun context state (amount: decimal) ->
+            task {
+                context.raiseEvent (Deposited amount)
+
+                let tentative = context.journalTentativeState<AccountState> ()
+
+                return
+                    [],
+                    { confirmedBalance = context.journalState<AccountState>().balance
+                      tentativeBalance = tentative.balance
+                      unconfirmedCount = context.unconfirmedEvents<AccountEvent>().Length
+                      version = context.journalVersion }
+            })
+
+        handle (_.submitSequential) (fun context state (amounts: decimal list) ->
+            task {
+                for amount in amounts do
+                    context.raiseEvent (Deposited amount)
+
+                return
+                    [],
+                    { confirmedBalance = context.journalState<AccountState>().balance
+                      tentativeBalance = context.journalTentativeState<AccountState>().balance
+                      unconfirmedCount = context.unconfirmedEvents<AccountEvent>().Length
+                      version = context.journalVersion }
+            })
+
+        handle (_.submitUnconfirmedBatch) (fun context state (amounts: decimal list) ->
+            task {
+                context.raiseEvents (amounts |> List.map Deposited)
+
+                return
+                    [],
+                    { confirmedBalance = context.journalState<AccountState>().balance
+                      tentativeBalance = context.journalTentativeState<AccountState>().balance
+                      unconfirmedCount = context.unconfirmedEvents<AccountEvent>().Length
+                      version = context.journalVersion }
+            })
+
+        handle (_.confirmPending) (fun context state () ->
+            task {
+                do! context.confirmEvents ()
+
+                return
+                    [],
+                    { confirmedBalance = context.journalState<AccountState>().balance
+                      tentativeBalance = context.journalTentativeState<AccountState>().balance
+                      unconfirmedCount = context.unconfirmedEvents<AccountEvent>().Length
+                      version = context.journalVersion }
+            })
+
+        handle (_.refresh) (fun context state () ->
+            task {
+                do! context.refreshJournal ()
+
+                return
+                    [],
+                    { confirmedBalance = context.journalState<AccountState>().balance
+                      tentativeBalance = context.journalTentativeState<AccountState>().balance
+                      unconfirmedCount = context.unconfirmedEvents<AccountEvent>().Length
+                      version = context.journalVersion }
+            })
+
+        handle (_.retrieve) (fun context state (fromVersion, toVersion) ->
+            task {
+                let! events = context.retrieveConfirmedEvents<AccountEvent> (fromVersion, toVersion)
+                return [], events
+            })
+
+        handle (_.clear) (fun context state () ->
+            task {
+                do! context.clearJournal ()
+
+                return
+                    [],
+                    { confirmedBalance = context.journalState<AccountState>().balance
+                      tentativeBalance = context.journalTentativeState<AccountState>().balance
+                      unconfirmedCount = context.unconfirmedEvents<AccountEvent>().Length
+                      version = context.journalVersion }
+            })
+
+        handle (_.collectStats) (fun context state () ->
+            task {
+                context.enableJournalStats ()
+                let stats = context.getJournalStats ()
+                context.disableJournalStats ()
+
+                return
+                    [],
+                    not (isNull stats.EventCounters)
+                    && not (isNull stats.StabilizationLatenciesInMsecs)
+            })
+
+        handle (_.interleavedDeposit) (fun _ state (amount: decimal) -> task { return [ Deposited amount ], () })
     }
 
 type LogAccountActor = private LogAccountActor of unit
@@ -398,6 +563,9 @@ let logAccountContract =
         readOnly (_.whereAmI)
         readOnly (_.readOnlyRaise)
         readOnly (_.readOnlyConditional)
+        readOnly (_.retrieve)
+        readOnly (_.collectStats)
+        alwaysInterleave (_.interleavedDeposit)
         oneWay (_.noteOneWay)
     }
 
@@ -411,6 +579,9 @@ let stateAccountContract =
         readOnly (_.whereAmI)
         readOnly (_.readOnlyRaise)
         readOnly (_.readOnlyConditional)
+        readOnly (_.retrieve)
+        readOnly (_.collectStats)
+        alwaysInterleave (_.interleavedDeposit)
         oneWay (_.noteOneWay)
     }
 
@@ -445,13 +616,15 @@ type CounterEvent = Added of int64
 
 [<NoEquality; NoComparison>]
 type CounterApi =
-    { add: int64 -> Task<int64>
-      total: unit -> Task<int64>
-      /// The key `initialEventState` was handed, folded into the state at seed time.
-      seededFrom: unit -> Task<int64>
-      /// The decoded domain key this activation sees, and its raw Orleans grain identity.
-      identity: unit -> Task<int64 * string>
-      recycle: unit -> Task<unit> }
+    {
+        add: int64 -> Task<int64>
+        total: unit -> Task<int64>
+        /// The key `initialEventState` was handed, folded into the state at seed time.
+        seededFrom: unit -> Task<int64>
+        /// The decoded domain key this activation sees, and its raw Orleans grain identity.
+        identity: unit -> Task<int64 * string>
+        recycle: unit -> Task<unit>
+    }
 
 let counterContract =
     grainContract<CounterActor, int64, CounterApi> {
@@ -466,7 +639,10 @@ let counterContract =
 let counterDefinition =
     journaledGrainFor counterContract {
         initialEventState (fun (key: int64) -> { total = 0L; seededFrom = key })
-        apply (fun state (Added amount) -> { state with total = state.total + amount })
+
+        apply (fun state (Added amount) ->
+            { state with
+                total = state.total + amount })
 
         logProvider PhaseEProviders.LogStorage
         journalStorage PhaseEProviders.JournalStore

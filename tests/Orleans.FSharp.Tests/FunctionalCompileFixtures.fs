@@ -266,3 +266,164 @@ module CounterFixture =
             handle (_.increment) (fun _ctx n by -> task { return [ Added by ], n + by })
             handleQuery (_.value) (fun _ctx n () -> task { return n })
         }
+
+/// <summary>
+/// The complete journal API and hook example mirrored by docs/event-sourcing.md. Keeping it in
+/// the ordinary test build makes every documented operation a compile-time compatibility pin.
+/// </summary>
+namespace JournalParity.Contracts
+
+open System
+open System.Threading.Tasks
+open Microsoft.Extensions.Logging
+open Orleans.FSharp
+open Orleans.Runtime
+
+type JournalParityActor = private JournalParityActor of unit
+
+type JournalParityState =
+    { total: int
+      entries: string list }
+
+type JournalParityEvent =
+    | Added of int
+    | Recorded of string
+
+[<NoEquality; NoComparison>]
+type JournalParityApi =
+    { snapshot: unit -> Task<int * int * int * int>
+      submitOne: int -> Task<unit>
+      submitMany: int list -> Task<unit>
+      conditionalOne: int -> Task<bool>
+      conditionalMany: int list -> Task<bool>
+      confirm: unit -> Task<unit>
+      refresh: unit -> Task<unit>
+      retrieve: int * int -> Task<JournalParityEvent list>
+      clear: unit -> Task<unit>
+      stats: unit -> Task<bool> }
+
+module JournalParityFixture =
+
+    let contract =
+        grainContract<JournalParityActor, string, JournalParityApi> {
+            grainType "docs.journal-parity"
+            stringKey
+        }
+
+    let definition =
+        journaledGrainFor contract {
+            initialEventState (fun _ -> { total = 0; entries = [] })
+
+            apply (fun state event ->
+                match event with
+                | Added amount ->
+                    { state with
+                        total = state.total + amount }
+                | Recorded entry ->
+                    { state with
+                        entries = state.entries @ [ entry ] })
+
+            logProvider "LogStorage"
+            journalStorage "JournalStore"
+
+            onActivate (fun _ _ -> task { return () })
+            onDeactivate (fun _ _ _ -> task { return () })
+
+            onReminder "daily" TimeSpan.Zero (TimeSpan.FromDays 1.0) (fun _ _ _ ->
+                task { return [ Recorded "reminder" ] })
+
+            onTimer
+                "heartbeat"
+                (GrainTimerCreationOptions(
+                    TimeSpan.FromMinutes 1.0,
+                    TimeSpan.FromMinutes 5.0,
+                    Interleave = true,
+                    KeepAlive = true
+                ))
+                (fun _ _ -> task { return [ Recorded "timer" ] })
+
+            onStream "Streams" "journal-events" (fun _ _ (entry: string) ->
+                task { return [ Recorded $"stream:{entry}" ] })
+
+            onBroadcast "Broadcasts" "journal-events" (fun _ _ (entry: string) ->
+                task { return [ Recorded $"broadcast:{entry}" ] })
+
+            onTentativeStateChanged (fun context state ->
+                context.logger.LogInformation("Tentative total: {Total}", state.total))
+
+            onStateChanged (fun context state ->
+                context.logger.LogInformation("Confirmed total: {Total}", state.total))
+
+            onConnectionIssue (fun context state issue ->
+                issue.RetryDelay <- TimeSpan.Zero
+                context.logger.LogWarning("Journal connection issue at total {Total}", state.total))
+
+            onConnectionIssueResolved (fun context state _ ->
+                context.logger.LogInformation("Journal connection restored at total {Total}", state.total))
+
+            handle (_.snapshot) (fun context _ () ->
+                task {
+                    return
+                        [],
+                        (context.journalVersion,
+                         context.journalState<JournalParityState>().total,
+                         context.journalTentativeState<JournalParityState>().total,
+                         context.unconfirmedEvents<JournalParityEvent>().Length)
+                })
+
+            handle (_.submitOne) (fun context _ amount ->
+                task {
+                    context.raiseEvent (Added amount)
+                    return [], ()
+                })
+
+            handle (_.submitMany) (fun context _ amounts ->
+                task {
+                    context.raiseEvents (amounts |> List.map Added)
+                    return [], ()
+                })
+
+            handle (_.conditionalOne) (fun context _ amount ->
+                task {
+                    let! accepted = context.raiseConditionalEvent (Added amount)
+                    return [], accepted
+                })
+
+            handle (_.conditionalMany) (fun context _ amounts ->
+                task {
+                    let! accepted = context.raiseConditional (amounts |> List.map Added)
+                    return [], accepted
+                })
+
+            handle (_.confirm) (fun context _ () ->
+                task {
+                    do! context.confirmEvents ()
+                    return [], ()
+                })
+
+            handle (_.refresh) (fun context _ () ->
+                task {
+                    do! context.refreshJournal ()
+                    return [], ()
+                })
+
+            handle (_.retrieve) (fun context _ range ->
+                task {
+                    let! events = context.retrieveConfirmedEvents<JournalParityEvent> range
+                    return [], events
+                })
+
+            handle (_.clear) (fun context _ () ->
+                task {
+                    do! context.clearJournal ()
+                    return [], ()
+                })
+
+            handle (_.stats) (fun context _ () ->
+                task {
+                    context.enableJournalStats ()
+                    let statistics = context.getJournalStats ()
+                    context.disableJournalStats ()
+                    return [], not (isNull statistics)
+                })
+        }

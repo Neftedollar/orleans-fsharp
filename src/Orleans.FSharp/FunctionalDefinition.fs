@@ -87,15 +87,13 @@ type internal FunctionalStreamDelivery = delegate of obj * StreamSequenceToken -
 /// exactly-typed subscription handle from the factory Orleans supplies and resumes it with an
 /// observer that forwards every item to the runtime's delivery callback.
 /// </summary>
-type internal FunctionalStreamAttach =
-    delegate of IStreamSubscriptionHandleFactory * FunctionalStreamDelivery -> Task
+type internal FunctionalStreamAttach = delegate of IStreamSubscriptionHandleFactory * FunctionalStreamDelivery -> Task
 
 /// <summary>
 /// The preclosed typed attach of one declared implicit broadcast-channel subscription. It calls
 /// <c>IBroadcastChannelSubscription.Attach</c> at the exact item type.
 /// </summary>
-type internal FunctionalChannelAttach =
-    delegate of IBroadcastChannelSubscription * FunctionalStreamDelivery -> Task
+type internal FunctionalChannelAttach = delegate of IBroadcastChannelSubscription * FunctionalStreamDelivery -> Task
 
 /// <summary>Which Orleans implicit-subscription transport a declared binding rides.</summary>
 type internal FunctionalStreamAttachment =
@@ -147,38 +145,40 @@ type internal FunctionalStreamDeclaration =
 /// <summary>Accumulated, not yet sealed, definition configuration.</summary>
 [<ReferenceEquality>]
 type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
-    { /// The contract this definition is being built for.
-      Contract: GrainContract<'Actor, 'Key, 'Api>
-      /// The custom operation that introduced the state type ('defaultState' or
-      /// 'initialState'), used in diagnostics.
-      InitializerOperation: string
-      /// State initialization normalized to 'Key -> 'State.
-      Initializer: 'Key -> 'State
-      /// The primary persistent holder, when 'stateFrom' has been declared.
-      Primary: PersistentStateRef<'State> option
-      /// Additional attached persistent states, in declaration order.
-      Additional: FunctionalFacetBlueprint list
-      /// Attached transactional states, in declaration order.
-      TransactionalFacets: FunctionalTransactionalBlueprint list
-      /// The declared idle collection age, when 'collectionAge' has been declared.
-      CollectionAge: TimeSpan option
-      /// The declared activation hook, when 'onActivate' has been declared.
-      OnActivate: ActivateHook<'Actor, 'Key, 'State> option
-      /// The declared deactivation hook, when 'onDeactivate' has been declared.
-      OnDeactivate: DeactivateHook<'Actor, 'Key, 'State> option
-      /// Declared reminders, in declaration order.
-      Reminders: ReminderDeclaration<'Actor, 'Key, 'State> list
-      /// Declared timers, in declaration order.
-      Timers: TimerDeclaration<'Actor, 'Key, 'State> list
-      /// Declared implicit stream and broadcast subscriptions, in declaration order.
-      StreamBindings: FunctionalStreamDeclaration list
-      /// The declared placement configuration, when 'statelessWorker' or 'placement' has been
-      /// declared.
-      Placement: PlacementConfiguration option
-      /// Declared lifecycle-stage hooks, keyed by their unique stage.
-      LifecycleHooks: Map<LifecycleStage, LifecycleHook<'Actor, 'Key>>
-      /// Boxed handlers keyed by API-record field index.
-      Handlers: Map<int, obj> }
+    {
+        /// The contract this definition is being built for.
+        Contract: GrainContract<'Actor, 'Key, 'Api>
+        /// The custom operation that introduced the state type ('defaultState' or
+        /// 'initialState'), used in diagnostics.
+        InitializerOperation: string
+        /// State initialization normalized to 'Key -> 'State.
+        Initializer: 'Key -> 'State
+        /// The primary persistent holder, when 'stateFrom' has been declared.
+        Primary: PersistentStateRef<'State> option
+        /// Additional attached persistent states, in declaration order.
+        Additional: FunctionalFacetBlueprint list
+        /// Attached transactional states, in declaration order.
+        TransactionalFacets: FunctionalTransactionalBlueprint list
+        /// The declared idle collection age, when 'collectionAge' has been declared.
+        CollectionAge: TimeSpan option
+        /// The declared activation hook, when 'onActivate' has been declared.
+        OnActivate: ActivateHook<'Actor, 'Key, 'State> option
+        /// The declared deactivation hook, when 'onDeactivate' has been declared.
+        OnDeactivate: DeactivateHook<'Actor, 'Key, 'State> option
+        /// Declared reminders, in declaration order.
+        Reminders: ReminderDeclaration<'Actor, 'Key, 'State> list
+        /// Declared timers, in declaration order.
+        Timers: TimerDeclaration<'Actor, 'Key, 'State> list
+        /// Declared implicit stream and broadcast subscriptions, in declaration order.
+        StreamBindings: FunctionalStreamDeclaration list
+        /// The declared placement configuration, when 'statelessWorker' or 'placement' has been
+        /// declared.
+        Placement: PlacementConfiguration option
+        /// Declared lifecycle-stage hooks, keyed by their unique stage.
+        LifecycleHooks: Map<LifecycleStage, LifecycleHook<'Actor, 'Key>>
+        /// Boxed handlers keyed by API-record field index.
+        Handlers: Map<int, obj>
+    }
 
 /// <summary>
 /// A sealed server definition: the contract, state initialization, one handler per API field,
@@ -345,7 +345,8 @@ module internal DefinitionDraft =
     /// combinations 'statelessWorker' rejects ('stateFrom', 'usePersistentState',
     /// 'transactionalStateFrom', 'onReminder', 'collectionAge', 'onStream'/'onBroadcast', a
     /// non-positive maxLocalWorkers, or a streaming API field); a blank or duplicate reminder or
-    /// timer name, an invalid reminder dueTime/period, or a timer declared with Interleave = true;
+    /// timer name, an invalid reminder dueTime/period, a timer declared with Interleave = true,
+    /// or a mutating always-interleaving operation (supported only by journaled definitions);
     /// or a blank or duplicate 'onStream'/'onBroadcast' provider/namespace pair.
     /// </exception>
     let run
@@ -381,6 +382,19 @@ module internal DefinitionDraft =
 
             fail DefinitionStage $"grain type '{grainTypeName}' has no handler for API field(s) {missingNames}."
 
+        let mutatingInterleaved =
+            state.Contract.Operations
+            |> Array.filter (fun operation ->
+                operation.IsAlwaysInterleave && not (operation.IsReadOnly || operation.IsOneWay))
+            |> Array.map (fun operation -> $"'{operation.FieldName}'")
+
+        if mutatingInterleaved.Length > 0 then
+            let names = String.Join(", ", mutatingInterleaved)
+
+            fail
+                DefinitionStage
+                $"grain type '{grainTypeName}' is an ordinary whole-state definition, but operation(s) {names} use 'alwaysInterleave' without 'readOnly' or 'oneWay'. Concurrent whole-state replacements could overwrite one another. Declare the operation 'readOnly' or 'oneWay', or host this contract with 'journaledGrainFor', whose log-view adaptor serializes event submissions."
+
         // Unique state names, with one provider and one stored type per name. The name alone is
         // the key: Orleans derives its activation-migration keys from the state name, so the
         // same name under two different providers is still a collision.
@@ -393,7 +407,8 @@ module internal DefinitionDraft =
         for extra in state.Additional do
             attached.Add extra.Descriptor
 
-        let seenStates = Dictionary<string, PersistentStateDescriptor>(StringComparer.Ordinal)
+        let seenStates =
+            Dictionary<string, PersistentStateDescriptor>(StringComparer.Ordinal)
 
         for descriptor in attached do
             match seenStates.TryGetValue descriptor.StateName with
@@ -535,7 +550,10 @@ module internal DefinitionDraft =
             // no record of the enumerator and answer MissingEnumeratorError, which surfaces as a
             // mid-stream EnumerationAbortedException. That is a load- and topology-dependent
             // failure, which is exactly the kind this runtime refuses at sealing.
-            match state.Contract.Operations |> Array.tryFind (fun operation -> operation.IsStreaming) with
+            match
+                state.Contract.Operations
+                |> Array.tryFind (fun operation -> operation.IsStreaming)
+            with
             | Some operation ->
                 fail
                     DefinitionStage
@@ -586,10 +604,7 @@ module internal DefinitionDraft =
         // the key: the same namespace on two different providers is two different streams, and
         // the delivery path matches on both, so both may be declared. A repeated triple would be
         // an unreachable second hook.
-        let seenBindings =
-            HashSet<struct (bool * string * string)>(
-                HashIdentity.Structural
-            )
+        let seenBindings = HashSet<struct (bool * string * string)>(HashIdentity.Structural)
 
         for binding in state.StreamBindings do
             if isBlank binding.ProviderName then
@@ -634,18 +649,14 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// <summary>Introduce the state type with a key-independent factory.</summary>
     /// <param name="factory">Produces the initial state; called once per activation regardless of key.</param>
     [<CustomOperation("defaultState")>]
-    member _.DefaultState<'State>
-        (state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>, factory: unit -> 'State)
-        =
+    member _.DefaultState<'State>(state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>, factory: unit -> 'State) =
         DefinitionDraft.create state.Contract "defaultState" (fun _ -> factory ())
 
     /// <summary>Introduce the state type with a key-aware factory.</summary>
     /// <param name="factory">Produces the initial state from the activation's domain key.</param>
     /// <exception cref="System.InvalidOperationException">Thrown when <paramref name="factory"/> is null.</exception>
     [<CustomOperation("initialState")>]
-    member _.InitialState<'State>
-        (state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>, factory: 'Key -> 'State)
-        =
+    member _.InitialState<'State>(state: FunctionalGrainDefinitionSeed<'Actor, 'Key, 'Api>, factory: 'Key -> 'State) =
         DefinitionDraft.create state.Contract "initialState" factory
 
     /// <summary>Bind one handler to the operation identified by the selector.</summary>
@@ -794,10 +805,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// </exception>
     [<CustomOperation("stateFrom")>]
     member _.StateFrom<'State>
-        (
-            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
-            persistentState: PersistentStateRef<'State>
-        ) =
+        (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, persistentState: PersistentStateRef<'State>)
+        =
         let draft = state.State
 
         if obj.ReferenceEquals(persistentState, null) then
@@ -890,8 +899,7 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         // The blueprint is closed over the exact stored type here, where 'StoredState is still
         // a type parameter of this custom operation. No silo-side code ever closes it again.
         let attached =
-            FunctionalTransactionalFacet.blueprint transactionalState (fun key ->
-                box (initializer (unbox<'Key> key)))
+            FunctionalTransactionalFacet.blueprint transactionalState (fun key -> box (initializer (unbox<'Key> key)))
 
         DefinitionDraft.withState
             { draft with
@@ -914,10 +922,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// <exception cref="System.InvalidOperationException">Thrown when 'onActivate' is already declared for this draft.</exception>
     [<CustomOperation("onActivate")>]
     member _.OnActivate<'State>
-        (
-            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
-            hook: ActivateHook<'Actor, 'Key, 'State>
-        ) =
+        (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, hook: ActivateHook<'Actor, 'Key, 'State>)
+        =
         let draft = state.State
 
         DefinitionDraft.withState
@@ -929,10 +935,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// <exception cref="System.InvalidOperationException">Thrown when 'onDeactivate' is already declared for this draft.</exception>
     [<CustomOperation("onDeactivate")>]
     member _.OnDeactivate<'State>
-        (
-            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
-            hook: DeactivateHook<'Actor, 'Key, 'State>
-        ) =
+        (state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>, hook: DeactivateHook<'Actor, 'Key, 'State>)
+        =
         let draft = state.State
 
         DefinitionDraft.withState
@@ -1272,7 +1276,11 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.withState
             { draft with
                 Placement =
-                    DefinitionDraft.singlePlacement "placement" draft.Contract.GrainTypeName draft.Placement (Strategy strategy) }
+                    DefinitionDraft.singlePlacement
+                        "placement"
+                        draft.Contract.GrainTypeName
+                        draft.Placement
+                        (Strategy strategy) }
 
     /// <summary>
     /// Hook one Orleans grain-lifecycle stage. Each stage accepts at most one hook.

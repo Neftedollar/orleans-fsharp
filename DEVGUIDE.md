@@ -243,7 +243,7 @@ test "handleState should auto-box state in result" {
 ### Step 5: Update Documentation
 
 - Add to `QUICK-REFERENCE.md`
-- Add to `docs/grain-definition.md`
+- Add legacy `grain { }` documentation to `docs/legacy/grain-definition.md`
 - Add example to README if significant
 - Update CHANGELOG.md
 

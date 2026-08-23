@@ -75,4 +75,11 @@ public sealed class FunctionalJournalEntry
     /// <summary>The event, serialized as the definition's exact event type.</summary>
     [Id(0)]
     public byte[] Payload { get; set; } = [];
+
+    /// <summary>
+    /// True on the final entry of a callback which explicitly requested a snapshot. The custom
+    /// storage bridge consumes this marker; it is not part of the application event.
+    /// </summary>
+    [Id(1)]
+    public bool SnapshotRequested { get; set; }
 }

@@ -102,12 +102,7 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
             for item in [ "a"; "b"; "c" ] do
                 do! fixture.Publish(StreamNames.Provider, StreamNames.Items, key, item)
 
-            do!
-                fixture.WaitFor(
-                    "three deliveries",
-                    deliveryTimeout,
-                    fun () -> StreamProbe.count probe = 3
-                )
+            do! fixture.WaitFor("three deliveries", deliveryTimeout, fun () -> StreamProbe.count probe = 3)
 
             let grain = sinkRef fixture.Client key
             let! items = grain.items ()
@@ -208,12 +203,7 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
             // The implicit subscription is not faulted by the failure: the next item arrives.
             do! fixture.Publish(StreamNames.Provider, StreamNames.Poison, key, "after-failure")
 
-            do!
-                fixture.WaitFor(
-                    "the item after the failure",
-                    deliveryTimeout,
-                    fun () -> StreamProbe.count probe = 2
-                )
+            do! fixture.WaitFor("the item after the failure", deliveryTimeout, fun () -> StreamProbe.count probe = 2)
 
             let! acceptedAfter = grain.accepted ()
             test <@ acceptedAfter = [ "retry-me"; "after-failure" ] @>
@@ -244,6 +234,52 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
             test <@ items = [ "broadcast" ] @>
         }
 
+    [<Fact>]
+    member _.``journaled reminder timer stream and broadcast hooks append durable events``() =
+        task {
+            let key = freshKey "journal-hooks"
+            let grain = journalSinkRef fixture.Client key
+
+            do! fixture.Publish(StreamNames.Provider, StreamNames.JournalItems, key, "one")
+
+            do! fixture.PublishChannelOn(StreamNames.AwaitedChannelProvider, StreamNames.JournalChannel, key, "two")
+
+            let expected = [ "stream:one"; "broadcast:two"; "timer"; "reminder" ]
+
+            let deadline = DateTime.UtcNow.Add deliveryTimeout
+            let mutable beforeRecycle = []
+
+            while not (expected |> List.forall (fun item -> List.contains item beforeRecycle))
+                  && DateTime.UtcNow < deadline do
+                let! observed = grain.observed ()
+                beforeRecycle <- observed
+
+                if not (expected |> List.forall (fun item -> List.contains item beforeRecycle)) then
+                    do! Task.Delay 100
+
+            test <@ expected |> List.forall (fun item -> List.contains item beforeRecycle) @>
+            test <@ StreamProbe.count $"journal-activate|{key}" >= 1 @>
+
+            let! versionBefore = grain.version ()
+            test <@ versionBefore >= expected.Length @>
+
+            do! grain.recycle ()
+
+            do!
+                fixture.WaitFor(
+                    "the journaled onDeactivate hook",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count $"journal-deactivate|{key}" >= 1
+                )
+
+            let! replayed = grain.observed ()
+            let! versionAfter = grain.version ()
+
+            test <@ beforeRecycle |> List.forall (fun item -> List.contains item replayed) @>
+            test <@ versionAfter >= versionBefore @>
+            test <@ StreamProbe.count $"journal-activate|{key}" >= 2 @>
+        }
+
     /// <remarks>
     /// The observer this runtime attaches lives on the ACTIVATION, inside Orleans'
     /// per-activation <c>StreamConsumerExtension</c> — so a deactivation throws it away. Nothing
@@ -259,12 +295,7 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
 
             do! fixture.Publish(StreamNames.Provider, StreamNames.Items, key, "before")
 
-            do!
-                fixture.WaitFor(
-                    "the first implicit delivery",
-                    deliveryTimeout,
-                    fun () -> StreamProbe.count probe = 1
-                )
+            do! fixture.WaitFor("the first implicit delivery", deliveryTimeout, fun () -> StreamProbe.count probe = 1)
 
             let grain = sinkRef fixture.Client key
             let! before = grain.items ()
@@ -477,13 +508,13 @@ type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
     /// </remarks>
     [<Fact>]
     member _.``the live grain manifest carries one binding group per declared namespace``() =
-        let services = fixture.Cluster.GetSiloServiceProvider fixture.Cluster.Primary.SiloAddress
+        let services =
+            fixture.Cluster.GetSiloServiceProvider fixture.Cluster.Primary.SiloAddress
 
         let manifest =
             services.GetRequiredService<IClusterManifestProvider>().LocalGrainManifest
 
-        let properties =
-            manifest.Grains.[GrainType.Create StreamGrainTypes.Sink].Properties
+        let properties = manifest.Grains.[GrainType.Create StreamGrainTypes.Sink].Properties
 
         let bindingValue (key: string) =
             match properties.TryGetValue key with
@@ -537,7 +568,10 @@ type ClusterTests(fixture: FunctionalStreamClusterFixture) =
                 )
 
             let hostingSilo = StreamProbe.silos.[probe]
-            let siloNames = fixture.Cluster.Silos |> Seq.map (fun silo -> silo.Name) |> Seq.toList
+
+            let siloNames =
+                fixture.Cluster.Silos |> Seq.map (fun silo -> silo.Name) |> Seq.toList
+
             test <@ List.contains hostingSilo siloNames @>
 
             let grain = sinkRef fixture.Client key
@@ -563,7 +597,9 @@ type ClusterTests(fixture: FunctionalStreamClusterFixture) =
                 fixture.WaitFor(
                     "every key to deliver",
                     deliveryTimeout,
-                    fun () -> keys |> List.forall (fun key -> StreamProbe.count $"{StreamNames.Items}|{key}" = 1)
+                    fun () ->
+                        keys
+                        |> List.forall (fun key -> StreamProbe.count $"{StreamNames.Items}|{key}" = 1)
                 )
 
             for key in keys do
@@ -629,12 +665,7 @@ type ClusterTests(fixture: FunctionalStreamClusterFixture) =
 
             do! fixture.PublishChannel(StreamNames.Channel, key, "cluster-broadcast")
 
-            do!
-                fixture.WaitFor(
-                    "the implicit channel delivery",
-                    deliveryTimeout,
-                    fun () -> StreamProbe.count probe = 1
-                )
+            do! fixture.WaitFor("the implicit channel delivery", deliveryTimeout, fun () -> StreamProbe.count probe = 1)
 
             let grain = sinkRef fixture.Client key
             let! items = grain.channelItems ()

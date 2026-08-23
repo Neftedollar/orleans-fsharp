@@ -2,9 +2,7 @@
 
 **Complete guide to the `siloConfig { }` computation expression.**
 
-> **Note.** `siloConfig { }` itself is current and not deprecated. The few `grain { persist ... }`
-> snippets on this page illustrate the deprecated `grain { }` CE, which now carries `[<Obsolete>]`
-> (warning, not error); see [functional-grains.md](functional-grains.md) for its replacement.
+> **Current API.** `siloConfig { }` configures hosting; functional definitions bind the named providers configured here.
 
 ## What you'll learn
 
@@ -194,11 +192,16 @@ siloConfig {
 }
 ```
 
-Then reference each by name in your grain definitions:
+Bind provider names to functional persistent-state descriptors, then attach a descriptor to a definition:
 
 ```fsharp
-grain { persist "Cache" ... }
-grain { persist "Archive" ... }
+let cachedState = PersistentState.create<MyState> "state" "Cache"
+let archivedState = PersistentState.create<MyState> "state" "Archive"
+
+let cachedDefinition = grainFor cachedContract {
+    stateFrom cachedState
+    // handlers call context.persistentState cachedState when they read or write
+}
 ```
 
 ---
@@ -360,6 +363,7 @@ siloConfig {
 ```
 
 Map the dashboard endpoints in your ASP.NET Core pipeline with `MapOrleansDashboard()`.
+See [Orleans Dashboard](dashboard.md) for the runnable functional-actor example, exact UI names, and production authorization guidance.
 
 ---
 
@@ -441,10 +445,7 @@ siloConfig {
 }
 ```
 
-`grainCollectionAge` is the global idle-deactivation timeout. There is no per-grain `grain { }`
-keyword for it: on the [functional grain runtime](functional-grains.md) use the `collectionAge`
-operation in `grainFor { }`, and on the C# CodeGen path use Orleans' `[CollectionAgeLimit]`
-attribute.
+`grainCollectionAge` is the global idle-deactivation timeout. A functional definition can override it with the `collectionAge` operation in `grainFor { }`.
 
 ---
 
@@ -642,6 +643,6 @@ let config = siloConfig {
 ## Next steps
 
 - [Client Configuration](client-configuration.md) -- configure Orleans clients
-- [Grain Definition](grain-definition.md) -- define grains that use these providers
+- [Legacy API](legacy/index.md) -- maintenance documentation for earlier authoring models
 - [Streaming](streaming.md) -- publish and subscribe to events
 - [Security](security.md) -- TLS, mTLS, and call filters in depth

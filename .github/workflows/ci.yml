@@ -86,6 +86,16 @@ jobs:
           grep -q -x "After decrement: 1" sample.out
           grep -q "Sample complete" sample.out
 
+      - name: Run the Orleans Dashboard example smoke
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          dotnet build examples/dashboard/Dashboard.fsproj --nologo ${{ matrix.arg }}
+          dotnet run --project examples/dashboard/Dashboard.fsproj --no-build ${{ matrix.arg }} -- --verify-silo | tee dashboard.out
+          rg -q "dashboard.counter/visits" dashboard.out
+          rg -q "FunctionalGrainMarker.*CounterActor" dashboard.out
+          rg -q "FunctionalGrainMarker.*CartActor" dashboard.out
+
   redis-durability:
     name: Redis Durability (Orleans ${{ matrix.label }})
     runs-on: ubuntu-latest
@@ -237,6 +247,8 @@ jobs:
       # live site kept teaching the deprecated model unmarked.
       - name: docs/ and its published mirror agree
         run: python3 scripts/check-docs-mirror.py
+      - name: Current docs do not teach the Legacy API
+        run: python3 scripts/check-current-docs-api.py
       # The published site is what ships; docs.yml only builds it on push to main, so a
       # PR that adds a page, a sidebar entry or a cross-doc link gets no feedback there.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

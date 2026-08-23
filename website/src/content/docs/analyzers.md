@@ -105,5 +105,5 @@ fsharp-analyzers --project MyGrains.fsproj --analyzers-path <path-to-Orleans.FSh
 ## See also
 
 - [Getting Started](/orleans-fsharp/getting-started/) — quick introduction to Orleans.FSharp
-- [Grain Definition](/orleans-fsharp/grain-definition/) — complete `grain { }` CE reference (deprecated authoring model; see [functional-grains.md](/orleans-fsharp/functional-grains/))
+- [Legacy API](/orleans-fsharp/legacy/) — maintenance documentation for earlier authoring models
 - [Advanced](/orleans-fsharp/advanced/) — transactions, OpenTelemetry, shutdown, migration

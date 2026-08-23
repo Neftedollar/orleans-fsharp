@@ -71,6 +71,7 @@
     <PackageReference Include="Microsoft.Orleans.Server" />
     <PackageReference Include="Microsoft.Orleans.Streaming" />
     <PackageReference Include="Microsoft.Orleans.BroadcastChannel" />
+    <PackageReference Include="Microsoft.Orleans.EventSourcing" />
     <PackageReference Include="IcedTasks" />
     <PackageReference Include="FSharp.SystemTextJson" />
     <PackageReference Include="FSharp.Control.TaskSeq" />

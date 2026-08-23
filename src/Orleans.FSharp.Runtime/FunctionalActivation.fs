@@ -70,12 +70,14 @@ type internal FunctionalGrainTarget<'Actor>
                     try
                         // "Reminder hook: CancellationToken.None, because
                         // IRemindable.ReceiveReminder supplies no token."
-                        let core =
-                            FunctionalContextFactory.core env CancellationToken.None scope
+                        let core = FunctionalContextFactory.core env CancellationToken.None scope
 
                         let! next = hostedReminder.Adapter.Invoke(env.Key, core, env.State.Current, status)
 
-                        env.State.Publish next
+                        match env.State.Journal with
+                        | null -> env.State.Publish next
+                        | journal ->
+                            do! journal.RaiseAndConfirm(unbox<obj list> next, scope.SnapshotRequested)
                     finally
                         scope.Expire()
                 }
@@ -212,8 +214,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                             StartupStage
                             $"the functional activation of grain type '{definition.GrainTypeName}' cannot create its transactional state: Orleans resolves a transactional facet against the ambient grain context (IGrainContextAccessor.GrainContext), which is '{ambientId}' here rather than this activation's '{grainContext.GrainId}'."
 
-                    let transactionalFactory =
-                        services.GetRequiredService<ITransactionalStateFactory>()
+                    let transactionalFactory = services.GetRequiredService<ITransactionalStateFactory>()
 
                     definition.TransactionalFacets
                     |> Array.map (fun blueprint ->
@@ -275,8 +276,12 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
 
             let mutable deactivate = fun () -> ()
             let mutable delay = fun (_: TimeSpan) -> ()
-            let mutable registerReminder = fun (_: string) (_: TimeSpan) (_: TimeSpan) -> Unchecked.defaultof<Task<IGrainReminder>>
-            let mutable createTimer = fun (_: CancellationToken -> Task) (_: GrainTimerCreationOptions) -> ()
+
+            let mutable registerReminder =
+                fun (_: string) (_: TimeSpan) (_: TimeSpan) -> Unchecked.defaultof<Task<IGrainReminder>>
+
+            let mutable createTimer =
+                fun (_: CancellationToken -> Task) (_: GrainTimerCreationOptions) -> ()
 
             let activationState =
                 FunctionalActivationState(definition, facets, transactionalFacets)
@@ -300,6 +305,15 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                   DelayDeactivation = fun timeSpan -> delay timeSpan
                   RegisterReminder = fun name dueTime period -> registerReminder name dueTime period
                   CreateTimer = fun callback options -> createTimer callback options }
+
+            // JournaledGrain's state/connection callbacks are synchronous instance methods and
+            // can use the same grain services as any other method. Bind the equivalent functional
+            // context now that the complete target environment exists, before the lifecycle can
+            // install or start the adaptor.
+            match journalHost with
+            | Some host ->
+                host.BindContextFactory(fun scope -> FunctionalContextFactory.core env CancellationToken.None scope)
+            | None -> ()
 
             // A definition with no implicit subscription gets the plain target, so Orleans never
             // probes it as a stream or broadcast consumer -- see FunctionalStreamingGrainTarget's
@@ -399,10 +413,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                 | :? ILoggerFactory as loggerFactory ->
                     loggerFactory
                         .CreateLogger("Orleans.FSharp.Functional.DisposeInstance")
-                        .LogDebug(
-                            "Functional DisposeInstance completed for grain {GrainId}",
-                            grainContext.GrainId
-                        )
+                        .LogDebug("Functional DisposeInstance completed for grain {GrainId}", grainContext.GrainId)
                 | _ -> ()
 
                 ValueTask.CompletedTask

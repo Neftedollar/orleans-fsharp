@@ -1,230 +1,113 @@
 # Serialization
 
-Orleans.FSharp offers three serialization modes. Choose based on your needs — you can switch at any time.
+The functional runtime carries API arguments, replies, state, and journal events without requiring Orleans serializer attributes on ordinary F# records or discriminated unions.
 
-> **Note.** `AddFSharpGrain`, the `grain { }` CE and `GrainDefinition<_,_>` referenced below now
-> carry `[<Obsolete>]` (warning, not error). Codec registration works the same way under the
-> functional grain runtime -- `AddFunctionalGrain` also registers `FSharpBinaryCodec` -- see
-> [functional-grains.md](functional-grains.md).
+## Functional runtime default
 
-## Quick Comparison
-
-| Mode | CE Keyword | Speed | C# Project Needed? | Attributes? | Best For |
-|------|-----------|-------|-------------------|-------------|----------|
-| **F# Binary** | `useFSharpBinarySerialization` | Fast | No | None | Pure F# clusters (recommended) |
-| **JSON** | `useJsonFallbackSerialization` | Good | No | None | Prototyping, schema flexibility |
-| **Orleans Native** | *(default)* | Fastest | Yes (CodeGen) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
-
-## Universal Grain Pattern — auto-registration
-
-When you use the universal grain pattern (`AddFSharpGrain<State, Command>`), **F# Binary serialization is registered automatically** — you do not need to add `useFSharpBinarySerialization` to your silo config.
+Registering a definition with `AddFunctionalGrain` and a client with `AddFunctionalGrainClient` installs the functional transport and its binary payload codec. API records themselves are local typed facades; only operation arguments and replies cross the wire.
 
 ```fsharp
-// This is all you need — FSharpBinaryCodec is registered for you
-builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
+host.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddMemoryGrainStorage("Default") |> ignore
+    siloBuilder.AddFunctionalGrain(counterDefinition) |> ignore)
+
+clientBuilder.AddFunctionalGrainClient() |> ignore
 ```
 
-The registration is idempotent: calling `AddFSharpGrain` multiple times for different `(State, Command)` pairs only registers the codec once.
-
-If you are NOT using the universal pattern (i.e., you are using per-grain C# stubs via `Orleans.FSharp.CodeGen`), you still need to opt in manually via `useFSharpBinarySerialization` or `useJsonFallbackSerialization`.
-
----
-
-## Mode 1: F# Binary (Recommended)
-
-Binary serialization using FSharp.Reflection — fast, compact, zero boilerplate.
+Plain F# types need no `[<GenerateSerializer>]` or `[<Id>]` attributes:
 
 ```fsharp
-// Your types — plain F#, no attributes
 type OrderState =
     | Created of orderId: string
     | Paid of amount: decimal
-    | Shipped of trackingNo: string
-    | Delivered
-    | Cancelled of reason: string
+    | Shipped of trackingNumber: string
 
-type OrderCommand = Place of string | Confirm | Ship of string | Cancel of string | GetStatus
+type PlaceOrder = { orderId: string; total: decimal }
 
-// Your grain — clean
-let orderGrain = grain {
-    defaultState (Created "")
-    handle (fun state cmd -> task { ... })
-    persist "Default"
+type OrderReply = Result<int64, string>
+```
+
+Supported shapes include records, discriminated unions, options and value options, lists, arrays, sets, maps, tuples, enums, common collection interfaces, POCO classes, and nested combinations of those shapes.
+
+## Explicit generalized serializers
+
+The hosting computation expressions can also register a generalized serializer for other Orleans payloads in the same process. Configure both silo and standalone client consistently.
+
+### F# binary
+
+```fsharp
+let silo = siloConfig {
+    useLocalhostClustering
+    useFSharpBinarySerialization
 }
 
-// Enable in silo config
-let config = siloConfig {
+let client = clientConfig {
     useLocalhostClustering
-    addMemoryStorage "Default"
-    useFSharpBinarySerialization  // ← this is all you need
+    useFSharpBinarySerialization
 }
 ```
 
-**How it works:** The `FSharpBinaryCodecProvider` inspects F# types at runtime via `FSharp.Reflection`, builds binary reader/writer functions, and **caches them per type** in a `ConcurrentDictionary`. First access pays the reflection cost (~1ms); subsequent calls are a dictionary lookup (~20ns).
+Use this for compact F#-only payloads without source-generation attributes.
 
-**Supported types:**
-- Discriminated unions (any nesting depth)
-- Records
-- Options and ValueOptions
-- Lists, arrays, sets, maps
-- Tuples
-- All .NET primitives (int, string, float, decimal, Guid, DateTime, TimeSpan, etc.)
-- Byte arrays
-- Any nested combination of the above
-
-**When to use:** Pure F# Orleans clusters. This is the recommended mode for new projects.
-
-## Mode 2: JSON Fallback
-
-JSON serialization via FSharp.SystemTextJson — human-readable, flexible schema evolution.
+### JSON fallback
 
 ```fsharp
-// Same clean types — no attributes
-type CounterState = { Count: int }
-type CounterCommand = Increment | Decrement | GetValue
-
-let config = siloConfig {
+let silo = siloConfig {
     useLocalhostClustering
-    addMemoryStorage "Default"
+    useJsonFallbackSerialization
+}
+
+let client = clientConfig {
+    useLocalhostClustering
     useJsonFallbackSerialization
 }
 ```
 
-**Pros:**
-- Human-readable payload (useful for debugging)
-- Name-based schema evolution (add/remove fields by name, not ordinal)
-- Broad ecosystem compatibility
+JSON is useful when a readable payload matters more than size and throughput. It is a fallback for types without an Orleans generated serializer.
 
-**Cons:**
-- ~2-5x slower than binary modes
-- Larger payload size (text vs binary)
-- `float Infinity`, `NaN` not supported (IEEE 754 limitation of JSON)
-- `option option` — `Some None` serializes as `null`, deserializes as `None` (known limitation)
+### Orleans native serialization
 
-**When to use:** Prototyping, debugging, or when you need flexible schema evolution.
-
-## Mode 3: Orleans Native
-
-Orleans built-in source-generated serialization — maximum performance, required for C# interop.
+Types shared directly with ordinary C# Orleans grains can use Orleans' generated serializers:
 
 ```fsharp
-// Types need Orleans attributes
 [<GenerateSerializer>]
-type CounterState =
-    | [<Id(0u)>] Zero
-    | [<Id(1u)>] Count of int
-
-[<GenerateSerializer>]
-type CounterCommand =
-    | [<Id(0u)>] Increment
-    | [<Id(1u)>] Decrement
-    | [<Id(2u)>] GetValue
-
-// No serialization keyword needed — it's the default
-let config = siloConfig {
-    useLocalhostClustering
-    addMemoryStorage "Default"
-}
+type SharedMessage =
+    { [<Id(0u)>]
+      orderId: string
+      [<Id(1u)>]
+      amount: decimal }
 ```
 
-**Requirements:**
-- `[<GenerateSerializer>]` attribute on every type crossing grain boundaries
-- `[<Id(n)>]` attribute on every DU case and record field (ordinal position)
-- A **C# CodeGen project** (`Orleans.FSharp.CodeGen`) that references your F# types — Orleans Roslyn source generators only work on C# projects
-- A C# grain class per grain definition (inherits `Grain`, delegates to F# handler)
+The functional API does not require this. Use it only when the same CLR type must participate directly in a native Orleans contract or another component already depends on that format.
 
-**Why so much boilerplate?** Orleans uses Roslyn source generators to produce optimized binary serializers at compile time. Roslyn does not support F# — hence the C# bridge project.
+## Mixing formats
 
-### When You MUST Use Orleans Native
+Generated serializers have priority for annotated types. The configured generalized serializer handles supported unannotated types. This allows native C#/F# shared messages and functional F# payloads in one silo.
 
-**Mixed F#/C# clusters.** If your Orleans cluster has both F# silos (using Orleans.FSharp) and C# silos (using standard Orleans), they need to agree on serialization format. Orleans Native is the common format both understand.
+Do not configure incompatible fallbacks on different cluster participants. A client and silo that exchange a generalized payload must understand the same format.
 
-```
-F# Silo ←→ C# Silo     → Orleans Native (both understand [GenerateSerializer])
-F# Silo ←→ F# Silo     → F# Binary (recommended) or JSON
-F# Silo only            → F# Binary (recommended)
-```
+## Schema evolution
 
-**Migrating from C# to F#.** If you're gradually moving C# grains to F#, start with Orleans Native for compatibility. Once all silos are F#, switch to F# Binary.
+| Change | F# binary | JSON fallback | Orleans generated |
+|---|---|---|---|
+| Append a DU case | Compatible while old readers never receive it | Compatible while old readers never receive it | Compatible with a new id |
+| Reorder DU cases | Breaking | Name-based | Safe when ids stay fixed |
+| Add or remove a record field | Breaking for stored/wire data | Treat as breaking unless covered by explicit JSON policy | Safe only with stable ids and compatible defaults |
+| Rename a DU case | Ordinal representation is unchanged | Breaking | Safe when ids stay fixed |
 
-**C# core plus new F# grains.** Existing C# grains keep Orleans Native serialization. New F# grains can use F# Binary — they have separate state types that don't cross the C#/F# boundary.
+Treat persisted grain state, journal events, and custom snapshots as durable contracts. For the functional binary codec, union cases and record fields are positional: append cases, keep old cases foldable, and migrate stored state explicitly when a record shape changes.
 
-### Setting Up CodeGen (Orleans Native only)
+## Security boundary
 
-1. Create a C# class library project:
+Generalized deserialization resolves declared CLR types. Accept payloads only from trusted Orleans cluster participants, keep cluster transport authenticated, and do not expose raw serialized envelopes as a public untrusted-input endpoint.
 
-```bash
-dotnet new classlib -lang C# -n MyApp.CodeGen
-dotnet add MyApp.CodeGen package Microsoft.Orleans.Sdk
-dotnet add MyApp.CodeGen reference ../MyApp.Grains/MyApp.Grains.fsproj
-```
+## Legacy serialization
 
-2. Add the assembly attribute:
+Configuration and CodeGen examples for the original authoring model are retained in [Legacy Serialization](legacy/serialization.md).
 
-```csharp
-// AssemblyAttributes.cs
-using Orleans;
-[assembly: GenerateCodeForDeclaringAssembly(typeof(MyApp.Grains.SomeType))]
-```
+## Next steps
 
-3. For each F# grain, create a C# grain class:
-
-```csharp
-// CounterGrainImpl.cs
-[GenerateSerializer]
-public class CounterGrainImpl : Grain, ICounterGrain
-{
-    private readonly GrainDefinition<CounterState, CounterCommand> _def;
-    // ... constructor, HandleMessage delegation to F# handler
-}
-```
-
-4. Reference the CodeGen project from your Silo project.
-
-## Mixing Modes
-
-You can use multiple modes in the same silo. Orleans resolves serializers in priority order:
-
-1. Orleans Native (types with `[GenerateSerializer]`) — highest priority
-2. F# Binary / JSON (fallback for types without attributes)
-
-This means you can use Orleans Native for shared C#/F# types and F# Binary for F#-only types:
-
-```fsharp
-let config = siloConfig {
-    useLocalhostClustering
-    addMemoryStorage "Default"
-    useFSharpBinarySerialization  // fallback for F#-only types
-    // Orleans Native types still work via [GenerateSerializer]
-}
-```
-
-## Schema Evolution
-
-| Scenario | JSON | F# Binary | Orleans Native |
-|----------|------|-----------|---------------|
-| Add DU case at end | Works | Works | Works (with new `[Id]`) |
-| Remove DU case | Old data with removed case fails | Same | Same |
-| Add record field | **Fails** (FSharp.SystemTextJson strict) | **Fails** (ordinal-based) | **Fails** (ordinal-based) |
-| Rename DU case | Fails (name-based) | Works (ordinal-based) | Works (ordinal-based) |
-
-For schema migrations across versions, use the [StateMigration](advanced.md) module.
-
-## Performance
-
-Measured over 10,000 roundtrips of a typical DU with 5 cases:
-
-| Mode | Time | Payload Size | Relative Speed |
-|------|------|-------------|----------------|
-| Orleans Native | ~1ms | Smallest | 1x (baseline) |
-| F# Binary | ~2ms | Small | ~2x |
-| JSON | ~5ms | Large (text) | ~5x |
-
-All modes are fast enough for real-world Orleans usage. Grain call network latency (~100-500μs) dominates serialization time.
-
-## Next Steps
-
-- [Getting Started](getting-started.md) — build your first grain
-- [Grain Definition](grain-definition.md) — all 27 CE keywords
-- [Advanced](advanced.md) — state migration for schema evolution
-- [Testing](testing.md) — FsCheck property tests for serialization roundtrips
+- [Functional Grain Runtime](functional-grains.md)
+- [Event Sourcing](event-sourcing.md)
+- [Silo Configuration](silo-configuration.md)
+- [Legacy Serialization](legacy/serialization.md)

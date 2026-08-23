@@ -26,12 +26,15 @@ type ChatApi =
 /// violation as a string literal for an override: the field NAME itself has to be long.
 /// </summary>
 [<NoEquality; NoComparison>]
-type LongFieldApi = { ``aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`` : string -> Task<unit> }
+type LongFieldApi =
+    { ``aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa``:
+        string -> Task<unit> }
 
 /// <summary>The exact field name declared above, for the test that names it in a diagnostic.</summary>
 module LongFieldApi =
     [<Literal>]
-    let longFieldName = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    let longFieldName =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 let private baseContract () =
     grainContract<ChatActor, string, ChatApi> {
@@ -53,15 +56,9 @@ let ``a contract keeps grain type, default version, and declaration order`` () =
     test <@ contract.GrainTypeName = "chat.room" @>
     test <@ contract.Version = 1 @>
 
-    test
-        <@
-            contract.Operations |> Array.map (fun op -> op.FieldName) = [| "join"; "say"; "history"; "typing" |]
-        @>
+    test <@ contract.Operations |> Array.map (fun op -> op.FieldName) = [| "join"; "say"; "history"; "typing" |] @>
 
-    test
-        <@
-            contract.Operations |> Array.map (fun op -> op.OperationId) = [| "join"; "say"; "history"; "typing" |]
-        @>
+    test <@ contract.Operations |> Array.map (fun op -> op.OperationId) = [| "join"; "say"; "history"; "typing" |] @>
 
 /// <summary>
 /// An API record declared WITHOUT <c>[&lt;NoEquality; NoComparison&gt;]</c>. Every other fixture in
@@ -125,8 +122,7 @@ let ``an omitted grain type derives the actor brand's CLR simple name`` () =
 [<Fact>]
 let ``a missing grain type on a nested actor brand fails contract construction`` () =
     let error =
-        throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> { stringKey } |> ignore)
+        throws (fun () -> grainContract<ChatActor, string, ChatApi> { stringKey } |> ignore)
 
     test <@ error.Message.Contains "nested" @>
     test <@ error.Message.Contains "explicit 'grainType'" @>
@@ -135,9 +131,7 @@ let ``a missing grain type on a nested actor brand fails contract construction``
 let ``a missing grain type on a generic actor brand fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.GenericActor<int>, string, ChatApi> {
-                stringKey
-            }
+            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.GenericActor<int>, string, ChatApi> { stringKey }
             |> ignore)
 
     test <@ error.Message.Contains "generic" @>
@@ -155,7 +149,13 @@ let ``a missing grain type on a generic actor brand fails contract construction`
 let ``an over-length derived grain type fails contract construction`` () =
     let error =
         throws (fun () ->
-            grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``, string, ChatApi> { stringKey }
+            grainContract<
+                Orleans.FSharp.Tests.GrainTypeDerivation.``bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb``,
+                string,
+                ChatApi
+             > {
+                stringKey
+            }
             |> ignore)
 
     test <@ error.Message.Contains "the 'grainType' derived from actor brand" @>
@@ -232,7 +232,9 @@ let ``a grain type at exactly the transport's bound is accepted`` () =
 /// therefore not constructible through source syntax; the length half is, and this is that case.
 /// </remarks>
 [<Fact>]
-let ``an over-length derived operation ID from a double-backtick field name fails contract construction, naming the field`` () =
+let ``an over-length derived operation ID from a double-backtick field name fails contract construction, naming the field``
+    ()
+    =
     let error =
         throws (fun () ->
             grainContract<ChatActor, string, LongFieldApi> {
@@ -292,8 +294,7 @@ let ``a repeated version fails contract construction`` () =
 [<Fact>]
 let ``a missing key operation fails contract construction`` () =
     let error =
-        throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> { grainType "chat.room" } |> ignore)
+        throws (fun () -> grainContract<ChatActor, string, ChatApi> { grainType "chat.room" } |> ignore)
 
     test <@ error.Message.Contains "exactly one native or mapped key operation" @>
 
@@ -323,10 +324,7 @@ let ``an operation ID override replaces only that field's ID`` () =
             operationId "enter" (_.join)
         }
 
-    test
-        <@
-            contract.Operations |> Array.map (fun op -> op.OperationId) = [| "enter"; "say"; "history"; "typing" |]
-        @>
+    test <@ contract.Operations |> Array.map (fun op -> op.OperationId) = [| "enter"; "say"; "history"; "typing" |] @>
 
     test <@ (contract.TryFindOperation "enter").IsSome @>
     test <@ (contract.TryFindOperation "join").IsNone @>
@@ -456,10 +454,7 @@ let ``policies land on the selected fields only`` () =
     test <@ contract.Operations |> Array.map (fun op -> op.IsReadOnly) = [| false; false; true; false |] @>
     test <@ contract.Operations |> Array.map (fun op -> op.IsOneWay) = [| false; false; false; true |] @>
 
-    test
-        <@
-            contract.Operations |> Array.map (fun op -> op.IsAlwaysInterleave) = [| false; false; false; true |]
-        @>
+    test <@ contract.Operations |> Array.map (fun op -> op.IsAlwaysInterleave) = [| false; false; false; true |] @>
 
 [<Fact>]
 let ``readOnly plus alwaysInterleave is accepted`` () =
@@ -502,17 +497,17 @@ let ``oneWay combined with readOnly fails contract construction`` () =
     test <@ error.Message.Contains "combines 'oneWay' with 'readOnly'" @>
 
 [<Fact>]
-let ``alwaysInterleave without readOnly or oneWay fails contract construction`` () =
-    let error =
-        throws (fun () ->
-            grainContract<ChatActor, string, ChatApi> {
-                grainType "chat.room"
-                stringKey
-                alwaysInterleave (_.say)
-            }
-            |> ignore)
+let ``a mutating alwaysInterleave operation is preserved for journaled definitions`` () =
+    let contract =
+        grainContract<ChatActor, string, ChatApi> {
+            grainType "chat.room"
+            stringKey
+            alwaysInterleave (_.say)
+        }
 
-    test <@ error.Message.Contains "without 'readOnly' or 'oneWay'" @>
+    test <@ contract.Operations.[1].IsAlwaysInterleave @>
+    test <@ not contract.Operations.[1].IsReadOnly @>
+    test <@ not contract.Operations.[1].IsOneWay @>
 
 /// <remarks>
 /// The F# compiler already rejects a <c>oneWay</c> selector whose reply is not
@@ -732,8 +727,18 @@ let ``reentrant keeps readOnly and oneWay legal`` () =
         }
 
     test <@ contract.IsReentrant @>
-    test <@ contract.Operations |> Array.exists (fun op -> op.FieldName = "history" && op.IsReadOnly) @>
-    test <@ contract.Operations |> Array.exists (fun op -> op.FieldName = "typing" && op.IsOneWay) @>
+
+    test
+        <@
+            contract.Operations
+            |> Array.exists (fun op -> op.FieldName = "history" && op.IsReadOnly)
+        @>
+
+    test
+        <@
+            contract.Operations
+            |> Array.exists (fun op -> op.FieldName = "typing" && op.IsOneWay)
+        @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Spec 004 item 7 -- version-tolerant contracts
@@ -815,7 +820,9 @@ let ``sinceVersion is recorded on the selected operation only`` () =
         }
 
     let sinceOf name =
-        contract.Operations |> Array.find (fun op -> op.FieldName = name) |> fun op -> op.SinceVersion
+        contract.Operations
+        |> Array.find (fun op -> op.FieldName = name)
+        |> fun op -> op.SinceVersion
 
     test <@ sinceOf "typing" = 4 @>
     test <@ sinceOf "join" = 1 @>

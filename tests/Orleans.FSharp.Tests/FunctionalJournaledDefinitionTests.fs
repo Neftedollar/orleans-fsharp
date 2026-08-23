@@ -16,6 +16,7 @@ open Xunit
 open Swensen.Unquote
 open Orleans
 open Orleans.FSharp
+open Orleans.Runtime
 
 type LedgerActor = private LedgerActor of unit
 type TransactionalLedgerActor = private TransactionalLedgerActor of unit
@@ -41,12 +42,19 @@ let private throws (action: unit -> unit) =
     Assert.Throws<InvalidOperationException>(action)
 
 let private creditHandler _ (_: LedgerState) (amount: decimal) = task { return [ Credited amount ], () }
-let private totalHandler _ (state: LedgerState) () = task { return ([]: LedgerEvent list), state.total }
+
+let private totalHandler _ (state: LedgerState) () =
+    task { return ([]: LedgerEvent list), state.total }
 
 let private fold (state: LedgerState) event =
     match event with
     | Credited amount -> { total = state.total + amount }
     | Reset -> { total = 0m }
+
+let private resolveCustomStorage
+    (_: IServiceProvider)
+    : IFunctionalJournalStorage<string, LedgerState, LedgerEvent> =
+    Unchecked.defaultof<_>
 
 /// The reference definition every rejection below is a one-change mutation of.
 let private complete () =
@@ -100,6 +108,356 @@ let ``journalStorage names the storage the provider writes through`` () =
         }
 
     test <@ definition.Journal.Value.StorageName = Some "Ledgers" @>
+
+[<Fact>]
+let ``customStorage and an explicit snapshot policy are retained by the sealed definition`` () =
+    let definition =
+        journaledGrainFor contract {
+            initialEventState (fun (_: string) -> { total = 0m })
+            apply fold
+            logProvider "CustomStorage"
+            customStorage resolveCustomStorage
+            snapshotPolicy (FunctionalJournalSnapshotPolicy.Every 100)
+            handle (_.credit) creditHandler
+            handle (_.total) totalHandler
+        }
+
+    test <@ definition.CustomStorage.IsSome @>
+    test <@ definition.SnapshotPolicy.IsSome @>
+
+    match definition.SnapshotPolicy.Value with
+    | FunctionalJournalSnapshotPolicy.Every eventCount -> test <@ eventCount = 100 @>
+    | policy -> failwith $"unexpected policy {policy.GetType().Name}"
+
+[<Fact>]
+let ``customStorage inherits the silo rule when snapshotPolicy is absent`` () =
+    let definition =
+        journaledGrainFor contract {
+            initialEventState (fun (_: string) -> { total = 0m })
+            apply fold
+            logProvider "CustomStorage"
+            customStorage resolveCustomStorage
+            handle (_.credit) creditHandler
+            handle (_.total) totalHandler
+        }
+
+    test <@ definition.CustomStorage.IsSome @>
+    test <@ definition.SnapshotPolicy.IsNone @>
+
+[<Fact>]
+let ``customStorage rejects an unused journalStorage name`` () =
+    let error =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "CustomStorage"
+                journalStorage "Unused"
+                customStorage resolveCustomStorage
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "both 'customStorage' and 'journalStorage'" @>
+    test <@ error.Message.Contains "would never be used" @>
+
+[<Fact>]
+let ``snapshotPolicy validates its interval and requires customStorage`` () =
+    let invalidInterval =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "CustomStorage"
+                customStorage resolveCustomStorage
+                snapshotPolicy (FunctionalJournalSnapshotPolicy.Every 0)
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let missingStorage =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                snapshotPolicy FunctionalJournalSnapshotPolicy.Disabled
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    test <@ invalidInterval.Message.Contains "requires a positive event count" @>
+    test <@ missingStorage.Message.Contains "but no 'customStorage'" @>
+
+[<Fact>]
+let ``customStorage and snapshotPolicy are singleton declarations`` () =
+    let duplicateStorage =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "CustomStorage"
+                customStorage resolveCustomStorage
+                customStorage resolveCustomStorage
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let duplicatePolicy =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "CustomStorage"
+                customStorage resolveCustomStorage
+                snapshotPolicy FunctionalJournalSnapshotPolicy.Disabled
+                snapshotPolicy FunctionalJournalSnapshotPolicy.Inherit
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    test <@ duplicateStorage.Message.Contains "'customStorage' is declared more than once" @>
+    test <@ duplicatePolicy.Message.Contains "'snapshotPolicy' is declared more than once" @>
+
+[<Fact>]
+let ``journaled definitions admit event-producing lifecycle and delivery hooks`` () =
+    let timerOptions =
+        GrainTimerCreationOptions(
+            TimeSpan.FromSeconds 1.0,
+            TimeSpan.FromSeconds 5.0,
+            Interleave = true,
+            KeepAlive = true
+        )
+
+    let definition =
+        journaledGrainFor contract {
+            initialEventState (fun (_: string) -> { total = 0m })
+            apply fold
+            logProvider "LogStorage"
+            onActivate (fun _ _ -> task { return () })
+            onDeactivate (fun _ _ _ -> task { return () })
+            onReminder "close-day" TimeSpan.Zero (TimeSpan.FromHours 24.0) (fun _ _ _ -> task { return [ Reset ] })
+            onTimer "interest" timerOptions (fun _ _ -> task { return [ Credited 1m ] })
+            onStream "Memory" "ledger-events" (fun _ _ (_: string) -> task { return [ Credited 2m ] })
+            onBroadcast "Broadcast" "ledger-events" (fun _ _ (_: int) -> task { return [ Credited 3m ] })
+            onTentativeStateChanged (fun _ _ -> ())
+            onStateChanged (fun _ _ -> ())
+            onConnectionIssue (fun _ _ _ -> ())
+            onConnectionIssueResolved (fun _ _ _ -> ())
+            handle (_.credit) creditHandler
+            handle (_.total) totalHandler
+        }
+
+    test <@ definition.Reminders.Length = 1 @>
+    test <@ definition.Reminders.Head.Name = "close-day" @>
+    test <@ definition.Timers.Length = 1 @>
+    test <@ definition.Timers.Head.Interleave @>
+    test <@ definition.Timers.Head.KeepAlive @>
+    test <@ definition.StreamBindings.Length = 2 @>
+    test <@ definition.StreamBindings.[0].IsStream @>
+    test <@ not definition.StreamBindings.[1].IsStream @>
+    test <@ definition.OnActivate.IsSome @>
+    test <@ definition.OnDeactivate.IsSome @>
+    test <@ definition.OnTentativeStateChanged.IsSome @>
+    test <@ definition.OnStateChanged.IsSome @>
+    test <@ definition.OnConnectionIssue.IsSome @>
+    test <@ definition.OnConnectionIssueResolved.IsSome @>
+
+[<Fact>]
+let ``duplicate journaled delivery bindings are rejected`` () =
+    let error =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onStream "Memory" "ledger-events" (fun _ _ (_: string) -> task { return [ Reset ] })
+                onStream "Memory" "ledger-events" (fun _ _ (_: string) -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'onStream' is declared more than once" @>
+
+[<Fact>]
+let ``journaled reminder declarations validate identity and schedule`` () =
+    let blank =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onReminder " " TimeSpan.Zero (TimeSpan.FromMinutes 1.0) (fun _ _ _ -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let duplicate =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onReminder "close-day" TimeSpan.Zero (TimeSpan.FromMinutes 1.0) (fun _ _ _ -> task { return [ Reset ] })
+                onReminder "close-day" TimeSpan.Zero (TimeSpan.FromMinutes 1.0) (fun _ _ _ -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let negativeDueTime =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onReminder "close-day" (TimeSpan.FromTicks -1L) (TimeSpan.FromMinutes 1.0) (fun _ _ _ -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let nonPositivePeriod =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onReminder "close-day" TimeSpan.Zero TimeSpan.Zero (fun _ _ _ -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    test <@ blank.Message.Contains "blank name" @>
+    test <@ duplicate.Message.Contains "declared more than once" @>
+    test <@ negativeDueTime.Message.Contains "dueTime >= 0" @>
+    test <@ nonPositivePeriod.Message.Contains "period > 0" @>
+
+[<Fact>]
+let ``journaled timer and delivery declarations validate their identities`` () =
+    let options =
+        GrainTimerCreationOptions(TimeSpan.Zero, TimeSpan.FromMinutes 1.0)
+
+    let blankTimer =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onTimer " " options (fun _ _ -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let duplicateTimer =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onTimer "close-day" options (fun _ _ -> task { return [ Reset ] })
+                onTimer "close-day" options (fun _ _ -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let blankProvider =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onStream " " "ledger-events" (fun _ _ (_: string) -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let blankNamespace =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onBroadcast "Broadcast" " " (fun _ _ (_: string) -> task { return [ Reset ] })
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    test <@ blankTimer.Message.Contains "blank name" @>
+    test <@ duplicateTimer.Message.Contains "declared more than once" @>
+    test <@ blankProvider.Message.Contains "blank provider name" @>
+    test <@ blankNamespace.Message.Contains "blank namespace" @>
+
+[<Fact>]
+let ``journal state and connection callbacks are singletons`` () =
+    let duplicateTentative =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onTentativeStateChanged (fun _ _ -> ())
+                onTentativeStateChanged (fun _ _ -> ())
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let duplicateConfirmed =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onStateChanged (fun _ _ -> ())
+                onStateChanged (fun _ _ -> ())
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let duplicateIssue =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onConnectionIssue (fun _ _ _ -> ())
+                onConnectionIssue (fun _ _ _ -> ())
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    let duplicateResolved =
+        throws (fun () ->
+            journaledGrainFor contract {
+                initialEventState (fun (_: string) -> { total = 0m })
+                apply fold
+                logProvider "LogStorage"
+                onConnectionIssueResolved (fun _ _ _ -> ())
+                onConnectionIssueResolved (fun _ _ _ -> ())
+                handle (_.credit) creditHandler
+                handle (_.total) totalHandler
+            }
+            |> ignore)
+
+    test <@ duplicateTentative.Message.Contains "'onTentativeStateChanged' is declared more than once" @>
+    test <@ duplicateConfirmed.Message.Contains "'onStateChanged' is declared more than once" @>
+    test <@ duplicateIssue.Message.Contains "'onConnectionIssue' is declared more than once" @>
+    test <@ duplicateResolved.Message.Contains "'onConnectionIssueResolved' is declared more than once" @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Rejections

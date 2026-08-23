@@ -6,9 +6,143 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open Orleans
+open Orleans.EventSourcing
 open Orleans.Runtime
 open Orleans.Streams
 open Orleans.FSharp.FunctionalDiagnostics
+
+/// <summary>A materialized journal view and the number of events represented by it.</summary>
+[<NoEquality; NoComparison>]
+type FunctionalJournalSnapshot<'State> =
+    {
+        /// The number of events already folded into <see cref="P:Orleans.FSharp.FunctionalJournalSnapshot`1.State"/>.
+        Version: int
+        /// The materialized journal state at <see cref="P:Orleans.FSharp.FunctionalJournalSnapshot`1.Version"/>.
+        State: 'State
+    }
+
+/// <summary>The durable identity handed to a functional journal's custom storage.</summary>
+[<Sealed>]
+type FunctionalJournalStorageIdentity<'Key>
+    internal (grainTypeName: string, grainId: GrainId, key: 'Key) =
+
+    /// <summary>The explicit Orleans grain type name.</summary>
+    member _.GrainTypeName = grainTypeName
+
+    /// <summary>The complete Orleans grain identity, including its grain type.</summary>
+    member _.GrainId = grainId
+
+    /// <summary>The definition's decoded domain key.</summary>
+    member _.Key = key
+
+/// <summary>
+/// What custom journal storage returns on activation: an optional compacted view followed by the
+/// still-retained events after that view.
+/// </summary>
+[<NoEquality; NoComparison>]
+type FunctionalJournalRead<'State, 'Event> =
+    {
+        /// The latest stored snapshot, or <c>None</c> when replay starts at the declared initial state.
+        Snapshot: FunctionalJournalSnapshot<'State> option
+        /// Events strictly after the snapshot, in journal order.
+        Events: IReadOnlyList<'Event>
+    }
+
+/// <summary>One compare-and-swap append issued to custom functional journal storage.</summary>
+[<NoEquality; NoComparison>]
+type FunctionalJournalWrite<'State, 'Event> =
+    {
+        /// The total journal version which must still be current for this write to succeed.
+        ExpectedVersion: int
+        /// The atomic event batch to append. A manual snapshot may write an empty batch.
+        Events: IReadOnlyList<'Event>
+        /// <summary>
+        /// The resulting compacted view when the resolved snapshot policy fires; otherwise
+        /// <c>None</c>. Its version is <c>ExpectedVersion + Events.Count</c>.
+        /// </summary>
+        Snapshot: FunctionalJournalSnapshot<'State> option
+    }
+
+/// <summary>
+/// Typed application storage behind Orleans' CustomStorage log-consistency provider.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <c>Append</c> is a compare-and-swap operation: it must return <c>false</c> without changing
+/// storage when the durable version differs from <c>ExpectedVersion</c>. On success it appends the
+/// whole event batch atomically and advances the version by its count. When <c>Snapshot</c> is
+/// present, the same atomic write may discard every retained event represented by that snapshot.
+/// </para>
+/// <para>
+/// The runtime, not the storage implementation, folds the tail returned by <c>Read</c>. There is
+/// therefore one authoritative <c>apply</c> function: the one declared by
+/// <c>journaledGrainFor</c>.
+/// </para>
+/// </remarks>
+type IFunctionalJournalStorage<'Key, 'State, 'Event> =
+
+    /// <summary>Read the latest snapshot and every retained event after it.</summary>
+    abstract Read:
+        identity: FunctionalJournalStorageIdentity<'Key> -> Task<FunctionalJournalRead<'State, 'Event>>
+
+    /// <summary>Atomically append one batch, optionally replacing the compacted snapshot.</summary>
+    abstract Append:
+        identity: FunctionalJournalStorageIdentity<'Key> * write: FunctionalJournalWrite<'State, 'Event> -> Task<bool>
+
+    /// <summary>Delete the complete stored journal for one grain identity.</summary>
+    abstract Clear: identity: FunctionalJournalStorageIdentity<'Key> -> Task
+
+/// <summary>A per-definition snapshot rule. Absence and <c>Inherit</c> use the silo default.</summary>
+[<RequireQualifiedAccess; NoEquality; NoComparison>]
+type FunctionalJournalSnapshotPolicy<'State> =
+    /// <summary>Use the silo-wide default rule.</summary>
+    | Inherit
+    /// <summary>Disable automatic snapshots for this definition.</summary>
+    | Disabled
+    /// <summary>Snapshot whenever an append crosses the next positive event-count boundary.</summary>
+    | Every of eventCount: int
+    /// <summary>Pure decision from the resulting version and state; CAS retries may evaluate it more than once.</summary>
+    | When of predicate: (int -> 'State -> bool)
+
+/// <summary>Information available to a silo-wide conditional snapshot rule.</summary>
+[<Sealed>]
+type FunctionalJournalSnapshotContext
+    internal (grainTypeName: string, grainId: GrainId, key: obj, version: int, stateType: Type, state: obj) =
+
+    /// <summary>The explicit Orleans grain type name.</summary>
+    member _.GrainTypeName = grainTypeName
+
+    /// <summary>The complete Orleans grain identity.</summary>
+    member _.GrainId = grainId
+
+    /// <summary>The boxed domain key.</summary>
+    member _.Key = key
+
+    /// <summary>The resulting journal version.</summary>
+    member _.Version = version
+
+    /// <summary>The definition's exact state type.</summary>
+    member _.StateType = stateType
+
+    /// <summary>The resulting state, boxed because one silo default serves heterogeneous definitions.</summary>
+    member _.State = state
+
+/// <summary>The silo-wide snapshot rule inherited by custom-storage definitions.</summary>
+[<RequireQualifiedAccess; NoEquality; NoComparison>]
+type FunctionalJournalSnapshotDefault =
+    /// <summary>Do not create automatic snapshots.</summary>
+    | Disabled
+    /// <summary>Snapshot whenever an append crosses the next positive event-count boundary.</summary>
+    | Every of eventCount: int
+    /// <summary>Pure decision from identity and resulting state; CAS retries may evaluate it more than once.</summary>
+    | When of predicate: (FunctionalJournalSnapshotContext -> bool)
+
+/// <summary>Options for the snapshot rule inherited by functional custom-storage journals.</summary>
+[<Sealed>]
+type FunctionalJournalSnapshotOptions() =
+
+    /// <summary>The silo-wide default. Per-definition <c>snapshotPolicy</c> overrides it.</summary>
+    member val Policy = FunctionalJournalSnapshotDefault.Disabled with get, set
 
 /// <summary>
 /// The activation-side journal of a <c>journaledGrainFor</c> definition, as an invocation context
@@ -25,26 +159,62 @@ type internal IFunctionalJournalAccess =
     /// <summary>The confirmed view, decoded into the definition's state type and boxed.</summary>
     abstract Current: obj
 
+    /// <summary>The tentative view, decoded into the definition's state type and boxed.</summary>
+    abstract Tentative: obj
+
     /// <summary>
     /// The length of the confirmed prefix of the journal: how many events have been appended and
     /// confirmed for this grain, ever.
     /// </summary>
     abstract ConfirmedVersion: int
 
+    /// <summary>The currently submitted but not yet confirmed events, decoded and boxed.</summary>
+    abstract Unconfirmed: obj list
+
+    /// <summary>The definition's declared state type, so a typed call can be checked against it.</summary>
+    abstract StateType: Type
+
     /// <summary>The definition's declared event type, so a typed call can be checked against it.</summary>
     abstract EventType: Type
+
+    /// <summary>Submit boxed events without waiting for confirmation.</summary>
+    abstract Raise: obj list -> unit
 
     /// <summary>
     /// Append the boxed events and wait until they are confirmed. This is the per-turn
     /// confirmation the dispatch path performs for a handler's returned events.
     /// </summary>
-    abstract RaiseAndConfirm: obj list -> Task
+    abstract RaiseAndConfirm: events: obj list * forceSnapshot: bool -> Task
+
+    /// <summary>Request a snapshot after this callback's events have been confirmed.</summary>
+    abstract RequestSnapshot: unit -> unit
 
     /// <summary>
     /// Append the boxed events at the current confirmed position only, reporting whether they were
     /// accepted. <c>false</c> means another writer appended first.
     /// </summary>
     abstract RaiseConditional: obj list -> Task<bool>
+
+    /// <summary>Wait until all previously submitted events have been confirmed.</summary>
+    abstract Confirm: unit -> Task
+
+    /// <summary>Refresh the confirmed view and confirm all previously submitted events.</summary>
+    abstract Refresh: unit -> Task
+
+    /// <summary>Retrieve and decode a segment of the confirmed event sequence.</summary>
+    abstract Retrieve: fromVersion: int * toVersion: int -> Task<obj list>
+
+    /// <summary>Clear every confirmed and unconfirmed event and restore the initial state.</summary>
+    abstract Clear: CancellationToken -> Task
+
+    /// <summary>Enable Orleans log-consistency statistics collection.</summary>
+    abstract EnableStats: unit -> unit
+
+    /// <summary>Disable Orleans log-consistency statistics collection.</summary>
+    abstract DisableStats: unit -> unit
+
+    /// <summary>Get the currently collected Orleans log-consistency statistics.</summary>
+    abstract GetStats: unit -> LogConsistencyStatistics
 
 /// <summary>
 /// One callback's view of the activation's journal: the activation-wide journal, bound to the
@@ -61,22 +231,66 @@ type internal FunctionalScopedJournal internal (journal: IFunctionalJournalAcces
 
     interface IFunctionalJournalAccess with
         member _.Current =
-            scope.EnsureJournalUsable "state"
+            scope.EnsureJournalUsable "journalState"
             journal.Current
+
+        member _.Tentative =
+            scope.EnsureJournalUsable "journalTentativeState"
+            journal.Tentative
 
         member _.ConfirmedVersion =
             scope.EnsureJournalUsable "journalVersion"
             journal.ConfirmedVersion
 
+        member _.Unconfirmed =
+            scope.EnsureJournalUsable "unconfirmedEvents"
+            journal.Unconfirmed
+
+        member _.StateType = journal.StateType
+
         member _.EventType = journal.EventType
 
-        member _.RaiseAndConfirm events =
+        member _.Raise events =
+            scope.EnsureJournalAppend "raiseEvents"
+            journal.Raise events
+
+        member _.RaiseAndConfirm(events, forceSnapshot) =
             scope.EnsureJournalAppend "raise"
-            journal.RaiseAndConfirm events
+            journal.RaiseAndConfirm(events, forceSnapshot)
+
+        member _.RequestSnapshot() = scope.RequestJournalSnapshot()
 
         member _.RaiseConditional events =
-            scope.EnsureJournalAppend "raiseConditional"
+            scope.EnsureJournalAppend "raiseConditional/raiseConditionalEvent"
             journal.RaiseConditional events
+
+        member _.Confirm() =
+            scope.EnsureJournalUsable "confirmEvents"
+            journal.Confirm()
+
+        member _.Refresh() =
+            scope.EnsureJournalUsable "refreshJournal"
+            journal.Refresh()
+
+        member _.Retrieve(fromVersion, toVersion) =
+            scope.EnsureJournalUsable "retrieveConfirmedEvents"
+            journal.Retrieve(fromVersion, toVersion)
+
+        member _.Clear cancellationToken =
+            scope.EnsureJournalAppend "clearJournal"
+            journal.Clear cancellationToken
+
+        member _.EnableStats() =
+            scope.EnsureJournalUsable "enableJournalStats"
+            journal.EnableStats()
+
+        member _.DisableStats() =
+            scope.EnsureJournalUsable "disableJournalStats"
+            journal.DisableStats()
+
+        member _.GetStats() =
+            scope.EnsureJournalUsable "getJournalStats"
+            journal.GetStats()
 
 /// <summary>
 /// Activation-supplied services behind one invocation context. Phase 4 fills this record for
@@ -131,6 +345,34 @@ type internal FunctionalContextCore =
 /// </summary>
 [<Sealed>]
 type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalContextCore) =
+
+    let journalFor (operationName: string) =
+        match core.Journal with
+        | null ->
+            fail
+                DefinitionStage
+                $"'{operationName}' is available only inside a definition built with 'journaledGrainFor'. An ordinary 'grainFor' definition has no journal."
+        | journal -> journal
+
+    let requireJournalState (operationName: string) (stateType: Type) =
+        let journal = journalFor operationName
+
+        if journal.StateType <> stateType then
+            fail
+                DefinitionStage
+                $"'{operationName}' was called with state type '{stateType.FullName}', but this definition's declared state type is '{journal.StateType.FullName}'."
+
+        journal
+
+    let requireJournalEvent (operationName: string) (eventType: Type) =
+        let journal = journalFor operationName
+
+        if journal.EventType <> eventType then
+            fail
+                DefinitionStage
+                $"'{operationName}' was called with event type '{eventType.FullName}', but this definition's declared event type is '{journal.EventType.FullName}'."
+
+        journal
 
     /// <summary>The domain key decoded once from the supplied grain identity.</summary>
     member _.key = key
@@ -252,13 +494,95 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when this definition was not built with 'journaledGrainFor'.
     /// </exception>
-    member _.journalVersion: int =
-        match core.Journal with
-        | null ->
-            fail
-                DefinitionStage
-                "'journalVersion' is available only inside a definition built with 'journaledGrainFor'. An ordinary 'grainFor' definition has no journal."
-        | journal -> journal.ConfirmedVersion
+    member _.journalVersion: int = (journalFor "journalVersion").ConfirmedVersion
+
+    /// <summary>Read the current confirmed journal state.</summary>
+    /// <remarks>
+    /// Unlike the state argument handed to a handler, this value is read when the member is
+    /// called. After <c>refreshJournal</c> it therefore observes the refreshed confirmed view,
+    /// matching <c>JournaledGrain.State</c>.
+    /// </remarks>
+    member _.journalState<'State>() : 'State =
+        let journal = requireJournalState "journalState" typeof<'State>
+        unbox<'State> journal.Current
+
+    /// <summary>
+    /// Read the tentative journal state, including both confirmed and locally submitted events.
+    /// </summary>
+    member _.journalTentativeState<'State>() : 'State =
+        let journal = requireJournalState "journalTentativeState" typeof<'State>
+        unbox<'State> journal.Tentative
+
+    /// <summary>Read the locally submitted events which are not confirmed yet.</summary>
+    member _.unconfirmedEvents<'Event>() : 'Event list =
+        let journal = requireJournalEvent "unconfirmedEvents" typeof<'Event>
+        journal.Unconfirmed |> List.map unbox<'Event>
+
+    /// <summary>
+    /// Submit one event without waiting for confirmation. The tentative state changes
+    /// synchronously; call <c>confirmEvents</c> before relying on durability.
+    /// </summary>
+    member _.raiseEvent<'Event>(event: 'Event) : unit =
+        let journal = requireJournalEvent "raiseEvent" typeof<'Event>
+        journal.Raise [ box event ]
+
+    /// <summary>
+    /// Submit an atomic event batch without waiting for confirmation. The tentative state changes
+    /// synchronously; call <c>confirmEvents</c> before relying on durability.
+    /// </summary>
+    member _.raiseEvents<'Event>(events: 'Event list) : unit =
+        let journal = requireJournalEvent "raiseEvents" typeof<'Event>
+        journal.Raise(events |> List.map box)
+
+    /// <summary>Wait until every previously submitted event has been confirmed.</summary>
+    member _.confirmEvents() : Task = (journalFor "confirmEvents").Confirm()
+
+    /// <summary>
+    /// Force one custom-storage snapshot after this callback's submitted and returned events have
+    /// been confirmed. A manual request overrides both a per-definition and a silo-wide
+    /// <c>Disabled</c> rule.
+    /// </summary>
+    /// <remarks>
+    /// Available only when the definition declares <c>customStorage</c>. The request is bound to
+    /// this callback: if the callback fails, no snapshot is written; in a read-only or otherwise
+    /// state-neutral callback it is rejected like an event append. It is also rejected by the
+    /// synchronous state/connection notification hooks, which have no asynchronous completion at
+    /// which a storage write could be awaited.
+    /// </remarks>
+    member _.snapshotNow() : unit = (journalFor "snapshotNow").RequestSnapshot()
+
+    /// <summary>
+    /// Refresh the confirmed state from the global journal and confirm every submitted event.
+    /// </summary>
+    member _.refreshJournal() : Task = (journalFor "refreshJournal").Refresh()
+
+    /// <summary>Retrieve a half-open segment of the confirmed event sequence.</summary>
+    member _.retrieveConfirmedEvents<'Event>(fromVersion: int, toVersion: int) : Task<'Event list> =
+        let journal = requireJournalEvent "retrieveConfirmedEvents" typeof<'Event>
+
+        task {
+            let! events = journal.Retrieve(fromVersion, toVersion)
+            return events |> List.map unbox<'Event>
+        }
+
+    /// <summary>
+    /// Clear confirmed and unconfirmed events and restore the declared initial state. The current
+    /// callback's cancellation token is forwarded to Orleans.
+    /// </summary>
+    member _.clearJournal() : Task =
+        (journalFor "clearJournal").Clear core.CancellationToken
+
+    /// <summary>Enable Orleans log-consistency statistics collection for this activation.</summary>
+    member _.enableJournalStats() : unit =
+        (journalFor "enableJournalStats").EnableStats()
+
+    /// <summary>Disable Orleans log-consistency statistics collection for this activation.</summary>
+    member _.disableJournalStats() : unit =
+        (journalFor "disableJournalStats").DisableStats()
+
+    /// <summary>Get the currently collected Orleans log-consistency statistics.</summary>
+    member _.getJournalStats() : LogConsistencyStatistics =
+        (journalFor "getJournalStats").GetStats()
 
     /// <summary>
     /// Append events at the journal's current confirmed position <b>only</b>, and report whether
@@ -286,18 +610,13 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
     /// <typeparamref name="'Event"/> does not match the definition's declared event type.
     /// </exception>
     member _.raiseConditional<'Event>(events: 'Event list) : Task<bool> =
-        match core.Journal with
-        | null ->
-            fail
-                DefinitionStage
-                "'raiseConditional' is available only inside a definition built with 'journaledGrainFor'. An ordinary 'grainFor' definition has no journal."
-        | journal ->
-            if journal.EventType <> typeof<'Event> then
-                fail
-                    DefinitionStage
-                    $"'raiseConditional' was called with events of type '{typeof<'Event>.FullName}', but this definition's declared event type is '{journal.EventType.FullName}'."
+        let journal = requireJournalEvent "raiseConditional" typeof<'Event>
+        journal.RaiseConditional(events |> List.map box)
 
-            journal.RaiseConditional(events |> List.map box)
+    /// <summary>Conditionally append one event at the current confirmed position.</summary>
+    member _.raiseConditionalEvent<'Event>(event: 'Event) : Task<bool> =
+        let journal = requireJournalEvent "raiseConditionalEvent" typeof<'Event>
+        journal.RaiseConditional [ box event ]
 
     /// <summary>Read a typed value from the Orleans request context.</summary>
     /// <param name="name">The request-context key to read.</param>
@@ -403,6 +722,28 @@ type JournaledActivateHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor
 type JournaledDeactivateHook<'Actor, 'Key, 'State> =
     FunctionalGrainContext<'Actor, 'Key> -> DeactivationReason -> 'State -> Task<unit>
 
+/// <summary>A durable reminder hook of a journaled definition; its returned events are confirmed.</summary>
+type JournaledReminderHook<'Actor, 'Key, 'State, 'Event> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> TickStatus -> Task<'Event list>
+
+/// <summary>An activation-local timer hook of a journaled definition; its returned events are confirmed.</summary>
+type JournaledTimerHook<'Actor, 'Key, 'State, 'Event> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> Task<'Event list>
+
+/// <summary>
+/// An implicit stream or broadcast delivery hook of a journaled definition; its returned events
+/// are confirmed atomically before Orleans observes successful delivery.
+/// </summary>
+type JournaledStreamHook<'Actor, 'Key, 'State, 'Event, 'Item> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Item -> Task<'Event list>
+
+/// <summary>A synchronous notification that the confirmed or tentative journal state changed.</summary>
+type JournaledStateChangedHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> unit
+
+/// <summary>A synchronous notification from Orleans' log-consistency connection monitor.</summary>
+type JournaledConnectionIssueHook<'Actor, 'Key, 'State> =
+    FunctionalGrainContext<'Actor, 'Key> -> 'State -> ConnectionIssue -> unit
+
 /// <summary>An activation hook; its returned state is published in memory only.</summary>
 type ActivateHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> Task<'State>
 
@@ -411,8 +752,7 @@ type DeactivateHook<'Actor, 'Key, 'State> =
     FunctionalGrainContext<'Actor, 'Key> -> DeactivationReason -> 'State -> Task<unit>
 
 /// <summary>A reminder hook; whole-state replacement under ordinary Orleans scheduling.</summary>
-type ReminderHook<'Actor, 'Key, 'State> =
-    FunctionalGrainContext<'Actor, 'Key> -> 'State -> TickStatus -> Task<'State>
+type ReminderHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> TickStatus -> Task<'State>
 
 /// <summary>A timer hook; whole-state replacement under non-interleaving scheduling.</summary>
 type TimerHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> Task<'State>
@@ -424,8 +764,7 @@ type TimerHook<'Actor, 'Key, 'State> = FunctionalGrainContext<'Actor, 'Key> -> '
 /// hook returns successfully, and the runtime issues no storage call of its own.
 /// </summary>
 /// <typeparam name="TItem">The exact item type carried on the stream or channel.</typeparam>
-type StreamHook<'Actor, 'Key, 'State, 'Item> =
-    FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Item -> Task<'State>
+type StreamHook<'Actor, 'Key, 'State, 'Item> = FunctionalGrainContext<'Actor, 'Key> -> 'State -> 'Item -> Task<'State>
 
 /// <summary>
 /// The closed set of documented Orleans grain-lifecycle stages an <c>onLifecycle</c> hook may

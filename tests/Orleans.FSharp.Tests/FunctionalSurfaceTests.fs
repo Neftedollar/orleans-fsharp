@@ -14,6 +14,7 @@ open Xunit
 open Swensen.Unquote
 open Orleans
 open Orleans.GrainReferences
+open Orleans.EventSourcing
 open Orleans.Hosting
 open Orleans.Runtime
 open Orleans.Streams
@@ -26,7 +27,10 @@ type SurfaceApi =
     { first: int -> Task<unit>
       second: int -> Task<unit> }
 
+[<CLIMutable>]
 type SurfaceState = { count: int }
+
+type SurfaceJournalEvent = Incremented of int
 
 let private contract =
     grainContract<SurfaceActor, string, SurfaceApi> {
@@ -53,11 +57,12 @@ type private StrictlyIncreasingTimeProvider(start: DateTimeOffset) =
         current <- current.AddTicks 1L
         current
 
-let private makeContextWithToken
+let private makeContextWithTokenAndJournal
     (timeProvider: TimeProvider)
     (resolve: PersistentStateDescriptor -> obj)
     (token: CancellationToken)
     (sequenceToken: StreamSequenceToken)
+    (journal: IFunctionalJournalAccess)
     =
     let mutable deactivated = 0
     let mutable delayed = TimeSpan.Zero
@@ -75,10 +80,18 @@ let private makeContextWithToken
           DelayDeactivation = fun span -> delayed <- span
           ResolvePersistentState = resolve
           ResolveTransactionalState = fun _ -> null
-          Journal = null }
+          Journal = journal }
 
     let context = FunctionalGrainContext<SurfaceActor, string>("general", core)
     context, (fun () -> deactivated), (fun () -> delayed)
+
+let private makeContextWithToken
+    (timeProvider: TimeProvider)
+    (resolve: PersistentStateDescriptor -> obj)
+    (token: CancellationToken)
+    (sequenceToken: StreamSequenceToken)
+    =
+    makeContextWithTokenAndJournal timeProvider resolve token sequenceToken null
 
 let private makeContextWith
     (timeProvider: TimeProvider)
@@ -89,6 +102,93 @@ let private makeContextWith
 
 let private makeContext (resolve: PersistentStateDescriptor -> obj) (token: CancellationToken) =
     makeContextWith TimeProvider.System resolve token
+
+type private SurfaceJournalStub() =
+    let stats = LogConsistencyStatistics()
+    let mutable snapshotRequested = false
+
+    member _.SnapshotRequested = snapshotRequested
+
+    interface IFunctionalJournalAccess with
+        member _.Current = box { count = 0 }
+        member _.Tentative = box { count = 1 }
+        member _.ConfirmedVersion = 0
+        member _.Unconfirmed = [ box (Incremented 1) ]
+        member _.StateType = typeof<SurfaceState>
+        member _.EventType = typeof<SurfaceJournalEvent>
+        member _.Raise _ = ()
+        member _.RaiseAndConfirm(_, _) = Task.CompletedTask
+        member _.RequestSnapshot() = snapshotRequested <- true
+        member _.RaiseConditional _ = Task.FromResult true
+        member _.Confirm() = Task.CompletedTask
+        member _.Refresh() = Task.CompletedTask
+        member _.Retrieve(_, _) = Task.FromResult<obj list> []
+        member _.Clear _ = Task.CompletedTask
+        member _.EnableStats() = ()
+        member _.DisableStats() = ()
+        member _.GetStats() = stats
+
+let private makeJournalContext (journal: IFunctionalJournalAccess) =
+    let context, _, _ =
+        makeContextWithTokenAndJournal
+            TimeProvider.System
+            (fun _ -> null)
+            CancellationToken.None
+            null
+            journal
+
+    context
+
+let private journalActions (context: FunctionalGrainContext<SurfaceActor, string>) : (string * (unit -> Task)) list =
+    [ "journalVersion",
+      fun () ->
+          context.journalVersion |> ignore
+          Task.CompletedTask
+      "journalState",
+      fun () ->
+          context.journalState<SurfaceState>() |> ignore
+          Task.CompletedTask
+      "journalTentativeState",
+      fun () ->
+          context.journalTentativeState<SurfaceState>() |> ignore
+          Task.CompletedTask
+      "unconfirmedEvents",
+      fun () ->
+          context.unconfirmedEvents<SurfaceJournalEvent>() |> ignore
+          Task.CompletedTask
+      "raiseEvent",
+      fun () ->
+          context.raiseEvent (Incremented 1)
+          Task.CompletedTask
+      "raiseEvents",
+      fun () ->
+          context.raiseEvents [ Incremented 1 ]
+          Task.CompletedTask
+      "confirmEvents", context.confirmEvents
+      "snapshotNow",
+      fun () ->
+          context.snapshotNow ()
+          Task.CompletedTask
+      "refreshJournal", context.refreshJournal
+      "retrieveConfirmedEvents",
+      fun () -> context.retrieveConfirmedEvents<SurfaceJournalEvent>(0, 1) :> Task
+      "clearJournal", context.clearJournal
+      "enableJournalStats",
+      fun () ->
+          context.enableJournalStats ()
+          Task.CompletedTask
+      "disableJournalStats",
+      fun () ->
+          context.disableJournalStats ()
+          Task.CompletedTask
+      "getJournalStats",
+      fun () ->
+          context.getJournalStats () |> ignore
+          Task.CompletedTask
+      "raiseConditional",
+      fun () -> context.raiseConditional [ Incremented 1 ] :> Task
+      "raiseConditionalEvent",
+      fun () -> context.raiseConditionalEvent (Incremented 1) :> Task ]
 
 [<Fact>]
 let ``the context exposes the decoded key, grain identity, and clock`` () =
@@ -117,7 +217,10 @@ let ``the context exposes the decoded key, grain identity, and clock`` () =
 [<Fact>]
 let ``utcNow is a single frozen value, not recomputed on each read`` () =
     let timeProvider = StrictlyIncreasingTimeProvider(DateTimeOffset.UtcNow)
-    let context, _, _ = makeContextWith timeProvider (fun _ -> null) CancellationToken.None
+
+    let context, _, _ =
+        makeContextWith timeProvider (fun _ -> null) CancellationToken.None
+
     let first = context.utcNow
     let second = context.utcNow
 
@@ -153,7 +256,8 @@ let ``the context exposes the stream sequence token only when a delivery carries
 
 [<Fact>]
 let ``the context wraps the Orleans deactivation methods`` () =
-    let context, deactivations, delay = makeContext (fun _ -> null) CancellationToken.None
+    let context, deactivations, delay =
+        makeContext (fun _ -> null) CancellationToken.None
 
     context.deactivateOnIdle ()
     context.delayDeactivation (TimeSpan.FromMinutes 2.0)
@@ -206,6 +310,111 @@ let ``the context reads, writes, and removes request context values`` () =
         test <@ context.tryGetRequestContext<string> "tenant" = None @>
     finally
         RequestContext.Clear()
+
+[<Fact>]
+let ``every journal context member rejects an ordinary grain context`` () =
+    task {
+        let context, _, _ = makeContext (fun _ -> null) CancellationToken.None
+
+        for operation, invoke in journalActions context do
+            let! error = Assert.ThrowsAsync<InvalidOperationException>(fun () -> invoke ())
+            test <@ error.Message.Contains operation @>
+            test <@ error.Message.Contains "journaledGrainFor" @>
+    }
+
+[<Fact>]
+let ``typed journal context members reject the wrong state or event type`` () =
+    task {
+        let context = makeJournalContext (SurfaceJournalStub() :> IFunctionalJournalAccess)
+
+        let wrongTypeActions: (string * (unit -> Task)) list =
+            [ "journalState",
+              fun () ->
+                  context.journalState<int>() |> ignore
+                  Task.CompletedTask
+              "journalTentativeState",
+              fun () ->
+                  context.journalTentativeState<int>() |> ignore
+                  Task.CompletedTask
+              "unconfirmedEvents",
+              fun () ->
+                  context.unconfirmedEvents<string>() |> ignore
+                  Task.CompletedTask
+              "raiseEvent",
+              fun () ->
+                  context.raiseEvent "wrong"
+                  Task.CompletedTask
+              "raiseEvents",
+              fun () ->
+                  context.raiseEvents [ "wrong" ]
+                  Task.CompletedTask
+              "retrieveConfirmedEvents",
+              fun () -> context.retrieveConfirmedEvents<string>(0, 1) :> Task
+              "raiseConditional",
+              fun () -> context.raiseConditional [ "wrong" ] :> Task
+              "raiseConditionalEvent",
+              fun () -> context.raiseConditionalEvent "wrong" :> Task ]
+
+        for operation, invoke in wrongTypeActions do
+            let! error = Assert.ThrowsAsync<InvalidOperationException>(fun () -> invoke ())
+            test <@ error.Message.Contains operation @>
+            test <@ error.Message.Contains "declared" @>
+    }
+
+[<Fact>]
+let ``snapshotNow is forwarded to the callback journal`` () =
+    let journal = SurfaceJournalStub()
+    let context = makeJournalContext (journal :> IFunctionalJournalAccess)
+
+    context.snapshotNow ()
+
+    test <@ journal.SnapshotRequested @>
+
+[<Fact>]
+let ``snapshotNow is rejected by a state-neutral callback`` () =
+    let scope = FunctionalStateScope("surface.test", "read", false)
+
+    let journal =
+        FunctionalScopedJournal(SurfaceJournalStub() :> IFunctionalJournalAccess, scope)
+        :> IFunctionalJournalAccess
+
+    let context = makeJournalContext journal
+    let error = Assert.Throws<InvalidOperationException>(fun () -> context.snapshotNow ())
+
+    test <@ error.Message.Contains "snapshotNow" @>
+    test <@ error.Message.Contains "state-neutral" @>
+
+[<Fact>]
+let ``snapshotNow is rejected by a synchronous journal notification`` () =
+    let scope = FunctionalStateScope("surface.test", "onStateChanged", true, Unavailable, false)
+
+    let journal =
+        FunctionalScopedJournal(SurfaceJournalStub() :> IFunctionalJournalAccess, scope)
+        :> IFunctionalJournalAccess
+
+    let context = makeJournalContext journal
+    let error = Assert.Throws<InvalidOperationException>(fun () -> context.snapshotNow ())
+
+    test <@ error.Message.Contains "snapshotNow" @>
+    test <@ error.Message.Contains "synchronous journal notification" @>
+
+[<Fact>]
+let ``every journal context member rejects an expired invocation scope`` () =
+    task {
+        let scope = FunctionalStateScope("surface.test", "expired-test", true)
+
+        let journal =
+            FunctionalScopedJournal(SurfaceJournalStub() :> IFunctionalJournalAccess, scope)
+            :> IFunctionalJournalAccess
+
+        let context = makeJournalContext journal
+        scope.Expire()
+
+        for operation, invoke in journalActions context do
+            let! error = Assert.ThrowsAsync<InvalidOperationException>(fun () -> invoke ())
+            test <@ error.Message.Contains operation @>
+            test <@ error.Message.Contains "had already completed" @>
+    }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Bound reference wrapper
@@ -292,10 +501,10 @@ let ``the point-free bindings infer the specification's concrete types`` () =
     let inferredRef: IGrainFactory -> Chat.PointFree.LobbyId -> Chat.PointFree.LobbyApi =
         Chat.PointFree.Lobby.ref
 
-    let inferredRawRef:
-        IGrainFactory
-            -> Chat.PointFree.LobbyId
-            -> FunctionalGrainRef<Chat.PointFree.LobbyActor, Chat.PointFree.LobbyId, Chat.PointFree.LobbyApi> =
+    let inferredRawRef
+        : IGrainFactory
+              -> Chat.PointFree.LobbyId
+              -> FunctionalGrainRef<Chat.PointFree.LobbyActor, Chat.PointFree.LobbyId, Chat.PointFree.LobbyApi> =
         Chat.PointFree.Lobby.rawRef
 
     // The runtime types carry no type parameters left open either.
@@ -321,12 +530,16 @@ let ``the point-free bindings infer the specification's concrete types`` () =
 let private fakeClientBuilder (services: IServiceCollection) =
     { new IClientBuilder with
         member _.Services = services
-        member _.Configuration = Unchecked.defaultof<Microsoft.Extensions.Configuration.IConfiguration> }
+
+        member _.Configuration =
+            Unchecked.defaultof<Microsoft.Extensions.Configuration.IConfiguration> }
 
 let private fakeSiloBuilder (services: IServiceCollection) =
     { new ISiloBuilder with
         member _.Services = services
-        member _.Configuration = Unchecked.defaultof<Microsoft.Extensions.Configuration.IConfiguration> }
+
+        member _.Configuration =
+            Unchecked.defaultof<Microsoft.Extensions.Configuration.IConfiguration> }
 
 /// <summary>
 /// Orleans installs its own reference activator providers before a builder extension runs.
@@ -440,8 +653,17 @@ let ``policy order does not matter`` () =
             alwaysInterleave (_.second)
         }
 
-    test <@ interleaveFirst.Operations.[1].IsOneWay && interleaveFirst.Operations.[1].IsAlwaysInterleave @>
-    test <@ oneWayFirst.Operations.[1].IsOneWay && oneWayFirst.Operations.[1].IsAlwaysInterleave @>
+    test
+        <@
+            interleaveFirst.Operations.[1].IsOneWay
+            && interleaveFirst.Operations.[1].IsAlwaysInterleave
+        @>
+
+    test
+        <@
+            oneWayFirst.Operations.[1].IsOneWay
+            && oneWayFirst.Operations.[1].IsAlwaysInterleave
+        @>
 
 [<Fact>]
 let ``a null selector fails with the required diagnostic`` () =
@@ -517,9 +739,90 @@ let ``two contracts over the same API share one cached shape`` () =
 let private customOperations (builderType: Type) =
     builderType.GetMethods(Reflection.BindingFlags.Public ||| Reflection.BindingFlags.Instance)
     |> Array.collect (fun method' ->
-        method'.GetCustomAttributes(typeof<CustomOperationAttribute>, false)
-        |> Array.map (fun attribute' -> (attribute' :?> CustomOperationAttribute).Name))
+        method'.GetCustomAttributes(typeof<Microsoft.FSharp.Core.CustomOperationAttribute>, false)
+        |> Array.map (fun attribute' -> (attribute' :?> Microsoft.FSharp.Core.CustomOperationAttribute).Name))
     |> Array.sort
+
+[<Fact>]
+let ``every Orleans JournaledGrain member is mapped and the baseline has not drifted`` () =
+    // This is the source side of the parity contract. If a supported Orleans version adds,
+    // removes, or renames a declared JournaledGrain member, this fails beside the exact F#
+    // context and builder surface pins below instead of letting the wrapper silently lag.
+    let mapping =
+        [| "ClearLogAsync", [ "clearJournal" ]
+           "ConfirmEvents", [ "confirmEvents" ]
+           "DefaultAdaptorFactory", [ "logProvider"; "journalStorage" ]
+           "DisableStatsCollection", [ "disableJournalStats" ]
+           "EnableStatsCollection", [ "enableJournalStats" ]
+           "GetStats", [ "getJournalStats" ]
+           "InstallAdaptor", [ "logProvider"; "journalStorage" ]
+           // The adaptor itself and pre-activation protocol stage are runtime-owned seams.
+           "LogViewAdaptor", []
+           "OnActivateAsync", [ "onActivate" ]
+           "OnConnectionIssue", [ "onConnectionIssue" ]
+           "OnConnectionIssueResolved", [ "onConnectionIssueResolved" ]
+           "OnStateChanged", [ "onStateChanged" ]
+           "OnTentativeStateChanged", [ "onTentativeStateChanged" ]
+           "Orleans.EventSourcing.IConnectionIssueListener.OnConnectionIssue", [ "onConnectionIssue" ]
+           "Orleans.EventSourcing.IConnectionIssueListener.OnConnectionIssueResolved",
+           [ "onConnectionIssueResolved" ]
+           "Orleans.EventSourcing.ILogConsistencyProtocolParticipant.DeactivateProtocolParticipant",
+           [ "onDeactivate" ]
+           "Orleans.EventSourcing.ILogConsistencyProtocolParticipant.PostActivateProtocolParticipant",
+           [ "onActivate" ]
+           "Orleans.EventSourcing.ILogConsistencyProtocolParticipant.PreActivateProtocolParticipant", []
+           "Orleans.EventSourcing.ILogViewAdaptorHost<TGrainState,TEventBase>.OnViewChanged",
+           [ "onTentativeStateChanged"; "onStateChanged" ]
+           "Orleans.EventSourcing.ILogViewAdaptorHost<TGrainState,TEventBase>.UpdateView", [ "apply" ]
+           "RaiseConditionalEvent", [ "raiseConditionalEvent" ]
+           "RaiseConditionalEvents", [ "raiseConditional" ]
+           "RaiseEvent", [ "raiseEvent" ]
+           "RaiseEvents", [ "raiseEvents" ]
+           "RefreshNow", [ "refreshJournal" ]
+           "RetrieveConfirmedEvents", [ "retrieveConfirmedEvents" ]
+           "State", [ "journalState" ]
+           "TentativeState", [ "journalTentativeState" ]
+           "TransitionState", [ "apply" ]
+           "UnconfirmedEvents", [ "unconfirmedEvents" ]
+           "Version", [ "journalVersion" ] |]
+
+    let expected = mapping |> Array.map fst |> Array.sort
+
+    let flags =
+        Reflection.BindingFlags.Instance
+        ||| Reflection.BindingFlags.Public
+        ||| Reflection.BindingFlags.NonPublic
+        ||| Reflection.BindingFlags.DeclaredOnly
+
+    let journaledType = typeof<JournaledGrain<SurfaceState, SurfaceJournalEvent>>
+
+    let actual =
+        Array.append
+            (journaledType.GetMethods flags
+             |> Array.map (fun method' -> method'.Name)
+             |> Array.filter (fun name -> not (name.StartsWith "get_" || name.StartsWith "set_")))
+            (journaledType.GetProperties flags |> Array.map (fun property' -> property'.Name))
+        |> Array.distinct
+        |> Array.sort
+
+    test <@ actual = expected @>
+
+    let contextSurface =
+        typeof<FunctionalGrainContext<SurfaceActor, string>>
+            .GetMembers(Reflection.BindingFlags.Public ||| Reflection.BindingFlags.Instance)
+        |> Array.map (fun member' -> member'.Name)
+        |> Array.filter (fun name -> not (name.StartsWith "get_" || name.StartsWith "set_"))
+        |> Set.ofArray
+
+    let builderSurface =
+        customOperations typeof<FunctionalJournaledGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>>
+        |> Set.ofArray
+
+    let fsharpSurface = Set.union contextSurface builderSurface
+
+    for source, targets in mapping do
+        for target in targets do
+            test <@ Set.contains target fsharpSurface @>
 
 [<Fact>]
 let ``the builders module exposes exactly the specified entry points`` () =
@@ -680,17 +983,17 @@ let ``the definition builder declares exactly the specified custom operations`` 
     test <@ customOperations typeof<FunctionalGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
 
 /// <remarks>
-/// Spec 004 item 3. The journaled builder's operation set is a deliberate SUBSET of the ordinary
-/// one plus two of its own, and every absence is a ruling with a mechanism behind it — a journal
-/// cannot honour a whole-state-replacement hook, cannot be a transaction participant, and cannot
-/// be shared by the many activations of a stateless worker. An operation appearing here without
-/// that decision being made is exactly what this pin exists to catch.
+/// Spec 004 item 3. Whole-state hooks have journal-aware counterparts which return events, while
+/// transactional facets, lifecycle-stage hooks, and stateless workers remain absent. An operation
+/// appearing or disappearing here without that decision being made is exactly what this pin
+/// exists to catch.
 /// </remarks>
 [<Fact>]
 let ``the journaled definition builder declares exactly the specified custom operations`` () =
     let expected =
         [| "apply"
            "collectionAge"
+           "customStorage"
            "handle"
            // Reply-only sugar over 'handle', admitted only on a readOnly operation. It takes the
            // same QueryHandler shape the ordinary builder's does: a query raises no events and
@@ -705,35 +1008,60 @@ let ``the journaled definition builder declares exactly the specified custom ope
            "journalStorage"
            "logProvider"
            "onActivate"
+           "onBroadcast"
+           "onConnectionIssue"
+           "onConnectionIssueResolved"
            "onDeactivate"
-           "placement" |]
+           "onReminder"
+           "onStateChanged"
+           "onStream"
+           "onTentativeStateChanged"
+           "onTimer"
+           "placement"
+           "snapshotPolicy" |]
 
     test
-        <@ customOperations typeof<FunctionalJournaledGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected @>
+        <@
+            customOperations typeof<FunctionalJournaledGrainDefinitionBuilder<SurfaceActor, string, SurfaceApi>> = expected
+        @>
 
 [<Fact>]
 let ``the invocation context declares exactly the specified public members`` () =
     let expected =
         [| "cancellationToken"
+           "clearJournal"
+           "confirmEvents"
            "deactivateOnIdle"
            "delayDeactivation"
+           "disableJournalStats"
+           "enableJournalStats"
+           "getJournalStats"
            "grainFactory"
            "grainId"
-           // Spec 004 item 3: the two journaled members. Both are on the ONE context type rather
-           // than on a journaled variant of it, so an ordinary grainFor definition can reach them
-           // too — and both refuse with a definition-stage diagnostic when it does.
+           // The complete JournaledGrain lifecycle lives on the ONE context type rather than on a
+           // journaled variant. An ordinary grainFor definition can name these members, and each
+           // refuses with a definition-stage diagnostic when invoked there.
+           "journalState"
+           "journalTentativeState"
            "journalVersion"
            "key"
            "logger"
            "persistentState"
            "raiseConditional"
+           "raiseConditionalEvent"
+           "raiseEvent"
+           "raiseEvents"
+           "refreshJournal"
            "removeRequestContext"
+           "retrieveConfirmedEvents"
            "services"
            "setRequestContext"
+           "snapshotNow"
            "streamSequenceToken"
            "timeProvider"
            "transactionalState"
            "tryGetRequestContext"
+           "unconfirmedEvents"
            "utcNow" |]
 
     let actual =
@@ -758,10 +1086,18 @@ let ``the invocation context declares exactly the specified public members`` () 
 /// </remarks>
 [<Fact>]
 let ``FunctionalGrain.streamId and channelId carry the contract's own grain-key bytes`` () =
-    let streamNamespace = (FunctionalGrain.streamId contract "surface.ns" "general").GetNamespace()
-    let streamKey = (FunctionalGrain.streamId contract "surface.ns" "general").GetKeyAsString()
-    let channelNamespace = (FunctionalGrain.channelId contract "surface.ns" "general").GetNamespace()
-    let channelKey = (FunctionalGrain.channelId contract "surface.ns" "general").GetKeyAsString()
+    let streamNamespace =
+        (FunctionalGrain.streamId contract "surface.ns" "general").GetNamespace()
+
+    let streamKey =
+        (FunctionalGrain.streamId contract "surface.ns" "general").GetKeyAsString()
+
+    let channelNamespace =
+        (FunctionalGrain.channelId contract "surface.ns" "general").GetNamespace()
+
+    let channelKey =
+        (FunctionalGrain.channelId contract "surface.ns" "general").GetKeyAsString()
+
     let grainKey = contract.GrainIdOf("general").Key.ToString()
 
     test <@ streamNamespace = "surface.ns" @>
@@ -777,7 +1113,9 @@ let ``FunctionalGrain.streamId and channelId carry the contract's own grain-key 
             int64Key
         }
 
-    let numericKey = (FunctionalGrain.streamId numeric "surface.ns" 42L).GetKeyAsString()
+    let numericKey =
+        (FunctionalGrain.streamId numeric "surface.ns" 42L).GetKeyAsString()
+
     let naiveKey = StreamId.Create("surface.ns", 42L).GetKeyAsString()
     let numericGrainKey = numeric.GrainIdOf(42L).Key.ToString()
 
@@ -789,12 +1127,10 @@ let ``FunctionalGrain.streamId and channelId carry the contract's own grain-key 
 [<Fact>]
 let ``FunctionalGrain.streamId and channelId reject a blank namespace`` () =
     let blankStream =
-        Assert.Throws<InvalidOperationException>(fun () ->
-            FunctionalGrain.streamId contract "  " "general" |> ignore)
+        Assert.Throws<InvalidOperationException>(fun () -> FunctionalGrain.streamId contract "  " "general" |> ignore)
 
     let blankChannel =
-        Assert.Throws<InvalidOperationException>(fun () ->
-            FunctionalGrain.channelId contract "" "general" |> ignore)
+        Assert.Throws<InvalidOperationException>(fun () -> FunctionalGrain.channelId contract "" "general" |> ignore)
 
     test <@ blankStream.Message.Contains "stream namespace" @>
     test <@ blankChannel.Message.Contains "channel namespace" @>
@@ -816,4 +1152,3 @@ let ``the bound reference declares exactly the specified public members`` () =
         |> Array.sort
 
     test <@ actual = expected @>
-

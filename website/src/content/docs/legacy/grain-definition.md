@@ -1,4 +1,9 @@
-# Grain Definition
+---
+title: "Legacy: Grain Definition"
+description: "Reference for the deprecated grain computation expression."
+---
+
+# Legacy: Grain Definition
 
 **Complete guide to the `grain { }` computation expression.**
 
@@ -6,7 +11,7 @@
 > the old `GrainContext`, `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, `Reminder`,
 > and the `FSharpGrain.*` handle module -- now carries `[<Obsolete>]` (warning, not error). It keeps
 > compiling and running; new code should use the functional grain runtime described in
-> [functional-grains.md](functional-grains.md), which also carries the before/after mapping table.
+> [functional-grains.md](/orleans-fsharp/functional-grains/), which also carries the before/after mapping table.
 
 ## What you'll learn
 
@@ -470,7 +475,7 @@ any of these four stages — `Activate` and `Last` included — always runs *bef
 operation) does. The library test suite pins this by subscribing directly at the raw stage number,
 not assumed from the stage names — see `tests/Orleans.FSharp.Integration/FunctionalPlacementIntegrationTests.fs`
 and, for the functional runtime's own `onLifecycle` operation with the closed
-`First`/`SetupState`/`Activate`/`Last` set, [Lifecycle-stage hooks](functional-grains.md#lifecycle-stage-hooks-onlifecycle)
+`First`/`SetupState`/`Activate`/`Last` set, [Lifecycle-stage hooks](/orleans-fsharp/functional-grains/#lifecycle-stage-hooks-onlifecycle)
 in the functional grain runtime guide.
 
 ```fsharp
@@ -577,7 +582,7 @@ covered. Repeated registrations of the same type are de-duplicated.
 ## Per-grain Orleans attributes (C# CodeGen path)
 
 > This whole section is about the deprecated `grain { }` model. On the
-> [functional grain runtime](functional-grains.md) each of these concepts is a first-class
+> [functional grain runtime](/orleans-fsharp/functional-grains/) each of these concepts is a first-class
 > `grainContract` / `grainFor` operation — `readOnly`, `oneWay`, `alwaysInterleave`, `reentrant`,
 > `mayInterleave`, `acceptsVersions` / `sinceVersion`, `grainType`, `collectionAge`,
 > `statelessWorker`, `placement`, and `onStream` / `onBroadcast` for implicit stream and
@@ -587,7 +592,7 @@ Reentrancy beyond `interleaveMessage` (whole-grain `[Reentrant]` and predicate
 `[MayInterleave]`), stateless workers, placement strategies, one-way and read-only methods,
 implicit stream subscriptions, and custom grain-type names are **not** `grain { }` CE
 keywords. All of them are first-class contract operations on the [functional grain
-runtime](functional-grains.md). The universal grain pattern shares a single `FSharpGrainImpl` class and
+runtime](/orleans-fsharp/functional-grains/). The universal grain pattern shares a single `FSharpGrainImpl` class and
 one handler method, so per-grain class-level or per-method attributes cannot be expressed there.
 
 To use them, define the grain through the per-grain `Orleans.FSharp.CodeGen` path: each grain
@@ -680,7 +685,7 @@ let chatRoom =
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md) -- configure storage, clustering, and streaming for your grains
-- [Streaming](streaming.md) -- publish and subscribe to events
-- [Testing](testing.md) -- test your grain definitions with FsCheck and TestHarness
-- [Advanced](advanced.md) -- transactions, grain directory, OpenTelemetry, shutdown, state migration
+- [Silo Configuration](/orleans-fsharp/silo-configuration/) -- configure storage, clustering, and streaming for your grains
+- [Streaming](/orleans-fsharp/streaming/) -- publish and subscribe to events
+- [Testing](/orleans-fsharp/testing/) -- test your grain definitions with FsCheck and TestHarness
+- [Advanced](/orleans-fsharp/advanced/) -- transactions, grain directory, OpenTelemetry, shutdown, state migration

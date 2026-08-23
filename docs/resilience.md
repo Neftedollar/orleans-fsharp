@@ -2,10 +2,7 @@
 
 **Retry, circuit-breaker, and timeout strategies for Orleans grain calls, powered by Polly v8.**
 
-> **Note.** The "Wrapping typed `FSharpGrain.ask` calls" section uses the deprecated
-> `FSharpGrain.*` handle module, which now carries `[<Obsolete>]` (warning, not error). The
-> resilience policies themselves are model-agnostic and wrap functional-runtime calls the same way;
-> see [functional-grains.md](functional-grains.md).
+> **Current API.** The examples wrap ordinary functional API-record calls. The original handle example is retained in [Legacy Resilience](legacy/resilience.md).
 
 ## What you'll learn
 
@@ -401,15 +398,12 @@ let! response =
         apiGrain.HandleMessage(ApiRequest payload))
 ```
 
-### Wrapping typed `FSharpGrain.ask` calls
+### Wrapping a functional API call
 
 ```fsharp
 let! price =
-    GrainResilience.retry<decimal> 3 TimeSpan.Zero (fun () ->
-        FSharpGrain.ask<PricingState, PricingCommand, decimal> (GetPrice itemId) pricingGrain)
+    GrainResilience.execute options (fun () -> pricingApi.getPrice itemId)
 ```
-
----
 
 ## Testing resilience
 

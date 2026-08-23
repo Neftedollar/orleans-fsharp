@@ -122,6 +122,27 @@ let ``a duplicate handler fails definition sealing`` () =
 
     test <@ error.Message.Contains "already has a handler" @>
 
+[<Fact>]
+let ``an ordinary definition rejects a mutating always-interleaving operation`` () =
+    let interleavedContract =
+        grainContract<RoomActor, string, RoomApi> {
+            grainType "def.room.interleaved"
+            stringKey
+            alwaysInterleave (_.say)
+        }
+
+    let error =
+        throws (fun () ->
+            grainFor interleavedContract {
+                defaultState (fun () -> { count = 0 })
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "ordinary whole-state definition" @>
+    test <@ error.Message.Contains "journaledGrainFor" @>
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Persistence attachment
 // ──────────────────────────────────────────────────────────────────────────────
@@ -577,7 +598,12 @@ let ``onStream and onBroadcast reject a blank provider or namespace`` () =
         throws (fun () ->
             grainFor contract {
                 defaultState (fun () -> { count = 0 })
-                onStream "Streams" "chat.messages" Unchecked.defaultof<StreamHook<RoomActor, string, RoomState, string>>
+
+                onStream
+                    "Streams"
+                    "chat.messages"
+                    Unchecked.defaultof<StreamHook<RoomActor, string, RoomState, string>>
+
                 handle (_.join) joinHandler
                 handle (_.say) sayHandler
             }
@@ -893,8 +919,11 @@ type private DerivedExtraState = { total: int64 }
 let private derivedContract =
     grainContract<Orleans.FSharp.Tests.GrainTypeDerivation.DerivableActor, string, RoomApi> { stringKey }
 
-let private derivedPrimary = PersistentState.create<RoomState> "derived-state" "Default"
-let private derivedExtra = PersistentState.create<DerivedExtraState> "derived-extra" "Default"
+let private derivedPrimary =
+    PersistentState.create<RoomState> "derived-state" "Default"
+
+let private derivedExtra =
+    PersistentState.create<DerivedExtraState> "derived-extra" "Default"
 
 [<Fact>]
 let ``an ephemeral definition may omit the contract's grain type`` () =
@@ -915,7 +944,8 @@ let ``an ephemeral definition may omit the contract's grain type`` () =
 /// </remarks>
 [<Fact>]
 let ``onActivate, onDeactivate, onTimer, and collectionAge do not require an explicit grain type`` () =
-    let options = GrainTimerCreationOptions(TimeSpan.FromSeconds 1.0, TimeSpan.FromSeconds 5.0)
+    let options =
+        GrainTimerCreationOptions(TimeSpan.FromSeconds 1.0, TimeSpan.FromSeconds 5.0)
 
     let definition =
         grainFor derivedContract {
@@ -1005,10 +1035,7 @@ let ``the specification example contract and definition are constructed`` () =
     let contract = Chat.Contracts.RoomApi.contract
     let definition = Chat.Server.Definition.roomDefinition
 
-    test
-        <@
-            contract.Operations |> Array.map (fun op -> op.OperationId) = [| "join"; "say"; "history"; "typing" |]
-        @>
+    test <@ contract.Operations |> Array.map (fun op -> op.OperationId) = [| "join"; "say"; "history"; "typing" |] @>
 
     test <@ contract.Operations.[2].IsReadOnly @>
     test <@ contract.Operations.[3].IsOneWay && contract.Operations.[3].IsAlwaysInterleave @>
@@ -1070,10 +1097,17 @@ let private audits = TransactionalState.create<TxState> "audits" "TxStore"
 
 [<Fact>]
 let ``TransactionalState.create validates its names and stored type`` () =
-    let blankName = throws (fun () -> TransactionalState.create<TxState> "  " "TxStore" |> ignore)
-    let nulName = throws (fun () -> TransactionalState.create<TxState> "sta\000te" "TxStore" |> ignore)
-    let blankStorage = throws (fun () -> TransactionalState.create<TxState> "state" "" |> ignore)
-    let nulStorage = throws (fun () -> TransactionalState.create<TxState> "state" "Tx\000Store" |> ignore)
+    let blankName =
+        throws (fun () -> TransactionalState.create<TxState> "  " "TxStore" |> ignore)
+
+    let nulName =
+        throws (fun () -> TransactionalState.create<TxState> "sta\000te" "TxStore" |> ignore)
+
+    let blankStorage =
+        throws (fun () -> TransactionalState.create<TxState> "state" "" |> ignore)
+
+    let nulStorage =
+        throws (fun () -> TransactionalState.create<TxState> "state" "Tx\000Store" |> ignore)
 
     test <@ blankName.Message.Contains "stateName must be a non-blank string" @>
     test <@ nulName.Message.Contains "must not contain a NUL character" @>
@@ -1177,7 +1211,9 @@ let ``a transactional facet with no operation that could reach it is rejected`` 
             |> ignore)
 
     test <@ noneAtAll.Message.Contains "declares no 'transactional' operation that can carry a transaction context" @>
-    test <@ suppressOnly.Message.Contains "declares no 'transactional' operation that can carry a transaction context" @>
+
+    test
+        <@ suppressOnly.Message.Contains "declares no 'transactional' operation that can carry a transaction context" @>
 
 [<Fact>]
 let ``a Supported operation is enough to reach a transactional facet`` () =
@@ -1296,7 +1332,8 @@ let ``handleQuery on a readOnly field stores a handler that replies without repl
     test <@ definition.Handlers.Count = 2 @>
 
     let handler =
-        definition.Handlers.[1] |> unbox<Handler<RoomActor, string, RoomState, string, int64>>
+        definition.Handlers.[1]
+        |> unbox<Handler<RoomActor, string, RoomState, string, int64>>
 
     let state, reply =
         handler Unchecked.defaultof<FunctionalGrainContext<RoomActor, string>> { count = 7 } "hi"

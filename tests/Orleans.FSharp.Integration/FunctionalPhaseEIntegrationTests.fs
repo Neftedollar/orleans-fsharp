@@ -60,7 +60,8 @@ let rec private messages (error: exn) : string list =
     match error with
     | null -> []
     | :? AggregateException as aggregate ->
-        error.Message :: (aggregate.InnerExceptions |> Seq.collect messages |> List.ofSeq)
+        error.Message
+        :: (aggregate.InnerExceptions |> Seq.collect messages |> List.ofSeq)
     | _ -> error.Message :: messages error.InnerException
 
 let private mentions (fragment: string) (error: exn) =
@@ -242,13 +243,157 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
 
                 let! first = api.conditional 7m
                 let! second = api.conditional 3m
+                let! third = api.conditionalOne 2m
                 let! balance = api.balance ()
                 let! version = api.version ()
 
                 test <@ first @>
                 test <@ second @>
-                test <@ balance = 10m @>
-                test <@ version = 2 @>
+                test <@ third @>
+                test <@ balance = 12m @>
+                test <@ version = 3 @>
+        }
+
+    /// <summary>
+    /// The protected JournaledGrain surface exposed through the functional context: tentative and
+    /// confirmed views, unconfirmed suffix, explicit confirmation/refresh, diagnostics, and clear.
+    /// </summary>
+    [<Fact>]
+    member _.``the functional context exposes the full journal lifecycle``() =
+        task {
+            for provider, account in accounts fixture do
+                let key = freshKey $"surface-{provider}"
+                let api = account key
+
+                let! _ = api.version ()
+
+                let tentativeBefore = PhaseEJournalNotifications.count "tentative" provider key
+
+                let confirmedBefore = PhaseEJournalNotifications.count "confirmed" provider key
+
+                let! submitted = api.submitUnconfirmed 9m
+                test <@ submitted.confirmedBalance = 0m @>
+                test <@ submitted.tentativeBalance = 9m @>
+                test <@ submitted.unconfirmedCount = 1 @>
+                test <@ submitted.version = 0 @>
+                test <@ PhaseEJournalNotifications.count "tentative" provider key > tentativeBefore @>
+                test <@ PhaseEJournalNotifications.latestBalance "tentative" provider key = Some 9m @>
+
+                let! confirmed = api.confirmPending ()
+                test <@ confirmed.confirmedBalance = 9m @>
+                test <@ confirmed.tentativeBalance = 9m @>
+                test <@ confirmed.unconfirmedCount = 0 @>
+                test <@ confirmed.version = 1 @>
+                test <@ PhaseEJournalNotifications.count "confirmed" provider key > confirmedBefore @>
+                test <@ PhaseEJournalNotifications.latestBalance "confirmed" provider key = Some 9m @>
+
+                let! batch = api.submitUnconfirmedBatch [ 1m; 2m ]
+                test <@ batch.confirmedBalance = 9m @>
+                test <@ batch.tentativeBalance = 12m @>
+                test <@ batch.unconfirmedCount = 2 @>
+                test <@ batch.version = 1 @>
+
+                let! confirmedBatch = api.confirmPending ()
+                test <@ confirmedBatch.confirmedBalance = 12m @>
+                test <@ confirmedBatch.tentativeBalance = 12m @>
+                test <@ confirmedBatch.unconfirmedCount = 0 @>
+                test <@ confirmedBatch.version = 3 @>
+
+                let! refreshed = api.refresh ()
+                test <@ refreshed = confirmedBatch @>
+
+                let! statsAvailable = api.collectStats ()
+                test <@ statsAvailable @>
+
+                let! pendingBeforeClear = api.submitUnconfirmed 100m
+                test <@ pendingBeforeClear.confirmedBalance = 12m @>
+                test <@ pendingBeforeClear.tentativeBalance = 112m @>
+                test <@ pendingBeforeClear.unconfirmedCount = 1 @>
+                test <@ pendingBeforeClear.version = 3 @>
+
+                let! cleared = api.clear ()
+                test <@ cleared.confirmedBalance = 0m @>
+                test <@ cleared.tentativeBalance = 0m @>
+                test <@ cleared.unconfirmedCount = 0 @>
+                test <@ cleared.version = 0 @>
+        }
+
+    [<Fact>]
+    member _.``refreshJournal confirms pending submissions and refreshes the view``() =
+        task {
+            for provider, account in accounts fixture do
+                let api = account (freshKey $"refresh-pending-{provider}")
+
+                let! submitted = api.submitUnconfirmed 7m
+                test <@ submitted.confirmedBalance = 0m @>
+                test <@ submitted.tentativeBalance = 7m @>
+                test <@ submitted.unconfirmedCount = 1 @>
+                test <@ submitted.version = 0 @>
+
+                let! refreshed = api.refresh ()
+                test <@ refreshed.confirmedBalance = 7m @>
+                test <@ refreshed.tentativeBalance = 7m @>
+                test <@ refreshed.unconfirmedCount = 0 @>
+                test <@ refreshed.version = 1 @>
+        }
+
+    [<Fact>]
+    member _.``sequential raiseEvent calls fold over the tentative state``() =
+        task {
+            for provider, account in accounts fixture do
+                let api = account (freshKey $"sequential-pending-{provider}")
+
+                let! submitted = api.submitSequential [ 2m; 3m ]
+                test <@ submitted.confirmedBalance = 0m @>
+                test <@ submitted.tentativeBalance = 5m @>
+                test <@ submitted.unconfirmedCount = 2 @>
+                test <@ submitted.version = 0 @>
+
+                let! confirmed = api.confirmPending ()
+                test <@ confirmed.confirmedBalance = 5m @>
+                test <@ confirmed.tentativeBalance = 5m @>
+                test <@ confirmed.unconfirmedCount = 0 @>
+                test <@ confirmed.version = 2 @>
+        }
+
+    /// <summary>
+    /// LogStorage retains events and can retrieve them; StateStorage deliberately retains only
+    /// the folded view, so Orleans reports that event retrieval is unsupported.
+    /// </summary>
+    [<Fact>]
+    member _.``confirmed event retrieval preserves provider capabilities``() =
+        task {
+            let logApi = logAccountRef fixture.Client (freshKey "retrieve-log")
+            let stateApi = stateAccountRef fixture.Client (freshKey "retrieve-state")
+
+            let! _ = logApi.deposit 4m
+            let! _ = logApi.deposit 5m
+            let! _ = logApi.deposit 6m
+            let! _ = stateApi.deposit 4m
+
+            let! events = logApi.retrieve (1, 3)
+            test <@ events = [ Deposited 5m; Deposited 6m ] @>
+
+            let! unsupported = Assert.ThrowsAsync<NotSupportedException>(fun () -> stateApi.retrieve (0, 1) :> Task)
+            test <@ unsupported.Message.Length > 0 @>
+        }
+
+    /// <summary>
+    /// C# JournaledGrain submissions are reentrancy-safe. The functional surface must not reject
+    /// an event merely because the contract marks the operation always-interleaving.
+    /// </summary>
+    [<Fact>]
+    member _.``an always-interleaving journaled operation can raise events``() =
+        task {
+            for provider, account in accounts fixture do
+                let api = account (freshKey $"interleave-{provider}")
+
+                do! api.interleavedDeposit 11m
+
+                let! balance = api.balance ()
+                let! version = api.version ()
+                test <@ balance = 11m @>
+                test <@ version = 1 @>
         }
 
     /// <remarks>
@@ -414,6 +559,10 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
                 // Activate first, so the arming window covers the confirm and not the activation.
                 let! _ = api.version ()
 
+                let issuesBefore = PhaseEJournalNotifications.count "issue" provider key
+
+                let resolutionsBefore = PhaseEJournalNotifications.count "resolved" provider key
+
                 PhaseEFaults.arm grainId 3
 
                 // The call must NOT fault. If the claim were wrong, this line would throw.
@@ -425,6 +574,12 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
                 // deterministic — UpdatePrimary loops until one WriteAsync reports progress, and
                 // each WriteAsync issues exactly one storage write.
                 test <@ PhaseEFaults.writeAttempts grainId = 4 @>
+                test <@ PhaseEJournalNotifications.count "issue" provider key > issuesBefore @>
+                test <@ PhaseEJournalNotifications.count "resolved" provider key > resolutionsBefore @>
+                // Connection callbacks receive the confirmed view at the instant Orleans reports
+                // the storage transition. The pending deposit is still tentative at both points.
+                test <@ PhaseEJournalNotifications.latestBalance "issue" provider key = Some 0m @>
+                test <@ PhaseEJournalNotifications.latestBalance "resolved" provider key = Some 0m @>
 
                 // The events are in the journal, not just in memory: a fresh activation replays them.
                 do! api.recycle ()
@@ -451,12 +606,10 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
             let api = counterRef fixture.Client key
 
             let! decodedKey, grainId = api.identity ()
+
             let expectedGrainId =
                 string (
-                    GrainId.Create(
-                        GrainType.Create PhaseEGrainTypes.Counter,
-                        GrainIdKeyExtensions.CreateIntegerKey key
-                    )
+                    GrainId.Create(GrainType.Create PhaseEGrainTypes.Counter, GrainIdKeyExtensions.CreateIntegerKey key)
                 )
 
             test <@ decodedKey = key @>
@@ -500,11 +653,7 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
     member _.``the C# facade over a journaled contract is transport-transparent``() =
         task {
             let facade =
-                FunctionalGrainInterop.For<IAccountFacade>(
-                    logAccountContract,
-                    fixture.Client,
-                    box (freshKey "facade")
-                )
+                FunctionalGrainInterop.For<IAccountFacade>(logAccountContract, fixture.Client, box (freshKey "facade"))
 
             let! deposited = facade.Deposit 25m
             let! balance = facade.Balance()
@@ -540,15 +689,13 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
                 let! _ = api.deposit 3m
                 ()
 
-            // Everything so far: SIX folds each — two per raised event, by design. The runtime
-            // dry-runs the fold over the confirmed state before submitting (so a throwing `apply`
-            // fails the call with nothing appended, instead of poisoning the journal Orleans
-            // folds only AFTER the durable write), and the adaptor's UpdateView then folds the
-            // same entry once more. Purity is what makes the double run sound; this counter is
-            // where that design becomes visible.
+            // The runtime dry-runs every event before submitting, so a throwing `apply` appends
+            // nothing. LogStorage then folds the tentative view on submission and the confirmed
+            // view on confirmation (three calls per event total); StateStorage replaces its view
+            // as a unit on confirmation (two calls total). Purity makes both strategies sound.
             let logBefore = PhaseECounters.count logLabel
             let stateBefore = PhaseECounters.count stateLabel
-            test <@ logBefore = 6 @>
+            test <@ logBefore = 9 @>
             test <@ stateBefore = 6 @>
 
             do! logApi.recycle ()

@@ -6,6 +6,7 @@
 
 - How to define a journaled grain: `initialEventState`, `apply`, and handlers that raise events
 - Which Orleans log-consistency provider to name, and what each one actually stores
+- How typed CustomStorage snapshots are configured globally or per definition
 - Exactly when events become durable, and what a caller can conclude from a reply
 - Which `grainFor` operations carry over to a journaled definition, and why the rest do not
 - What this model does **not** give you
@@ -24,6 +25,7 @@ A journaled definition is a second definition kind over the same contract layer 
 | where the state comes from | memory, or a `stateFrom` holder | the fold of the journal |
 
 ```fsharp
+open System
 open System.Threading.Tasks
 open Orleans.FSharp
 
@@ -135,16 +137,111 @@ Choose `LogStorage` when the history itself is the point (audit, projections reb
 events, temporal queries). Choose `StateStorage` when you want the event-sourced *authoring*
 model — commands producing events producing state — without paying to keep or replay history.
 
-**Neither one truncates or snapshots.** There is no `snapshotEvery`, and its absence is
-deliberate rather than an omission: Orleans' `ILogViewAdaptor` surface has no snapshot or
-truncate operation at all, so no implementation could be honest on the built-in providers. On
-`StateStorage` the view is written on *every* confirm, which is what "snapshot every event"
-would mean anyway; on `LogStorage` the log grows without bound and every activation replays all
-of it. Keep a `LogStorage` journal short, or bring a provider that snapshots.
+The built-in providers have no configurable snapshot operation. `StateStorage` writes the folded
+view on *every* confirm, so it already behaves like a snapshot-only store and keeps no events.
+`LogStorage` never compacts: its log grows without bound and every activation replays all of it.
+Application-controlled snapshots are available through Orleans' `CustomStorage` provider below.
 
-The one log-lifecycle operation the adaptors do expose is a **complete** clear
-(`ClearLogAsync`), which is all-or-nothing and is not exposed on the journaled definition
-surface.
+The adaptors also expose a **complete** clear (`ClearLogAsync`). The functional equivalent is
+`context.clearJournal()`: it removes confirmed and unconfirmed events and restores the
+`initialEventState` seed. It is a destructive reset, not truncation up to a selected version and
+not snapshotting.
+
+### Custom storage and snapshots
+
+`journaledGrainFor` implements Orleans'
+`ICustomStorageInterface<FunctionalJournalView, FunctionalJournalEntry>` internally and exposes a
+typed F# storage contract to application code:
+
+```fsharp
+type AccountJournalStore() =
+    interface IFunctionalJournalStorage<string, Account, AccountEvent> with
+        member _.Read(identity) =
+            // Return the latest snapshot plus events strictly after it.
+            load identity.GrainTypeName identity.Key
+
+        member _.Append(identity, write) =
+            // CAS on write.ExpectedVersion. On success append write.Events atomically;
+            // when write.Snapshot is Some, compact everything represented by it in the
+            // same atomic write. Return false without changing storage on a conflict.
+            append identity.GrainTypeName identity.Key write
+
+        member _.Clear(identity) =
+            clear identity.GrainTypeName identity.Key
+```
+
+`Read` returns `FunctionalJournalRead<'State,'Event>`: `Snapshot = None` starts at
+`initialEventState`, and `Events` is the ordered tail the runtime folds with the definition's one
+authoritative `apply`. `Append` receives `FunctionalJournalWrite<'State,'Event>` and must obey the
+same contract as Orleans' custom interface: compare-and-swap on `ExpectedVersion`, append the
+batch atomically, and advance the durable version by `Events.Count`. A supplied snapshot has the
+resulting version and state; the store may discard every event represented by it in that same
+write. `FunctionalJournalStorageIdentity<'Key>` contains the grain type, complete `GrainId`, and
+decoded key, so one singleton store can safely serve several grain types.
+
+Bind it in the definition and register Orleans' provider under the same name:
+
+```fsharp
+open Microsoft.Extensions.DependencyInjection
+
+let initialAccount key =
+    { balance = 0m
+      entries = [ $"opened:{key}" ] }
+
+let applyAccount state event =
+    match event with
+    | Deposited amount -> { state with balance = state.balance + amount }
+    | Withdrawn amount -> { state with balance = state.balance - amount }
+
+let accountDefinition =
+    journaledGrainFor accountContract {
+        initialEventState initialAccount
+        apply applyAccount
+        logProvider "CustomStorage"
+
+        customStorage (fun services ->
+            services.GetRequiredService<AccountJournalStore>()
+            :> IFunctionalJournalStorage<string, Account, AccountEvent>)
+
+        snapshotPolicy (FunctionalJournalSnapshotPolicy.Every 1_000)
+        // handlers...
+    }
+
+silo.Services.AddSingleton<AccountJournalStore>() |> ignore
+silo.AddCustomStorageBasedLogConsistencyProvider "CustomStorage" |> ignore
+silo.AddFunctionalJournaledGrain accountDefinition |> ignore
+```
+
+`snapshotPolicy` is `Inherit | Disabled | Every of int | When of (int -> 'State -> bool)`.
+Without it, a custom-storage definition inherits the silo default:
+
+```fsharp
+silo.UseFunctionalJournalSnapshots 5_000 |> ignore
+
+// Or a heterogeneous silo-wide predicate:
+silo.ConfigureFunctionalJournalSnapshots(fun options ->
+    options.Policy <-
+        FunctionalJournalSnapshotDefault.When(fun context ->
+            context.Version >= 10_000))
+|> ignore
+```
+
+Precedence is explicit:
+
+1. `context.snapshotNow()` forces a snapshot for the current successful callback;
+2. the definition's `snapshotPolicy` overrides the silo default;
+3. `Inherit` or no definition rule uses `FunctionalJournalSnapshotOptions.Policy`;
+4. the default is `Disabled`.
+
+A manual request includes events returned or explicitly submitted by that callback and is dropped
+when the callback fails. It is rejected in read-only/state-neutral callbacks and on definitions
+without `customStorage`. It is also rejected in the synchronous state/connection notification
+hooks, which have no asynchronous completion at which storage could be awaited. `Every n` is
+boundary-based: a batch from version 2 to 4 triggers `Every 3`, so multi-event batches cannot skip
+a snapshot boundary. `journalStorage` must not be combined with `customStorage`; Orleans'
+CustomStorage provider calls the typed interface directly and does not use `IGrainStorage`.
+Both `When` predicates must be pure: a compare-and-swap conflict can make Orleans retry the same
+candidate append and evaluate the predicate again.
 
 ---
 
@@ -212,12 +309,13 @@ service provider, no cancellation token, and no key — so it cannot call anothe
 storage, start a timer, or observe the clock through anything the runtime hands it. That shape
 is the API making impurity hard, and it is load-bearing:
 
-**the fold runs twice for the same event, at two different times, and both runs must agree.** It
-runs once when the event is raised, to move this activation's view forward, and again on every
-later activation that replays the journal — hours or months later, in a different process, quite
-possibly on a different silo. A fold that read the clock, generated an identifier, or called a
-service would produce a different state on replay than the one the application saw when the event
-was raised, and nothing would report the difference.
+**the fold may run more than once for the same event, and every run must agree.** The runtime
+preflights the event before submission so a failing fold cannot poison the durable journal;
+Orleans then updates tentative and confirmed views as required by the selected provider, and
+`LogStorage` runs the fold again on every later activation that replays the journal — hours or
+months later, in a different process, quite possibly on a different silo. A fold that read the
+clock, generated an identifier, or called a service would produce different states for the same
+event, and nothing could reconcile them.
 
 Put the impure part in the **handler**, which may do anything a `grainFor` handler may do, and
 have it put the result *into the event*:
@@ -234,34 +332,97 @@ handle (_.deposit) (fun context state amount ->
 
 ---
 
-## The context surface
+## Journal API parity with C# `JournaledGrain`
 
-A journaled definition's handlers get the ordinary invocation context plus two members:
+The functional grain drives the same Orleans `ILogViewAdaptor` directly instead of inheriting
+`JournaledGrain<'State,'Event>`. Its API is therefore idiomatic F#, but the C# journal surface
+has a direct equivalent:
+
+| C# `JournaledGrain` member | Functional F# equivalent |
+|---|---|
+| `State` | `context.journalState<'State>()` (handlers also receive this confirmed state as their `state` argument) |
+| `TentativeState` | `context.journalTentativeState<'State>()` |
+| `Version` | `context.journalVersion` |
+| `UnconfirmedEvents` | `context.unconfirmedEvents<'Event>()` |
+| `RaiseEvent` / `RaiseEvents` | `context.raiseEvent event` / `context.raiseEvents events` |
+| `RaiseConditionalEvent` / `RaiseConditionalEvents` | `context.raiseConditionalEvent event` / `context.raiseConditional events` |
+| `ConfirmEvents` | `context.confirmEvents()` |
+| `RefreshNow` | `context.refreshJournal()` |
+| `RetrieveConfirmedEvents` | `context.retrieveConfirmedEvents<'Event>(fromVersion, toVersion)` |
+| `ClearLogAsync` | `context.clearJournal()` |
+| `EnableStatsCollection` / `DisableStatsCollection` / `GetStats` | `context.enableJournalStats()` / `context.disableJournalStats()` / `context.getJournalStats()` |
+| `TransitionState` | the definition's pure `apply` fold |
+| `OnActivateAsync` | the runtime replays the journal first, then runs the definition's `onActivate` hook |
+| `OnTentativeStateChanged` / `OnStateChanged` | `onTentativeStateChanged` / `onStateChanged` definition hooks |
+| `OnConnectionIssue` / `OnConnectionIssueResolved` | hooks with the same names; they receive Orleans' exact `ConnectionIssue` |
+| `InstallAdaptor` / `DefaultAdaptorFactory` | `logProvider`, optional `journalStorage`, and the matching silo registration |
+| protected `LogViewAdaptor` and explicit `ILogViewAdaptorHost` members | owned by the functional runtime; `apply` folds adaptor updates and the state hooks observe them |
+| explicit `ILogConsistencyProtocolParticipant` members | the runtime's replay/activation/deactivation lifecycle bridge |
+| explicit `IConnectionIssueListener` members | the same `onConnectionIssue` / `onConnectionIssueResolved` hooks above |
+
+The normal path stays simpler: return `events, reply` from a handler and the runtime submits the
+batch and confirms it before replying. The explicit submit/confirm API is for workflows which
+need to inspect tentative state:
 
 ```fsharp
-handle (_.audit) (fun context state () ->
-    task { return [], context.journalVersion })         // the confirmed length of the journal
-```
-
-```fsharp
-handle (_.reserve) (fun context state amount ->
+handle (_.stage) (fun context _ event ->
     task {
-        let! accepted = context.raiseConditional [ Reserved amount ]
-        return [], accepted
+        context.raiseEvent event
+
+        let tentative = context.journalTentativeState<Account>()
+        let pending = context.unconfirmedEvents<AccountEvent>()
+
+        do! context.confirmEvents ()
+        return [], (tentative, pending.Length)
     })
 ```
 
-`raiseConditional` appends at the journal's current confirmed position **only** and reports
-whether it was accepted. It can only ever answer `false` when something else can write this
-grain's journal between the handler's read and its append — and with a non-reentrant definition
-on a single cluster nothing can, because the activation is the sole writer and Orleans does not
-interleave its turns. It becomes meaningful for a `reentrant` or `mayInterleave` contract, where
-a second turn of the same activation can append in between.
+`raiseEvent` and `raiseEvents` only submit; they do **not** become durable until
+`confirmEvents` (or another Orleans synchronization) succeeds. Events returned by the same
+handler are a separate automatically confirmed batch, so a handler which uses explicit submission
+should explicitly confirm it.
 
-Both members raise a definition-stage diagnostic on an ordinary `grainFor` definition, which has
-no journal.
+`refreshJournal` has the same semantics as C# `RefreshNow`: it confirms every locally submitted
+event and synchronizes the confirmed view with the latest global journal. It is not a read-only
+reload.
+
+`raiseConditional` and `raiseConditionalEvent` append at the journal's current confirmed
+position and confirm inside the turn. They can return `false` only when another interleaved turn
+moves that position first.
+
+`retrieveConfirmedEvents` preserves the provider's capabilities: `LogStorage` can return the
+half-open confirmed segment `[fromVersion, toVersion)`; `StateStorage` keeps only the folded
+view and reports that retrieval is unsupported. `clearJournal` is supported by both built-in
+providers and restores the declared initial state.
+
+The four notification hooks are synchronous, just like their C# counterparts. Keep them short and
+non-blocking. A connection hook may adjust `ConnectionIssue.RetryDelay`; storage retry and
+resolution remain Orleans' responsibility. Connection hooks receive the current confirmed view;
+an event whose storage write is being retried is still visible only in the tentative view.
+
+```fsharp
+open System
+open Microsoft.Extensions.Logging
+
+onTentativeStateChanged (fun context state ->
+    context.logger.LogInformation("Tentative balance: {Balance}", state.balance))
+
+onStateChanged (fun context state ->
+    context.logger.LogInformation("Confirmed balance: {Balance}", state.balance))
+
+onConnectionIssue (fun context state issue ->
+    issue.RetryDelay <- TimeSpan.Zero
+    context.logger.LogWarning("Journal connection issue at balance {Balance}", state.balance))
+
+onConnectionIssueResolved (fun context state _issue ->
+    context.logger.LogInformation("Journal connection restored at balance {Balance}", state.balance))
+```
+
+Both the journal members and hooks refuse use on an ordinary `grainFor` definition, which has no
+journal.
 
 ---
+
 
 ## Which `grainFor` operations carry over
 
@@ -269,24 +430,48 @@ no journal.
 |---|---|---|
 | `handle` | **yes**, with the events-and-reply shape | the whole point |
 | `handleQuery` | **yes**, on a `readOnly` operation | reply-only sugar over `handle`; it raises nothing, which is already the rule a `readOnly` operation is held to, so the declaration is required and anywhere else it would turn a write into a silent no-op |
+| `handleStream` | **yes**, without events | a server-streaming enumeration spans many activation turns, so it reads the confirmed state captured when enumeration starts and cannot append |
 | `onActivate` / `onDeactivate` | **yes**, returning `unit` | the journal is the state, so there is nothing to replace; `onActivate` runs after the replay has completed |
+| `onTimer` / `onReminder` | **yes**, returning `Task<'Event list>` | each successful tick appends and confirms its event batch; an interleaving timer is supported because the adaptor serializes submissions |
+| `onStream` / `onBroadcast` | **yes**, returning `Task<'Event list>` | a successful delivery appends and confirms before Orleans observes completion |
+| journal state/connection notifications | **yes** | `onTentativeStateChanged`, `onStateChanged`, `onConnectionIssue`, and `onConnectionIssueResolved` map to the C# callbacks |
 | `collectionAge` | **yes** | activation lifetime is orthogonal to the journal |
 | `placement` | **yes** | placement is orthogonal; the journal is addressed by grain identity |
 | `statelessWorker` | **no** | many activations of one grain identity, each with its own log-view adaptor over the same journal, racing each other's appends through the adaptor's e-tag retry loop |
 | `defaultState` / `initialState` | **no** | replaced by `initialEventState` |
 | `stateFrom`, `usePersistentState` | **no** | a second durable holder on the same activation is a second source of truth, with no ordering against the journal |
 | `transactionalStateFrom`, `transactional` | **no** | an Orleans log-view adaptor is not a transaction participant: it registers nothing with the transaction manager and has no prepare or abort, so events confirmed inside a transaction would survive its abort |
-| `onStream`, `onBroadcast`, `onTimer`, `onReminder` | **no** | every one of them is a whole-state-replacement hook, which a journaled definition has no way to honour |
+
+The delivery hooks have the same event-producing shape as a command handler:
+
+```fsharp
+onTimer
+    "interest"
+    (Orleans.Runtime.GrainTimerCreationOptions(
+        DueTime = TimeSpan.Zero,
+        Period = TimeSpan.FromHours 1.0,
+        Interleave = true))
+    (fun _context _state -> task { return [ Deposited 1m ] })
+
+onReminder "daily" TimeSpan.Zero (TimeSpan.FromDays 1.0) (fun _context _state _tick ->
+    task { return [ Deposited 2m ] })
+
+onStream "Streams" "bank.deposits" (fun _context _state (amount: decimal) ->
+    task { return [ Deposited amount ] })
+
+onBroadcast "Channels" "bank.adjustments" (fun _context _state (amount: decimal) ->
+    task { return [ Deposited amount ] })
+```
 
 Anything declared on the **contract** — `version`, `acceptsVersions`, `sinceVersion`, `readOnly`,
 `oneWay`, `reentrant`, `mayInterleave`, the key mapping — works unchanged, with two rules the
 runtime enforces:
 
 - `transactional` is refused at sealing (the row above).
-- A `readOnly` or `alwaysInterleave` operation that raises events is refused at dispatch. Such an
-  operation may run while another turn is in flight, so its appends could not be ordered against
-  that turn's; dropping the events silently would be worse, because the handler believed it had
-  changed the grain.
+- A `readOnly` operation that raises events is refused at dispatch.
+- A mutating `alwaysInterleave` operation is supported on a journaled definition: Orleans' adaptor
+  serializes concurrent event submissions. The same contract is refused by an ordinary
+  whole-state `grainFor` definition, whose concurrent replacements could overwrite one another.
 
 A journaled definition always requires an explicit `grainType` on its contract: the grain type
 name is part of the storage key of the journal, so a brand rename would orphan every stored
@@ -316,8 +501,10 @@ See [calling-from-csharp.md](calling-from-csharp.md).
 
 ## What this does NOT give you
 
-- **No snapshotting or log truncation.** Covered above: the surface does not exist on the
-  providers, so `snapshotEvery` does not exist here.
+- **No configurable snapshots on the built-in providers, and no public selective-truncate
+  operation.** `LogStorage` retains its whole log; `StateStorage` retains only its latest folded
+  view. A `customStorage` implementation can atomically compact to the snapshot supplied by the
+  runtime. `clearJournal` remains the only destructive lifecycle operation exposed to a handler.
 - **No cross-cluster replication.** Orleans 10's log-consistency machinery still declares a
   multi-cluster protocol gateway, but nothing constructs or calls it, and
   `ILogConsistencyProtocolServices` carries no message-sending member at all. A journal is
@@ -329,9 +516,10 @@ See [calling-from-csharp.md](calling-from-csharp.md).
   returns a new one. Until there is, evolve an event type by adding cases and keeping the old
   ones foldable.
 - **No transactions.** See the table above.
-- **No read of the raw event history.** The journal is exposed as the fold and the version, not
-  as a queryable log. `LogStorage` keeps the entries, so a projection can be built against the
-  storage provider directly, but that is outside this API.
+- **Event-history reads are provider-dependent.** `retrieveConfirmedEvents` works with
+  `LogStorage`; `StateStorage` has discarded the entries, and Orleans' CustomStorage adaptor does
+  not expose the retained tail through that API. Query custom storage directly for application
+  history when it keeps one.
 - **No exactly-once command semantics.** Confirmation is per turn and durable, but a caller that
   times out cannot tell "not written" from "written, reply lost". Make commands idempotent.
 - **No ordering guarantee across grains.** Each grain's journal is its own; there is no global
@@ -339,145 +527,9 @@ See [calling-from-csharp.md](calling-from-csharp.md).
 
 ---
 
-## Classic path (superseded)
+## Legacy model
 
-> **Superseded, not deprecated.** The `eventSourcedGrain { }` computation expression and
-> `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class,
-> and they need C# CodeGen for the grain interface. New code should use `journaledGrainFor` from
-> the functional grain runtime (above, and [functional-grains.md](functional-grains.md)). Nothing
-> in `Orleans.FSharp.EventSourcing` carries `[<Obsolete>]`, so this path compiles without a
-> warning; it is still shipped and is not being removed.
-
-The classic model splits a grain into `apply` (a pure fold), `handle` (a command handler
-returning events), and `defaultState`, and the `Orleans.FSharp.CodeGen` package generates a C#
-`JournaledGrain` that delegates to them.
-
-```bash
-dotnet add package Orleans.FSharp.EventSourcing
-```
-
-```fsharp
-open Orleans.FSharp.EventSourcing
-
-[<GenerateSerializer>]
-type BankAccountState =
-    { Balance: decimal
-      TransactionCount: int }
-
-[<GenerateSerializer>]
-type BankAccountEvent =
-    | [<Id(0u)>] Deposited of amount: decimal
-    | [<Id(1u)>] Withdrawn of amount: decimal
-
-[<GenerateSerializer>]
-type BankAccountCommand =
-    | [<Id(0u)>] Deposit of amount: decimal
-    | [<Id(1u)>] Withdraw of amount: decimal
-    | [<Id(2u)>] GetBalance
-
-let bankAccount =
-    eventSourcedGrain {
-        defaultState { Balance = 0m; TransactionCount = 0 }
-
-        apply (fun state event ->
-            match event with
-            | Deposited amount ->
-                { state with
-                    Balance = state.Balance + amount
-                    TransactionCount = state.TransactionCount + 1 }
-            | Withdrawn amount ->
-                { state with
-                    Balance = state.Balance - amount
-                    TransactionCount = state.TransactionCount + 1 })
-
-        handle (fun state cmd ->
-            match cmd with
-            | Deposit amount when amount > 0m -> [ Deposited amount ]
-            | Withdraw amount when amount > 0m && state.Balance >= amount -> [ Withdrawn amount ]
-            | GetBalance -> []          // no events -- this is a query
-            | _ -> [])                  // reject invalid commands silently
-
-        logConsistencyProvider "LogStorage"
-    }
-```
-
-### Replaying and handling commands in-process
-
-```fsharp
-let finalState =
-    EventSourcedGrainDefinition.foldEvents bankAccount
-        { Balance = 0m; TransactionCount = 0 }
-        [ Deposited 100m; Withdrawn 30m; Deposited 50m ]
-// finalState = { Balance = 120m; TransactionCount = 3 }
-
-let newState, events =
-    EventSourcedGrainDefinition.handleCommand bankAccount
-        { Balance = 100m; TransactionCount = 0 }
-        (Withdraw 30m)
-// newState = { Balance = 70m; TransactionCount = 1 }; events = [ Withdrawn 30m ]
-```
-
-### Testing with FsCheck
-
-Both `apply` and `handle` are pure functions, so they test directly:
-
-```fsharp
-open FsCheck
-open FsCheck.Xunit
-open Orleans.FSharp.Testing
-
-let balanceInvariant state = state.Balance >= 0m
-
-let applyCommand state cmd =
-    let newState, _ = EventSourcedGrainDefinition.handleCommand bankAccount state cmd
-    newState
-
-[<Property>]
-let ``balance is never negative for any command sequence`` () =
-    let arb = GrainArbitrary.forCommands<BankAccountCommand>()
-
-    Prop.forAll arb (fun commands ->
-        FsCheckHelpers.stateMachineProperty
-            { Balance = 0m; TransactionCount = 0 }
-            applyCommand
-            balanceInvariant
-            commands)
-```
-
-### EventStore module
-
-| Function | Description |
-|---|---|
-| `EventStore.processCommand def state cmd` | Produce events from a command |
-| `EventStore.applyEvent def state event` | Apply a single event |
-| `EventStore.replayEvents def state events` | Replay a list of events |
-
-These are used internally by the generated C# `JournaledGrain` class.
-
-### Clearing the event log
-
-```fsharp
-open Orleans.FSharp   // the FSharpEventSourcedGrain handle module lives here, not in
-                      // Orleans.FSharp.EventSourcing, which holds the CE and its types
-
-let handle = FSharpEventSourcedGrain.ref<BankAccountState, BankAccountCommand> grainFactory "acc-1"
-do! handle |> FSharpEventSourcedGrain.clearLog
-```
-
-> **Provider-dependent.** This routes through Orleans' `JournaledGrain.ClearLogAsync`, which
-> throws `NotSupportedException` for log-consistency providers that do not override
-> `ClearPrimaryLogAsync`. Both built-in providers do; a custom one need not.
-
-### Third-party event stores
-
-There is no first-party adapter for an external event store (Marten, EventStoreDB, …), and the
-placeholder `Orleans.FSharp.EventSourcing.Marten` package — whose helpers only forwarded to
-Orleans' own `LogStorage` provider — has been removed. An adapter for any store is a separate
-package registering a named `ILogViewAdaptorFactory`, which both the classic and the journaled
-model then name with no further work — see
-["Bringing your own provider"](#bringing-your-own-provider).
-
----
+The original event-sourcing API is retained in [Legacy Event Sourcing](legacy/event-sourcing.md).
 
 ## Bringing your own provider
 

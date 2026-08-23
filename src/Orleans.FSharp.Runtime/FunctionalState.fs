@@ -56,7 +56,9 @@ type internal FunctionalActivationState
 
     let primary =
         match definition.PrimaryFacet with
-        | Some blueprint -> facets |> Array.tryFind (fun facet -> obj.ReferenceEquals(facet.Blueprint, blueprint))
+        | Some blueprint ->
+            facets
+            |> Array.tryFind (fun facet -> obj.ReferenceEquals(facet.Blueprint, blueprint))
         | None -> None
 
     let byDescriptor =
@@ -70,9 +72,7 @@ type internal FunctionalActivationState
 
     let byTransactionalDescriptor =
         let map =
-            Dictionary<TransactionalStateDescriptor, FunctionalActivationTransactionalFacet>(
-                HashIdentity.Structural
-            )
+            Dictionary<TransactionalStateDescriptor, FunctionalActivationTransactionalFacet>(HashIdentity.Structural)
 
         for facet in transactionalFacets do
             map.[facet.Blueprint.Descriptor] <- facet
@@ -130,16 +130,15 @@ type internal FunctionalActivationState
     /// <see cref="Current" /> are ordered by the scheduler rather than by memory barriers.
     /// </para>
     /// <para>
-    /// The claim survives the interleaving cases because none of them publish. A read-only or
-    /// always-interleave request is the only kind Orleans admits while another request is in
-    /// flight, and the dispatch rule discards its returned state rather than publishing it, so
-    /// such a turn can only read. A declared timer publishes like a handler return, but sealing
-    /// rejects <c>Interleave = true</c> on a whole-state timer hook, so a publishing timer tick
-    /// never overlaps a request either. Reminder and activation hooks publish from turns that
-    /// are not interleaving to begin with. What remains is one writer at a time, ordered against
-    /// its own readers by the same scheduler — which is what makes the plain write correct.
-    /// Admitting publication from an interleaving operation would invalidate this, and needs the
-    /// synchronization this deliberately does without.
+    /// The claim survives the ordinary-definition interleaving cases because none of them
+    /// publish. A read-only or always-interleave request is the only kind Orleans admits while
+    /// another request is in flight, and the dispatch rule discards its returned state rather
+    /// than publishing it, so such a turn can only read. A declared whole-state timer cannot use
+    /// <c>Interleave = true</c>. Reminder and activation hooks publish from turns that are not
+    /// interleaving to begin with. Journaled definitions never reach <c>Publish</c>: their
+    /// interleaving operations append through the adaptor instead. What remains here is one
+    /// writer at a time, ordered against its own readers by the same scheduler — which is what
+    /// makes the plain write correct.
     /// </para>
     /// </remarks>
     /// <param name="value">The replacement primary state value, boxed.</param>
@@ -151,9 +150,9 @@ type internal FunctionalActivationState
             | Some facet -> facet.Blueprint.SetState facet.Instance value
             | None -> ephemeral <- value
         | _ ->
-            // Unreachable through any shipped path: every caller of Publish consults
-            // FunctionalActivationState.Journal first and raises events instead, and a journaled
-            // definition declares no timer, reminder, or stream hook that could reach here.
+            // Unreachable through any shipped path: every request, timer, reminder, stream, and
+            // broadcast caller consults FunctionalActivationState.Journal first and appends the
+            // returned events instead of publishing a replacement state.
             fail
                 JournalStage
                 $"the state of grain type '{definition.GrainTypeName}' is the fold of its journal and cannot be replaced directly. Raise an event instead."

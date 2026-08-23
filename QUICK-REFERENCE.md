@@ -213,7 +213,7 @@ do! h |> FSharpGrain.postInt Command
 ## See Also
 
 - [Getting Started](docs/getting-started.md) — Complete tutorial
-- [Grain Definition Reference](docs/grain-definition.md) — Detailed grain definition guide
+- [Legacy Grain Definition Reference](docs/legacy/grain-definition.md) — Deprecated `grain { }` definition guide
 - [Silo Configuration Reference](docs/silo-configuration.md) — Detailed silo configuration guide
 - [Client Configuration Reference](docs/client-configuration.md) — Detailed client configuration guide
 - [API Reference](docs/api-reference.md) — All public modules, types, and functions

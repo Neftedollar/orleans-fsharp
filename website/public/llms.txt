@@ -12,8 +12,8 @@ License: MIT
 
 ## Core Docs
 - Functional grain runtime (current authoring model): https://neftedollar.com/orleans-fsharp/functional-grains/
-- Grain definition (deprecated `grain {}` model, still supported): https://neftedollar.com/orleans-fsharp/grain-definition/
 - Silo configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
+- Orleans Dashboard: https://neftedollar.com/orleans-fsharp/dashboard/
 - Client configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
 - Serialization: https://neftedollar.com/orleans-fsharp/serialization/
 - Streaming: https://neftedollar.com/orleans-fsharp/streaming/
@@ -24,6 +24,9 @@ License: MIT
 - Advanced: https://neftedollar.com/orleans-fsharp/advanced/
 - Analyzers: https://neftedollar.com/orleans-fsharp/analyzers/
 - Calling from C#: https://neftedollar.com/orleans-fsharp/calling-from-csharp/
+
+## Legacy API
+- Maintenance documentation for earlier authoring models: https://neftedollar.com/orleans-fsharp/legacy/
 
 ## Packages
 - Orleans.FSharp

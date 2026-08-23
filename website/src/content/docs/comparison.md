@@ -10,7 +10,7 @@ description: Comparison of Orleans.FSharp, raw C# Microsoft Orleans, Akkling (Ak
 | | Orleans.FSharp | C# Orleans (from F#) | Akkling (Akka.NET) | Proto.Actor |
 |---|---|---|---|---|
 | **Actor model** | Virtual actors | Virtual actors | Classic actors | Virtual + classic |
-| **F# API** | Functional runtime (`grainContract`/`grainFor`, current) + native CEs (`siloConfig {}`; `grain {}` deprecated) | Manual interop (class inheritance) | Native CEs (`actorOf`, `spawnAnonymous`) | None (C# API) |
+| **F# API** | Typed API records with `grainContract` / `grainFor`; `siloConfig {}` for hosting | Manual interop (class inheritance) | Native CEs (`actorOf`, `spawnAnonymous`) | None (C# API) |
 | **State persistence** | Typed facets (`usePersistentState`) | Automatic (attribute) | Manual | Manual |
 | **Type safety** | Compile-time checked API records, DU state | Runtime errors | Typed messages | Runtime errors |
 | **Clustering** | Built-in (Redis, Azure, Kubernetes) | Built-in | Akka.Cluster | Built-in |
@@ -189,4 +189,4 @@ transport.
 - [Getting Started](/orleans-fsharp/getting-started/) -- zero to working grain in 15 minutes
 - [How To](/orleans-fsharp/how-to/) -- step-by-step distributed system tutorial
 - [FAQ](/orleans-fsharp/faq/) -- common questions about Orleans.FSharp
-- [Grain Definition](/orleans-fsharp/grain-definition/) -- complete `grain {}` CE reference
+- [Legacy API](/orleans-fsharp/legacy/) -- maintenance documentation for earlier authoring models

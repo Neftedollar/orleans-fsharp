@@ -75,6 +75,18 @@ module StreamNames =
     [<Literal>]
     let Counters = "implicit.counters"
 
+    [<Literal>]
+    let JournalProvider = "ImplicitJournalLog"
+
+    [<Literal>]
+    let JournalStore = "ImplicitJournalStore"
+
+    [<Literal>]
+    let JournalItems = "implicit.journal.items"
+
+    [<Literal>]
+    let JournalChannel = "implicit.journal.channel"
+
 [<RequireQualifiedAccess>]
 module StreamGrainTypes =
     [<Literal>]
@@ -85,6 +97,9 @@ module StreamGrainTypes =
 
     [<Literal>]
     let Counter = "functional.streamcounter"
+
+    [<Literal>]
+    let JournalSink = "functional.journalstreamsink"
 
     [<Literal>]
     let PrimarySiloName = "Primary"
@@ -103,8 +118,7 @@ type FailureBudget() =
     let remaining = ConcurrentDictionary<string, int ref>()
 
     /// <summary>Refuse the next <paramref name="count"/> deliveries of one item.</summary>
-    member _.Arm(item: string, count: int) =
-        remaining.[item] <- ref count
+    member _.Arm(item: string, count: int) = remaining.[item] <- ref count
 
     /// <summary>Consume one unit of that item's budget; true while the hook must still throw.</summary>
     member _.ShouldFail(item: string) =
@@ -146,6 +160,7 @@ module StreamProbe =
 
 type SinkActor = private SinkActor of unit
 type PoisonActor = private PoisonActor of unit
+type JournalSinkActor = private JournalSinkActor of unit
 
 type SinkState =
     { streamItems: string list
@@ -154,12 +169,14 @@ type SinkState =
 
 [<NoEquality; NoComparison>]
 type SinkApi =
-    { items: unit -> Task<string list>
-      numbers: unit -> Task<int list>
-      channelItems: unit -> Task<string list>
-      touch: unit -> Task<string>
-      /// Ends this activation after the current turn, so a later delivery has to re-activate.
-      goIdle: unit -> Task<unit> }
+    {
+        items: unit -> Task<string list>
+        numbers: unit -> Task<int list>
+        channelItems: unit -> Task<string list>
+        touch: unit -> Task<string>
+        /// Ends this activation after the current turn, so a later delivery has to re-activate.
+        goIdle: unit -> Task<unit>
+    }
 
 /// <summary>
 /// A stateless-worker definition WITHOUT any implicit subscription, hosted on the same
@@ -192,6 +209,15 @@ type PoisonState = { acceptedItems: string list }
 [<NoEquality; NoComparison>]
 type PoisonApi = { accepted: unit -> Task<string list> }
 
+type JournalSinkState = { observed: string list }
+type JournalSinkEvent = Observed of string
+
+[<NoEquality; NoComparison>]
+type JournalSinkApi =
+    { observed: unit -> Task<string list>
+      version: unit -> Task<int>
+      recycle: unit -> Task<unit> }
+
 let sinkContract =
     grainContract<SinkActor, string, SinkApi> {
         grainType StreamGrainTypes.Sink
@@ -212,6 +238,16 @@ let poisonContract =
         readOnly (_.accepted)
     }
 
+let journalSinkContract =
+    grainContract<JournalSinkActor, string, JournalSinkApi> {
+        grainType StreamGrainTypes.JournalSink
+        version 1
+        stringKey
+
+        readOnly (_.observed)
+        readOnly (_.version)
+    }
+
 /// <summary>The name of the silo an activation is running on, read from its own services.</summary>
 let private siloOf (services: IServiceProvider) =
     services.GetRequiredService<ILocalSiloDetails>().Name
@@ -228,6 +264,7 @@ let sinkDefinition =
                 let key = $"{StreamNames.Items}|{context.key}"
                 StreamProbe.record key
                 StreamProbe.silos.[key] <- siloOf context.services
+
                 return
                     { state with
                         streamItems = state.streamItems @ [ item ] }
@@ -236,6 +273,7 @@ let sinkDefinition =
         onStream StreamNames.Provider StreamNames.Numbers (fun context state (item: int) ->
             task {
                 StreamProbe.record $"{StreamNames.Numbers}|{context.key}"
+
                 return
                     { state with
                         streamNumbers = state.streamNumbers @ [ item ] }
@@ -324,7 +362,8 @@ let poisonDefinition =
 
         onStream StreamNames.Provider StreamNames.Poison (fun context state (item: string) ->
             task {
-                StreamProbe.attempts.AddOrUpdate(item, 1, fun _ previous -> previous + 1) |> ignore
+                StreamProbe.attempts.AddOrUpdate(item, 1, fun _ previous -> previous + 1)
+                |> ignore
 
                 if StreamProbe.poison.ShouldFail item then
                     raise (ApplicationException $"poison hook refused '{item}' on {context.key}")
@@ -339,10 +378,57 @@ let poisonDefinition =
         handle (_.accepted) (fun _ state () -> task { return state, state.acceptedItems })
     }
 
+let journalSinkDefinition =
+    journaledGrainFor journalSinkContract {
+        initialEventState (fun (_: string) -> { observed = [] })
+
+        apply (fun state (Observed source) ->
+            { state with
+                observed = state.observed @ [ source ] })
+
+        logProvider StreamNames.JournalProvider
+        journalStorage StreamNames.JournalStore
+
+        onActivate (fun context _ ->
+            task { StreamProbe.record $"journal-activate|{context.key}" })
+
+        onDeactivate (fun context _ _ ->
+            task { StreamProbe.record $"journal-deactivate|{context.key}" })
+
+        onTimer
+            "journal-timer"
+            (GrainTimerCreationOptions(
+                DueTime = TimeSpan.FromMilliseconds 100.0,
+                Period = TimeSpan.FromDays 1.0,
+                Interleave = true,
+                KeepAlive = true
+            ))
+            (fun _ _ -> task { return [ Observed "timer" ] })
+
+        onReminder "journal-reminder" (TimeSpan.FromMilliseconds 100.0) (TimeSpan.FromDays 1.0) (fun _ _ _ ->
+            task { return [ Observed "reminder" ] })
+
+        onStream StreamNames.Provider StreamNames.JournalItems (fun _ _ (item: string) ->
+            task { return [ Observed $"stream:{item}" ] })
+
+        onBroadcast StreamNames.AwaitedChannelProvider StreamNames.JournalChannel (fun _ _ (item: string) ->
+            task { return [ Observed $"broadcast:{item}" ] })
+
+        handle (_.observed) (fun _ state () -> task { return [], state.observed })
+        handle (_.version) (fun context _ () -> task { return [], context.journalVersion })
+
+        handle (_.recycle) (fun context _ () ->
+            task {
+                context.deactivateOnIdle ()
+                return [], ()
+            })
+    }
+
 let sinkRef = FunctionalGrain.ref sinkContract
 let poisonRef = FunctionalGrain.ref poisonContract
 let workerRef = FunctionalGrain.ref workerContract
 let counterRef = FunctionalGrain.ref counterContract
+let journalSinkRef = FunctionalGrain.ref journalSinkContract
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Cluster configuration
@@ -352,9 +438,18 @@ type FunctionalStreamSiloConfigurator() =
     interface ISiloConfigurator with
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.AddMemoryGrainStorage "PubSubStore" |> ignore
+            siloBuilder.AddMemoryGrainStorage StreamNames.JournalStore |> ignore
             siloBuilder.AddMemoryStreams StreamNames.Provider |> ignore
             siloBuilder.AddMemoryStreams StreamNames.OtherProvider |> ignore
             siloBuilder.AddBroadcastChannel StreamNames.ChannelProvider |> ignore
+            siloBuilder.UseInMemoryReminderService() |> ignore
+
+            siloBuilder.AddLogStorageBasedLogConsistencyProvider StreamNames.JournalProvider
+            |> ignore
+
+            siloBuilder.Services.Configure<ReminderOptions>(fun (options: ReminderOptions) ->
+                options.MinimumReminderPeriod <- TimeSpan.FromMilliseconds 100.0)
+            |> ignore
 
             // Orleans' own default is FireAndForgetDelivery = true, so the first provider above
             // never reports a failed delivery to the publisher; this one does.
@@ -368,12 +463,17 @@ type FunctionalStreamSiloConfigurator() =
 
             // BroadcastChannelWriter logs a failed fire-and-forget delivery at Error; that log is
             // the only signal in that mode, so the tests read it back.
-            siloBuilder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider, FunctionalClusterFixture.FunctionalLogCaptureProvider>()
+            siloBuilder.Services.AddSingleton<
+                Microsoft.Extensions.Logging.ILoggerProvider,
+                FunctionalClusterFixture.FunctionalLogCaptureProvider
+             >()
             |> ignore
+
             siloBuilder.AddFunctionalGrain sinkDefinition |> ignore
             siloBuilder.AddFunctionalGrain poisonDefinition |> ignore
             siloBuilder.AddFunctionalGrain workerDefinition |> ignore
             siloBuilder.AddFunctionalGrain counterDefinition |> ignore
+            siloBuilder.AddFunctionalJournaledGrain journalSinkDefinition |> ignore
 
 type FunctionalStreamClientConfigurator() =
     interface IClientBuilderConfigurator with
@@ -405,21 +505,19 @@ type FunctionalStreamFixtureBase(siloCount: int16) =
     member _.SiloCount = int siloCount
 
     /// <summary>The named stream provider of the external client.</summary>
-    member _.StreamProvider(providerName: string) = cluster.Client.GetStreamProvider providerName
+    member _.StreamProvider(providerName: string) =
+        cluster.Client.GetStreamProvider providerName
 
     /// <summary>The named broadcast-channel provider of the primary silo.</summary>
     member _.ChannelProvider(providerName: string) =
-        cluster
-            .GetSiloServiceProvider(cluster.Primary.SiloAddress)
-            .GetRequiredKeyedService<IBroadcastChannelProvider> providerName
+        cluster.GetSiloServiceProvider(cluster.Primary.SiloAddress).GetRequiredKeyedService<IBroadcastChannelProvider>
+            providerName
 
     /// <summary>Publish one item to the named provider, namespace, and key.</summary>
     member this.Publish<'Item>(providerName: string, streamNamespace: string, key: string, item: 'Item) =
         task {
             let stream =
-                this
-                    .StreamProvider(providerName)
-                    .GetStream<'Item>(StreamId.Create(streamNamespace, key))
+                this.StreamProvider(providerName).GetStream<'Item>(StreamId.Create(streamNamespace, key))
 
             do! stream.OnNextAsync item
         }
@@ -432,14 +530,10 @@ type FunctionalStreamFixtureBase(siloCount: int16) =
         }
 
     /// <summary>Publish one item to a declared broadcast channel on the named provider.</summary>
-    member this.PublishChannelOn<'Item>
-        (providerName: string, channelNamespace: string, key: string, item: 'Item)
-        =
+    member this.PublishChannelOn<'Item>(providerName: string, channelNamespace: string, key: string, item: 'Item) =
         task {
             let writer =
-                this
-                    .ChannelProvider(providerName)
-                    .GetChannelWriter<'Item>(ChannelId.Create(channelNamespace, key))
+                this.ChannelProvider(providerName).GetChannelWriter<'Item>(ChannelId.Create(channelNamespace, key))
 
             do! writer.Publish item
         }
@@ -489,9 +583,7 @@ type FunctionalStreamFixtureBase(siloCount: int16) =
         cluster.Silos
         |> Seq.map (fun handle ->
             handle.Name,
-            (handle :?> InProcessSiloHandle)
-                .SiloHost.Services.GetRequiredService<IClusterManifestProvider>()
-                .Current)
+            (handle :?> InProcessSiloHandle).SiloHost.Services.GetRequiredService<IClusterManifestProvider>().Current)
         |> Seq.toList
 
     interface IDisposable with

@@ -226,6 +226,22 @@ module SiloConfig =
     let private invokeExtensionMethod (methodName: string) (args: obj array) (packageHint: string) (siloBuilder: ISiloBuilder) =
         let siloBuilderType = typeof<ISiloBuilder>
 
+        // A PackageReference does not guarantee that its assembly has been loaded by the time the
+        // Orleans configuration delegate runs. Try the package name and the usual
+        // Microsoft.Orleans.* -> Orleans.* assembly name before scanning the AppDomain.
+        [
+            packageHint
+
+            if packageHint.StartsWith("Microsoft.", StringComparison.Ordinal) then
+                packageHint.Substring("Microsoft.".Length)
+        ]
+        |> List.distinct
+        |> List.iter (fun assemblyName ->
+            try
+                Reflection.Assembly.Load(assemblyName) |> ignore
+            with _ ->
+                ())
+
         let extensionMethod =
             AppDomain.CurrentDomain.GetAssemblies()
             |> Array.collect (fun asm ->
@@ -433,9 +449,22 @@ module SiloConfig =
         // Apply Dashboard configuration
         match config.DashboardConfig with
         | Some DashboardDefaults ->
-            invokeExtensionMethod "AddDashboard" [||] "Microsoft.Orleans.Dashboard" siloBuilder
+            // AddDashboard has one optional Action<DashboardOptions> parameter in IL. Reflection
+            // therefore still needs the null argument even when the caller wants defaults.
+            invokeExtensionMethod "AddDashboard" [| null |] "Microsoft.Orleans.Dashboard" siloBuilder
         | Some(DashboardWithOptions(intervalMs, historyLen, hideTrace)) ->
-            invokeExtensionMethod "AddDashboard" [||] "Microsoft.Orleans.Dashboard" siloBuilder
+            // Keep the Dashboard package optional for Orleans.FSharp.Runtime. Action<'T> is
+            // contravariant, so Action<obj> is accepted by Action<DashboardOptions>; the callback
+            // can set the three public options without a compile-time package reference.
+            let configure =
+                Action<obj>(fun options ->
+                    let optionsType = options.GetType()
+
+                    optionsType.GetProperty("CounterUpdateIntervalMs").SetValue(options, intervalMs)
+                    optionsType.GetProperty("HistoryLength").SetValue(options, historyLen)
+                    optionsType.GetProperty("HideTrace").SetValue(options, hideTrace))
+
+            invokeExtensionMethod "AddDashboard" [| box configure |] "Microsoft.Orleans.Dashboard" siloBuilder
         | None -> ()
 
         // Apply JSON fallback serialization (FSharp.SystemTextJson as fallback for unattributed types)
@@ -509,6 +538,16 @@ module SiloConfig =
 /// </code>
 /// </example>
 type SiloConfigBuilder() =
+
+    static member private TryLoadDashboardAssembly() =
+        try
+            System.Reflection.Assembly.Load("Orleans.Dashboard") |> ignore
+        with _ ->
+            // Dashboard is optional. Building a SiloConfig remains a pure operation when the
+            // package is absent; applyToSiloBuilder reports the missing package if the config is
+            // actually used. When present, loading it here puts its grain metadata in Orleans'
+            // application manifest before UseOrleans snapshots the application parts.
+            ()
 
     /// <summary>Yields the initial empty silo configuration.</summary>
     member _.Yield(_: unit) : SiloConfig = SiloConfig.Default
@@ -969,6 +1008,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the dashboard enabled.</returns>
     [<CustomOperation("addDashboard")>]
     member _.AddDashboard(config: SiloConfig) =
+        SiloConfigBuilder.TryLoadDashboardAssembly()
+
         { config with
             DashboardConfig = Some DashboardDefaults
         }
@@ -985,6 +1026,8 @@ type SiloConfigBuilder() =
     /// <returns>The updated silo configuration with the dashboard enabled.</returns>
     [<CustomOperation("addDashboardWithOptions")>]
     member _.AddDashboardWithOptions(config: SiloConfig, counterUpdateIntervalMs: int, historyLength: int, hideTrace: bool) =
+        SiloConfigBuilder.TryLoadDashboardAssembly()
+
         { config with
             DashboardConfig = Some(DashboardWithOptions(counterUpdateIntervalMs, historyLength, hideTrace))
         }

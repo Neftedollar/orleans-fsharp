@@ -8,6 +8,10 @@ export default defineConfig({
 	site: 'https://neftedollar.com',
 	base: '/orleans-fsharp',
 	trailingSlash: 'always',
+	redirects: {
+		'/grain-definition': '/orleans-fsharp/legacy/grain-definition/',
+		'/redis-example': '/orleans-fsharp/legacy/redis-example/',
+	},
 	integrations: [
 		starlight({
 			title: 'Orleans.FSharp',
@@ -25,8 +29,8 @@ export default defineConfig({
 					label: 'Core Guides',
 					items: [
 						{ label: 'Functional Grain Runtime', link: '/functional-grains' },
-						{ label: 'Grain Definition', link: '/grain-definition' },
 						{ label: 'Silo Configuration', link: '/silo-configuration' },
+						{ label: 'Orleans Dashboard', link: '/dashboard' },
 						{ label: 'Client Configuration', link: '/client-configuration' },
 						{ label: 'Serialization', link: '/serialization' },
 						{ label: 'Streaming', link: '/streaming' },
@@ -40,11 +44,30 @@ export default defineConfig({
 						{ label: 'Calling from C#', link: '/calling-from-csharp' },
 					],
 				},
-				{ label: 'Redis Example', link: '/redis-example' },
 				{ label: 'API Reference', link: '/api-reference' },
 				{ label: 'How To', link: '/how-to' },
 				{ label: 'Comparison', link: '/comparison' },
 				{ label: 'FAQ', link: '/faq' },
+				{
+					label: 'Legacy API',
+					collapsed: true,
+					items: [
+						{ label: 'Legacy Overview', link: '/legacy' },
+						{ label: 'Getting Started', link: '/legacy/getting-started' },
+						{ label: 'How To', link: '/legacy/how-to' },
+						{ label: 'Grain Definition', link: '/legacy/grain-definition' },
+						{ label: 'API Reference', link: '/legacy/api-reference' },
+						{ label: 'API Migration', link: '/legacy/migration' },
+						{ label: 'Event Sourcing', link: '/legacy/event-sourcing' },
+						{ label: 'Serialization', link: '/legacy/serialization' },
+						{ label: 'Streaming', link: '/legacy/streaming' },
+						{ label: 'Testing', link: '/legacy/testing' },
+						{ label: 'Advanced Patterns', link: '/legacy/advanced' },
+						{ label: 'Resilience', link: '/legacy/resilience' },
+						{ label: 'Redis Example', link: '/legacy/redis-example' },
+						{ label: 'FAQ', link: '/legacy/faq' },
+					],
+				},
 			],
 			customCss: ['./src/styles/custom.css'],
 			head: [
@@ -57,7 +80,7 @@ export default defineConfig({
 				{ tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
 				{ tag: 'meta', attrs: { property: 'og:site_name', content: 'Orleans.FSharp' } },
 				{ tag: 'meta', attrs: { property: 'og:title', content: 'Orleans.FSharp — Idiomatic F# for Microsoft Orleans' } },
-				{ tag: 'meta', attrs: { property: 'og:description', content: 'Full Orleans 10 parity with idiomatic F# computation expressions. 1500+ tests. grain {}, siloConfig {}, eventSourcedGrain {}.' } },
+				{ tag: 'meta', attrs: { property: 'og:description', content: 'Functional F# actors on Orleans 10: typed API records, grainContract, grainFor, journaledGrainFor, transactions, streams, and snapshots.' } },
 				{ tag: 'meta', attrs: { property: 'og:locale', content: 'en_US' } },
 				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://neftedollar.com/orleans-fsharp/social-preview.png' } },
 				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1280' } },
@@ -66,7 +89,7 @@ export default defineConfig({
 				// Twitter Card
 				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
 				{ tag: 'meta', attrs: { name: 'twitter:title', content: 'Orleans.FSharp — Idiomatic F# for Microsoft Orleans' } },
-				{ tag: 'meta', attrs: { name: 'twitter:description', content: 'Full Orleans 10 parity with idiomatic F# computation expressions. 1500+ tests. grain {}, siloConfig {}, eventSourcedGrain {}.' } },
+				{ tag: 'meta', attrs: { name: 'twitter:description', content: 'Functional F# actors on Orleans 10: typed API records, grainContract, grainFor, journaledGrainFor, transactions, streams, and snapshots.' } },
 				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://neftedollar.com/orleans-fsharp/social-preview.png' } },
 				// JSON-LD structured data
 				{ tag: 'script', attrs: { type: 'application/ld+json' }, content: JSON.stringify({

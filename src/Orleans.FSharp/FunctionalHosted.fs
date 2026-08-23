@@ -6,6 +6,7 @@ open System.Reflection
 open System.Threading
 open System.Threading.Tasks
 open Orleans
+open Orleans.EventSourcing
 open Orleans.Runtime
 open Orleans.FSharp.FunctionalDiagnostics
 
@@ -97,8 +98,8 @@ module internal ServerAdapter =
         let closed =
             createMethod.MakeGenericMethod [| actorType; keyType; stateType; argumentType; replyType |]
 
-        (closed.CreateDelegate typeof<Func<obj, FunctionalServerAdapter>> :?> Func<obj, FunctionalServerAdapter>)
-            .Invoke handler
+        (closed.CreateDelegate typeof<Func<obj, FunctionalServerAdapter>> :?> Func<obj, FunctionalServerAdapter>).Invoke
+            handler
 
 /// <summary>
 /// The preclosed typed server adapter of one <b>streaming</b> operation. Spec 004 item 6. It
@@ -115,8 +116,7 @@ type internal FunctionalStreamServerAdapter =
 /// run when the caller disposes.
 /// </summary>
 [<Sealed>]
-type internal SerializingStreamEnumerator<'Item>
-    (source: IAsyncEnumerator<'Item>, codec: FunctionalPayloadCodec) =
+type internal SerializingStreamEnumerator<'Item>(source: IAsyncEnumerator<'Item>, codec: FunctionalPayloadCodec) =
 
     let mutable current: byte[] = Array.empty
 
@@ -208,8 +208,9 @@ module internal StreamServerAdapter =
             createMethod.MakeGenericMethod [| actorType; keyType; stateType; argumentType; itemType |]
 
         (closed.CreateDelegate typeof<Func<obj, FunctionalStreamServerAdapter>>
-         :?> Func<obj, FunctionalStreamServerAdapter>)
-            .Invoke handler
+        :?> Func<obj, FunctionalStreamServerAdapter>)
+            .Invoke
+            handler
 
 /// <summary>
 /// The preclosed typed server adapter of one operation of a JOURNALED definition. It has exactly
@@ -275,8 +276,8 @@ module internal JournaledServerAdapter =
         let closed =
             createMethod.MakeGenericMethod [| actorType; keyType; stateType; eventType; argumentType; replyType |]
 
-        (closed.CreateDelegate typeof<Func<obj, FunctionalServerAdapter>> :?> Func<obj, FunctionalServerAdapter>)
-            .Invoke handler
+        (closed.CreateDelegate typeof<Func<obj, FunctionalServerAdapter>> :?> Func<obj, FunctionalServerAdapter>).Invoke
+            handler
 
 /// <summary>
 /// The preclosed typed adapter of a journaled definition's <c>onActivate</c> hook: boxed key,
@@ -287,6 +288,44 @@ type internal FunctionalJournaledHookAdapter = delegate of obj * FunctionalConte
 /// <summary>The preclosed typed adapter of a journaled definition's <c>onDeactivate</c> hook.</summary>
 type internal FunctionalJournaledDeactivateAdapter =
     delegate of obj * FunctionalContextCore * DeactivationReason * obj -> Task
+
+/// <summary>A preclosed synchronous tentative/confirmed-state notification.</summary>
+type internal FunctionalJournalStateChangedAdapter = delegate of obj * FunctionalContextCore * obj -> unit
+
+/// <summary>A preclosed synchronous log-consistency connection notification.</summary>
+type internal FunctionalJournalConnectionIssueAdapter =
+    delegate of obj * FunctionalContextCore * obj * ConnectionIssue -> unit
+
+/// <summary>A boxed custom-storage read, after the definition's generic types were preclosed.</summary>
+[<ReferenceEquality>]
+type internal FunctionalJournalStorageReadData =
+    { Snapshot: struct (int * obj) option
+      Events: obj list }
+
+/// <summary>A boxed custom-storage write, after the definition's generic types were preclosed.</summary>
+[<ReferenceEquality>]
+type internal FunctionalJournalStorageWriteData =
+    { ExpectedVersion: int
+      Events: obj list
+      Snapshot: struct (int * obj) option }
+
+/// <summary>The preclosed typed seam to one application custom-storage implementation.</summary>
+[<ReferenceEquality>]
+type internal FunctionalJournalStorageBlueprint =
+    {
+        Resolve: IServiceProvider -> obj
+        Read: obj -> string -> GrainId -> obj -> Task<FunctionalJournalStorageReadData>
+        Append: obj -> string -> GrainId -> obj -> FunctionalJournalStorageWriteData -> Task<bool>
+        Clear: obj -> string -> GrainId -> obj -> Task
+    }
+
+/// <summary>The boxed per-definition snapshot rule consumed by the activation runtime.</summary>
+[<NoEquality; NoComparison>]
+type internal FunctionalJournalSnapshotRule =
+    | InheritSnapshotRule
+    | DisableSnapshotRule
+    | EverySnapshotRule of int
+    | ConditionalSnapshotRule of (int -> obj -> bool)
 
 /// <summary>
 /// Everything the silo side needs to host one definition's journal, with every generic already
@@ -305,6 +344,10 @@ type internal FunctionalJournalBlueprint =
         ProviderName: string
         /// The named <c>IGrainStorage</c> the provider writes through, or the silo default.
         StorageName: string option
+        /// The typed storage bridge used by Orleans' CustomStorage provider, when declared.
+        CustomStorage: FunctionalJournalStorageBlueprint option
+        /// The per-definition snapshot rule, already closed over the exact state type.
+        SnapshotRule: FunctionalJournalSnapshotRule
         /// The definition's declared state type.
         StateType: Type
         /// The definition's declared event type.
@@ -325,6 +368,14 @@ type internal FunctionalJournalBlueprint =
         OnActivate: FunctionalJournaledHookAdapter option
         /// The preclosed deactivation hook, when the definition declares one.
         OnDeactivate: FunctionalJournaledDeactivateAdapter option
+        /// The preclosed tentative-state notification hook, when declared.
+        OnTentativeStateChanged: FunctionalJournalStateChangedAdapter option
+        /// The preclosed confirmed-state notification hook, when declared.
+        OnStateChanged: FunctionalJournalStateChangedAdapter option
+        /// The preclosed connection-issue notification hook, when declared.
+        OnConnectionIssue: FunctionalJournalConnectionIssueAdapter option
+        /// The preclosed resolved-connection notification hook, when declared.
+        OnConnectionIssueResolved: FunctionalJournalConnectionIssueAdapter option
     }
 
 /// <summary>
@@ -338,18 +389,19 @@ type internal FunctionalActivateAdapter = delegate of obj * FunctionalContextCor
 /// The preclosed typed adapter of the functional <c>onDeactivate</c> hook. It returns no
 /// replacement state.
 /// </summary>
-type internal FunctionalDeactivateAdapter =
-    delegate of obj * FunctionalContextCore * DeactivationReason * obj -> Task
+type internal FunctionalDeactivateAdapter = delegate of obj * FunctionalContextCore * DeactivationReason * obj -> Task
 
 /// <summary>
-/// The preclosed typed adapter of one declared reminder hook. Whole-state replacement under
-/// ordinary Orleans scheduling; the reminder context token is always <c>CancellationToken.None</c>.
+/// The preclosed typed adapter of one declared reminder hook. Its boxed result is a replacement
+/// state for an ordinary definition and an event list for a journaled definition; the reminder
+/// context token is always <c>CancellationToken.None</c>.
 /// </summary>
 type internal FunctionalReminderAdapter = delegate of obj * FunctionalContextCore * obj * TickStatus -> Task<obj>
 
 /// <summary>
-/// The preclosed typed adapter of one declared timer hook. Whole-state replacement under
-/// <c>Interleave = false</c>; the context token is the one supplied by the Orleans timer callback.
+/// The preclosed typed adapter of one declared timer hook. Its boxed result is a replacement state
+/// for an ordinary definition and an event list for a journaled definition; the context token is
+/// the one supplied by the Orleans timer callback.
 /// </summary>
 type internal FunctionalTimerAdapter = delegate of obj * FunctionalContextCore * obj -> Task<obj>
 
@@ -383,7 +435,8 @@ type internal FunctionalHostedTimer =
         DueTime: TimeSpan
         /// <c>GrainTimerCreationOptions.Period</c>, copied at sealing.
         Period: TimeSpan
-        /// <c>GrainTimerCreationOptions.Interleave</c>; always <c>false</c> for a whole-state timer.
+        /// <c>GrainTimerCreationOptions.Interleave</c>; always <c>false</c> for a whole-state timer,
+        /// and allowed for a journaled event-producing timer.
         Interleave: bool
         /// <c>GrainTimerCreationOptions.KeepAlive</c>, copied at sealing.
         KeepAlive: bool
@@ -461,7 +514,8 @@ type internal FunctionalHostedOperation =
 
     /// <summary>The protocol-token pair this operation uses for one admitted request version.</summary>
     /// <param name="version">The admitted request version to look up.</param>
-    member this.TokensFor(version: int) = this.VersionTokens.[version - this.MinAcceptedVersion]
+    member this.TokensFor(version: int) =
+        this.VersionTokens.[version - this.MinAcceptedVersion]
 
     /// <summary>The request-direction protocol token at the hosted contract version.</summary>
     member this.RequestToken =
@@ -753,7 +807,12 @@ module internal FunctionalHosted =
                 // Exact policy this is a single-element array holding exactly the tokens spec
                 // 003 precomputed. A streaming operation uses the two streaming directions in
                 // exactly the same shape.
-                let versionTokens = FunctionalHostedTokens.forOperation contract.GrainTypeName operation minAcceptedVersion contract.Version
+                let versionTokens =
+                    FunctionalHostedTokens.forOperation
+                        contract.GrainTypeName
+                        operation
+                        minAcceptedVersion
+                        contract.Version
 
                 { OperationId = operation.OperationId
                   FieldName = operation.FieldName
@@ -888,9 +947,7 @@ module internal FunctionalJournaledHosted =
         (definition: FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>)
         : FunctionalHostedDefinition =
         if obj.ReferenceEquals(definition, null) then
-            fail
-                DefinitionStage
-                "AddFunctionalJournaledGrain requires a sealed functional journaled grain definition."
+            fail DefinitionStage "AddFunctionalJournaledGrain requires a sealed functional journaled grain definition."
 
         let contract = definition.Contract
         let metadata = contract.TargetMetadata
@@ -927,7 +984,12 @@ module internal FunctionalJournaledHosted =
                     else
                         Unchecked.defaultof<FunctionalStreamServerAdapter>
 
-                let versionTokens = FunctionalHostedTokens.forOperation contract.GrainTypeName operation minAcceptedVersion contract.Version
+                let versionTokens =
+                    FunctionalHostedTokens.forOperation
+                        contract.GrainTypeName
+                        operation
+                        minAcceptedVersion
+                        contract.Version
 
                 { OperationId = operation.OperationId
                   FieldName = operation.FieldName
@@ -969,9 +1031,133 @@ module internal FunctionalJournaledHosted =
                     let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
                     hook context reason (unbox<'State> state) :> Task))
 
+        let reminders =
+            definition.Reminders
+            |> List.map (fun declaration ->
+                let adapter =
+                    FunctionalReminderAdapter(fun key core state tickStatus ->
+                        task {
+                            let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                            let! events = declaration.Hook context (unbox<'State> state) tickStatus
+                            return box (events |> List.map box)
+                        })
+
+                { Name = declaration.Name
+                  DueTime = declaration.DueTime
+                  Period = declaration.Period
+                  Adapter = adapter })
+            |> List.toArray
+
+        let timers =
+            definition.Timers
+            |> List.map (fun declaration ->
+                let adapter =
+                    FunctionalTimerAdapter(fun key core state ->
+                        task {
+                            let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                            let! events = declaration.Hook context (unbox<'State> state)
+                            return box (events |> List.map box)
+                        })
+
+                { Name = declaration.Name
+                  DueTime = declaration.DueTime
+                  Period = declaration.Period
+                  Interleave = declaration.Interleave
+                  KeepAlive = declaration.KeepAlive
+                  Adapter = adapter })
+            |> List.toArray
+
+        let stateChanged hook =
+            hook
+            |> Option.map (fun callback ->
+                FunctionalJournalStateChangedAdapter(fun key core state ->
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    callback context (unbox<'State> state)))
+
+        let connectionChanged hook =
+            hook
+            |> Option.map (fun callback ->
+                FunctionalJournalConnectionIssueAdapter(fun key core state issue ->
+                    let context = FunctionalGrainContext<'Actor, 'Key>(unbox<'Key> key, core)
+                    callback context (unbox<'State> state) issue))
+
+        let customStorage =
+            definition.CustomStorage
+            |> Option.map (fun resolve ->
+                let identity grainTypeName grainId key =
+                    FunctionalJournalStorageIdentity<'Key>(grainTypeName, grainId, unbox<'Key> key)
+
+                { Resolve =
+                    fun services ->
+                        let storage = resolve services
+
+                        if isNull (box storage) then
+                            fail
+                                JournalStage
+                                $"the 'customStorage' resolver of grain type '{contract.GrainTypeName}' returned null."
+
+                        box storage
+                  Read =
+                    fun instance grainTypeName grainId key ->
+                        task {
+                            let storage = unbox<IFunctionalJournalStorage<'Key, 'State, 'Event>> instance
+                            let! read = storage.Read(identity grainTypeName grainId key)
+
+                            if obj.ReferenceEquals(read, null) then
+                                fail
+                                    JournalStage
+                                    $"custom storage of grain type '{contract.GrainTypeName}' returned null from Read."
+
+                            if isNull (box read.Events) then
+                                fail
+                                    JournalStage
+                                    $"custom storage of grain type '{contract.GrainTypeName}' returned a null event tail from Read. Return an empty IReadOnlyList instead."
+
+                            return
+                                { Snapshot = read.Snapshot |> Option.map (fun value -> struct (value.Version, box value.State))
+                                  Events = read.Events |> Seq.map box |> Seq.toList }
+                        }
+                  Append =
+                    fun instance grainTypeName grainId key write ->
+                        let storage = unbox<IFunctionalJournalStorage<'Key, 'State, 'Event>> instance
+
+                        let events =
+                            write.Events
+                            |> List.map unbox<'Event>
+                            |> List.toArray
+                            :> IReadOnlyList<'Event>
+
+                        let snapshot =
+                            write.Snapshot
+                            |> Option.map (fun struct (version, state) ->
+                                { Version = version
+                                  State = unbox<'State> state })
+
+                        storage.Append(
+                            identity grainTypeName grainId key,
+                            { ExpectedVersion = write.ExpectedVersion
+                              Events = events
+                              Snapshot = snapshot }
+                        )
+                  Clear =
+                    fun instance grainTypeName grainId key ->
+                        let storage = unbox<IFunctionalJournalStorage<'Key, 'State, 'Event>> instance
+                        storage.Clear(identity grainTypeName grainId key) })
+
+        let snapshotRule =
+            match definition.SnapshotPolicy with
+            | None
+            | Some FunctionalJournalSnapshotPolicy.Inherit -> InheritSnapshotRule
+            | Some FunctionalJournalSnapshotPolicy.Disabled -> DisableSnapshotRule
+            | Some(FunctionalJournalSnapshotPolicy.Every eventCount) -> EverySnapshotRule eventCount
+            | Some(FunctionalJournalSnapshotPolicy.When predicate) ->
+                ConditionalSnapshotRule(fun version state -> predicate version (unbox<'State> state))
+
         let blueprint =
             { ProviderName = configuration.ProviderName
               StorageName = configuration.StorageName
+              CustomStorage = customStorage
+              SnapshotRule = snapshotRule
               StateType = typeof<'State>
               EventType = typeof<'Event>
               Initial = fun key -> box (definition.Initial(unbox<'Key> key))
@@ -981,7 +1167,11 @@ module internal FunctionalJournaledHosted =
               EncodeEvent = fun codec value -> codec.Serialize<'Event>(unbox<'Event> value)
               DecodeEvent = fun codec payload -> box (codec.Deserialize<'Event> payload)
               OnActivate = onActivate
-              OnDeactivate = onDeactivate }
+              OnDeactivate = onDeactivate
+              OnTentativeStateChanged = stateChanged definition.OnTentativeStateChanged
+              OnStateChanged = stateChanged definition.OnStateChanged
+              OnConnectionIssue = connectionChanged definition.OnConnectionIssue
+              OnConnectionIssueResolved = connectionChanged definition.OnConnectionIssueResolved }
 
         FunctionalHostedDefinition(
             box definition,
@@ -1005,9 +1195,9 @@ module internal FunctionalJournaledHosted =
             None,
             None,
             definition.CollectionAge,
-            Array.empty,
-            Array.empty,
-            Array.empty,
+            reminders,
+            timers,
+            List.toArray definition.StreamBindings,
             definition.Placement,
             Array.empty,
             Some blueprint

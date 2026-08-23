@@ -2,9 +2,7 @@
 
 **Guide to Orleans streaming with F#-idiomatic APIs.**
 
-> **Note.** The streaming APIs on this page are current. The `grain { }` CE used in the examples to
-> host them now carries `[<Obsolete>]` (warning, not error); see
-> [functional-grains.md](functional-grains.md) for the current grain authoring model.
+> **Current API.** This guide uses functional definitions for subscriptions. Examples for the original authoring model are retained in [Legacy Streaming](legacy/streaming.md).
 
 ## What you'll learn
 
@@ -214,10 +212,8 @@ do! BroadcastChannel.publish channel "System maintenance at midnight"
 
 ### Consuming
 
-On the **functional grain runtime** a broadcast consumer is a definition operation — see
-[implicit subscriptions](#implicit-subscriptions) below. On the classic `grain { }` /
-CodeGen path, a broadcast channel consumer is a class grain that implements
-`IOnBroadcastChannelSubscribed` and carries `[ImplicitChannelSubscription]`.
+A broadcast consumer is a functional definition operation — see
+[implicit subscriptions](#implicit-subscriptions) below.
 
 ---
 
@@ -332,15 +328,6 @@ matches on `(provider, namespace)`, logs a warning, and leaves the item undelive
 
 Batch delivery (`IAsyncBatchObserver`) is not exposed: a hook receives one item at a time.
 
-### On the classic `grain { }` / CodeGen path
-
-Implicit subscriptions there are a per-grain Orleans attribute. The universal grain pattern shares
-a single `FSharpGrainImpl` class, so it cannot carry a per-grain
-`[ImplicitStreamSubscription("namespace")]`. Define the grain via `Orleans.FSharp.CodeGen` and
-annotate the generated C# class. For explicit subscriptions from any grain, use `Stream.subscribe`
-(shown above), which works with the universal pattern.
-
----
 
 ## Stream Providers
 
@@ -373,50 +360,14 @@ Apply these to the `ISiloBuilder` directly or via `addCustomStorage` in the silo
 
 ---
 
-## Complete Example
+## Complete functional examples
 
-```fsharp
-open Orleans.FSharp.Runtime
-open Orleans.FSharp.Streaming
-
-// Configure
-let config = siloConfig {
-    useLocalhostClustering
-    addMemoryStorage "Default"
-    addMemoryStreams "Events"
-    addBroadcastChannel "Alerts"
-}
-
-// Publish from a grain handler
-let publisher =
-    grain {
-        defaultState ()
-        handleWithContext (fun ctx state msg ->
-            task {
-                let streamProvider =
-                    GrainContext.getService<IClusterClient> ctx
-                    |> fun c -> c.GetStreamProvider("Events")
-                let stream = Stream.getStream<string> streamProvider "logs" "app"
-                do! Stream.publish stream $"Event: {msg}"
-                return (), box ()
-            })
-    }
-
-// Subscribe from client code
-let streamProvider = client.GetStreamProvider("Events")
-let stream = Stream.getStream<string> streamProvider "logs" "app"
-
-let! sub = Stream.subscribe stream (fun msg ->
-    task { printfn "Log: %s" msg })
-
-// Pull-based consumption
-let events = Stream.asTaskSeq stream
-for event in events do
-    printfn "Pulled: %s" event
-```
+- [Functional Grain Runtime](functional-grains.md#implicit-subscriptions-onstream-and-onbroadcast)
+- [Feature tour source](https://github.com/Neftedollar/orleans-fsharp/tree/main/examples/feature-tour)
+- [Legacy Streaming](legacy/streaming.md)
 
 ## Next steps
 
-- [Grain Definition](grain-definition.md) -- `interleaveMessage` and other grain features
+- [Legacy API](legacy/index.md) -- maintenance documentation for earlier authoring models
 - [Silo Configuration](silo-configuration.md) -- configure stream providers
 - [Event Sourcing](event-sourcing.md) -- CQRS pattern with event streams

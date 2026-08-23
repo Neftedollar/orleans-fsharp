@@ -119,7 +119,7 @@ Everything Orleans offers, as contract or definition operations — no attribute
 |---|---|
 | `contract<'Key, 'Api> { }` / `grainContract<'Actor, 'Key, 'Api> { }` | `grainType` (optional for ephemeral grains), `version`, key codecs (`stringKey` / `guidKey` / `int64Key`, compound + mapped forms), per-operation `readOnly` / `oneWay` / `alwaysInterleave` / `operationId` / `sinceVersion` / `transactional`, whole-grain `reentrant` / `mayInterleave`, `acceptsVersions` |
 | `grainFor { }` | `defaultState` / `initialState` / `stateFrom`, `usePersistentState`, `transactionalStateFrom`, `onActivate` / `onDeactivate` / `onLifecycle`, `onTimer` / `onReminder`, `onStream` / `onBroadcast` (implicit subscriptions), `statelessWorker` / `placement`, `collectionAge`, `handle` / `handleQuery` (reply-only, `readOnly` operations) / `handleStream` |
-| `journaledGrainFor { }` | event sourcing over Orleans' own log-consistency providers: `initialEventState`, pure `apply` fold, handlers that raise events — see [Event Sourcing](docs/event-sourcing.md) |
+| `journaledGrainFor { }` | event sourcing over Orleans' log-consistency providers: `initialEventState`, pure `apply`, event-returning handlers, and typed CustomStorage snapshots — see [Event Sourcing](docs/event-sourcing.md) |
 | API field shapes | `'Arg -> Task<'Reply>` and `'Arg -> IAsyncEnumerable<'Item>` ([streaming replies](docs/streaming-replies.md)) |
 | From C# | a typed facade over any contract: awaited calls and `await foreach` — [Calling from C#](docs/calling-from-csharp.md) |
 
@@ -317,7 +317,7 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 | Guide | Description |
 |---|---|
 | [Getting Started](docs/getting-started.md) | Zero to working grain in 15 minutes |
-| [Grain Definition](docs/grain-definition.md) | Complete `grain { }` CE reference (deprecated authoring model) |
+| [Legacy: Grain Definition](docs/legacy/grain-definition.md) | Complete `grain { }` CE reference (deprecated authoring model) |
 | [Functional Grain Runtime](docs/functional-grains.md) | User-authored API records: contracts, key codecs, delivery semantics, immutable state |
 | [Silo Configuration](docs/silo-configuration.md) | Complete `siloConfig { }` CE reference |
 | [Client Configuration](docs/client-configuration.md) | `clientConfig { }` CE reference |
@@ -331,7 +331,7 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 | [Advanced](docs/advanced.md) | Transactions, OpenTelemetry, shutdown, migration |
 | [Resilience](docs/resilience.md) | Polly v8 retry, circuit-breaker, and timeout patterns |
 | [Calling from C#](docs/calling-from-csharp.md) | Bind a hand-written C# interface to a functional grain contract |
-| [Redis Example](docs/redis-example.md) | End-to-end shopping cart with Redis storage/clustering |
+| [Legacy: Redis Example](docs/legacy/redis-example.md) | End-to-end shopping cart using the deprecated authoring model |
 | [API Reference](docs/api-reference.md) | All public modules, types, functions |
 
 ## Package Structure

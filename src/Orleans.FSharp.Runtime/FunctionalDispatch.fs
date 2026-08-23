@@ -65,11 +65,7 @@ module internal FunctionalContextFactory =
     /// <param name="env">The activation environment the callback runs against.</param>
     /// <param name="cancellationToken">Cancellation token for this callback.</param>
     /// <param name="scope">The callback's state scope, binding the returned facades' permissions.</param>
-    let core
-        (env: FunctionalTargetEnvironment)
-        (cancellationToken: CancellationToken)
-        (scope: FunctionalStateScope)
-        =
+    let core (env: FunctionalTargetEnvironment) (cancellationToken: CancellationToken) (scope: FunctionalStateScope) =
         { GrainId = env.GrainContext.GrainId
           GrainFactory = env.GrainFactory
           Services = env.Services
@@ -196,9 +192,15 @@ module internal FunctionalDispatch =
             envelope.Payload.Length
             env.MaxPayloadBytes
 
-        if isNull envelope.ProtocolToken || envelope.ProtocolToken.Length <> ProtocolToken.Length then
+        if
+            isNull envelope.ProtocolToken
+            || envelope.ProtocolToken.Length <> ProtocolToken.Length
+        then
             let actual =
-                if isNull envelope.ProtocolToken then 0 else envelope.ProtocolToken.Length
+                if isNull envelope.ProtocolToken then
+                    0
+                else
+                    envelope.ProtocolToken.Length
 
             fail
                 TransportStage
@@ -245,7 +247,8 @@ module internal FunctionalDispatch =
 
         // 3. Compare the exact protocol token and the admission flags with the descriptor, at the
         //    admitted request version.
-        let struct (expectedRequestToken, expectedReplyToken) = operation.TokensFor requestVersion
+        let struct (expectedRequestToken, expectedReplyToken) =
+            operation.TokensFor requestVersion
 
         if not (ProtocolToken.equal envelope.ProtocolToken expectedRequestToken) then
             fail
@@ -265,8 +268,8 @@ module internal FunctionalDispatch =
     /// <param name="cancellationToken">Cancellation token forwarded to the resolved handler (ignored for a one-way operation).</param>
     /// <exception cref="System.InvalidOperationException">
     /// <paramref name="envelope"/> fails admission (see <see cref="M:Orleans.FSharp.FunctionalDispatch.admit"/>);
-    /// the reply payload exceeds the local size limit; or a journaled definition's <c>readOnly</c>
-    /// or <c>alwaysInterleave</c> operation raised one or more events.
+    /// the reply payload exceeds the local size limit; or a journaled definition's
+    /// <c>readOnly</c> or transaction-scoped operation raised one or more events.
     /// </exception>
     let dispatch
         (env: FunctionalTargetEnvironment)
@@ -276,7 +279,8 @@ module internal FunctionalDispatch =
         let definition = env.Definition
         let grainTypeName = definition.GrainTypeName
 
-        let struct (operation, requestVersion, _, expectedReplyToken) = admit env envelope false
+        let struct (operation, requestVersion, _, expectedReplyToken) =
+            admit env envelope false
 
         // 4-6. Typed payload deserialization with a fresh session, the per-invocation context,
         //      the preclosed typed handler adapter, and the state-publication rule.
@@ -303,7 +307,9 @@ module internal FunctionalDispatch =
         // everything except its transactional facets: the transactional facade is enabled by the
         // separate TransactionalAccess axis below, so the two rules do not fight.
         let stateNeutral =
-            operation.IsReadOnly || operation.IsAlwaysInterleave || operation.IsTransactionScoped
+            operation.IsReadOnly
+            || operation.IsAlwaysInterleave
+            || operation.IsTransactionScoped
 
         // Which transactional facet operations this callback may perform. 'Supported' is included
         // because Orleans forwards a caller's ambient context to it; Suppress and NotAllowed never
@@ -320,8 +326,18 @@ module internal FunctionalDispatch =
                     ReadWriteTransaction
             | _ -> Unavailable
 
+        // Journal submissions are reentrancy-safe in Orleans. An always-interleaving journaled
+        // operation may therefore raise events just like a method on C# JournaledGrain; only a
+        // declared read-only operation (and the transaction-scoped case journaled definitions
+        // reject at sealing) remains mutation-free. Whole-state replacement cannot make that
+        // guarantee, so ordinary definitions retain the stricter stateNeutral rule.
+        let allowsMutation =
+            match env.State.Journal with
+            | null -> not stateNeutral
+            | _ -> not operation.IsReadOnly && not operation.IsTransactionScoped
+
         let scope =
-            FunctionalStateScope(grainTypeName, operation.OperationId, not stateNeutral, transactionalAccess)
+            FunctionalStateScope(grainTypeName, operation.OperationId, allowsMutation, transactionalAccess)
 
         let invocation =
             { Key = env.Key
@@ -368,18 +384,18 @@ module internal FunctionalDispatch =
                             | journal ->
                                 let raised = unbox<obj list> nextState
 
-                                if stateNeutral then
-                                    // A readOnly or alwaysInterleave operation may run while
-                                    // another turn is in flight, so an append from it would
-                                    // interleave with that turn's own appends and be ordered by
-                                    // nothing. Dropping the events silently would be worse: the
-                                    // handler believed it had changed the grain.
+                                if operation.IsReadOnly || operation.IsTransactionScoped then
+                                    // The read-only declaration is a contract promise, not a
+                                    // limitation of the adaptor. Transaction-scoped journaled
+                                    // operations are rejected at sealing, but the guard remains
+                                    // here so a malformed hosted definition cannot leak a durable
+                                    // event out of an aborted transaction.
                                     if not (List.isEmpty raised) then
                                         fail
                                             JournalStage
-                                            $"operation '{operation.OperationId}' of grain type '{grainTypeName}' raised {List.length raised} event(s), but it is declared 'readOnly' or 'alwaysInterleave'. Such an operation may run while another turn of this activation is in flight, so its appends could not be ordered against that turn's. Declare the operation without 'readOnly'/'alwaysInterleave', or return no events."
+                                            $"operation '{operation.OperationId}' of grain type '{grainTypeName}' raised {List.length raised} event(s), but it is declared 'readOnly' or transaction-scoped. Declare a mutating non-transactional operation, or return no events."
                                 else
-                                    do! journal.RaiseAndConfirm raised
+                                    do! journal.RaiseAndConfirm(raised, scope.SnapshotRequested)
 
                             // 7. The silo reply limit, then the descriptor's reply token and
                             //    fresh payload.
@@ -492,7 +508,9 @@ type internal FunctionalStreamEnumerator
     /// Steps 1 through 6 of the dispatch order, run once, on the first pull.
     member private _.Start() =
         let grainTypeName = env.Definition.GrainTypeName
-        let struct (operation, version, _, expectedItemToken) = FunctionalDispatch.admit env envelope true
+
+        let struct (operation, version, _, expectedItemToken) =
+            FunctionalDispatch.admit env envelope true
 
         operationId <- operation.OperationId
         requestVersion <- version
@@ -622,9 +640,9 @@ module internal FunctionalLifecycle =
     /// <summary>
     /// Step 6 of the activation order: create every declared timer from the
     /// <c>GrainTimerCreationOptions</c> copied at sealing. Each callback builds a fresh
-    /// invocation context per tick — token from the Orleans timer callback, whole-state
-    /// replacement under <c>Interleave = false</c> — and publishes its returned state exactly
-    /// like a handler return.
+    /// invocation context per tick, using the token from the Orleans timer callback. An ordinary
+    /// definition publishes the returned replacement state under <c>Interleave = false</c>; a
+    /// journaled definition may interleave and appends the returned event batch instead.
     /// </summary>
     /// <param name="env">The activation environment whose declared timers to create.</param>
     let private createTimers (env: FunctionalTargetEnvironment) =
@@ -645,7 +663,11 @@ module internal FunctionalLifecycle =
                     try
                         let core = FunctionalContextFactory.core env token scope
                         let! next = timer.Adapter.Invoke(env.Key, core, env.State.Current)
-                        env.State.Publish next
+
+                        match env.State.Journal with
+                        | null -> env.State.Publish next
+                        | journal ->
+                            do! journal.RaiseAndConfirm(unbox<obj list> next, scope.SnapshotRequested)
                     finally
                         scope.Expire()
                 }
@@ -677,18 +699,19 @@ module internal FunctionalLifecycle =
                     // allowsMutation = true: a journaled definition has no persistent facet for
                     // the flag to govern, and this hook runs as an ordinary turn of the activation
                     // with nothing else in flight, so it MAY append through raiseConditional.
-                    let scope =
-                        FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", true)
+                    let scope = FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", true)
 
                     try
                         let core = FunctionalContextFactory.core env cancellationToken scope
                         do! hook.Invoke(env.Key, core, env.State.Current)
+
+                        if scope.SnapshotRequested then
+                            do! env.State.Journal.RaiseAndConfirm([], true)
                     finally
                         scope.Expire()
             | None, None -> ()
             | Some hook, None ->
-                let scope =
-                    FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", true)
+                let scope = FunctionalStateScope(env.Definition.GrainTypeName, "onActivate", true)
 
                 try
                     let core = FunctionalContextFactory.core env cancellationToken scope
@@ -722,8 +745,50 @@ module internal FunctionalLifecycle =
                 match journal.OnDeactivate with
                 | None -> ()
                 | Some hook ->
-                    let scope =
-                        FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", true)
+                    let scope = FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", true)
+
+                    try
+                        try
+                            let core = FunctionalContextFactory.core env cancellationToken scope
+                            do! hook.Invoke(env.Key, core, reason, env.State.Current)
+
+                            if scope.SnapshotRequested then
+                                do! env.State.Journal.RaiseAndConfirm([], true)
+                        with error ->
+                            env.Logger.LogError(
+                                error,
+                                "Functional onDeactivate hook of grain type {GrainType} failed on {GrainId} (reason {Reason}): {Message}. The runtime performs no retry.",
+                                env.Definition.GrainTypeName,
+                                env.GrainContext.GrainId,
+                                reason.ReasonCode,
+                                error.Message
+                            )
+
+                            ExceptionDispatchInfo.Capture(error).Throw()
+                    finally
+                        scope.Expire()
+            | None ->
+
+                match env.Definition.OnDeactivate with
+                | None -> ()
+                | Some _ when not env.State.IsInitialized ->
+                    // The activation never reached state initialization — its storage read,
+                    // initializer, or activation hook failed — so there is no primary state value to
+                    // hand the hook. Running it with an absent state would turn a clear activation
+                    // failure into an unrelated one inside application code.
+                    //
+                    // Orleans 10.1.0 and 10.2.2 do not invoke OnDeactivateAsync for an activation
+                    // whose OnActivateAsync failed (proven by the integration test "a failing
+                    // activation hook fails the call and skips the deactivation hook"), so this is
+                    // defence in depth against a version which does, not a live path.
+                    env.Logger.LogWarning(
+                        "Skipping the functional onDeactivate hook of grain type {GrainType} on {GrainId} (reason {Reason}): the activation failed before its state was initialized.",
+                        env.Definition.GrainTypeName,
+                        env.GrainContext.GrainId,
+                        reason.ReasonCode
+                    )
+                | Some hook ->
+                    let scope = FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", true)
 
                     try
                         try
@@ -742,47 +807,6 @@ module internal FunctionalLifecycle =
                             ExceptionDispatchInfo.Capture(error).Throw()
                     finally
                         scope.Expire()
-            | None ->
-
-            match env.Definition.OnDeactivate with
-            | None -> ()
-            | Some _ when not env.State.IsInitialized ->
-                // The activation never reached state initialization — its storage read,
-                // initializer, or activation hook failed — so there is no primary state value to
-                // hand the hook. Running it with an absent state would turn a clear activation
-                // failure into an unrelated one inside application code.
-                //
-                // Orleans 10.1.0 and 10.2.2 do not invoke OnDeactivateAsync for an activation
-                // whose OnActivateAsync failed (proven by the integration test "a failing
-                // activation hook fails the call and skips the deactivation hook"), so this is
-                // defence in depth against a version which does, not a live path.
-                env.Logger.LogWarning(
-                    "Skipping the functional onDeactivate hook of grain type {GrainType} on {GrainId} (reason {Reason}): the activation failed before its state was initialized.",
-                    env.Definition.GrainTypeName,
-                    env.GrainContext.GrainId,
-                    reason.ReasonCode
-                )
-            | Some hook ->
-                let scope =
-                    FunctionalStateScope(env.Definition.GrainTypeName, "onDeactivate", true)
-
-                try
-                    try
-                        let core = FunctionalContextFactory.core env cancellationToken scope
-                        do! hook.Invoke(env.Key, core, reason, env.State.Current)
-                    with error ->
-                        env.Logger.LogError(
-                            error,
-                            "Functional onDeactivate hook of grain type {GrainType} failed on {GrainId} (reason {Reason}): {Message}. The runtime performs no retry.",
-                            env.Definition.GrainTypeName,
-                            env.GrainContext.GrainId,
-                            reason.ReasonCode,
-                            error.Message
-                        )
-
-                        ExceptionDispatchInfo.Capture(error).Throw()
-                finally
-                    scope.Expire()
         }
         :> Task
 
@@ -804,10 +828,11 @@ module internal FunctionalLifecycle =
 /// <c>IOnBroadcastChannelSubscribed</c> and <c>BroadcastChannelConsumerExtension</c>.
 /// </para>
 /// <para>
-/// A delivery runs under the timer-hook rules: whole-state replacement published only on a
-/// successful return, no storage call of the runtime's own, and <c>CancellationToken.None</c>
-/// (neither <c>IAsyncObserver.OnNextAsync</c> nor <c>IBroadcastChannelSubscription.Attach</c>
-/// supplies a token). Non-reentrancy is Orleans' doing rather than a setting of ours:
+/// A delivery runs under the timer-hook rules: an ordinary definition publishes whole-state
+/// replacement only on a successful return; a journaled definition appends and confirms the
+/// returned event batch. Both use <c>CancellationToken.None</c> (neither
+/// <c>IAsyncObserver.OnNextAsync</c> nor <c>IBroadcastChannelSubscription.Attach</c> supplies a
+/// token). Non-reentrancy is Orleans' doing rather than a setting of ours:
 /// <c>IStreamConsumerExtension</c>'s delivery methods carry no <c>[AlwaysInterleave]</c>, so a
 /// delivery takes an ordinary turn on the activation.
 /// </para>
@@ -821,9 +846,9 @@ module internal FunctionalStreams =
         $"{binding.OperationName}:{binding.ProviderName}/{binding.Namespace}"
 
     /// <summary>
-    /// Run one delivered item through its declared hook. The replacement state is published
-    /// exactly like a handler return, so a throwing hook leaves the activation's state untouched
-    /// and the exception travels back to Orleans unaltered.
+    /// Run one delivered item through its declared hook. An ordinary definition publishes the
+    /// returned replacement state; a journaled definition appends and confirms the returned
+    /// events. A throwing hook changes neither and the exception reaches Orleans unaltered.
     /// </summary>
     /// <param name="env">The activation environment to run the delivery hook against.</param>
     /// <param name="binding">The declared subscription the item was delivered for.</param>
@@ -844,7 +869,11 @@ module internal FunctionalStreams =
                     FunctionalContextFactory.streamCore env CancellationToken.None scope sequenceToken
 
                 let! next = binding.Adapter.Invoke(env.Key, core, env.State.Current, item)
-                env.State.Publish next
+
+                match env.State.Journal with
+                | null -> env.State.Publish next
+                | journal ->
+                    do! journal.RaiseAndConfirm(unbox<obj list> next, scope.SnapshotRequested)
             finally
                 scope.Expire()
         }
