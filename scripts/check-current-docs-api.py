@@ -24,6 +24,9 @@ LEGACY_EXAMPLES = re.compile(
     r'|\bGrainContext\.(?:get|primary|grainId|deactivate|delay)'
     r'|\bUniversalGrainHandlerRegistry\b'
     r'|\bwithFSharpGrain(?:Guid|Int)?\b'
+    r'|\bFunctionalGrainFacade\.create\b'
+    r'|\bScripting\.getGrain\b'
+    r'|\b(?:CompatibilityStrategy|VersionSelectorStrategy)\b'
 )
 
 

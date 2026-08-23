@@ -75,7 +75,7 @@ Before/after mapping:
 `grain { }`'s `onLifecycleStage` operation let a grain hook an *arbitrary* `GrainLifecycleStage`
 (`First`/`SetupState`/`Activate`/`Last`/any other int) with a `CancellationToken -> Task<unit>`
 callback. `grainFor { }` has `onLifecycle` for the closed set of
-documented Orleans stages -- see [Lifecycle-stage hooks](#lifecycle-stage-hooks-onlifecycle)
+documented Orleans stages -- see [Lifecycle-stage hooks](/orleans-fsharp/functional-grains/#lifecycle-stage-hooks-onlifecycle)
 above for why the hook carries no state at any stage, and for the verified activation ordering. A grain that genuinely needs an *undocumented* numbered stage
 (outside `First`/`SetupState`/`Activate`/`Last`) still has no functional-runtime equivalent and
 must stay on the `grain { }` CE, or hook the stage on a class grain directly via
@@ -112,7 +112,7 @@ observer interface in F# (`examples/chat-room`, `IChatObserver` in `ChatTypes.fs
 classic path at all under either authoring model.
 
 **Functional observers remove that constraint** — see
-[Push to clients: functional observers](#push-to-clients-functional-observers) above. The one
+[Push to clients: functional observers](/orleans-fsharp/functional-grains/#push-to-clients-functional-observers). The one
 C#-declared interface lives inside `Orleans.FSharp.Abstractions`, every application observer of
 every brand rides on it, and an observer becomes an ordinary F# handler record. `examples/chat-room`
 pushes live through it. Use the classic path when you already have a C#-declared observer

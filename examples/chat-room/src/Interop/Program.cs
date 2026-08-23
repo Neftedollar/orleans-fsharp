@@ -51,25 +51,25 @@ public static class Program
 
         // A Result reply is an FSharpResult. IsOk / ResultValue / ErrorValue read it; the error is
         // the grain's own discriminated union, and its cases are ordinary properties in C#.
-        var posted = await room.Say("Alice", "Hey everyone!");
+        var posted = await room.Say(new PostedMessage("Alice", "Hey everyone!"));
         Console.WriteLine($"Alice says 'Hey everyone!' -> {Describe(posted)}");
 
-        var rejected = await room.Say("Charlie", "Can I join in?");
+        var rejected = await room.Say(new PostedMessage("Charlie", "Can I join in?"));
         Console.WriteLine($"Charlie (not a member) -> {Describe(rejected)}");
 
-        var empty = await room.Say("Alice", "   ");
+        var empty = await room.Say(new PostedMessage("Alice", "   "));
         Console.WriteLine($"Alice posts whitespace -> {Describe(empty)}");
 
-        await room.NotifyTyping("Bob", true);
-        await room.Say("Bob", "Hi Alice!");
+        await room.NotifyTyping(new TypingStatus("Bob", true));
+        await room.Say(new PostedMessage("Bob", "Hi Alice!"));
         await room.Leave("Bob");
         Console.WriteLine($"Bob left. Members: {await room.MemberCount()}");
 
         Console.WriteLine();
-        Console.WriteLine("--- History (an F# list of F# tuples, read from C#) ---");
-        foreach (var (sender, message, at) in await room.History(10))
+        Console.WriteLine("--- History (an F# list of named records, read from C#) ---");
+        foreach (var entry in await room.History(10))
         {
-            Console.WriteLine($"  [{at:HH:mm:ss}] {sender}: {message}");
+            Console.WriteLine($"  [{entry.timestamp:HH:mm:ss}] {entry.sender}: {entry.text}");
         }
 
         Console.WriteLine();

@@ -83,3 +83,31 @@ public sealed class FunctionalJournalEntry
     [Id(1)]
     public bool SnapshotRequested { get; set; }
 }
+
+/// <summary>
+/// Marks a custom functional-journal storage failure as permanent for the current activation.
+/// </summary>
+/// <remarks>
+/// Orleans' CustomStorage log-consistency provider retries ordinary read and event-append
+/// exceptions raised through its adaptor because they are assumed to be transient. A zero-event
+/// manual snapshot and a complete clear call the typed store directly, so their ordinary
+/// exceptions surface once to the caller without deactivating the grain. Throw this exception only
+/// when retrying the same operation cannot succeed without an application or data change (for
+/// example, an unsupported stored schema). The functional runtime exits an Orleans retry loop when
+/// one is active, fails the current call, and deactivates the grain so a later call starts from
+/// durable storage again; it has the same fail-and-deactivate meaning on the two direct paths.
+/// </remarks>
+public sealed class FunctionalJournalPermanentStorageException : Exception
+{
+    /// <summary>Creates a permanent custom-storage failure.</summary>
+    public FunctionalJournalPermanentStorageException(string message)
+        : base(message)
+    {
+    }
+
+    /// <summary>Creates a permanent custom-storage failure with its underlying cause.</summary>
+    public FunctionalJournalPermanentStorageException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}

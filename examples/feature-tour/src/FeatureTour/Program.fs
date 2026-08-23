@@ -399,19 +399,20 @@ let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider)
         // service provider — the shape an in-process host reaches for first.
         let outOfGrainSubscriber = "out-of-grain"
 
-        let outOfGrainOutcome =
-            try
-                let provider = siloServices.GetRequiredKeyedService<IStreamProvider> TourStream.Provider
-                let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
+        let! outOfGrainOutcome =
+            task {
+                try
+                    let provider = siloServices.GetRequiredKeyedService<IStreamProvider> TourStream.Provider
+                    let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
 
-                (Stream.subscribe stream (fun event -> task { StreamInbox.add outOfGrainSubscriber event }))
-                    .GetAwaiter()
-                    .GetResult()
-                |> ignore
+                    let! _ =
+                        Stream.subscribe stream (fun event ->
+                            task { StreamInbox.add outOfGrainSubscriber event })
 
-                "subscribed"
-            with error ->
-                describe error
+                    return "subscribed"
+                with error ->
+                    return describe error
+            }
 
         say $"arm (c) subscription from the silo service provider, no grain context -> {outOfGrainOutcome}"
 
@@ -431,19 +432,20 @@ let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider)
         do! clientHost.StartAsync()
         let clusterClient = clientHost.Services.GetRequiredService<IClusterClient>()
 
-        let externalOutcome =
-            try
-                let provider = clusterClient.GetStreamProvider TourStream.Provider
-                let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
+        let! externalOutcome =
+            task {
+                try
+                    let provider = clusterClient.GetStreamProvider TourStream.Provider
+                    let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
 
-                (Stream.subscribe stream (fun event -> task { StreamInbox.add externalSubscriber event }))
-                    .GetAwaiter()
-                    .GetResult()
-                |> ignore
+                    let! _ =
+                        Stream.subscribe stream (fun event ->
+                            task { StreamInbox.add externalSubscriber event })
 
-                "subscribed"
-            with error ->
-                describe error
+                    return "subscribed"
+                with error ->
+                    return describe error
+            }
 
         say $"arm (a) subscription from an external IClusterClient over the gateway -> {externalOutcome}"
 
@@ -594,16 +596,22 @@ let private runHeterogeneous () =
         say $"'{Cluster.RegionalGrainType}' appears in the local grain manifest of: {observation.regionalHostSilos}"
 
         let everywhereSilos =
-            observation.everywherePlacements |> List.map snd |> List.distinct |> List.sort
+            observation.everywherePlacements
+            |> List.map _.siloName
+            |> List.distinct
+            |> List.sort
 
         let regionalSilos =
-            observation.regionalPlacements |> List.map snd |> List.distinct |> List.sort
+            observation.regionalPlacements
+            |> List.map _.siloName
+            |> List.distinct
+            |> List.sort
 
         say $"'{Cluster.EverywhereGrainType}' activations landed on: {everywhereSilos}"
         say $"'{Cluster.RegionalGrainType}' activations landed on: {regionalSilos}"
 
-        for key, silo in observation.regionalPlacements do
-            detail $"{Cluster.RegionalGrainType}/{key} ran on {silo}"
+        for placement in observation.regionalPlacements do
+            detail $"{Cluster.RegionalGrainType}/{placement.grainKey} ran on {placement.siloName}"
 
         let routedAway =
             regionalSilos = observation.regionalHostSilos
@@ -653,7 +661,11 @@ let private runImplicit (factory: IGrainFactory) =
         let inboxKey = $"inbox-{Guid.NewGuid():N}"
 
         // Nothing has ever touched this grain id. The publish below is the ONLY interaction.
-        let! _ = mailer.post (TourImplicit.StreamNamespace, inboxKey, "first")
+        let! _ =
+            mailer.post
+                { routeNamespace = TourImplicit.StreamNamespace
+                  key = inboxKey
+                  text = "first" }
 
         let streamPrefix = $"stream {inboxKey}"
         let broadcastPrefix = $"broadcast {inboxKey}"
@@ -669,13 +681,21 @@ let private runImplicit (factory: IGrainFactory) =
             say $"no implicit stream delivery observed within 30s for key '{inboxKey}'"
 
         // A second item, so the transcript shows the hook seeing the state the first one left.
-        let! _ = mailer.post (TourImplicit.StreamNamespace, inboxKey, "second")
+        let! _ =
+            mailer.post
+                { routeNamespace = TourImplicit.StreamNamespace
+                  key = inboxKey
+                  text = "second" }
 
         let! bothDelivered =
             waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf streamPrefix = 2 })
 
         // The broadcast arm of the same machinery, on the same grain id.
-        let! _ = mailer.broadcast (TourImplicit.ChannelNamespace, inboxKey, "all-hands")
+        let! _ =
+            mailer.broadcast
+                { routeNamespace = TourImplicit.ChannelNamespace
+                  key = inboxKey
+                  text = "all-hands" }
 
         let! broadcastDelivered =
             waitUntil (TimeSpan.FromSeconds 30.0) (fun () -> task { return ImplicitLog.countOf broadcastPrefix = 1 })
@@ -683,7 +703,11 @@ let private runImplicit (factory: IGrainFactory) =
         // The negative control: a namespace no definition declares publishes no binding, so
         // Orleans resolves no implicit subscriber and nothing is activated at all.
         let undeliveredKey = $"inbox-{Guid.NewGuid():N}"
-        let! _ = mailer.post (TourImplicit.UndeclaredNamespace, undeliveredKey, "into the void")
+        let! _ =
+            mailer.post
+                { routeNamespace = TourImplicit.UndeclaredNamespace
+                  key = undeliveredKey
+                  text = "into the void" }
         do! Task.Delay(TimeSpan.FromSeconds 2.0)
         let undeclaredDeliveries = ImplicitLog.countOf $"stream {undeliveredKey}"
 
@@ -737,8 +761,17 @@ let private runTransactions (factory: IGrainFactory) =
 
         // ── Commit: one transaction, two participants, both states move ──────
         do! sourceAccount.deposit 100m
-        do! teller.transfer (source, target, 40m)
-        let! committed = teller.totals (source, target)
+        do!
+            teller.transfer
+                { fromAccount = source
+                  toAccount = target
+                  amount = 40m }
+
+        let accountPair =
+            { leftAccount = source
+              rightAccount = target }
+
+        let! committed = teller.totals accountPair
 
         say $"one transaction created by '{TellerApi.GrainType}' moved 40 from A to B"
         detail $"both balances read inside ONE transaction afterwards: {committed}"
@@ -749,13 +782,18 @@ let private runTransactions (factory: IGrainFactory) =
         let! aborted =
             task {
                 try
-                    do! teller.transfer (source, target, 500m)
+                    do!
+                        teller.transfer
+                            { fromAccount = source
+                              toAccount = target
+                              amount = 500m }
+
                     return "the transfer SUCCEEDED (unexpected)"
                 with error ->
                     return describe error
             }
 
-        let! afterAbort = teller.totals (source, target)
+        let! afterAbort = teller.totals accountPair
         let entriesAfter = Entries.count $"withdraw:{source}"
 
         say $"a transfer of 500 (A holds 60) failed with: {aborted}"
@@ -780,8 +818,12 @@ let private runTransactions (factory: IGrainFactory) =
         detail "facet: the handler's replacement primary state is discarded and its persistent-state"
         detail "facades reject every write, because nothing could roll either of them back."
 
-        let committedHolds = committed = (60m, 40m)
-        let abortHolds = afterAbort = (60m, 40m) && aborted.Contains "Aborted"
+        let expectedBalances =
+            { leftBalance = 60m
+              rightBalance = 40m }
+
+        let committedHolds = committed = expectedBalances
+        let abortHolds = afterAbort = expectedBalances && aborted.Contains "Aborted"
         let onceHolds = entriesAfter - entriesBefore = 1
         let refusalsHold = readOnlyOutcome.Contains "refused" && unguardedOutcome.Contains "refused"
 
@@ -894,59 +936,65 @@ let private runEventSourcing (factory: IGrainFactory) =
             [ "LogStorage (stores the whole event log)", BalanceApi.logRef factory $"log-{run}"
               "StateStorage (stores the folded view)", BalanceApi.stateRef factory $"state-{run}" ]
 
-        let mutable allHold = true
+        let verifyProvider (label, api) =
+            task {
+                say $"provider: {label}"
 
-        for label, api in providers do
-            say $"provider: {label}"
+                let! afterFirst = api.deposit 100m
+                let! afterSecond = api.deposit 40m
+                let! withdrew = api.withdraw 30m
+                let! refused = api.withdraw 5000m
 
-            let! afterFirst = api.deposit 100m
-            let! afterSecond = api.deposit 40m
-            let! withdrew = api.withdraw 30m
-            let! refused = api.withdraw 5000m
+                detail $"deposit 100 -> {afterFirst}; deposit 40 -> {afterSecond} (the handler saw the state its own event produced)"
+                detail $"withdraw 30 -> {withdrew}; withdraw 5000 -> {refused} (refused, and so raises no event at all)"
 
-            detail $"deposit 100 -> {afterFirst}; deposit 40 -> {afterSecond} (the handler saw the state its own event produced)"
-            detail $"withdraw 30 -> {withdrew}; withdraw 5000 -> {refused} (refused, and so raises no event at all)"
+                let! (before, versionBefore) = api.snapshot ()
+                detail $"state {before.amount} from journal version {versionBefore} — three events, and the refusal is not one of them"
 
-            let! (before, versionBefore) = api.snapshot ()
-            detail $"state {before.amount} from journal version {versionBefore} — three events, and the refusal is not one of them"
+                // ── The replay: the activation is dropped and the state is rebuilt ──
+                do! api.goIdle ()
 
-            // ── The replay: the activation is dropped and the state is rebuilt ──
-            do! api.goIdle ()
+                let! recycled =
+                    waitUntil (TimeSpan.FromSeconds 30.0) (fun () ->
+                        task {
+                            let! _ = api.snapshot ()
+                            return true
+                        })
 
-            let! recycled =
-                waitUntil (TimeSpan.FromSeconds 30.0) (fun () ->
+                do! Task.Delay 1500
+                let! (after, versionAfter) = api.snapshot ()
+
+                detail $"after the activation ended: state {after.amount} from version {versionAfter}, entries {after.entries}"
+                detail "nothing wrote the state anywhere — it is the fold of the journal, rebuilt"
+
+                // ── The negative control ────────────────────────────────────────
+                let! readOnlyOutcome =
                     task {
-                        let! _ = api.snapshot ()
-                        return true
-                    })
+                        try
+                            return! api.readOnlyRaise ()
+                        with error ->
+                            return describe error
+                    }
 
-            do! Task.Delay 1500
-            let! (after, versionAfter) = api.snapshot ()
+                detail $"a readOnly operation that raises an event: {readOnlyOutcome}"
 
-            detail $"after the activation ended: state {after.amount} from version {versionAfter}, entries {after.entries}"
-            detail "nothing wrote the state anywhere — it is the fold of the journal, rebuilt"
+                return
+                    before.amount = 110m
+                    && versionBefore = 3
+                    && after.amount = 110m
+                    && versionAfter = 3
+                    && after.entries = before.entries
+                    && recycled
+                    && readOnlyOutcome.Contains "readOnly"
+            }
 
-            // ── The negative control ────────────────────────────────────────────
-            let! readOnlyOutcome =
-                task {
-                    try
-                        return! api.readOnlyRaise ()
-                    with error ->
-                        return describe error
-                }
+        let providerChecks = ResizeArray<bool>()
 
-            detail $"a readOnly operation that raises an event: {readOnlyOutcome}"
+        for provider in providers do
+            let! holds = verifyProvider provider
+            providerChecks.Add holds
 
-            let holds =
-                before.amount = 110m
-                && versionBefore = 3
-                && after.amount = 110m
-                && versionAfter = 3
-                && after.entries = before.entries
-                && recycled
-                && readOnlyOutcome.Contains "readOnly"
-
-            allHold <- allHold && holds
+        let allHold = providerChecks |> Seq.forall id
 
         detail "confirmation is per turn: the runtime appends a handler's events and waits for the"
         detail "log-consistency provider to confirm them BEFORE the reply leaves the activation, so a"
@@ -971,27 +1019,25 @@ let private runStreamingReplies (factory: IGrainFactory) =
 
         // ── Incremental delivery ────────────────────────────────────────────────
         let watchLabel = $"watch-{run}"
-        let stream = api.watch (watchLabel, 4)
+        let stream = api.watch { label = watchLabel; count = 4 }
         let enumerator = stream.GetAsyncEnumerator CancellationToken.None
         let received = ResizeArray<Tick>()
-        let mutable incremental = true
+        let deliveryChecks = ResizeArray<bool>()
 
         for index in 0..3 do
             // Nothing may have been produced beyond what has already been consumed.
-            if Produced.count watchLabel <> index then
-                incremental <- false
-
+            let heldBeforeRelease = Produced.count watchLabel = index
             Gates.release watchLabel index
             let! moved = enumerator.MoveNextAsync()
 
             if moved then
                 received.Add enumerator.Current
-            else
-                incremental <- false
 
             // The producer is now parked at the NEXT gate, so it produced exactly one more.
-            if Produced.count watchLabel <> index + 1 then
-                incremental <- false
+            let heldAfterDelivery = Produced.count watchLabel = index + 1
+            deliveryChecks.Add(heldBeforeRelease && moved && heldAfterDelivery)
+
+        let incremental = deliveryChecks |> Seq.forall id
 
         let! completed = enumerator.MoveNextAsync()
         do! enumerator.DisposeAsync()
@@ -1004,7 +1050,7 @@ let private runStreamingReplies (factory: IGrainFactory) =
         // ── An ordinary call while a stream is open ─────────────────────────────
         let openLabel = $"open-{run}"
         let! _ = api.bump 7
-        let openStream = api.watch (openLabel, 3)
+        let openStream = api.watch { label = openLabel; count = 3 }
         let openEnumerator = openStream.GetAsyncEnumerator CancellationToken.None
         Gates.release openLabel 0
         let! _ = openEnumerator.MoveNextAsync()

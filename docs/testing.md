@@ -35,11 +35,43 @@ the runtime-owned context. `counterDefinition` and `CounterApi` below are the sa
 `grainContract` / `grainFor` pair shown in [Getting Started](getting-started.md):
 
 ```fsharp
+open System
+open System.Threading.Tasks
 open Orleans
 open Orleans.Hosting
 open Orleans.TestingHost
 open Orleans.FSharp
 open Xunit
+
+type CounterActor = private CounterActor of unit
+
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { increment: unit -> Task<int>
+      value: unit -> Task<int> }
+
+[<RequireQualifiedAccess>]
+module CounterApi =
+    let contract =
+        grainContract<CounterActor, string, CounterApi> {
+            grainType "testing.counter"
+            version 1
+            stringKey
+            readOnly (_.value)
+        }
+
+    let ref = FunctionalGrain.ref contract
+
+let counterDefinition =
+    grainFor CounterApi.contract {
+        defaultState (fun () -> 0)
+        handle (_.increment) (fun _ count () ->
+            task {
+                let next = count + 1
+                return next, next
+            })
+        handleQuery (_.value) (fun _ count () -> task { return count })
+    }
 
 type CounterSiloConfigurator() =
     interface ISiloConfigurator with
@@ -54,7 +86,7 @@ type CounterClientConfigurator() =
 
 type CounterClusterFixture() =
     let cluster =
-        let builder = TestClusterBuilder 1s
+        let builder = TestClusterBuilder(1s)
         builder.AddSiloBuilderConfigurator<CounterSiloConfigurator>() |> ignore
         builder.AddClientBuilderConfigurator<CounterClientConfigurator>() |> ignore
         let cluster = builder.Build()
@@ -98,7 +130,7 @@ functions, for the context-free case above) rather than folding over a generated
 ```fsharp
 open Orleans.FSharp.Testing
 
-let! harness = TestHarness.createTestCluster()
+let createHarness () = TestHarness.createTestCluster()
 ```
 
 This starts a single-silo cluster with:
@@ -119,86 +151,35 @@ let config = siloConfig {
     addMemoryReminderService
 }
 
-let! harness = TestHarness.createTestClusterWith config
-```
-
-### Get grain references
-
-```fsharp
-let counterRef =
-    TestHarness.getGrainByString<ICounterGrain> harness "test-counter"
-
-let orderRef =
-    TestHarness.getGrainByInt64<IOrderGrain> harness 42L
-
-let sessionRef =
-    TestHarness.getGrainByGuid<ISessionGrain> harness (Guid.NewGuid())
-```
-
-### Make grain calls
-
-```fsharp
-let! result = GrainRef.invoke counterRef (fun g -> g.Increment())
-Assert.Equal(1, result)
-
-let! value = GrainRef.invoke counterRef (fun g -> g.GetValue())
-Assert.Equal(1, value)
+let createCustomHarness () = TestHarness.createTestClusterWith config
 ```
 
 ### Capture logs
 
 ```fsharp
-let logs = TestHarness.captureLogs harness
+open Microsoft.Extensions.Logging
+open Xunit
 
-for entry in logs do
-    printfn "[%A] %s" entry.Level entry.Template
+let assertNoWarnings harness =
+    let logs = TestHarness.captureLogs harness
 
-// Assert on specific log entries
-let warnings =
-    logs |> List.filter (fun e -> e.Level = LogLevel.Warning)
-Assert.Empty(warnings)
+    for entry in logs do
+        printfn "[%A] %s" entry.Level entry.Template
+
+    logs
+    |> List.filter (fun entry -> entry.Level = LogLevel.Warning)
+    |> Assert.Empty
 ```
 
 ### Reset and dispose
 
 ```fsharp
-// Clear captured logs between tests
-do! TestHarness.reset harness
-
-// Dispose after all tests
-do! TestHarness.dispose harness
+let resetAndDispose harness =
+    task {
+        do! TestHarness.reset harness
+        do! TestHarness.dispose harness
+    }
 ```
-
-### Full integration test
-
-```fsharp
-open Xunit
-open Orleans.FSharp
-open Orleans.FSharp.Testing
-
-type CounterTests() =
-    let mutable harness = Unchecked.defaultof<TestHarness>
-
-    interface IAsyncLifetime with
-        member _.InitializeAsync() =
-            task { harness <- TestHarness.createTestCluster().GetAwaiter().GetResult() }
-
-        member _.DisposeAsync() =
-            TestHarness.dispose harness
-
-    [<Fact>]
-    member _.``increment increases counter`` () =
-        task {
-            let ref = TestHarness.getGrainByString<ICounterGrain> harness "test-1"
-            let! v1 = GrainRef.invoke ref (fun g -> g.Increment())
-            let! v2 = GrainRef.invoke ref (fun g -> g.Increment())
-            Assert.Equal(1, v1)
-            Assert.Equal(2, v2)
-        }
-```
-
----
-
 
 ## GrainArbitrary
 
@@ -209,11 +190,20 @@ type CounterTests() =
 ```fsharp
 open Orleans.FSharp.Testing
 
+type CounterState =
+    | Zero
+    | Count of int
+
+type CounterCommand =
+    | Increment
+    | Decrement
+    | GetValue
+
 let arb = GrainArbitrary.forState<CounterState>()
 
 // Use in a property test
-let gen = arb |> Arb.toGen
-let sample = gen |> Gen.sample 10 5
+let gen = arb |> FsCheck.FSharp.Arb.toGen
+let sample = gen |> FsCheck.FSharp.Gen.sampleWithSize 10 5
 // Produces: [Zero; Count 42; Count -7; Zero; Count 1]
 ```
 
@@ -328,7 +318,10 @@ let ``apply folds a deposit`` () =
     Assert.Equal({ balance = 15m }, applyAccount initial (Deposited 5m))
 ```
 
-The integration fixture registers the definition with `AddFunctionalGrain`, configures one of Orleans' log-consistency providers, then calls the typed API via `FunctionalGrain.ref`. Snapshot policy tests should use a custom storage adapter and assert the stored version and state, not only the reply.
+The integration fixture registers the definition with `AddFunctionalJournaledGrain`, configures one
+of Orleans' log-consistency providers, then calls the typed API via `FunctionalGrain.ref`. Snapshot
+policy tests should use a custom storage adapter and assert the stored version and state, not only
+the reply.
 
 ## Legacy tests
 

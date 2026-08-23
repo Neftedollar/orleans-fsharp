@@ -51,8 +51,8 @@ jobs:
       - run: dotnet build --verbosity normal ${{ matrix.arg }}
       - run: dotnet test tests/Orleans.FSharp.Tests --verbosity normal ${{ matrix.arg }}
       # spec 003: the functional grain runtime's Integration suite runs on both ends of the
-      # Orleans version matrix, not just the floor. 101 tests, ~40s per matrix entry (~80s
-      # total added to this job) — Redis-gated tests inside this filter are skipped here (no
+      # Orleans version matrix, not just the floor. The complete functional surface takes about
+      # one minute per matrix entry — Redis-gated tests inside this filter are skipped here (no
       # Redis service in this job); they run non-skipped in redis-durability below.
       #
       # The second clause is NOT redundant: the chat-room sample's end-to-end test lives in
@@ -93,8 +93,9 @@ jobs:
           dotnet build examples/dashboard/Dashboard.fsproj --nologo ${{ matrix.arg }}
           dotnet run --project examples/dashboard/Dashboard.fsproj --no-build ${{ matrix.arg }} -- --verify-silo | tee dashboard.out
           rg -q "dashboard.counter/visits" dashboard.out
-          rg -q "FunctionalGrainMarker.*CounterActor" dashboard.out
-          rg -q "FunctionalGrainMarker.*CartActor" dashboard.out
+          rg -q -x "DASHBOARD_API_OK endpoint=/dashboard/DashboardCounters collection=simpleGrainStats" dashboard.out
+          rg -q "^DASHBOARD_API_ACTIVATION actor=CounterActor ActivationCount=[1-9][0-9]* grainType=Orleans\.FSharp\.FunctionalGrainMarker<.*CounterActor>$" dashboard.out
+          rg -q "^DASHBOARD_API_ACTIVATION actor=CartActor ActivationCount=[1-9][0-9]* grainType=Orleans\.FSharp\.FunctionalGrainMarker<.*CartActor>$" dashboard.out
 
   redis-durability:
     name: Redis Durability (Orleans ${{ matrix.label }})
@@ -249,6 +250,8 @@ jobs:
         run: python3 scripts/check-docs-mirror.py
       - name: Current docs do not teach the Legacy API
         run: python3 scripts/check-current-docs-api.py
+      - name: Published LLM corpus matches its documentation sources
+        run: python3 scripts/generate-llms-full.py --check
       # The published site is what ships; docs.yml only builds it on push to main, so a
       # PR that adds a page, a sidebar entry or a cross-doc link gets no feedback there.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

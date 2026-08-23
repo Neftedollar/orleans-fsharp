@@ -6,7 +6,8 @@
     <!-- Version is driven by MinVer (git tag) like every other package — do not hardcode. -->
     <Title>Orleans F# Project Templates</Title>
     <Authors>Orleans.FSharp</Authors>
-    <Description>Project templates for building Orleans applications with idiomatic F#. Includes grain definitions, silo configuration, C# code generation bridge, and property-based tests.</Description>
+    <Description>Project templates for building Orleans applications with the current functional F# API. Includes typed grain contracts, functional grain definitions, silo configuration, and property-based tests.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>dotnet-new;templates;fsharp;orleans;actor-model</PackageTags>
     <TargetFramework>net10.0</TargetFramework>
 
@@ -24,6 +25,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
     <!-- Forward slashes so the glob matches on Linux/macOS CI (backslashes match nothing there → NU5017). -->
     <Content Include="orleans-fsharp/**/*" Exclude="orleans-fsharp/**/bin/**;orleans-fsharp/**/obj/**" />
     <Compile Remove="**/*" />

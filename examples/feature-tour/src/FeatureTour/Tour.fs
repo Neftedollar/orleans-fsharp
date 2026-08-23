@@ -55,16 +55,19 @@ let rec describe (error: exn) =
 /// held. Used instead of a fixed sleep so the transcript is stable on a slow machine.
 /// </summary>
 let waitUntil (timeout: TimeSpan) (condition: unit -> Task<bool>) : Task<bool> =
-    task {
-        let deadline = DateTimeOffset.UtcNow + timeout
-        let mutable ok = false
+    let deadline = DateTimeOffset.UtcNow + timeout
 
-        while not ok && DateTimeOffset.UtcNow < deadline do
+    let rec poll () =
+        task {
             let! current = condition ()
-            ok <- current
 
-            if not ok then
+            if current then
+                return true
+            elif DateTimeOffset.UtcNow >= deadline then
+                return false
+            else
                 do! Task.Delay 100
+                return! poll ()
+        }
 
-        return ok
-    }
+    poll ()

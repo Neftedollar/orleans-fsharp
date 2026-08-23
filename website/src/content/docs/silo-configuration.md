@@ -562,9 +562,9 @@ siloConfig {
 
 ## Serialization
 
-Opt a silo into the F# codecs. The universal grain pattern and the functional grain runtime both
-register `FSharpBinaryCodec` for you; declare these only when you are on the per-grain C# CodeGen
-path, or when you want the JSON fallback as well:
+Opt a silo into the F# codecs. Functional definition registration already installs
+`FSharpBinaryCodec`; declare these explicitly when other host code needs the codec before
+functional registration, or when you want the JSON fallback as well:
 
 ```fsharp
 siloConfig {

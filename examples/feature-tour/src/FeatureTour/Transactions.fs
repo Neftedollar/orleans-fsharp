@@ -6,6 +6,7 @@
 /// </summary>
 namespace FeatureTour.Transactions
 
+open System
 open System.Collections.Concurrent
 open System.Runtime.CompilerServices
 open System.Threading
@@ -45,11 +46,37 @@ type Ledger =
     { balance: decimal
       entries: string list }
 
+/// <summary>A business rejection from the pure ledger core.</summary>
+type WithdrawalError =
+    | InsufficientFunds of available: decimal * requested: decimal
+
+[<RequireQualifiedAccess>]
+module WithdrawalError =
+    let describe = function
+        | InsufficientFunds(available, requested) ->
+            $"insufficient funds: {available} < {requested}"
+
+[<RequireQualifiedAccess>]
+module Ledger =
+    let deposit amount ledger =
+        { ledger with
+            balance = ledger.balance + amount
+            entries = ledger.entries @ [ $"+{amount}" ] }
+
+    let withdraw amount ledger =
+        if ledger.balance < amount then
+            Error(InsufficientFunds(ledger.balance, amount))
+        else
+            Ok
+                { ledger with
+                    balance = ledger.balance - amount
+                    entries = ledger.entries @ [ $"-{amount}" ] }
+
 [<NoEquality; NoComparison>]
 type AccountApi =
     { /// Adds to the balance inside the caller's transaction.
       deposit: decimal -> Task<unit>
-      /// Subtracts, throwing (and so aborting the whole transaction) on an overdraft.
+      /// Subtracts, translating a typed domain rejection into an Orleans transaction abort.
       withdraw: decimal -> Task<unit>
       /// Reads the balance inside the caller's transaction.
       balance: unit -> Task<decimal>
@@ -97,10 +124,7 @@ module AccountDefinition =
 
                     do!
                         (context.transactionalState AccountApi.ledger)
-                            .update (fun ledger ->
-                                { ledger with
-                                    balance = ledger.balance + amount
-                                    entries = ledger.entries @ [ $"+{amount}" ] })
+                            .update (Ledger.deposit amount)
 
                     return state, ()
                 })
@@ -111,16 +135,14 @@ module AccountDefinition =
                     let ledger = context.transactionalState AccountApi.ledger
                     let! current = ledger.read ()
 
-                    if current.balance < amount then
-                        failwith $"insufficient funds: {current.balance} < {amount}"
-
-                    do!
-                        ledger.update (fun value ->
-                            { value with
-                                balance = value.balance - amount
-                                entries = value.entries @ [ $"-{amount}" ] })
-
-                    return state, ()
+                    match Ledger.withdraw amount current with
+                    | Error rejection ->
+                        // Orleans aborts a transaction on a fault. Keep that framework concern at
+                        // the actor boundary; the reusable business rule above remains Result-based.
+                        return raise (InvalidOperationException(WithdrawalError.describe rejection))
+                    | Ok updated ->
+                        do! ledger.update (fun _ -> updated)
+                        return state, ()
                 })
 
             handle (_.balance) (fun context state () ->
@@ -168,12 +190,25 @@ module AccountDefinition =
 
 type TellerActor = private TellerActor of unit
 
+type TransferRequest =
+    { fromAccount: string
+      toAccount: string
+      amount: decimal }
+
+type AccountPair =
+    { leftAccount: string
+      rightAccount: string }
+
+type AccountBalances =
+    { leftBalance: decimal
+      rightBalance: decimal }
+
 [<NoEquality; NoComparison>]
 type TellerApi =
     { /// Moves funds between two accounts in ONE transaction it creates itself.
-      transfer: string * string * decimal -> Task<unit>
+      transfer: TransferRequest -> Task<unit>
       /// Reads both balances in one transaction, so the pair is a consistent snapshot.
-      totals: string * string -> Task<decimal * decimal> }
+      totals: AccountPair -> Task<AccountBalances> }
 
 [<RequireQualifiedAccess>]
 module TellerApi =
@@ -188,7 +223,7 @@ module TellerApi =
     let contract =
         grainContract<TellerActor, string, TellerApi> {
             grainType GrainType
-            version 1
+            version 2
             stringKey
             transactional Orleans.TransactionOption.Create (_.transfer)
             transactional Orleans.TransactionOption.Create (_.totals)
@@ -203,23 +238,27 @@ module TellerDefinition =
         grainFor TellerApi.contract {
             defaultState (fun () -> ())
 
-            handle (_.transfer) (fun context state ((from: string), (into: string), (amount: decimal)) ->
+            handle (_.transfer) (fun context state (request: TransferRequest) ->
                 task {
-                    let source = AccountApi.ref context.grainFactory from
-                    let target = AccountApi.ref context.grainFactory into
+                    let source = AccountApi.ref context.grainFactory request.fromAccount
+                    let target = AccountApi.ref context.grainFactory request.toAccount
 
-                    do! source.withdraw amount
-                    do! target.deposit amount
+                    do! source.withdraw request.amount
+                    do! target.deposit request.amount
                     return state, ()
                 })
 
-            handle (_.totals) (fun context state ((left: string), (right: string)) ->
+            handle (_.totals) (fun context state (pair: AccountPair) ->
                 task {
-                    let first = AccountApi.ref context.grainFactory left
-                    let second = AccountApi.ref context.grainFactory right
+                    let first = AccountApi.ref context.grainFactory pair.leftAccount
+                    let second = AccountApi.ref context.grainFactory pair.rightAccount
 
                     let! leftBalance = first.balance ()
                     let! rightBalance = second.balance ()
-                    return state, (leftBalance, rightBalance)
+
+                    return
+                        state,
+                        { leftBalance = leftBalance
+                          rightBalance = rightBalance }
                 })
         }

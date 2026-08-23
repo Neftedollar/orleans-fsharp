@@ -11,12 +11,12 @@ cannot run standalone, and
 [docs/functional-grains.md, "Distributed ACID transactions"](../../docs/functional-grains.md) for
 the full model.
 
-**The twin does not restate a single business rule.** It hands `AccountGrainDef.deposit` and
-`AccountGrainDef.withdraw` straight to Orleans as `'State -> 'State` update functions, over the
-same `AccountBalance` state, under the same `("state", "TransactionStore")` identity. So
+**The twin does not restate a single business rule.** It hands `AccountGrainDef.deposit` and the
+Result-returning `AccountGrainDef.withdraw` core to the Orleans boundary over the same
+`AccountBalance` state, under the same `("state", "TransactionStore")` identity. Only the boundary
+adapter turns an overdraft rejection into the fault Orleans needs to abort a transaction. So
 `tests/Domain.Tests` -- which tests those two pure functions -- is parity evidence for both paths
-at once, and the overdraft message a rolled-back transfer reports is character-for-character the
-one the classic grain reported.
+at once, and the overdraft message remains unchanged.
 
 ## How to run
 
@@ -70,7 +70,7 @@ Orleans'.
 | classic | functional | note |
 |---|---|---|
 | `ITransactionalAccountGrain.Deposit` | `AccountApi.deposit` | `transactional CreateOrJoin` |
-| `ITransactionalAccountGrain.Withdraw` | `AccountApi.withdraw` | throws, and so aborts, exactly as before |
+| `ITransactionalAccountGrain.Withdraw` | `AccountApi.withdraw` | typed domain rejection translated to an abort at the Orleans boundary |
 | `ITransactionalAccountGrain.GetBalance` | `AccountApi.balance` | `transactional CreateOrJoin` |
 | `IAtmGrain.Transfer` | `AtmApi.transfer` | `transactional Create` |
 | — | `AtmApi.totals` | both balances read in ONE transaction |
@@ -119,8 +119,8 @@ Both classic definitions stay compiled, stay registered on the silo
 - **A state-free participant** the ATM declares `transactional` and attaches no facet at all -- the shape every "unit of work" grain has
 - **`UseTransactions()`** must be called on the silo builder; one call serves both authoring models
 - **`addMemoryStorage "TransactionStore"`** memory storage really is a transactional store: `NamedTransactionalStateStorageFactory` falls back to a keyed `IGrainStorage` wrapped in `TransactionalStateStorageProviderWrapper`, ETags and all
-- **Abort is Orleans'** a throw anywhere in the transaction aborts it; the example adds no retry, no compensation, and no catch on the write path
-- **Pure F# business logic** deposit/withdraw are testable without the Orleans runtime, and are the *same* functions both grain models run
+- **Abort is Orleans'** a boundary fault anywhere in the transaction aborts it; the example adds no retry, no compensation, and no catch on the write path
+- **Pure F# business logic** deposit returns the next state and withdraw returns `Result<AccountBalance, AccountError>`; both are testable without the Orleans runtime and shared by both grain models
 - **FsCheck property tests** verify the transfer preserves the total balance, plus the twin's transactional-state identity
 
 ## Documentation

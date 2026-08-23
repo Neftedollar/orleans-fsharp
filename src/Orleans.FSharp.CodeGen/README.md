@@ -1,18 +1,14 @@
-# Orleans.FSharp.CodeGen
+# Orleans.FSharp.CodeGen — Legacy compatibility package
 
-C# bridge project that enables Orleans Roslyn source generators for F# grain definitions.
+This package is the per-grain C# Roslyn source-generation bridge for applications that still use
+the original Orleans.FSharp authoring model. New functional grains use typed API records and the
+fixed proxies from `Orleans.FSharp.Abstractions`; they do not use this package.
 
-## Why this package exists
+## Legacy API
 
-Orleans uses C# Roslyn source generators to produce serializers and grain method dispatchers. These generators do not run on F# projects. This package is a thin C# project that references your F# grain interfaces and definitions, allowing the Orleans SDK to generate the required code.
-
-**This project contains no runtime logic** -- only assembly-level attributes and project references.
-
-## How to use
-
-1. Add this package (or a project reference) to your solution.
-2. Reference your F# grains project and `Orleans.FSharp` from this C# project.
-3. Add an `AssemblyAttributes.cs` file with the appropriate Orleans generate-code attributes:
+Existing applications may keep this bridge while migrating. It contains no runtime logic: a C#
+project references the F# grain assembly, applies Orleans generation attributes, and lets
+`Microsoft.Orleans.Sdk` emit serializers and dispatchers.
 
 ```csharp
 using Orleans;
@@ -20,19 +16,13 @@ using Orleans;
 [assembly: GenerateCodeForDeclaringAssembly]
 ```
 
-4. The Orleans SDK source generator runs during the C# build and emits serializers for all referenced F# types.
-
-## Project references
-
-This package references:
-- `Orleans.FSharp` -- core grain definitions
-- `Orleans.FSharp.EventSourcing` -- event-sourced grain definitions
-- Your F# sample/application project containing grain interfaces
+See the [Legacy API](https://github.com/Neftedollar/orleans-fsharp/tree/main/docs/legacy) and
+[migration guide](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/legacy/migration.md).
 
 ## Requirements
 
 - .NET 10+
-- `Microsoft.Orleans.Sdk` (included)
+- `Microsoft.Orleans.Sdk`
 
 ## License
 

@@ -70,10 +70,13 @@ type TickerActor = private TickerActor of unit
 /// <summary>One streamed item; an application record, not a primitive.</summary>
 type Tick = { index: int; note: string }
 
+/// <summary>The named input for a finite ticker stream.</summary>
+type WatchRequest = { label: string; count: int }
+
 [<NoEquality; NoComparison>]
 type TickerApi =
     { /// Yields <c>count</c> ticks, waiting at a per-item gate before each one.
-      watch: string * int -> IAsyncEnumerable<Tick>
+      watch: WatchRequest -> IAsyncEnumerable<Tick>
       /// Yields forever until the enumeration is cancelled, then records what it saw.
       follow: string -> IAsyncEnumerable<int>
       /// An ordinary call, so the section can show one completing while a stream is open.
@@ -89,7 +92,7 @@ module TickerApi =
     let contract =
         grainContract<TickerActor, string, TickerApi> {
             grainType GrainType
-            version 1
+            version 2
             stringKey
         }
 
@@ -105,23 +108,20 @@ module TickerDefinition =
             // returns items only, and there is no replacement state — a stream produces across many
             // turns of the activation, so a whole-state replacement published when it ended would
             // overwrite everything the turns it overlapped had done.
-            handleStream (_.watch) (fun _ _ ((label: string), (count: int)) ->
+            handleStream (_.watch) (fun _ _ (request: WatchRequest) ->
                 taskSeq {
-                    for index in 0 .. count - 1 do
-                        do! Gates.gate label index
-                        Produced.record label
-                        yield { index = index; note = $"{label}#{index}" }
+                    for index in 0 .. request.count - 1 do
+                        do! Gates.gate request.label index
+                        Produced.record request.label
+                        yield { index = index; note = $"{request.label}#{index}" }
                 })
 
             handleStream (_.follow) (fun context _ (label: string) ->
                 taskSeq {
                     try
-                        let mutable index = 0
-
-                        while true do
+                        for index in Seq.initInfinite id do
                             Produced.record label
                             yield index
-                            index <- index + 1
                             // The enumeration's own token: Orleans cancels it when the caller
                             // disposes the enumerator.
                             do! Task.Delay(25, context.cancellationToken)
@@ -151,7 +151,7 @@ module Refusals =
             grainFor TickerApi.contract {
                 defaultState (fun () -> 0)
                 statelessWorker 4
-                handleStream (_.watch) (fun _ _ ((_: string), (_: int)) -> taskSeq { () })
+                handleStream (_.watch) (fun _ _ (_: WatchRequest) -> taskSeq { () })
                 handleStream (_.follow) (fun _ _ (_: string) -> taskSeq { () })
                 handle (_.ping) (fun _ state () -> task { return state, state })
                 handle (_.bump) (fun _ state (amount: int) -> task { return state + amount, state + amount })

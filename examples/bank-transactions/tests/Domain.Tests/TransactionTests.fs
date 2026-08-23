@@ -28,19 +28,22 @@ module Properties =
     let ``withdraw decreases balance by exact amount`` (PositiveInt amount) =
         let initial = AccountBalance()
         initial.Balance <- decimal amount + 100m
-        let result = AccountGrainDef.withdraw initial (decimal amount)
-        result.Balance = initial.Balance - decimal amount
+        match AccountGrainDef.withdraw initial (decimal amount) with
+        | Ok result -> result.Balance = initial.Balance - decimal amount
+        | Error _ -> false
 
     /// <summary>
-    /// Withdraw with insufficient funds throws InvalidOperationException.
+    /// Withdraw with insufficient funds returns a typed business rejection.
     /// </summary>
     [<Fact>]
-    let ``withdraw with insufficient funds throws`` () =
+    let ``withdraw with insufficient funds is rejected`` () =
         let balance = AccountBalance()
         balance.Balance <- 50m
-        Assert.Throws<System.InvalidOperationException>(fun () ->
-            AccountGrainDef.withdraw balance 100m |> ignore)
-        |> ignore
+
+        Assert.Equal(
+            Error(InsufficientFunds(50m, 100m)),
+            AccountGrainDef.withdraw balance 100m
+        )
 
     /// <summary>
     /// A simulated transfer preserves total balance across two accounts.
@@ -56,11 +59,12 @@ module Properties =
 
         let totalBefore = balanceA.Balance + balanceB.Balance
 
-        let newA = AccountGrainDef.withdraw balanceA (decimal transferAmt)
-        let newB = AccountGrainDef.deposit balanceB (decimal transferAmt)
-
-        let totalAfter = newA.Balance + newB.Balance
-        totalBefore = totalAfter
+        match AccountGrainDef.withdraw balanceA (decimal transferAmt) with
+        | Error _ -> false
+        | Ok newA ->
+            let newB = AccountGrainDef.deposit balanceB (decimal transferAmt)
+            let totalAfter = newA.Balance + newB.Balance
+            totalBefore = totalAfter
 
     /// <summary>
     /// Deposit of zero or negative amounts does not reduce balance.
@@ -81,15 +85,13 @@ module Properties =
         state.Balance <- decimal balance
 
         if decimal withdrawAmt <= state.Balance then
-            let result = AccountGrainDef.withdraw state (decimal withdrawAmt)
-            result.Balance >= 0m
+            match AccountGrainDef.withdraw state (decimal withdrawAmt) with
+            | Ok result -> result.Balance >= 0m
+            | Error _ -> false
         else
-            // Should throw, which means balance stays non-negative
-            try
-                AccountGrainDef.withdraw state (decimal withdrawAmt) |> ignore
-                false // should not reach here
-            with :? System.InvalidOperationException ->
-                true
+            match AccountGrainDef.withdraw state (decimal withdrawAmt) with
+            | Error(InsufficientFunds _) -> true
+            | Ok _ -> false
 
 /// <summary>
 /// Parity pins for the functional-runtime twin (<c>AccountGrainFunctional.fs</c>). The twin hands

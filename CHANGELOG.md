@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Custom journal storage can classify a failure as permanent.**
+  `FunctionalJournalPermanentStorageException(message[, innerException])` gives a typed
+  `IFunctionalJournalStorage` implementation an explicit exit from Orleans CustomStorage's
+  catch-all retry loop. The runtime fails the current operation, suppresses callbacks over the
+  synthetic fallback used to release the adaptor, and requests activation deactivation so the
+  next call starts with a fresh durable read. Ordinary adaptor-path exceptions remain transient.
+  A zero-event manual snapshot and a complete clear call the typed store directly, so their
+  ordinary exceptions surface once without implicit retry or deactivation; the permanent marker
+  keeps the fail-and-deactivate meaning on those paths too.
+- **Bounded zero-event snapshot conflict retries.**
+  `FunctionalJournalSnapshotOptions.ManualSnapshotMaxConflictRetries` defaults to `3`, counts
+  retries after the first compare-and-swap attempt, and is rejected at startup when negative.
+  Every retry synchronizes and recomputes the snapshot from confirmed state; the final rejected
+  attempt also synchronizes before failing, so a surviving activation cannot retain a stale view.
+
+### Fixed
+
+- **Functional CustomStorage failures now terminate without acknowledging non-durable state.**
+  Permanent read/append/clear failures, malformed snapshot data, retained-tail `apply` failures,
+  and snapshot-predicate failures are surfaced to the caller instead of being trapped inside
+  Orleans' internal retry loop. Manual snapshot conflicts refresh and recompute, and a conflict
+  injected by another writer is preserved. `retrieveConfirmedEvents` range validation now matches
+  Orleans `JournaledGrain`, including empty ranges and invalid-bound diagnostics.
+- **The `orleans-fsharp` template now scaffolds only the current functional API.**
+  The deprecated `grain {}` twin, warning suppression, application CodeGen bridge, and duplicate
+  counter model are gone; generated projects use `grainContract` / `grainFor`, typed references,
+  functional registration, and pure property tests.
+- **Current documentation no longer mixes Legacy and functional authoring surfaces.**
+  The API reference, package READMEs, website mirror, generated LLM corpus, and runnable examples
+  were re-audited against the actual public surface. Legacy remains in its own section; custom
+  storage/snapshot behavior and Dashboard actor names are documented and verified. The docs CI
+  now checks both emitted pages and `#fragment` targets.
+
+### Changed
+
+- **Runnable examples use domain records and pure decision cores at functional boundaries.**
+  Stringly tuples, process-wide actor state, sync-over-async callbacks, and business exceptions
+  were removed from the active paths where a typed record, activation state, `task`, or
+  `Result` expresses the intent. Example contracts whose wire shapes changed now advance their
+  contract version, while the Chat Room keeps its existing persisted-state shape. The Dashboard
+  smoke test now validates the real
+  `/dashboard/DashboardCounters` response and positive functional-actor activation rows.
+
 ## [4.1.0] - 2026-08-21
 
 ### Added

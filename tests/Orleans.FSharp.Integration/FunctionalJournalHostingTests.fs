@@ -10,7 +10,9 @@
 module Orleans.FSharp.Integration.FunctionalJournalHostingTests
 
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
+open System.IO
 open System.Threading.Tasks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
@@ -159,6 +161,8 @@ type SnapshotNoteApi =
 type SnapshotNoteActor = private SnapshotNoteActor of unit
 type DisabledSnapshotNoteActor = private DisabledSnapshotNoteActor of unit
 type ConditionalSnapshotNoteActor = private ConditionalSnapshotNoteActor of unit
+type GlobalSnapshotNoteActor = private GlobalSnapshotNoteActor of unit
+type PoisonedSnapshotNoteActor = private PoisonedSnapshotNoteActor of unit
 type WrongSnapshotProviderActor = private WrongSnapshotProviderActor of unit
 
 [<ReferenceEquality>]
@@ -167,10 +171,26 @@ type private StoredSnapshotJournal =
       Snapshot: FunctionalJournalSnapshot<NoteState> option
       Tail: NoteEvent list }
 
+[<ReferenceEquality>]
+type private StoragePlan =
+    { mutable PermanentRead: bool
+      mutable PermanentAppend: bool
+      mutable PermanentClear: bool
+      mutable TransientReadFailures: int
+      mutable TransientAppendFailures: int
+      mutable TransientClearFailures: int
+      mutable RejectedAppends: int
+      mutable ConflictEvent: NoteEvent option
+      mutable MalformedSnapshot: bool
+      mutable ReadAttempts: int
+      mutable AppendAttempts: int
+      mutable ClearAttempts: int }
+
 [<Sealed>]
 type private SnapshotJournalStorage() =
     let gate = obj ()
     let values = Dictionary<string, StoredSnapshotJournal>(StringComparer.Ordinal)
+    let plans = Dictionary<string, StoragePlan>(StringComparer.Ordinal)
 
     let storageKey (grainTypeName: string) (key: string) = $"{grainTypeName}|{key}"
 
@@ -178,6 +198,80 @@ type private SnapshotJournalStorage() =
         { Version = 0
           Snapshot = None
           Tail = [] }
+
+    let newPlan () =
+        { PermanentRead = false
+          PermanentAppend = false
+          PermanentClear = false
+          TransientReadFailures = 0
+          TransientAppendFailures = 0
+          TransientClearFailures = 0
+          RejectedAppends = 0
+          ConflictEvent = None
+          MalformedSnapshot = false
+          ReadAttempts = 0
+          AppendAttempts = 0
+          ClearAttempts = 0 }
+
+    let planFor key =
+        match plans.TryGetValue key with
+        | true, plan -> plan
+        | false, _ ->
+            let plan = newPlan ()
+            plans.Add(key, plan)
+            plan
+
+    member _.FailReadPermanently(grainTypeName: string, key: string) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).PermanentRead <- true)
+
+    member _.FailAppendPermanently(grainTypeName: string, key: string) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).PermanentAppend <- true)
+
+    member _.FailClearPermanently(grainTypeName: string, key: string) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).PermanentClear <- true)
+
+    member _.FailNextReads(grainTypeName: string, key: string, count: int) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).TransientReadFailures <- count)
+
+    member _.FailNextAppends(grainTypeName: string, key: string, count: int) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).TransientAppendFailures <- count)
+
+    member _.FailNextClears(grainTypeName: string, key: string, count: int) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).TransientClearFailures <- count)
+
+    member _.RejectNextAppends(grainTypeName: string, key: string, count: int) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).RejectedAppends <- count)
+
+    member _.ConflictOnNextAppend(grainTypeName: string, key: string, event: NoteEvent) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).ConflictEvent <- Some event)
+
+    member _.ReturnMalformedSnapshot(grainTypeName: string, key: string) =
+        lock gate (fun () -> (planFor (storageKey grainTypeName key)).MalformedSnapshot <- true)
+
+    member _.SeedTail(grainTypeName: string, key: string, events: NoteEvent list) =
+        lock gate (fun () ->
+            values.[storageKey grainTypeName key] <-
+                { Version = events.Length
+                  Snapshot = None
+                  Tail = events })
+
+    member _.ClearFaults(grainTypeName: string, key: string) =
+        lock gate (fun () ->
+            let plan = planFor (storageKey grainTypeName key)
+            plan.PermanentRead <- false
+            plan.PermanentAppend <- false
+            plan.PermanentClear <- false
+            plan.TransientReadFailures <- 0
+            plan.TransientAppendFailures <- 0
+            plan.TransientClearFailures <- 0
+            plan.RejectedAppends <- 0
+            plan.ConflictEvent <- None
+            plan.MalformedSnapshot <- false)
+
+    member _.Attempts(grainTypeName: string, key: string) =
+        lock gate (fun () ->
+            let plan = planFor (storageKey grainTypeName key)
+            struct (plan.ReadAttempts, plan.AppendAttempts, plan.ClearAttempts))
 
     member _.SnapshotVersion(grainTypeName: string, key: string) =
         lock gate (fun () ->
@@ -193,32 +287,91 @@ type private SnapshotJournalStorage() =
 
     interface IFunctionalJournalStorage<string, NoteState, NoteEvent> with
         member _.Read(identity) =
-            let read =
+            let outcome =
                 lock gate (fun () ->
                     let key = storageKey identity.GrainTypeName identity.Key
+                    let plan = planFor key
+                    plan.ReadAttempts <- plan.ReadAttempts + 1
 
                     let stored =
                         match values.TryGetValue key with
                         | true, value -> value
                         | false, _ -> empty
 
-                    { Snapshot = stored.Snapshot
-                      Events = stored.Tail |> List.toArray :> IReadOnlyList<NoteEvent> })
+                    if plan.PermanentRead then
+                        Error(
+                            FunctionalJournalPermanentStorageException(
+                                $"permanent read failure for {identity.GrainTypeName}/{identity.Key}"
+                            )
+                            :> exn
+                        )
+                    elif plan.TransientReadFailures > 0 then
+                        plan.TransientReadFailures <- plan.TransientReadFailures - 1
+                        Error(IOException($"transient read failure for {identity.GrainTypeName}/{identity.Key}") :> exn)
+                    elif plan.MalformedSnapshot then
+                        Ok
+                            { Snapshot =
+                                Some
+                                    { Version = -1
+                                      State = { notes = [] } }
+                              Events = Array.empty<NoteEvent> :> IReadOnlyList<NoteEvent> }
+                    else
+                        Ok
+                            { Snapshot = stored.Snapshot
+                              Events = stored.Tail |> List.toArray :> IReadOnlyList<NoteEvent> })
 
-            Task.FromResult read
+            match outcome with
+            | Ok read -> Task.FromResult read
+            | Error error -> Task.FromException<FunctionalJournalRead<NoteState, NoteEvent>> error
 
         member _.Append(identity, write) =
-            let accepted =
+            let outcome =
                 lock gate (fun () ->
                     let key = storageKey identity.GrainTypeName identity.Key
+                    let plan = planFor key
+                    plan.AppendAttempts <- plan.AppendAttempts + 1
 
                     let stored =
                         match values.TryGetValue key with
                         | true, value -> value
                         | false, _ -> empty
 
-                    if stored.Version <> write.ExpectedVersion then
-                        false
+                    if plan.PermanentAppend then
+                        Error(
+                            FunctionalJournalPermanentStorageException(
+                                $"permanent append failure for {identity.GrainTypeName}/{identity.Key}"
+                            )
+                            :> exn
+                        )
+                    elif plan.TransientAppendFailures > 0 then
+                        plan.TransientAppendFailures <- plan.TransientAppendFailures - 1
+                        Error(IOException($"transient append failure for {identity.GrainTypeName}/{identity.Key}") :> exn)
+                    elif plan.ConflictEvent.IsSome then
+                        let event = plan.ConflictEvent.Value
+                        plan.ConflictEvent <- None
+
+                        values.[key] <-
+                            { stored with
+                                Version = stored.Version + 1
+                                Tail = stored.Tail @ [ event ] }
+
+                        Ok false
+                    elif plan.RejectedAppends > 0 then
+                        plan.RejectedAppends <- plan.RejectedAppends - 1
+
+                        // Model a real CAS conflict: another writer advances durable state before
+                        // rejecting this expected version. The activation must synchronize after
+                        // every rejection, including the final bounded attempt.
+                        let external = Noted $"external-{stored.Version + 1}"
+
+                        values.[key] <-
+                            { stored with
+                                Version = stored.Version + 1
+                                Tail = stored.Tail @ [ external ] }
+
+                        Ok false
+                    elif stored.Version <> write.ExpectedVersion then
+                        Ok false
                     else
                         let resultingVersion = write.ExpectedVersion + write.Events.Count
 
@@ -237,13 +390,36 @@ type private SnapshotJournalStorage() =
                                     Version = resultingVersion
                                     Tail = stored.Tail @ (write.Events |> Seq.toList) }
 
-                        true)
+                        Ok true)
 
-            Task.FromResult accepted
+            match outcome with
+            | Ok accepted -> Task.FromResult accepted
+            | Error error -> Task.FromException<bool> error
 
         member _.Clear(identity) =
-            lock gate (fun () -> values.Remove(storageKey identity.GrainTypeName identity.Key) |> ignore)
-            Task.CompletedTask
+            let outcome =
+                lock gate (fun () ->
+                    let key = storageKey identity.GrainTypeName identity.Key
+                    let plan = planFor key
+                    plan.ClearAttempts <- plan.ClearAttempts + 1
+
+                    if plan.PermanentClear then
+                        Error(
+                            FunctionalJournalPermanentStorageException(
+                                $"permanent clear failure for {identity.GrainTypeName}/{identity.Key}"
+                            )
+                            :> exn
+                        )
+                    elif plan.TransientClearFailures > 0 then
+                        plan.TransientClearFailures <- plan.TransientClearFailures - 1
+                        Error(IOException($"transient clear failure for {identity.GrainTypeName}/{identity.Key}") :> exn)
+                    else
+                        values.Remove key |> ignore
+                        Ok())
+
+            match outcome with
+            | Ok() -> Task.CompletedTask
+            | Error error -> Task.FromException error
 
 let private snapshotJournalStorage = SnapshotJournalStorage()
 
@@ -268,6 +444,20 @@ let private conditionalSnapshotContract =
         readOnly (_.notes)
     }
 
+let private globalSnapshotContract =
+    grainContract<GlobalSnapshotNoteActor, string, SnapshotNoteApi> {
+        grainType "journalhosting.snapshots.global"
+        stringKey
+        readOnly (_.notes)
+    }
+
+let private poisonedSnapshotContract =
+    grainContract<PoisonedSnapshotNoteActor, string, SnapshotNoteApi> {
+        grainType "journalhosting.snapshots.poisoned"
+        stringKey
+        readOnly (_.notes)
+    }
+
 let private wrongSnapshotProviderContract =
     grainContract<WrongSnapshotProviderActor, string, SnapshotNoteApi> {
         grainType "journalhosting.snapshots.wrongprovider"
@@ -275,7 +465,8 @@ let private wrongSnapshotProviderContract =
         readOnly (_.notes)
     }
 
-let private snapshotDefinition
+let private snapshotDefinitionWithApply
+    (fold: NoteState -> NoteEvent -> NoteState)
     (contract: GrainContract<'Actor, string, SnapshotNoteApi>)
     (providerName: string)
     (policyOverride: FunctionalJournalSnapshotPolicy<NoteState> option)
@@ -320,7 +511,7 @@ let private snapshotDefinition
     | None ->
         journaledGrainFor contract {
             initialEventState (fun (_: string) -> ({ notes = [] }: NoteState))
-            apply (fun (state: NoteState) (Noted note) -> { notes = state.notes @ [ note ] })
+            apply fold
             logProvider providerName
             customStorage resolve
             handle (_.append) append
@@ -333,7 +524,7 @@ let private snapshotDefinition
     | Some policyValue ->
         journaledGrainFor contract {
             initialEventState (fun (_: string) -> ({ notes = [] }: NoteState))
-            apply (fun (state: NoteState) (Noted note) -> { notes = state.notes @ [ note ] })
+            apply fold
             logProvider providerName
             customStorage resolve
             snapshotPolicy policyValue
@@ -344,6 +535,17 @@ let private snapshotDefinition
             handleQuery (_.notes) notes
             handle (_.recycle) recycle
         }
+
+let private snapshotDefinition
+    (contract: GrainContract<'Actor, string, SnapshotNoteApi>)
+    (providerName: string)
+    (policyOverride: FunctionalJournalSnapshotPolicy<NoteState> option)
+    =
+    snapshotDefinitionWithApply
+        (fun (state: NoteState) (Noted note) -> { notes = state.notes @ [ note ] })
+        contract
+        providerName
+        policyOverride
 
 let private inheritedSnapshotDefinition = snapshotDefinition snapshotContract SnapshotProvider None
 
@@ -359,8 +561,32 @@ let private conditionalSnapshotDefinition =
                 version >= 2 && state.notes |> List.contains "snapshot-me")
         ))
 
+let private globalSnapshotDefinition =
+    snapshotDefinition globalSnapshotContract SnapshotProvider None
+
+let private poisonedSnapshotDefinition =
+    snapshotDefinitionWithApply
+        (fun state (Noted note) ->
+            if note = "poison" then
+                invalidOp "poisoned retained event"
+
+            { notes = state.notes @ [ note ] })
+        poisonedSnapshotContract
+        SnapshotProvider
+        None
+
 let private wrongSnapshotProviderDefinition =
     snapshotDefinition wrongSnapshotProviderContract StockProvider None
+
+[<NoEquality; NoComparison>]
+type private GlobalSnapshotObservation =
+    { GrainTypeName: string
+      Key: string
+      Version: int
+      StateType: Type
+      Notes: string list }
+
+let private globalSnapshotObservations = ConcurrentQueue<GlobalSnapshotObservation>()
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Silo configurations
@@ -419,6 +645,55 @@ type SnapshotStorageSiloConfigurator() =
             siloBuilder.AddFunctionalJournaledGrain inheritedSnapshotDefinition |> ignore
             siloBuilder.AddFunctionalJournaledGrain disabledSnapshotDefinition |> ignore
             siloBuilder.AddFunctionalJournaledGrain conditionalSnapshotDefinition |> ignore
+            siloBuilder.AddFunctionalJournaledGrain poisonedSnapshotDefinition |> ignore
+
+/// <summary>A conditional silo default used to prove context shape and failure behavior.</summary>
+type GlobalSnapshotPolicySiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddCustomStorageBasedLogConsistencyProvider SnapshotProvider |> ignore
+
+            siloBuilder.ConfigureFunctionalJournalSnapshots(
+                Action<FunctionalJournalSnapshotOptions>(fun options ->
+                    options.Policy <-
+                        FunctionalJournalSnapshotDefault.When(fun context ->
+                            let state = unbox<NoteState> context.State
+
+                            globalSnapshotObservations.Enqueue
+                                { GrainTypeName = context.GrainTypeName
+                                  Key = unbox<string> context.Key
+                                  Version = context.Version
+                                  StateType = context.StateType
+                                  Notes = state.notes }
+
+                            if state.notes |> List.contains "policy-error" then
+                                invalidOp "global snapshot predicate failed"
+
+                            state.notes |> List.contains "global-snapshot"))
+            )
+            |> ignore
+
+            siloBuilder.Services.AddSingleton<SnapshotJournalStorage>(snapshotJournalStorage)
+            |> ignore
+
+            siloBuilder.AddFunctionalJournaledGrain globalSnapshotDefinition |> ignore
+
+/// <summary>A negative manual-snapshot retry budget is rejected before the silo serves calls.</summary>
+type InvalidSnapshotRetrySiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddCustomStorageBasedLogConsistencyProvider SnapshotProvider |> ignore
+
+            siloBuilder.ConfigureFunctionalJournalSnapshots(
+                Action<FunctionalJournalSnapshotOptions>(fun options ->
+                    options.ManualSnapshotMaxConflictRetries <- -1)
+            )
+            |> ignore
+
+            siloBuilder.Services.AddSingleton<SnapshotJournalStorage>(snapshotJournalStorage)
+            |> ignore
+
+            siloBuilder.AddFunctionalJournaledGrain inheritedSnapshotDefinition |> ignore
 
 /// <summary>A stock provider paired with a custom-storage declaration: rejected at startup.</summary>
 type WrongSnapshotProviderSiloConfigurator() =
@@ -508,6 +783,9 @@ let private deployExpectingFailure<'Configurator
         cluster.Dispose()
 
     messages error
+
+let private expectFailureWithin (timeout: TimeSpan) (operation: Task) =
+    Assert.ThrowsAnyAsync<exn>(Func<Task>(fun () -> operation.WaitAsync timeout))
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Tests
@@ -606,6 +884,327 @@ let ``custom storage snapshots compact tails reload state and honor explicit pre
             cluster.Dispose()
     }
 
+[<Fact>]
+let ``custom storage failures and manual snapshot conflicts terminate without losing durable state`` () =
+    let builder = TestClusterBuilder 1s
+    builder.AddSiloBuilderConfigurator<SnapshotStorageSiloConfigurator>() |> ignore
+    builder.AddClientBuilderConfigurator<JournalHostingClientConfigurator>() |> ignore
+    let cluster = builder.Build()
+    cluster.Deploy()
+    cluster.WaitForLivenessToStabilizeAsync().GetAwaiter().GetResult()
+
+    task {
+        try
+            let transientReadKey = $"transient-read-{Guid.NewGuid():N}"
+
+            snapshotJournalStorage.FailNextReads("journalhosting.snapshots", transientReadKey, 1)
+
+            let transientRead = FunctionalGrain.ref snapshotContract cluster.Client transientReadKey
+            let! initiallyEmpty = (transientRead.notes ()).WaitAsync(TimeSpan.FromSeconds 20.0)
+            Assert.Empty initiallyEmpty
+
+            let struct (transientReadAttempts, _, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", transientReadKey)
+
+            Assert.Equal(2, transientReadAttempts)
+
+            let transientAppendKey = $"transient-append-{Guid.NewGuid():N}"
+
+            snapshotJournalStorage.FailNextAppends("journalhosting.snapshots", transientAppendKey, 1)
+
+            let transientAppend = FunctionalGrain.ref snapshotContract cluster.Client transientAppendKey
+            let! transientCount = (transientAppend.append [ "retried" ]).WaitAsync(TimeSpan.FromSeconds 20.0)
+            Assert.Equal(1, transientCount)
+
+            let struct (_, transientAppendAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", transientAppendKey)
+
+            Assert.Equal(2, transientAppendAttempts)
+
+            let directSnapshotKey = $"direct-snapshot-transient-{Guid.NewGuid():N}"
+            let directSnapshot = FunctionalGrain.ref snapshotContract cluster.Client directSnapshotKey
+            let! _ = directSnapshot.append [ "kept" ]
+
+            let struct (_, beforeDirectSnapshotAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", directSnapshotKey)
+
+            snapshotJournalStorage.FailNextAppends("journalhosting.snapshots", directSnapshotKey, 1)
+
+            let! directSnapshotError =
+                expectFailureWithin (TimeSpan.FromSeconds 5.0) (directSnapshot.snapshot () :> Task)
+
+            Assert.Contains(
+                messages directSnapshotError,
+                fun message -> message.Contains "transient append failure"
+            )
+
+            let struct (_, afterDirectSnapshotAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", directSnapshotKey)
+
+            // A zero-event snapshot bypasses Orleans' adaptor. Its ordinary exception surfaces
+            // once to the caller; it neither enters the adaptor retry loop nor poisons the
+            // activation. The caller can retry explicitly.
+            Assert.Equal(1, afterDirectSnapshotAttempts - beforeDirectSnapshotAttempts)
+            let! afterDirectSnapshotFailure = directSnapshot.notes ()
+            Assert.Equal<string list>([ "kept" ], afterDirectSnapshotFailure)
+            do! directSnapshot.snapshot ()
+
+            Assert.Equal(
+                Some 1,
+                snapshotJournalStorage.SnapshotVersion("journalhosting.snapshots", directSnapshotKey)
+            )
+
+            let permanentReadKey = $"permanent-read-{Guid.NewGuid():N}"
+
+            snapshotJournalStorage.FailReadPermanently("journalhosting.snapshots", permanentReadKey)
+
+            let permanentRead = FunctionalGrain.ref snapshotContract cluster.Client permanentReadKey
+
+            let! permanentReadError =
+                expectFailureWithin (TimeSpan.FromSeconds 5.0) (permanentRead.notes () :> Task)
+
+            let permanentReadMessages = messages permanentReadError
+
+            Assert.True(
+                permanentReadMessages |> List.exists (fun message -> message.Contains "failed permanently"),
+                String.concat Environment.NewLine permanentReadMessages
+            )
+
+            let struct (permanentReadAttempts, _, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", permanentReadKey)
+
+            // Orleans may retry a failed activation as a whole, but each activation exits its
+            // CustomStorage loop immediately. The client retry budget is bounded at three.
+            Assert.InRange(permanentReadAttempts, 1, 3)
+            snapshotJournalStorage.ClearFaults("journalhosting.snapshots", permanentReadKey)
+            do! Task.Delay 750
+            let! recoveredRead = permanentRead.notes ()
+            Assert.Empty recoveredRead
+
+            let permanentAppendKey = $"permanent-append-{Guid.NewGuid():N}"
+
+            snapshotJournalStorage.FailAppendPermanently("journalhosting.snapshots", permanentAppendKey)
+
+            let permanentAppend = FunctionalGrain.ref snapshotContract cluster.Client permanentAppendKey
+
+            let! permanentAppendError =
+                expectFailureWithin
+                    (TimeSpan.FromSeconds 5.0)
+                    (permanentAppend.append [ "not-durable" ] :> Task)
+
+            Assert.Contains(messages permanentAppendError, fun message -> message.Contains "failed permanently")
+
+            let struct (_, permanentAppendAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", permanentAppendKey)
+
+            Assert.InRange(permanentAppendAttempts, 1, 3)
+            snapshotJournalStorage.ClearFaults("journalhosting.snapshots", permanentAppendKey)
+            do! Task.Delay 750
+            let! afterPermanentAppend = permanentAppend.notes ()
+            Assert.Empty afterPermanentAppend
+
+            let permanentManualSnapshotKey = $"permanent-manual-snapshot-{Guid.NewGuid():N}"
+
+            let permanentManualSnapshot =
+                FunctionalGrain.ref snapshotContract cluster.Client permanentManualSnapshotKey
+
+            let! _ = permanentManualSnapshot.append [ "kept" ]
+
+            snapshotJournalStorage.FailAppendPermanently(
+                "journalhosting.snapshots",
+                permanentManualSnapshotKey
+            )
+
+            let! permanentManualSnapshotError =
+                expectFailureWithin
+                    (TimeSpan.FromSeconds 5.0)
+                    (permanentManualSnapshot.snapshot () :> Task)
+
+            Assert.Contains(
+                messages permanentManualSnapshotError,
+                fun message -> message.Contains "writing a manual snapshot"
+            )
+
+            snapshotJournalStorage.ClearFaults("journalhosting.snapshots", permanentManualSnapshotKey)
+            do! Task.Delay 750
+            let! afterPermanentManualSnapshot = permanentManualSnapshot.notes ()
+            Assert.Equal<string list>([ "kept" ], afterPermanentManualSnapshot)
+
+            let permanentClearKey = $"permanent-clear-{Guid.NewGuid():N}"
+            let permanentClear = FunctionalGrain.ref snapshotContract cluster.Client permanentClearKey
+            let! _ = permanentClear.append [ "kept" ]
+            snapshotJournalStorage.FailClearPermanently("journalhosting.snapshots", permanentClearKey)
+
+            let! permanentClearError =
+                expectFailureWithin (TimeSpan.FromSeconds 5.0) (permanentClear.clear () :> Task)
+
+            Assert.Contains(messages permanentClearError, fun message -> message.Contains "failed permanently")
+
+            let struct (_, _, permanentClearAttempts) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", permanentClearKey)
+
+            Assert.InRange(permanentClearAttempts, 1, 3)
+            snapshotJournalStorage.ClearFaults("journalhosting.snapshots", permanentClearKey)
+            do! Task.Delay 750
+            let! afterPermanentClear = permanentClear.notes ()
+            Assert.Equal<string list>([ "kept" ], afterPermanentClear)
+
+            let transientClearKey = $"transient-clear-{Guid.NewGuid():N}"
+            let transientClear = FunctionalGrain.ref snapshotContract cluster.Client transientClearKey
+            let! _ = transientClear.append [ "kept" ]
+
+            let struct (_, _, beforeTransientClearAttempts) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", transientClearKey)
+
+            snapshotJournalStorage.FailNextClears("journalhosting.snapshots", transientClearKey, 1)
+
+            let! transientClearError =
+                expectFailureWithin (TimeSpan.FromSeconds 5.0) (transientClear.clear () :> Task)
+
+            Assert.Contains(messages transientClearError, fun message -> message.Contains "transient clear failure")
+
+            let struct (_, _, afterTransientClearAttempts) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", transientClearKey)
+
+            // Clear is a direct CustomStorage call in Orleans. An ordinary failure surfaces once,
+            // leaves durable state intact, and an explicit retry remains usable.
+            Assert.Equal(1, afterTransientClearAttempts - beforeTransientClearAttempts)
+            let! afterTransientClearFailure = transientClear.notes ()
+            Assert.Equal<string list>([ "kept" ], afterTransientClearFailure)
+            do! transientClear.clear ()
+            let! afterTransientClearRetry = transientClear.notes ()
+            Assert.Empty afterTransientClearRetry
+
+            let malformedKey = $"malformed-{Guid.NewGuid():N}"
+            snapshotJournalStorage.ReturnMalformedSnapshot("journalhosting.snapshots", malformedKey)
+            let malformed = FunctionalGrain.ref snapshotContract cluster.Client malformedKey
+            let! malformedError = expectFailureWithin (TimeSpan.FromSeconds 5.0) (malformed.notes () :> Task)
+            Assert.Contains(messages malformedError, fun message -> message.Contains "versions cannot be negative")
+
+            let struct (malformedReads, _, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", malformedKey)
+
+            Assert.InRange(malformedReads, 1, 3)
+
+            let poisonedKey = $"poisoned-{Guid.NewGuid():N}"
+            snapshotJournalStorage.SeedTail("journalhosting.snapshots.poisoned", poisonedKey, [ Noted "poison" ])
+            let poisoned = FunctionalGrain.ref poisonedSnapshotContract cluster.Client poisonedKey
+            let! poisonedError = expectFailureWithin (TimeSpan.FromSeconds 5.0) (poisoned.notes () :> Task)
+            Assert.Contains(messages poisonedError, fun message -> message.Contains "apply' fold")
+
+            let struct (poisonedReads, _, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots.poisoned", poisonedKey)
+
+            Assert.InRange(poisonedReads, 1, 3)
+
+            let boundedKey = $"bounded-conflict-{Guid.NewGuid():N}"
+            let bounded = FunctionalGrain.ref snapshotContract cluster.Client boundedKey
+            let! _ = bounded.append [ "base" ]
+
+            let struct (_, beforeBoundedAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", boundedKey)
+
+            snapshotJournalStorage.RejectNextAppends("journalhosting.snapshots", boundedKey, 10)
+            let! boundedError = expectFailureWithin (TimeSpan.FromSeconds 5.0) (bounded.snapshot () :> Task)
+
+            Assert.Contains(
+                messages boundedError,
+                fun message -> message.Contains "ManualSnapshotMaxConflictRetries is 3"
+            )
+
+            let struct (_, afterBoundedAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots", boundedKey)
+
+            Assert.Equal(4, afterBoundedAttempts - beforeBoundedAttempts)
+
+            let! synchronizedAfterBoundedConflict = bounded.notes ()
+
+            Assert.Equal<string list>(
+                [ "base"; "external-2"; "external-3"; "external-4"; "external-5" ],
+                synchronizedAfterBoundedConflict
+            )
+
+            snapshotJournalStorage.ClearFaults("journalhosting.snapshots", boundedKey)
+
+            let recomputedKey = $"recomputed-conflict-{Guid.NewGuid():N}"
+            let recomputed = FunctionalGrain.ref snapshotContract cluster.Client recomputedKey
+            let! _ = recomputed.append [ "base" ]
+
+            snapshotJournalStorage.ConflictOnNextAppend(
+                "journalhosting.snapshots",
+                recomputedKey,
+                Noted "external"
+            )
+
+            do! recomputed.snapshot ()
+
+            Assert.Equal(
+                Some 2,
+                snapshotJournalStorage.SnapshotVersion("journalhosting.snapshots", recomputedKey)
+            )
+
+            let! recomputedNotes = recomputed.notes ()
+            Assert.Equal<string list>([ "base"; "external" ], recomputedNotes)
+        finally
+            cluster.StopAllSilos()
+            cluster.Dispose()
+    }
+
+[<Fact>]
+let ``global snapshot When receives typed context and predicate failures do not enter Orleans retries`` () =
+    let builder = TestClusterBuilder 1s
+    builder.AddSiloBuilderConfigurator<GlobalSnapshotPolicySiloConfigurator>() |> ignore
+    builder.AddClientBuilderConfigurator<JournalHostingClientConfigurator>() |> ignore
+    let cluster = builder.Build()
+    cluster.Deploy()
+    cluster.WaitForLivenessToStabilizeAsync().GetAwaiter().GetResult()
+
+    task {
+        try
+            let snapshotKey = $"global-when-{Guid.NewGuid():N}"
+            let snapshot = FunctionalGrain.ref globalSnapshotContract cluster.Client snapshotKey
+            let! count = snapshot.append [ "one"; "global-snapshot" ]
+            Assert.Equal(2, count)
+
+            Assert.Equal(
+                Some 2,
+                snapshotJournalStorage.SnapshotVersion("journalhosting.snapshots.global", snapshotKey)
+            )
+
+            let observation =
+                globalSnapshotObservations.ToArray()
+                |> Array.find (fun candidate -> candidate.Key = snapshotKey && candidate.Version = 2)
+
+            Assert.Equal("journalhosting.snapshots.global", observation.GrainTypeName)
+            Assert.Equal(typeof<NoteState>, observation.StateType)
+            Assert.Equal<string list>([ "one"; "global-snapshot" ], observation.Notes)
+
+            let failureKey = $"global-failure-{Guid.NewGuid():N}"
+            let failure = FunctionalGrain.ref globalSnapshotContract cluster.Client failureKey
+            let! _ = failure.append [ "before-error" ]
+
+            let struct (_, beforeFailureAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots.global", failureKey)
+
+            let! predicateError =
+                expectFailureWithin
+                    (TimeSpan.FromSeconds 5.0)
+                    (failure.append [ "policy-error" ] :> Task)
+
+            Assert.Contains(messages predicateError, fun message -> message.Contains "predicate failed")
+
+            let struct (_, afterFailureAttempts, _) =
+                snapshotJournalStorage.Attempts("journalhosting.snapshots.global", failureKey)
+
+            Assert.Equal(beforeFailureAttempts, afterFailureAttempts)
+            do! Task.Delay 750
+            let! durableNotes = failure.notes ()
+            Assert.Equal<string list>([ "before-error" ], durableNotes)
+        finally
+            cluster.StopAllSilos()
+            cluster.Dispose()
+    }
+
 /// <remarks>
 /// The positive control for all three startup rejections below, and the composition claim in one:
 /// two journaled definitions on one silo, one on a stock provider registration and one on a
@@ -687,6 +1286,13 @@ let ``Orleans CustomStorage provider requires a typed customStorage declaration`
     Assert.Contains(reported, (fun message -> message.Contains "journalhosting.missingcustomstorage"))
     Assert.Contains(reported, (fun message -> message.Contains "uses Orleans CustomStorage"))
     Assert.Contains(reported, (fun message -> message.Contains "declares no 'customStorage'"))
+
+[<Fact>]
+let ``manual snapshot conflict retry budget cannot be negative`` () =
+    let reported = deployExpectingFailure<InvalidSnapshotRetrySiloConfigurator> ()
+
+    Assert.Contains(reported, fun message -> message.Contains "ManualSnapshotMaxConflictRetries")
+    Assert.Contains(reported, fun message -> message.Contains "cannot be negative")
 
 /// <remarks>
 /// The one constraint a third-party adapter package has to know about, and the reason it is worth

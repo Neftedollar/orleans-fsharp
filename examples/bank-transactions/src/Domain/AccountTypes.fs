@@ -3,6 +3,32 @@ namespace BankTransactions.Domain
 open System.Threading.Tasks
 open Orleans
 
+/// <summary>A rejected account operation from the pure domain core.</summary>
+type AccountError =
+    | InsufficientFunds of available: decimal * requested: decimal
+
+[<RequireQualifiedAccess>]
+module AccountError =
+    let describe = function
+        | InsufficientFunds(available, requested) ->
+            $"Insufficient funds: balance={available}, requested={requested}"
+
+/// <summary>A named transfer command for the functional actor boundary.</summary>
+type TransferRequest =
+    { FromAccount: string
+      ToAccount: string
+      Amount: decimal }
+
+/// <summary>Two accounts read in one transaction.</summary>
+type AccountPair =
+    { FirstAccount: string
+      SecondAccount: string }
+
+/// <summary>The consistent balance snapshot returned for an account pair.</summary>
+type AccountTotals =
+    { FirstBalance: decimal
+      SecondBalance: decimal }
+
 /// <summary>
 /// Mutable account balance state for transactional grains.
 /// Must be a reference type with a parameterless constructor (Orleans constraint for ITransactionalState).
@@ -34,7 +60,7 @@ type ITransactionalAccountGrain =
     /// <summary>Deposit funds into the account (transactional).</summary>
     abstract Deposit: amount: decimal -> Task
 
-    /// <summary>Withdraw funds from the account (transactional, throws on overdraft).</summary>
+    /// <summary>Withdraw funds from the account (transactional; an overdraft aborts the call).</summary>
     abstract Withdraw: amount: decimal -> Task
 
     /// <summary>Get the current balance (transactional read).</summary>

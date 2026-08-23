@@ -19,7 +19,7 @@ type UserProfile = { Name: string; Email: string }
 
 [<NoEquality; NoComparison>]
 type UserApi =
-    { setProfile: string * string -> Task<bool>
+    { setProfile: UserProfile -> Task<bool>
       getProfile: unit -> Task<UserProfile> }
 
 [<RequireQualifiedAccess>]
@@ -27,7 +27,7 @@ module UserApi =
     let contract =
         grainContract<UserActor, int64<UserId>, UserApi> {
             grainType "typesafe-ids.user.functional"
-            version 1
+            version 2
             int64KeyMapped rawId userId
         }
 
@@ -40,7 +40,7 @@ module UserFunctionalDef =
 
             handle
                 (_.setProfile)
-                (fun _context _state (name, email) -> task { return { Name = name; Email = email }, true })
+                (fun _context _state profile -> task { return profile, true })
 
             handle (_.getProfile) (fun _context state () -> task { return state, state })
         }

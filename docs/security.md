@@ -259,15 +259,26 @@ addAzureBlobStorage "Default" "DefaultEndpointsProtocol=https;AccountName=..."
 A common security pattern is to set the user principal at the entry point and validate it in grain call filters:
 
 ```fsharp
+open System.Security.Claims
+open System.Threading.Tasks
+open Microsoft.AspNetCore.Http
+open Orleans.FSharp
+
 // At the API boundary (ASP.NET controller, etc.)
-let handleRequest (httpContext: HttpContext) =
+let handleRequest (httpContext: HttpContext) (doWork: unit -> Task<'T>) =
     task {
         let userId = httpContext.User.Identity.Name
+        let roles =
+            httpContext.User.Claims
+            |> Seq.filter (fun claim -> claim.Type = ClaimTypes.Role)
+            |> Seq.map (fun claim -> claim.Value)
+            |> Seq.toArray
+
         RequestCtx.set "Principal" (box userId)
-        RequestCtx.set "Roles" (box (httpContext.User.Claims |> Seq.map ...))
+        RequestCtx.set "Roles" (box roles)
 
         // All grain calls from here will carry the principal
-        let! result = GrainRef.invoke myGrain (fun g -> g.DoWork())
+        let! result = doWork ()
         return result
     }
 

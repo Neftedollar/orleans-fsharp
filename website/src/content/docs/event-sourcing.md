@@ -93,10 +93,13 @@ Calling it is exactly the same as calling any other functional grain — the def
 invisible to a caller:
 
 ```fsharp
-let account = FunctionalGrain.ref accountContract grainFactory "acct-1"
-
-let! afterDeposit = account.deposit 100m
-let! balance = account.balance ()
+let callAccount (grainFactory: Orleans.IGrainFactory) =
+    task {
+        let account = FunctionalGrain.ref accountContract grainFactory "acct-1"
+        let! afterDeposit = account.deposit 100m
+        let! balance = account.balance ()
+        return afterDeposit, balance
+    }
 ```
 
 `initialEventState` and `apply` are the first two operations, in that order, and both are
@@ -159,20 +162,27 @@ not snapshotting.
 typed F# storage contract to application code:
 
 ```fsharp
-type AccountJournalStore() =
+open System.Threading.Tasks
+
+type AccountJournalBackend =
+    { read:
+        FunctionalJournalStorageIdentity<string> ->
+            Task<FunctionalJournalRead<Account, AccountEvent>>
+      append:
+        FunctionalJournalStorageIdentity<string> ->
+            FunctionalJournalWrite<Account, AccountEvent> -> Task<bool>
+      clear: FunctionalJournalStorageIdentity<string> -> Task }
+
+type AccountJournalStore(backend: AccountJournalBackend) =
     interface IFunctionalJournalStorage<string, Account, AccountEvent> with
         member _.Read(identity) =
-            // Return the latest snapshot plus events strictly after it.
-            load identity.GrainTypeName identity.Key
+            backend.read identity
 
         member _.Append(identity, write) =
-            // CAS on write.ExpectedVersion. On success append write.Events atomically;
-            // when write.Snapshot is Some, compact everything represented by it in the
-            // same atomic write. Return false without changing storage on a conflict.
-            append identity.GrainTypeName identity.Key write
+            backend.append identity write
 
         member _.Clear(identity) =
-            clear identity.GrainTypeName identity.Key
+            backend.clear identity
 ```
 
 `Read` returns `FunctionalJournalRead<'State,'Event>`: `Snapshot = None` starts at
@@ -183,6 +193,20 @@ batch atomically, and advance the durable version by `Events.Count`. A supplied 
 resulting version and state; the store may discard every event represented by it in that same
 write. `FunctionalJournalStorageIdentity<'Key>` contains the grain type, complete `GrainId`, and
 decoded key, so one singleton store can safely serve several grain types.
+
+When Orleans' CustomStorage adaptor calls `Read` or appends events, it treats an ordinary exception
+as transient and retries it. A zero-event manual snapshot and `Clear` call the typed store directly;
+an ordinary exception from either direct path fails that call once, does not deactivate the grain,
+and leaves an explicit retry to the caller. When retrying the same operation cannot succeed without
+an application, configuration, or durable-data change, throw
+`FunctionalJournalPermanentStorageException` instead. It has `message` and
+`message, innerException` constructors. The functional runtime then exits the protocol retry loop,
+fails the current journal operation, and requests deactivation; a later call creates a fresh
+activation and reads durable state again. Use the permanent exception only for genuinely
+non-retryable failures, such as an unsupported stored schema.
+
+The permanent exception has the same fail-and-deactivate meaning on manual snapshot and `Clear`,
+even though no Orleans retry loop is active there.
 
 Bind it in the definition and register Orleans' provider under the same name:
 
@@ -221,15 +245,26 @@ silo.AddFunctionalJournaledGrain accountDefinition |> ignore
 Without it, a custom-storage definition inherits the silo default:
 
 ```fsharp
-silo.UseFunctionalJournalSnapshots 5_000 |> ignore
+open Orleans.Hosting
 
-// Or a heterogeneous silo-wide predicate:
-silo.ConfigureFunctionalJournalSnapshots(fun options ->
-    options.Policy <-
-        FunctionalJournalSnapshotDefault.When(fun context ->
-            context.Version >= 10_000))
-|> ignore
+let configureSnapshots (silo: ISiloBuilder) =
+    silo.UseFunctionalJournalSnapshots 5_000 |> ignore
+
+    // Or a heterogeneous silo-wide predicate:
+    silo.ConfigureFunctionalJournalSnapshots(fun options ->
+        options.Policy <-
+            FunctionalJournalSnapshotDefault.When(fun context ->
+                context.Version >= 10_000)
+
+        options.ManualSnapshotMaxConflictRetries <- 3)
 ```
+
+`ManualSnapshotMaxConflictRetries` controls only compare-and-swap conflicts for a zero-event
+manual snapshot requested with `context.snapshotNow()`. It must be non-negative and defaults to
+`3`: the number counts retries *after* the first CAS attempt, so the default permits at most four
+attempts. Each retry synchronizes with durable storage and recomputes the snapshot from confirmed
+state. Set it to `0` to make only the first attempt; exhausting the limit fails the call without
+writing the snapshot.
 
 Precedence is explicit:
 

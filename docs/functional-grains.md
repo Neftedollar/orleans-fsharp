@@ -31,12 +31,42 @@ open System.Threading.Tasks
 open Orleans.FSharp
 
 [<Struct>]
+type UserId = private UserId of string
+
+[<RequireQualifiedAccess>]
+module UserId =
+    let create value = UserId value
+    let value (UserId value) = value
+
+[<Struct>]
 type RoomId = private RoomId of string
 
 [<RequireQualifiedAccess>]
 module RoomId =
     let create value = RoomId value
     let value (RoomId value) = value
+
+type PostMessage =
+    { author: UserId
+      text: string }
+
+type PostError =
+    | NotMember
+    | EmptyMessage
+
+type HistoryRequest =
+    { take: int
+      beforeSequence: int64 option }
+
+type ChatMessage =
+    { sequence: int64
+      author: UserId
+      text: string
+      sentAt: DateTimeOffset }
+
+type Typing =
+    { user: UserId
+      isTyping: bool }
 
 type RoomActor = private RoomActor of unit
 
@@ -907,11 +937,11 @@ field is a *push* operation, `'Msg -> Task<unit>`:
 ```fsharp
 type RoomObserver = private RoomObserver of unit
 
-type ChatMessage = { author: string; text: string }
+type RoomNotification = { author: string; text: string }
 
 [<NoEquality; NoComparison>]
 type RoomObserverApi =
-    { onMessage: ChatMessage -> Task<unit>
+    { onMessage: RoomNotification -> Task<unit>
       onClosed: string -> Task<unit> }
 
 let roomObserverContract =
@@ -953,7 +983,7 @@ wire. Declare the grain operation with the handle as its argument type:
 ```fsharp
 type ChatRoomApi =
     { subscribe: FunctionalObserverHandle<RoomObserver, RoomObserverApi> -> Task<int>
-      say: ChatMessage -> Task<int> }
+      say: RoomNotification -> Task<int> }
 ```
 
 ### Pushing
@@ -1677,16 +1707,40 @@ itself uses, and performs the manifest pre-load above automatically:
 #r "nuget: Orleans.FSharp"
 #r "nuget: Orleans.FSharp.Runtime"
 
+open System.Threading.Tasks
 open Orleans.FSharp
 
-let! handle =
-    FunctionalScripting.startOnPorts 11511 30001 [ FunctionalGrainRegistration.of' myDefinition ]
+type ScriptCounterApi = { increment: unit -> Task<int> }
 
-let api = MyApi.ref handle.GrainFactory someKey
+let scriptCounterContract =
+    contract<string, ScriptCounterApi> {
+        grainType "script.counter"
+        version 1
+        stringKey
+    }
+
+let scriptCounterDefinition =
+    grainFor scriptCounterContract {
+        defaultState (fun () -> 0)
+        handle (_.increment) (fun _ count () -> task { return count + 1, count + 1 })
+    }
+
+let run () =
+    task {
+        let registrations = [ FunctionalGrainRegistration.of' scriptCounterDefinition ]
+        let! handle = FunctionalScripting.startOnPorts 11511 30001 registrations
+
+        let counter = FunctionalGrain.ref scriptCounterContract handle.GrainFactory "one"
+        let! result = counter.increment ()
+        do! Scripting.shutdown handle
+        return result
+    }
+
+let result = run().GetAwaiter().GetResult()
 ```
 
-It returns the same `Scripting.SiloHandle`, so `Scripting.getGrain` and `Scripting.shutdown` work
-unchanged against it. It is a separate module from `Scripting` rather than an overload of
+It returns the same `Scripting.SiloHandle`, so bind functional callers with `FunctionalGrain.ref`
+and stop it with `Scripting.shutdown`. It is a separate module from `Scripting` rather than an overload of
 `startOnPorts` itself: `Scripting` lives in `Orleans.FSharp`, while `AddFunctionalGrain` lives one
 assembly layer above it in `Orleans.FSharp.Runtime`, which references `Orleans.FSharp` and cannot
 be referenced back from it -- so `Scripting.startOnPorts` cannot apply a functional definition no

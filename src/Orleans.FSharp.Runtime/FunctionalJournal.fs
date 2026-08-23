@@ -63,6 +63,12 @@ type internal FunctionalJournalHost
     /// The first exception an <c>apply</c> fold threw, which Orleans would otherwise swallow.
     let mutable foldFailure: exn = null
 
+    /// A deterministic custom-storage failure tunneled through Orleans' catch-all retry loop.
+    /// The field stays set until this activation is deactivated: treating the adaptor's fallback
+    /// view as application state, even for one more turn, would acknowledge data that was not
+    /// durably read or written.
+    let mutable terminalStorageFailure: exn = null
+
     /// The application storage instance is resolved once per activation, matching ordinary
     /// grain-scoped dependency resolution.
     let customStorage =
@@ -71,10 +77,13 @@ type internal FunctionalJournalHost
 
     /// The silo default is read once for this activation. Per-definition rules are already in the
     /// blueprint and take precedence when a write is considered.
-    let globalSnapshotPolicy =
+    let snapshotOptions =
         match grainContext.ActivationServices.GetService<IOptions<FunctionalJournalSnapshotOptions>>() with
-        | null -> FunctionalJournalSnapshotDefault.Disabled
-        | options -> options.Value.Policy
+        | null -> FunctionalJournalSnapshotOptions()
+        | options -> options.Value
+
+    let globalSnapshotPolicy = snapshotOptions.Policy
+    let manualSnapshotMaxConflictRetries = snapshotOptions.ManualSnapshotMaxConflictRetries
 
     /// <summary>The declared initial state of this grain, boxed. Re-derived, never stored.</summary>
     member private _.InitialState = blueprint.Initial key
@@ -136,6 +145,54 @@ type internal FunctionalJournalHost
                 JournalStage
                 $"the 'apply' fold of grain type '{grainTypeName}' failed while {stage} for grain '{grainContext.GrainId}'. Orleans' log-view adaptor catches and logs a failing fold and continues with an unchanged view, which would leave this activation holding a state that is not the fold of its own journal, so the failure is raised here instead."
                 cause
+
+    /// <summary>
+    /// Record a non-retryable custom-storage failure. Orleans' CustomStorage adaptor catches every
+    /// exception and retries forever, so its callback must subsequently return a harmless success
+    /// value. The public journal operation observes this sticky failure, deactivates, and throws.
+    /// </summary>
+    member private _.RecordTerminalStorageFailure(cause: exn) =
+        let previous = Interlocked.CompareExchange(&terminalStorageFailure, cause, null)
+
+        if isNull previous then
+            logger.LogError(
+                cause,
+                "The custom journal storage of grain type {GrainType} on {GrainId} reported a permanent failure; the activation will be deactivated.",
+                grainTypeName,
+                grainContext.GrainId
+            )
+
+    /// <summary>Fail the current operation and retire an activation whose storage is unusable.</summary>
+    member private _.RethrowTerminalStorageFailure(stage: string) =
+        match Volatile.Read(&terminalStorageFailure) with
+        | null -> ()
+        | cause ->
+            let message =
+                $"the custom journal storage of grain type '{grainTypeName}' failed permanently while {stage} for grain '{grainContext.GrainId}'. The activation is being deactivated; a later call will create a fresh activation and read durable state again. Cause: {cause.GetType().FullName}: {cause.Message}"
+
+            grainContext.Deactivate(
+                // Orleans may deep-copy a deactivation reason. Do not put the exception object in
+                // it: Exception.TargetSite is a MethodBase, which the exact F# payload codec quite
+                // correctly refuses to serialize.
+                DeactivationReason(DeactivationReasonCode.ApplicationError, message),
+                CancellationToken.None
+            )
+
+            // Keep the original exception in the silo log above, but do not put it in the inner-
+            // exception graph sent to a functional caller for the same MethodBase reason.
+            fail JournalStage message
+
+    /// <summary>Raise either kind of failure hidden by an Orleans adaptor callback.</summary>
+    member private this.RethrowJournalFailure(stage: string) =
+        this.RethrowTerminalStorageFailure stage
+        this.RethrowFoldFailure stage
+
+    /// <summary>A harmless read result used only to make Orleans leave its permanent retry loop.</summary>
+    member private this.TerminalReadFallback() =
+        let view =
+            FunctionalJournalView(Payload = blueprint.EncodeState codec this.InitialState, HasValue = true)
+
+        KeyValuePair<int, FunctionalJournalView>(0, view)
 
     /// <summary>The adaptor, once installed.</summary>
     /// <exception cref="System.InvalidOperationException">The journal is read before <see cref="Install"/> has run.</exception>
@@ -212,11 +269,11 @@ type internal FunctionalJournalHost
                         $"the 'snapshotPolicy' predicate of grain type '{grainTypeName}' failed on grain '{grainContext.GrainId}' at resulting version {resultingVersion}. The event batch was not written."
                         cause
 
-    /// <summary>Write a snapshot without advancing the event version, retrying a CAS conflict.</summary>
+    /// <summary>Write a snapshot without advancing the event version, retrying bounded CAS conflicts.</summary>
     member private this.WriteSnapshotAsync() : Task =
         let struct (storage, instance) = this.CustomStorage
 
-        let rec write () =
+        let rec write conflictRetries =
             task {
                 let expectedVersion = this.Adaptor.ConfirmedVersion
                 let state = this.ValueOf this.Adaptor.ConfirmedView
@@ -227,15 +284,35 @@ type internal FunctionalJournalHost
                       Snapshot = Some(struct (expectedVersion, state)) }
 
                 let! accepted =
-                    storage.Append instance grainTypeName grainContext.GrainId key request
+                    task {
+                        try
+                            // A zero-event snapshot calls the typed store directly rather than
+                            // through Orleans' adaptor. Ordinary exceptions therefore surface to
+                            // the caller for an explicit retry; only the public permanent marker
+                            // retires the activation.
+                            return! storage.Append instance grainTypeName grainContext.GrainId key request
+                        with :? FunctionalJournalPermanentStorageException as cause ->
+                            this.RecordTerminalStorageFailure cause
+                            this.RethrowTerminalStorageFailure "writing a manual snapshot"
+                            return false
+                    }
 
                 if not accepted then
+                    // A CAS rejection means durable state may already have advanced. Refresh even
+                    // when this was the final permitted attempt so the surviving activation never
+                    // continues from the stale confirmed view.
                     do! this.Adaptor.Synchronize()
-                    this.RethrowFoldFailure "refreshing after a manual snapshot conflict"
-                    return! write ()
+                    this.RethrowJournalFailure "refreshing after a manual snapshot conflict"
+
+                    if conflictRetries >= manualSnapshotMaxConflictRetries then
+                        fail
+                            JournalStage
+                            $"manual snapshot of grain type '{grainTypeName}' on grain '{grainContext.GrainId}' was rejected by compare-and-swap after {conflictRetries + 1} attempt(s). ManualSnapshotMaxConflictRetries is {manualSnapshotMaxConflictRetries}; no snapshot was written."
+
+                    return! write (conflictRetries + 1)
             }
 
-        write () :> Task
+        write 0 :> Task
 
     /// <summary>Bind the functional context factory used by journal callbacks.</summary>
     member _.BindContextFactory(factory: FunctionalStateScope -> FunctionalContextCore) =
@@ -386,7 +463,7 @@ type internal FunctionalJournalHost
         task {
             do! this.Adaptor.PostOnActivate()
             do! this.Adaptor.Synchronize()
-            this.RethrowFoldFailure "replaying the journal"
+            this.RethrowJournalFailure "replaying the journal"
         }
         :> Task
 
@@ -445,13 +522,17 @@ type internal FunctionalJournalHost
 
         /// <inheritdoc/>
         member this.OnViewChanged(tentative: bool, confirmed: bool) =
-            if tentative then
+            // A permanent-storage fallback exists only to release Orleans' retry loop. Never
+            // expose its synthetic state through callbacks.
+            let storageIsHealthy = isNull (Volatile.Read(&terminalStorageFailure))
+
+            if storageIsHealthy && tentative then
                 this.InvokeStateChanged
                     "onTentativeStateChanged"
                     blueprint.OnTentativeStateChanged
                     (this.ValueOf this.Adaptor.TentativeView)
 
-            if confirmed then
+            if storageIsHealthy && confirmed then
                 this.InvokeStateChanged
                     "onStateChanged"
                     blueprint.OnStateChanged
@@ -464,44 +545,70 @@ type internal FunctionalJournalHost
         /// </summary>
         member this.ReadStateFromStorage() : Task<KeyValuePair<int, FunctionalJournalView>> =
             task {
-                let struct (storage, instance) = this.CustomStorage
+                match Volatile.Read(&terminalStorageFailure) with
+                | null ->
+                    let struct (storage, instance) = this.CustomStorage
 
-                let! read =
-                    storage.Read instance grainTypeName grainContext.GrainId key
-
-                let baseVersion, baseState =
-                    match read.Snapshot with
-                    | None -> 0, this.InitialState
-                    | Some struct (version, state) ->
-                        if version < 0 then
-                            fail
-                                JournalStage
-                                $"custom storage of grain type '{grainTypeName}' returned snapshot version {version}; versions cannot be negative."
-
-                        version, state
-
-                let resultingVersion64 = int64 baseVersion + int64 read.Events.Length
-
-                if resultingVersion64 > int64 Int32.MaxValue then
-                    fail
-                        JournalStage
-                        $"custom storage of grain type '{grainTypeName}' returned snapshot version {baseVersion} plus {read.Events.Length} retained event(s), which exceeds Int32.MaxValue."
-
-                let mutable state = baseState
-
-                for event in read.Events do
                     try
-                        state <- blueprint.Apply state event
-                    with cause ->
-                        failCause
-                            JournalStage
-                            $"the 'apply' fold of grain type '{grainTypeName}' failed while replaying an event tail returned by custom storage for grain '{grainContext.GrainId}'."
-                            cause
+                        let! read = storage.Read instance grainTypeName grainContext.GrainId key
 
-                let view =
-                    FunctionalJournalView(Payload = blueprint.EncodeState codec state, HasValue = true)
+                        let materialized =
+                            try
+                                if isNull (box read) then
+                                    fail
+                                        JournalStage
+                                        $"custom storage of grain type '{grainTypeName}' returned a null read result."
 
-                return KeyValuePair<int, FunctionalJournalView>(int resultingVersion64, view)
+                                if isNull (box read.Events) then
+                                    fail
+                                        JournalStage
+                                        $"custom storage of grain type '{grainTypeName}' returned a null retained-event list."
+
+                                let baseVersion, baseState =
+                                    match read.Snapshot with
+                                    | None -> 0, this.InitialState
+                                    | Some struct (version, state) ->
+                                        if version < 0 then
+                                            fail
+                                                JournalStage
+                                                $"custom storage of grain type '{grainTypeName}' returned snapshot version {version}; versions cannot be negative."
+
+                                        version, state
+
+                                let resultingVersion64 = int64 baseVersion + int64 read.Events.Length
+
+                                if resultingVersion64 > int64 Int32.MaxValue then
+                                    fail
+                                        JournalStage
+                                        $"custom storage of grain type '{grainTypeName}' returned snapshot version {baseVersion} plus {read.Events.Length} retained event(s), which exceeds Int32.MaxValue."
+
+                                let mutable state = baseState
+
+                                for event in read.Events do
+                                    try
+                                        state <- blueprint.Apply state event
+                                    with cause ->
+                                        failCause
+                                            JournalStage
+                                            $"the 'apply' fold of grain type '{grainTypeName}' failed while replaying an event tail returned by custom storage for grain '{grainContext.GrainId}'."
+                                            cause
+
+                                let view =
+                                    FunctionalJournalView(Payload = blueprint.EncodeState codec state, HasValue = true)
+
+                                Ok(KeyValuePair<int, FunctionalJournalView>(int resultingVersion64, view))
+                            with cause ->
+                                Error cause
+
+                        match materialized with
+                        | Ok value -> return value
+                        | Error cause ->
+                            this.RecordTerminalStorageFailure cause
+                            return this.TerminalReadFallback()
+                    with :? FunctionalJournalPermanentStorageException as cause ->
+                        this.RecordTerminalStorageFailure cause
+                        return this.TerminalReadFallback()
+                | _ -> return this.TerminalReadFallback()
             }
 
         /// <summary>
@@ -512,70 +619,96 @@ type internal FunctionalJournalHost
             (updates: IReadOnlyList<FunctionalJournalEntry>, expectedVersion: int)
             : Task<bool> =
             task {
-                if isNull (box updates) then
-                    fail JournalStage $"Orleans CustomStorage supplied a null update batch to grain type '{grainTypeName}'."
+                match Volatile.Read(&terminalStorageFailure) with
+                | null ->
+                    let prepared =
+                        try
+                            if isNull (box updates) then
+                                fail
+                                    JournalStage
+                                    $"Orleans CustomStorage supplied a null update batch to grain type '{grainTypeName}'."
 
-                if expectedVersion < 0 then
-                    fail
-                        JournalStage
-                        $"Orleans CustomStorage supplied negative expected version {expectedVersion} to grain type '{grainTypeName}'."
+                            if expectedVersion < 0 then
+                                fail
+                                    JournalStage
+                                    $"Orleans CustomStorage supplied negative expected version {expectedVersion} to grain type '{grainTypeName}'."
 
-                let resultingVersion64 = int64 expectedVersion + int64 updates.Count
+                            let resultingVersion64 = int64 expectedVersion + int64 updates.Count
 
-                if resultingVersion64 > int64 Int32.MaxValue then
-                    fail
-                        JournalStage
-                        $"the custom-storage append of grain type '{grainTypeName}' would advance version {expectedVersion} by {updates.Count}, beyond Int32.MaxValue."
+                            if resultingVersion64 > int64 Int32.MaxValue then
+                                fail
+                                    JournalStage
+                                    $"the custom-storage append of grain type '{grainTypeName}' would advance version {expectedVersion} by {updates.Count}, beyond Int32.MaxValue."
 
-                this.RethrowFoldFailure "preparing a custom-storage append"
+                            this.RethrowFoldFailure "preparing a custom-storage append"
 
-                let events = ResizeArray<obj>(updates.Count)
-                let mutable state = this.ValueOf this.Adaptor.ConfirmedView
-                let mutable forced = false
+                            let events = ResizeArray<obj>(updates.Count)
+                            let mutable state = this.ValueOf this.Adaptor.ConfirmedView
+                            let mutable forced = false
 
-                for update in updates do
-                    if isNull (box update) || isNull update.Payload then
-                        fail
-                            JournalStage
-                            $"Orleans CustomStorage supplied an empty functional journal entry to grain type '{grainTypeName}'."
+                            for update in updates do
+                                if isNull (box update) || isNull update.Payload then
+                                    fail
+                                        JournalStage
+                                        $"Orleans CustomStorage supplied an empty functional journal entry to grain type '{grainTypeName}'."
 
-                    let event = blueprint.DecodeEvent codec update.Payload
-                    events.Add event
-                    forced <- forced || update.SnapshotRequested
+                                let event = blueprint.DecodeEvent codec update.Payload
+                                events.Add event
+                                forced <- forced || update.SnapshotRequested
 
-                    try
-                        state <- blueprint.Apply state event
-                    with cause ->
-                        failCause
-                            JournalStage
-                            $"the 'apply' fold of grain type '{grainTypeName}' failed while preparing a custom-storage append for grain '{grainContext.GrainId}'. Nothing was written."
-                            cause
+                                try
+                                    state <- blueprint.Apply state event
+                                with cause ->
+                                    failCause
+                                        JournalStage
+                                        $"the 'apply' fold of grain type '{grainTypeName}' failed while preparing a custom-storage append for grain '{grainContext.GrainId}'. Nothing was written."
+                                        cause
 
-                let resultingVersion = int resultingVersion64
+                            let resultingVersion = int resultingVersion64
 
-                let snapshot =
-                    if this.ShouldSnapshot(expectedVersion, resultingVersion, state, forced) then
-                        Some(struct (resultingVersion, state))
-                    else
-                        None
+                            let snapshot =
+                                if this.ShouldSnapshot(expectedVersion, resultingVersion, state, forced) then
+                                    Some(struct (resultingVersion, state))
+                                else
+                                    None
 
-                let struct (storage, instance) = this.CustomStorage
+                            Ok
+                                ({ ExpectedVersion = expectedVersion
+                                   Events = events |> Seq.toList
+                                   Snapshot = snapshot }: FunctionalJournalStorageWriteData)
+                        with cause ->
+                            Error cause
 
-                return!
-                    storage.Append
-                        instance
-                        grainTypeName
-                        grainContext.GrainId
-                        key
-                        { ExpectedVersion = expectedVersion
-                          Events = events |> Seq.toList
-                          Snapshot = snapshot }
+                    match prepared with
+                    | Error cause ->
+                        this.RecordTerminalStorageFailure cause
+                        return true
+                    | Ok request ->
+                        let struct (storage, instance) = this.CustomStorage
+
+                        try
+                            return!
+                                storage.Append instance grainTypeName grainContext.GrainId key request
+                        with :? FunctionalJournalPermanentStorageException as cause ->
+                            this.RecordTerminalStorageFailure cause
+                            return true
+                | _ -> return true
             }
 
         /// <summary>Delete the complete application-owned journal.</summary>
         member this.ClearStoredState() : Task =
-            let struct (storage, instance) = this.CustomStorage
-            storage.Clear instance grainTypeName grainContext.GrainId key
+            task {
+                match Volatile.Read(&terminalStorageFailure) with
+                | null ->
+                    let struct (storage, instance) = this.CustomStorage
+
+                    try
+                        do! storage.Clear instance grainTypeName grainContext.GrainId key
+                    with :? FunctionalJournalPermanentStorageException as cause ->
+                        this.RecordTerminalStorageFailure cause
+                | _ -> ()
+            }
+            :> Task
 
     interface IFunctionalJournalAccess with
         /// <summary>
@@ -585,12 +718,12 @@ type internal FunctionalJournalHost
         /// should make decisions on.
         /// </summary>
         member this.Current =
-            this.RethrowFoldFailure "reading the confirmed state"
+            this.RethrowJournalFailure "reading the confirmed state"
             this.ValueOf this.Adaptor.ConfirmedView
 
         /// <inheritdoc/>
         member this.Tentative =
-            this.RethrowFoldFailure "reading the tentative state"
+            this.RethrowJournalFailure "reading the tentative state"
             this.ValueOf this.Adaptor.TentativeView
 
         /// <inheritdoc/>
@@ -640,7 +773,7 @@ type internal FunctionalJournalHost
                     // Include any events the callback submitted explicitly through raiseEvent(s)
                     // before materializing the callback-owned snapshot.
                     do! this.Adaptor.ConfirmSubmittedEntries()
-                    this.RethrowFoldFailure "confirming events before a manual snapshot"
+                    this.RethrowJournalFailure "confirming events before a manual snapshot"
                     do! this.WriteSnapshotAsync()
                 }
                 :> Task
@@ -660,7 +793,7 @@ type internal FunctionalJournalHost
                     // later replay can never observe half of a handler's events.
                     this.Adaptor.SubmitRange entries
                     do! this.Adaptor.ConfirmSubmittedEntries()
-                    this.RethrowFoldFailure "appending events"
+                    this.RethrowJournalFailure "appending events"
                 }
                 :> Task
 
@@ -683,7 +816,7 @@ type internal FunctionalJournalHost
                         |> List.map (fun event -> FunctionalJournalEntry(Payload = blueprint.EncodeEvent codec event))
 
                     let! accepted = this.Adaptor.TryAppendRange entries
-                    this.RethrowFoldFailure "appending events conditionally"
+                    this.RethrowJournalFailure "appending events conditionally"
                     return accepted
                 }
 
@@ -691,7 +824,7 @@ type internal FunctionalJournalHost
         member this.Confirm() : Task =
             task {
                 do! this.Adaptor.ConfirmSubmittedEntries()
-                this.RethrowFoldFailure "confirming events"
+                this.RethrowJournalFailure "confirming events"
             }
             :> Task
 
@@ -699,12 +832,21 @@ type internal FunctionalJournalHost
         member this.Refresh() : Task =
             task {
                 do! this.Adaptor.Synchronize()
-                this.RethrowFoldFailure "refreshing the journal"
+                this.RethrowJournalFailure "refreshing the journal"
             }
             :> Task
 
         /// <inheritdoc/>
         member this.Retrieve(fromVersion: int, toVersion: int) : Task<obj list> =
+            if fromVersion < 0 then
+                invalidArg (nameof fromVersion) "invalid range"
+
+            if toVersion < fromVersion then
+                invalidArg (nameof toVersion) "invalid range"
+
+            if toVersion > this.Adaptor.ConfirmedVersion then
+                invalidArg (nameof toVersion) "invalid range"
+
             task {
                 let! entries = this.Adaptor.RetrieveLogSegment(fromVersion, toVersion)
 
@@ -718,7 +860,7 @@ type internal FunctionalJournalHost
         member this.Clear(cancellationToken: CancellationToken) : Task =
             task {
                 do! this.Adaptor.ClearLogAsync cancellationToken
-                this.RethrowFoldFailure "clearing the journal"
+                this.RethrowJournalFailure "clearing the journal"
             }
             :> Task
 

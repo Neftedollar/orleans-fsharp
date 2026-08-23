@@ -32,11 +32,10 @@
 /// this twin keeps the classic <c>AccountBalance</c> instead, because reusing the very same state
 /// type is what makes the parity checkable.
 ///
-/// <b>The abort path is unchanged.</b> <c>AccountGrainDef.withdraw</c> throws
-/// <c>InvalidOperationException</c> on an overdraft. Handed to <c>update</c>, it throws inside
-/// Orleans' write lock, the handler faults, and Orleans aborts the whole transaction -- so a failed
-/// transfer leaves BOTH balances exactly as they were. Nothing in this file catches or retries;
-/// the rollback is Orleans'.
+/// <b>The abort path is unchanged.</b> <c>AccountGrainDef.withdraw</c> returns a typed domain
+/// rejection. <c>withdrawAtBoundary</c> translates it to the fault Orleans requires to abort the
+/// transaction, so a failed transfer leaves BOTH balances exactly as they were. Nothing in this
+/// file catches or retries; the rollback is Orleans'.
 /// </summary>
 namespace BankTransactions.Domain
 
@@ -54,8 +53,8 @@ type AtmActor = private AtmActor of unit
 type AccountApi =
     { /// <summary>Adds to the balance inside the caller's transaction.</summary>
       deposit: decimal -> Task<unit>
-      /// <summary>Subtracts from the balance, throwing -- and so aborting the whole transaction --
-      /// on an overdraft.</summary>
+      /// <summary>Subtracts from the balance; a typed domain rejection is translated into an
+      /// Orleans transaction abort at the actor boundary.</summary>
       withdraw: decimal -> Task<unit>
       /// <summary>Reads the balance inside the caller's transaction.</summary>
       balance: unit -> Task<decimal> }
@@ -63,15 +62,15 @@ type AccountApi =
 [<NoEquality; NoComparison>]
 type AtmApi =
     { /// <summary>Moves funds between two accounts in ONE transaction it creates itself.</summary>
-      transfer: string * string * decimal -> Task<unit>
+      transfer: TransferRequest -> Task<unit>
       /// <summary>Reads both balances in one transaction, so the pair is a consistent snapshot
       /// rather than two reads that could straddle a commit. No classic counterpart.</summary>
-      totals: string * string -> Task<decimal * decimal>
+      totals: AccountPair -> Task<AccountTotals>
       /// <summary>Performs the whole transfer and THEN throws. No classic counterpart, and the
       /// only way to see a real rollback: the overdraft case aborts before the second account is
       /// touched, so it proves short-circuiting rather than atomicity. Here both accounts really
       /// are written, and both writes have to be undone.</summary>
-      transferThenFail: string * string * decimal -> Task<unit> }
+      transferThenFail: TransferRequest -> Task<unit> }
 
 [<RequireQualifiedAccess>]
 module AccountApi =
@@ -117,7 +116,7 @@ module AtmApi =
     let contract =
         grainContract<AtmActor, string, AtmApi> {
             grainType "bank-transactions.atm.functional"
-            version 1
+            version 2
             stringKey
 
             // The orchestrator declares `transactional` and attaches NO transactional state of its
@@ -155,12 +154,12 @@ module AccountFunctionalDef =
                     return state, ()
                 })
 
-            // The same, with the classic overdraft guard intact: `AccountGrainDef.withdraw` raises
-            // InvalidOperationException, which faults this handler and aborts the transaction.
+            // The pure core returns Result; the adapter raises only at this Orleans boundary,
+            // which faults the handler and aborts the transaction.
             handle (_.withdraw) (fun context state (amount: decimal) ->
                 task {
                     do! (context.transactionalState AccountApi.ledger).update (fun balance ->
-                        AccountGrainDef.withdraw balance amount)
+                        AccountGrainDef.withdrawAtBoundary balance amount)
 
                     return state, ()
                 })
@@ -188,36 +187,45 @@ module AtmFunctionalDef =
         grainFor AtmApi.contract {
             defaultState (fun () -> ())
 
-            handle (_.transfer) (fun context state ((from: string), (into: string), (amount: decimal)) ->
+            handle (_.transfer) (fun context state (request: TransferRequest) ->
                 task {
-                    let source = AccountApi.ref context.grainFactory from
-                    let target = AccountApi.ref context.grainFactory into
+                    let source = AccountApi.ref context.grainFactory request.FromAccount
+                    let target = AccountApi.ref context.grainFactory request.ToAccount
 
-                    do! source.withdraw amount
-                    do! target.deposit amount
+                    do! source.withdraw request.Amount
+                    do! target.deposit request.Amount
                     return state, ()
                 })
 
-            handle (_.totals) (fun context state ((left: string), (right: string)) ->
+            handle (_.totals) (fun context state (pair: AccountPair) ->
                 task {
-                    let first = AccountApi.ref context.grainFactory left
-                    let second = AccountApi.ref context.grainFactory right
+                    let first = AccountApi.ref context.grainFactory pair.FirstAccount
+                    let second = AccountApi.ref context.grainFactory pair.SecondAccount
 
                     let! leftBalance = first.balance ()
                     let! rightBalance = second.balance ()
-                    return state, (leftBalance, rightBalance)
+
+                    return
+                        state,
+                        { FirstBalance = leftBalance
+                          SecondBalance = rightBalance }
                 })
 
             // The atomicity control. Both participants complete their writes, and only then does
             // the orchestrator fail -- so the rollback has two committed-in-progress writes to
             // undo, on two different grains, rather than one that never started.
-            handle (_.transferThenFail) (fun context state ((from: string), (into: string), (amount: decimal)) ->
+            handle (_.transferThenFail) (fun context state (request: TransferRequest) ->
                 task {
-                    let source = AccountApi.ref context.grainFactory from
-                    let target = AccountApi.ref context.grainFactory into
+                    let source = AccountApi.ref context.grainFactory request.FromAccount
+                    let target = AccountApi.ref context.grainFactory request.ToAccount
 
-                    do! source.withdraw amount
-                    do! target.deposit amount
-                    return failwith "the orchestrator failed after both accounts had been written"
+                    do! source.withdraw request.Amount
+                    do! target.deposit request.Amount
+
+                    return
+                        raise (
+                            System.InvalidOperationException
+                                "the orchestrator failed after both accounts had been written"
+                        )
                 })
         }

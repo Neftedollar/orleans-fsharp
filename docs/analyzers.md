@@ -12,7 +12,7 @@ dotnet add package Orleans.FSharp.Analyzers
 
 ---
 
-<a id="OF0001"></a>
+<a id="of0001"></a>
 
 ## OF0001 — Use `task { }` instead of `async { }`
 
@@ -25,24 +25,26 @@ Use `task { }` instead — the computation expression FSharp.Core has shipped si
 ### Example (warning)
 
 ```fsharp
+type CounterState = { count: int }
+
 // ⚠️ OF0001: Use task { } instead of async { }
-let handler state cmd =
-    async {                     // <-- warning here
-        match cmd with
-        | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
-        | GetValue  -> return state, box state.Count
+let handler (state: CounterState) () =
+    async {                     // warning here
+        let next = { count = state.count + 1 }
+        return next, next.count
     }
 ```
 
 ### Fix
 
 ```fsharp
+type CounterState = { count: int }
+
 // ✅ Correct
-let handler state cmd =
+let handler (state: CounterState) () =
     task {
-        match cmd with
-        | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
-        | GetValue  -> return state, box state.Count
+        let next = { count = state.count + 1 }
+        return next, next.count
     }
 ```
 
@@ -51,13 +53,14 @@ let handler state cmd =
 When `async { }` is genuinely required — for example, interoperating with a library that returns `Async<'T>` — suppress OF0001 on the specific binding:
 
 ```fsharp
+open System.Net.Http
 open Orleans.FSharp.Analyzers.AsyncUsageAnalyzer
 
 [<AllowAsync>]
 let fetchFromLegacyApi (url: string) : Async<string> =
     async {
-        let! result = legacyHttpClient.GetAsync(url) |> Async.AwaitTask
-        return! result.Content.ReadAsStringAsync() |> Async.AwaitTask
+        use client = new HttpClient()
+        return! client.GetStringAsync(url) |> Async.AwaitTask
     }
 ```
 
@@ -93,7 +96,7 @@ fsharp-analyzers --project MyGrains.fsproj --analyzers-path <path-to-Orleans.FSh
 
 | Code | Severity | Description |
 |------|----------|-------------|
-| [OF0001](#OF0001) | Warning | `async { }` should be `task { }` |
+| [OF0001](#of0001) | Warning | `async { }` should be `task { }` |
 
 ---
 

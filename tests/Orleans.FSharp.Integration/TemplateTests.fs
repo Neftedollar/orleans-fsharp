@@ -85,7 +85,7 @@ let private patchProjectReferences (projectDir: string) (projectName: string) : 
 
         let patched =
             content.Replace(
-                """<PackageReference Include="Orleans.FSharp" Version="3.*" />""",
+                """<PackageReference Include="Orleans.FSharp" Version="4.*" />""",
                 $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp", "Orleans.FSharp.fsproj")}" />"""
             )
 
@@ -101,15 +101,51 @@ let private patchProjectReferences (projectDir: string) (projectName: string) : 
         let patched =
             content
                 .Replace(
-                    """<PackageReference Include="Orleans.FSharp" Version="3.*" />""",
+                    """<PackageReference Include="Orleans.FSharp" Version="4.*" />""",
                     $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp", "Orleans.FSharp.fsproj")}" />"""
                 )
                 .Replace(
-                    """<PackageReference Include="Orleans.FSharp.Runtime" Version="3.*" />""",
+                    """<PackageReference Include="Orleans.FSharp.Runtime" Version="4.*" />""",
                     $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp.Runtime", "Orleans.FSharp.Runtime.fsproj")}" />"""
                 )
 
         File.WriteAllText(siloProj, patched)
+
+/// <summary>
+/// Assert that a generated solution contains only the current functional API surface.
+/// </summary>
+let private assertCurrentFunctionalTemplate (projectDir: string) (projectName: string) : unit =
+    let allGeneratedText =
+        Directory.EnumerateFiles(projectDir, "*", SearchOption.AllDirectories)
+        |> Seq.filter (fun path ->
+            match Path.GetExtension(path) with
+            | ".fs"
+            | ".fsproj"
+            | ".cs"
+            | ".csproj"
+            | ".sln" -> true
+            | _ -> false)
+        |> Seq.map File.ReadAllText
+        |> String.concat Environment.NewLine
+
+    let grainsDir = Path.Combine(projectDir, "src", $"{projectName}.Grains")
+    let codeGenDir = Path.Combine(projectDir, "src", $"{projectName}.CodeGen")
+
+    Assert.False(Directory.Exists(codeGenDir), $"Unexpected CodeGen project: {codeGenDir}")
+    Assert.False(File.Exists(Path.Combine(grainsDir, "CounterGrainFunctional.fs")))
+    Assert.False(File.Exists(Path.Combine(grainsDir, "AssemblyInfo.fs")))
+    Assert.DoesNotContain("FS0044", allGeneratedText)
+    Assert.DoesNotContain("AddFSharpGrain", allGeneratedText)
+    Assert.DoesNotContain("grain {", allGeneratedText)
+    Assert.DoesNotContain("ICounterGrain", allGeneratedText)
+    Assert.DoesNotContain("GrainRef.", allGeneratedText)
+    Assert.DoesNotContain("CounterGrainDef", allGeneratedText)
+    Assert.DoesNotContain("Microsoft.Orleans.Sdk", allGeneratedText)
+    Assert.DoesNotContain("CodeGen", allGeneratedText)
+    Assert.Contains("grainContract", allGeneratedText)
+    Assert.Contains("grainFor", allGeneratedText)
+    Assert.Contains("handleQuery", allGeneratedText)
+    Assert.Contains("AddFunctionalGrain", allGeneratedText)
 
 /// <summary>
 /// Create a unique temp directory for test isolation.
@@ -158,11 +194,20 @@ let ``template installs and generates project that builds with zero warnings`` (
 
         Assert.True(Directory.Exists(projectDir), $"Generated project directory not found: {projectDir}")
 
+        assertCurrentFunctionalTemplate projectDir "TestApp"
+
         // Patch to use local project references
         patchProjectReferences projectDir "TestApp"
 
-        // Build with zero warnings
-        let exitCode, stdout, stderr = runDotnet "build --nologo" projectDir 180000
+        let exitCode, stdout, stderr = runDotnet "restore --nologo" projectDir 180000
+
+        Assert.True(
+            (exitCode = 0),
+            $"Restore failed (exit code {exitCode}). stdout: {stdout} stderr: {stderr}"
+        )
+
+        // Build with zero warnings after the explicit restore.
+        let exitCode, stdout, stderr = runDotnet "build --nologo --no-restore" projectDir 180000
 
         Assert.True(
             (exitCode = 0),
@@ -187,6 +232,8 @@ let ``template generated tests all pass`` () =
         let projectDir = Path.Combine(tempDir, "TestApp2")
         let exitCode, _, _ = runDotnet "new orleans-fsharp -n TestApp2" tempDir 60000
         Assert.True((exitCode = 0), "Project generation failed")
+
+        assertCurrentFunctionalTemplate projectDir "TestApp2"
 
         // Patch references
         patchProjectReferences projectDir "TestApp2"

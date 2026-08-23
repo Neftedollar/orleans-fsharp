@@ -56,16 +56,37 @@ type RoomActor = private RoomActor of unit
 /// <summary>The observer brand: what a subscriber to this room is.</summary>
 type RoomObserver = private RoomObserver of unit
 
+/// <summary>A message with named sender and text fields.</summary>
+type PostedMessage =
+    { sender: string
+      text: string }
+
+/// <summary>A member joining or leaving the room.</summary>
+type PresenceChange =
+    { memberName: string
+      joined: bool }
+
+/// <summary>A durable chat-history entry.</summary>
+type ChatEntry =
+    { sender: string
+      text: string
+      timestamp: DateTimeOffset }
+
+/// <summary>A member's current typing signal.</summary>
+type TypingStatus =
+    { memberName: string
+      isTyping: bool }
+
 /// <summary>
 /// A subscriber's handler record. Every field is a push operation, <c>'Msg -> Task&lt;unit&gt;</c>;
 /// no interface, and no code generation in this project.
 /// </summary>
 [<NoEquality; NoComparison>]
 type RoomObserverApi =
-    { /// <summary>A message was posted: (sender, text).</summary>
-      onMessage: (string * string) -> Task<unit>
-      /// <summary>Someone joined or left: (member, joined).</summary>
-      onPresence: (string * bool) -> Task<unit> }
+    { /// <summary>A message was posted.</summary>
+      onMessage: PostedMessage -> Task<unit>
+      /// <summary>Someone joined or left.</summary>
+      onPresence: PresenceChange -> Task<unit> }
 
 /// <summary>The typed handle a subscriber hands to the room.</summary>
 type RoomObserverHandle = FunctionalObserverHandle<RoomObserver, RoomObserverApi>
@@ -83,16 +104,15 @@ type RoomApi =
       join: string -> Task<unit>
       /// <summary>Removes a member from the room. Idempotent.</summary>
       leave: string -> Task<unit>
-      /// <summary>Posts (sender, message); rejects non-members and empty text. Returns the new
+      /// <summary>Posts a named message; rejects non-members and empty text. Returns the new
       /// total message count on success.</summary>
-      say: string * string -> Task<Result<int, ChatError>>
-      /// <summary>Returns up to <c>take</c> most recent (sender, message, timestamp) entries,
+      say: PostedMessage -> Task<Result<int, ChatError>>
+      /// <summary>Returns up to <c>take</c> most recent entries,
       /// newest first. An ordinary paged query -- push is handled by observers, not by polling.</summary>
-      history: int -> Task<(string * string * DateTimeOffset) list>
+      history: int -> Task<ChatEntry list>
       /// <summary>Fire-and-forget typing indicator; never blocks the sender and interleaves with
-      /// every other call. Two inputs, so one tuple argument: an operation takes exactly one
-      /// argument, and a multi-input operation groups its inputs in a tuple.</summary>
-      typing: (string * bool) -> Task<unit>
+      /// every other call.</summary>
+      typing: TypingStatus -> Task<unit>
       /// <summary>Current member count.</summary>
       memberCount: unit -> Task<int>
       /// <summary>Subscribes a client-hosted observer for live push. Returns the subscriber
@@ -111,7 +131,7 @@ module RoomObserverApi =
     let contract =
         observerContract<RoomObserver, RoomObserverApi> {
             observerType "chat-room.room.observer"
-            version 1
+            version 2
         }
 
 [<RequireQualifiedAccess>]
@@ -119,7 +139,7 @@ module RoomApi =
     let contract =
         grainContract<RoomActor, string, RoomApi> {
             grainType "chat-room.room.functional"
-            version 1
+            version 2
             stringKey
 
             readOnly (_.history)
@@ -132,6 +152,7 @@ module RoomApi =
 
 type RoomState =
     { Members: Set<string>
+      // Keep the persisted v1 shape; the public v2 API maps it to named records at the boundary.
       Messages: (string * string * DateTimeOffset) list }
 
 /// <summary>
@@ -185,7 +206,13 @@ module RoomFunctionalDef =
                         let storage = context.persistentState roomState
                         storage.State <- persisted
                         do! storage.WriteStateAsync()
-                        do! fanOut state (_.onPresence) (sender, true)
+                        do!
+                            fanOut
+                                state
+                                (_.onPresence)
+                                { memberName = sender
+                                  joined = true }
+
                         return { state with Persisted = persisted }, ()
                     })
 
@@ -199,20 +226,26 @@ module RoomFunctionalDef =
                         let storage = context.persistentState roomState
                         storage.State <- persisted
                         do! storage.WriteStateAsync()
-                        do! fanOut state (_.onPresence) (sender, false)
+                        do!
+                            fanOut
+                                state
+                                (_.onPresence)
+                                { memberName = sender
+                                  joined = false }
+
                         return { state with Persisted = persisted }, ()
                     })
 
             handle
                 (_.say)
-                (fun context state (sender, message) ->
+                (fun context state (message: PostedMessage) ->
                     task {
-                        if not (Set.contains sender state.Persisted.Members) then
+                        if not (Set.contains message.sender state.Persisted.Members) then
                             return state, Error NotAMember
-                        elif String.IsNullOrWhiteSpace message then
+                        elif String.IsNullOrWhiteSpace message.text then
                             return state, Error EmptyMessage
                         else
-                            let entry = (sender, message, context.utcNow)
+                            let entry = (message.sender, message.text, context.utcNow)
 
                             let persisted =
                                 { state.Persisted with
@@ -224,7 +257,7 @@ module RoomFunctionalDef =
 
                             // The push: every subscriber sees the message live, and this handler
                             // does not wait for any of them.
-                            do! fanOut state (_.onMessage) (sender, message)
+                            do! fanOut state (_.onMessage) message
 
                             return { state with Persisted = persisted }, Ok persisted.Messages.Length
                     })
@@ -232,13 +265,28 @@ module RoomFunctionalDef =
             handle
                 (_.history)
                 (fun _context state take ->
-                    task { return state, state.Persisted.Messages |> List.truncate (max 0 take) })
+                    task {
+                        let entries =
+                            state.Persisted.Messages
+                            |> List.truncate (max 0 take)
+                            |> List.map (fun (sender, text, timestamp) ->
+                                { sender = sender
+                                  text = text
+                                  timestamp = timestamp })
+
+                        return state, entries
+                    })
 
             handle
                 (_.typing)
-                (fun context state (sender, isTyping) ->
+                (fun context state (status: TypingStatus) ->
                     task {
-                        context.logger.LogDebug("{Sender} typing={IsTyping}", sender, isTyping)
+                        context.logger.LogDebug(
+                            "{Sender} typing={IsTyping}",
+                            status.memberName,
+                            status.isTyping
+                        )
+
                         return state, ()
                     })
 

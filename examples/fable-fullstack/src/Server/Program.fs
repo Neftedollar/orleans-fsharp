@@ -113,8 +113,12 @@ printfn "--- Fable Fullstack: Server-side Demo (Functional Grain Runtime) ---"
 printfn "Fable.Remoting API available at http://localhost:5000/api/ITodoApi/*"
 printfn "Press Ctrl+C to stop."
 
-app.Lifetime.ApplicationStarted.Register(fun () ->
-    exerciseFunctionalTwin().GetAwaiter().GetResult())
-|> ignore
+let run () =
+    task {
+        app.Urls.Add "http://localhost:5000"
+        do! app.StartAsync()
+        do! exerciseFunctionalTwin ()
+        do! app.WaitForShutdownAsync()
+    }
 
-app.Run("http://localhost:5000")
+run().GetAwaiter().GetResult()

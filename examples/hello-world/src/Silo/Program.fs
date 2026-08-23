@@ -23,6 +23,17 @@ builder.UseOrleans(fun siloBuilder ->
 
 let host = builder.Build()
 
+type CounterStateV1 = { Count: int }
+
+type CounterStateV2 =
+    { Count: int
+      Label: string }
+
+let counterMigrations =
+    [ StateMigration.migration<CounterStateV1, CounterStateV2> 1 2 (fun oldState ->
+          { Count = oldState.Count
+            Label = "migrated counter" }) ]
+
 (*
     Classic grain { } model -- cannot run standalone.
 
@@ -64,6 +75,28 @@ let run () : Task =
 
         let! finalValue = counterFn.value ()
         printfn "Final count: %d" finalValue
+
+        // GrainBatch is for a dynamic collection of references. Calls run concurrently and the
+        // returned list keeps the same order as this input collection.
+        let batchCounters =
+            [ 1..3 ]
+            |> List.map (fun index -> CounterApi.ref factory $"batch-counter-{index}")
+
+        let! batchValues = GrainBatch.map batchCounters (fun counter -> counter.increment ())
+
+        let! batchTotal =
+            GrainBatch.aggregate batchCounters (fun counter -> counter.value ()) List.sum
+
+        printfn "GrainBatch increments: %A (aggregate = %d)" batchValues batchTotal
+
+        // StateMigration is a pure schema-upgrade core. Storage code supplies the persisted
+        // version and value; the utility validates and applies the chain before the new state is
+        // handed back to the actor boundary.
+        match StateMigration.tryApplyMigrations<CounterStateV2> counterMigrations 1 (box { Count = 5 }) with
+        | Ok migrated ->
+            printfn "State migration v1 -> v2: count = %d, label = %s" migrated.Count migrated.Label
+        | Error errors ->
+            printfn "State migration was rejected: %s" (String.concat "; " errors)
 
         printfn "Done. Shutting down..."
         do! host.StopAsync()

@@ -6,7 +6,6 @@
 namespace FeatureTour.Heterogeneous
 
 open System
-open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
@@ -104,10 +103,15 @@ type TourClientConfigurator() =
             clientBuilder.AddFunctionalGrainClient() |> ignore
 
 /// <summary>What one heterogeneous run observed.</summary>
+type GrainPlacement =
+    { grainKey: string
+      siloName: string }
+
+/// <summary>What one heterogeneous run observed.</summary>
 type ClusterObservation =
     { siloNames: string list
-      everywherePlacements: (string * string) list
-      regionalPlacements: (string * string) list
+      everywherePlacements: GrainPlacement list
+      regionalPlacements: GrainPlacement list
       regionalHostSilos: string list }
 
 [<RequireQualifiedAccess>]
@@ -131,10 +135,18 @@ module HeterogeneousRun =
                    |> Seq.forall (fun pair ->
                        pair.Value.Grains.ContainsKey(GrainType.Create Cluster.EverywhereGrainType)))
 
-        while not (propagated ()) && DateTime.UtcNow < deadline do
-            Thread.Sleep 200
+        let rec wait () =
+            task {
+                if propagated () then
+                    return true
+                elif DateTime.UtcNow >= deadline then
+                    return false
+                else
+                    do! Task.Delay 200
+                    return! wait ()
+            }
 
-        propagated ()
+        wait ()
 
     /// <summary>
     /// Deploy a two-silo cluster, drive both grain types from the external client, and report
@@ -152,7 +164,7 @@ module HeterogeneousRun =
             let cluster = builder.Build()
             cluster.Deploy()
             do! cluster.WaitForLivenessToStabilizeAsync()
-            waitForManifestPropagation cluster |> ignore
+            let! _ = waitForManifestPropagation cluster
 
             try
                 let client = cluster.Client
@@ -163,7 +175,7 @@ module HeterogeneousRun =
                     |> List.map (fun key ->
                         task {
                             let! silo = (WhereApi.everywhereRef client key).whichSilo ()
-                            return key, silo
+                            return { grainKey = key; siloName = silo }
                         })
                     |> Task.WhenAll
 
@@ -172,7 +184,7 @@ module HeterogeneousRun =
                     |> List.map (fun key ->
                         task {
                             let! silo = (WhereApi.regionalRef client key).whichSilo ()
-                            return key, silo
+                            return { grainKey = key; siloName = silo }
                         })
                     |> Task.WhenAll
 

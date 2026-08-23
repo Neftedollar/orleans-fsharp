@@ -16,8 +16,26 @@ No. The functional runtime uses precompiled Orleans proxies from `Orleans.FSharp
 ## How do I create a grain reference?
 
 ```fsharp
-let api = FunctionalGrain.ref CounterApi.contract grainFactory "counter-1"
-let! count = api.increment ()
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type CounterActor = private CounterActor of unit
+
+[<NoEquality; NoComparison>]
+type CounterApi = { increment: unit -> Task<int> }
+
+let counterContract =
+    grainContract<CounterActor, string, CounterApi> {
+        grainType "counter"
+        version 1
+        stringKey
+    }
+
+let increment (grainFactory: Orleans.IGrainFactory) =
+    task {
+        let api = FunctionalGrain.ref counterContract grainFactory "counter-1"
+        return! api.increment ()
+    }
 ```
 
 The returned value has the exact API-record type.
@@ -36,7 +54,9 @@ Yes. Journaled definitions support `onStream`, `onBroadcast`, `onTimer`, and `on
 
 ## Can C# call a functional grain?
 
-Yes. Build a typed facade with `FunctionalGrainFacade.create`. C# receives normal task-returning methods and can consume streaming replies with `await foreach`.
+Yes. Declare a C# facade interface and bind it with
+`FunctionalGrainInterop.For<TFacade>(contract, factory, key)`. C# receives normal task-returning
+methods and can consume streaming replies with `await foreach`.
 
 ## How do F# actors appear in Orleans Dashboard?
 

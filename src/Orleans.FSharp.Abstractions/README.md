@@ -1,65 +1,37 @@
 # Orleans.FSharp.Abstractions
 
-C# shim that enables Orleans proxy generation for all F# grains — add this to your silo project and get a zero-boilerplate F# actor system.
+Pre-generated Orleans transport proxies used by the functional F# runtime.
 
-## Why this exists
+## Why this package exists
 
-Orleans Roslyn source generators only run on C# projects. F# assemblies are invisible to them. Without proxy classes, calling a grain from a client throws at runtime.
+Orleans' Roslyn source generators run in C# projects, not F# projects. This small C# assembly owns
+the fixed transport interfaces and generated proxies that `grainContract` / `grainFor` use behind
+typed F# API records. Applications therefore do not need to create a C# bridge or a grain interface
+for each functional actor.
 
-This package contains **only** three `IFSharpGrain` interfaces in a C# project. Because the project has `Microsoft.Orleans.Sdk`, source generators run and produce the proxy classes (`Proxy_IFSharpGrain` etc.) in this assembly. Any silo that references this package (directly or transitively via `Orleans.FSharp.Runtime`) can call all F# grains — with no per-grain C# code required.
-
-> **Note.** The three `IFSharpGrain*` interfaces and their `FSharpGrainHandle*` companions back
-> the `grain {}` CE message-passing model. That whole surface is deprecated: the F# aliases
-> `Orleans.FSharp.IFSharpGrain*` (in the `Orleans.FSharp` package, which is what F# code resolves),
-> the handle types, and every `FSharpGrain.ref`/`send`/`post`/`ask` operation now carry
-> `[<Obsolete>]` (warning, not error). The C# interfaces in this package are left unattributed
-> because the generated proxies implement them. The package itself is not deprecated -- the
-> functional grain runtime (`grainContract` / `grainFor`) also relies on the proxies generated
-> here, and it needs no per-grain C# code either. See
-> [docs/functional-grains.md](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md).
-
-## Interfaces
-
-| Interface | Key type | F# handle type |
-|-----------|----------|----------------|
-| `IFSharpGrain` | `string` | `FSharpGrainHandle<'S,'M>` |
-| `IFSharpGrainWithGuidKey` | `Guid` | `FSharpGrainGuidHandle<'S,'M>` |
-| `IFSharpGrainWithIntKey` | `int64` | `FSharpGrainIntHandle<'S,'M>` |
-
-## Usage
-
-In your silo project (`.fsproj`):
-
-```xml
-<PackageReference Include="Orleans.FSharp.Abstractions" Version="*" />
-```
-
-In your client code (F#):
-
-```fsharp
-open Orleans.FSharp
-
-// Get a typed handle — no per-grain interface needed
-let counter = FSharpGrain.ref<CounterState, CounterCommand> factory "counter-1"
-
-// Call the grain — fully typed, no box/unbox
-let! state = counter |> FSharpGrain.send Increment
-```
+The package is normally pulled in transitively by `Orleans.FSharp`; application projects should
+reference `Orleans.FSharp` and `Orleans.FSharp.Runtime` instead of adding this package directly.
+Application code binds a `GrainContract<'Actor,'Key,'Api>` with `FunctionalGrain.ref`; it does
+not call this assembly directly.
 
 ## Dependency chain
 
-```
-Orleans.FSharp.Abstractions (C#)   ← proxy classes generated HERE
-        ↑                    ↑
-Orleans.FSharp (F#)     Orleans.FSharp.CodeGen (optional, legacy per-grain stubs)
+```text
+Orleans.FSharp.Abstractions (C#; generated fixed transport proxies)
         ↑
-Orleans.FSharp.Runtime (F#)        ← references Abstractions transitively
+Orleans.FSharp (functional contracts, definitions, typed references)
         ↑
-Your silo project (F#)             ← gets proxy classes for free
+Orleans.FSharp.Runtime (silo hosting)
+        ↑
+Application
 ```
 
-No circular dependencies. No code to write.
+## Legacy API
 
-## Key design decision: no `IRemindable`
+The assembly also retains the three `IFSharpGrain*` transport interfaces used by the obsolete
+universal `grain { }` model. Their public F# handles and calls are documented only in the
+[Legacy API reference](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/legacy/api-reference.md).
 
-`IFSharpGrain` does **not** inherit `IRemindable`. The `FSharpGrain<'S,'M>` class in `Orleans.FSharp.Runtime` implements `IRemindable` directly. This avoids pulling `Microsoft.Orleans.Reminders` source generators into the Abstractions project, which would create the cross-assembly proxy access problem this package is designed to solve.
+## License
+
+MIT

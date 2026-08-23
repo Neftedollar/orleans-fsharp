@@ -374,6 +374,25 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
             let! events = logApi.retrieve (1, 3)
             test <@ events = [ Deposited 5m; Deposited 6m ] @>
 
+            let! empty = logApi.retrieve (3, 3)
+            test <@ empty = [] @>
+
+            let! negative =
+                Assert.ThrowsAsync<ArgumentException>(fun () -> stateApi.retrieve (-1, 0) :> Task)
+
+            test <@ negative.Message.Contains "invalid range" @>
+            test <@ negative.Message.Contains "fromVersion" @>
+
+            let! reversed =
+                Assert.ThrowsAsync<ArgumentException>(fun () -> stateApi.retrieve (1, 0) :> Task)
+
+            test <@ reversed.Message.Contains "toVersion" @>
+
+            let! beyondConfirmed =
+                Assert.ThrowsAsync<ArgumentException>(fun () -> stateApi.retrieve (0, 2) :> Task)
+
+            test <@ beyondConfirmed.Message.Contains "toVersion" @>
+
             let! unsupported = Assert.ThrowsAsync<NotSupportedException>(fun () -> stateApi.retrieve (0, 1) :> Task)
             test <@ unsupported.Message.Length > 0 @>
         }

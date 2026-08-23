@@ -80,7 +80,7 @@ builder.UseOrleans(fun siloBuilder ->
 |> ignore
 
 let host = builder.Build()
-do! host.StartAsync()
+host.Start()
 ```
 
 A client-only process calls `AddFunctionalGrainClient()` on its Orleans client builder instead.
@@ -94,8 +94,8 @@ open Orleans
 let factory = host.Services.GetRequiredService<IGrainFactory>()
 let counter = CounterApi.ref factory "visits"
 
-let! first = counter.increment ()
-let! current = counter.value ()
+let first = counter.increment().GetAwaiter().GetResult()
+let current = counter.value().GetAwaiter().GetResult()
 ```
 
 The call site is the API record itself. There is no boxed command or untyped reply.

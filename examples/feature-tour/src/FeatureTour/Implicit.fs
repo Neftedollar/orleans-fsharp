@@ -66,7 +66,8 @@ type InboxActor = private InboxActor of unit
 type InboxState =
     { mail: string list
       announcements: string list
-      activations: int }
+      activations: int
+      cursor: string }
 
 /// <summary>The inbox's read-back shape, so the driver can print state after the fact.</summary>
 type InboxSnapshot =
@@ -95,16 +96,13 @@ module InboxApi =
 
 [<RequireQualifiedAccess>]
 module InboxDefinition =
-
-    /// <summary>What the last delivery reported about its stream cursor.</summary>
-    let mutable private lastCursor = "none observed yet"
-
     let definition =
         grainFor InboxApi.contract {
             defaultState (fun () ->
                 { mail = []
                   announcements = []
-                  activations = 0 })
+                  activations = 0
+                  cursor = "none observed yet" })
 
             // Activation counting is what proves the delivery ACTIVATED the grain: the first
             // delivery observes activations = 1 on a grain nothing had ever called.
@@ -126,12 +124,15 @@ module InboxDefinition =
                     // sequence number here. The runtime never rewinds with it: a fresh activation
                     // resumes at the subscription's current position, and the token is exposed so
                     // an application can checkpoint or de-duplicate against it.
-                    lastCursor <-
+                    let cursor =
                         match context.streamSequenceToken with
                         | Some token -> $"{token.SequenceNumber}.{token.EventIndex}"
                         | None -> "none (this provider is not rewindable)"
 
-                    return { state with mail = state.mail @ [ item ] }
+                    return
+                        { state with
+                            mail = state.mail @ [ item ]
+                            cursor = cursor }
                 })
 
             // Broadcast channels ride the same machinery through the channel-subscriber seam.
@@ -151,7 +152,7 @@ module InboxDefinition =
                         { mail = state.mail
                           announcements = state.announcements
                           activations = state.activations
-                          cursor = lastCursor }
+                          cursor = state.cursor }
                 })
         }
 
@@ -159,19 +160,25 @@ module InboxDefinition =
 
 type MailerActor = private MailerActor of unit
 
+/// <summary>A named publication request; field names make namespace, key and payload explicit.</summary>
+type Publication =
+    { routeNamespace: string
+      key: string
+      text: string }
+
 [<NoEquality; NoComparison>]
 type MailerApi =
     { /// Publishes one item onto (namespace, key) of the tour's stream provider.
-      post: (string * string * string) -> Task<int>
+      post: Publication -> Task<int>
       /// Publishes one item onto (namespace, key) of the tour's broadcast-channel provider.
-      broadcast: (string * string * string) -> Task<int> }
+      broadcast: Publication -> Task<int> }
 
 [<RequireQualifiedAccess>]
 module MailerApi =
     let contract =
         grainContract<MailerActor, string, MailerApi> {
             grainType "tour.implicit.mailer"
-            version 1
+            version 2
             stringKey
         }
 
@@ -187,7 +194,7 @@ module MailerDefinition =
             // The producer side is unchanged from experiment 7: an ordinary handler resolving a
             // keyed provider out of context.services. Implicit subscription changes only who
             // receives the item, never how it is published.
-            handle (_.post) (fun context state ((streamNamespace, key, text): string * string * string) ->
+            handle (_.post) (fun context state (publication: Publication) ->
                 task {
                     let provider =
                         context.services.GetRequiredKeyedService<IStreamProvider> TourStream.Provider
@@ -196,21 +203,29 @@ module MailerDefinition =
                     // routed to the grain whose key IS the stream key's bytes, so the stream key
                     // has to be the inbox contract's own key encoding. It agrees with
                     // StreamId.Create for a string key and disagrees for an int64 one.
-                    let streamId = FunctionalGrain.streamId InboxApi.contract streamNamespace key
+                    let streamId =
+                        FunctionalGrain.streamId
+                            InboxApi.contract
+                            publication.routeNamespace
+                            publication.key
+
                     let stream = provider.GetStream<string> streamId
-                    do! stream.OnNextAsync text
+                    do! stream.OnNextAsync publication.text
                     return state + 1, state + 1
                 })
 
-            handle (_.broadcast) (fun context state ((channelNamespace, key, text): string * string * string) ->
+            handle (_.broadcast) (fun context state (publication: Publication) ->
                 task {
                     let provider =
                         context.services.GetRequiredKeyedService<IBroadcastChannelProvider> TourChannels.Provider
 
                     let channelId =
-                        FunctionalGrain.channelId InboxApi.contract channelNamespace key
+                        FunctionalGrain.channelId
+                            InboxApi.contract
+                            publication.routeNamespace
+                            publication.key
 
-                    do! provider.GetChannelWriter<string>(channelId).Publish text
+                    do! provider.GetChannelWriter<string>(channelId).Publish publication.text
                     return state + 1, state + 1
                 })
         }

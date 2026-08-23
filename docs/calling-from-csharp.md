@@ -252,6 +252,10 @@ An operation whose API field returns `IAsyncEnumerable<'Item>` maps to a member 
 
 ```fsharp
 // F#
+type Entry =
+    { index: int
+      text: string }
+
 type FeedApi =
     { post: string -> Task<int>
       tail: int -> IAsyncEnumerable<Entry> }

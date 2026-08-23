@@ -5,9 +5,7 @@ open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open MyApp.Grains
 
-/// <summary>
-/// Configure the Orleans silo using the siloConfig { } CE.
-/// </summary>
+/// <summary>Configure the Orleans silo.</summary>
 let config =
     siloConfig {
         useLocalhostClustering
@@ -17,20 +15,13 @@ let config =
 let builder = Host.CreateApplicationBuilder()
 SiloConfig.applyToHost config builder
 
-// Register grain definitions with the DI container
-builder.Services.AddFSharpGrain<CounterState, CounterCommand>(CounterGrainDef.counter)
-|> ignore
-
-// Functional-runtime equivalent of the grain above -- see CounterGrainFunctional.fs.
 builder.UseOrleans(fun siloBuilder ->
-    siloBuilder.AddFunctionalGrain(CounterFunctionalDef.counter) |> ignore)
+    siloBuilder.AddFunctionalGrain(CounterGrain.definition) |> ignore)
 |> ignore
 
 let host = builder.Build()
 
-/// <summary>
-/// Run the sample silo, make a few grain calls, then exit cleanly.
-/// </summary>
+/// <summary>Run the sample silo, make a few typed grain calls, then exit cleanly.</summary>
 let runSample () : Task =
     task {
         do! host.StartAsync()
@@ -38,32 +29,21 @@ let runSample () : Task =
         let factory =
             host.Services.GetRequiredService<Orleans.IGrainFactory>()
 
-        let counterRef = GrainRef.ofInt64<ICounterGrain> factory 1L
-        printfn "--- Counter Grain Demo ---"
+        let counter = CounterApi.ref factory 1L
+        printfn "--- Functional Counter Grain Demo ---"
 
-        let! result = GrainRef.invoke counterRef (fun g -> g.HandleMessage(Increment))
-        printfn "After Increment: %A" result
+        let! first = counter.increment ()
+        printfn "After increment: %d" first
 
-        let! result = GrainRef.invoke counterRef (fun g -> g.HandleMessage(Increment))
-        printfn "After Increment: %A" result
+        let! second = counter.increment ()
+        printfn "After increment: %d" second
 
-        let! result = GrainRef.invoke counterRef (fun g -> g.HandleMessage(GetValue))
-        printfn "Current value: %A" result
+        let! current = counter.value ()
+        printfn "Current value: %d" current
 
-        let! result = GrainRef.invoke counterRef (fun g -> g.HandleMessage(Decrement))
-        printfn "After Decrement: %A" result
+        let! decremented = counter.decrement ()
+        printfn "After decrement: %d" decremented
 
-        printfn ""
-        printfn "--- Functional Grain Runtime equivalent (same counter domain) ---"
-        let counterFn = CounterApi.ref factory "counter-functional"
-
-        let! c1 = counterFn.increment ()
-        printfn "After increment (functional): %d" c1
-
-        let! c2 = counterFn.increment ()
-        printfn "After increment (functional): %d" c2
-
-        printfn ""
         printfn "Sample complete. Shutting down..."
         do! host.StopAsync()
     }

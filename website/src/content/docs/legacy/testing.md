@@ -67,7 +67,7 @@ let ``increment increases count (functional)`` () =
 A handler that *does* read `context` (services, persistent state, grain factory, request context)
 cannot be unit-tested this way: `FunctionalGrainContext`'s constructor is `internal`, so nothing
 outside the library can fabricate one. That handler needs a real activation -- see
-[Testing a Functional Grain](#testing-a-functional-grain) below.
+[Testing a Functional Grain](/orleans-fsharp/testing/#testing-a-functional-grain).
 
 ---
 
@@ -216,7 +216,7 @@ updates the internal state.
 verified against its public surface, which stops at `create` / `withGrain` / `withFSharpGrain*`. A
 functional grain's handlers can only run inside a real activation, so the supported unit-testing
 path is either calling a context-free handler function directly, or a `TestingHost` cluster; see
-[Testing a Functional Grain](#testing-a-functional-grain) above.
+[Testing a Functional Grain](/orleans-fsharp/testing/#testing-a-functional-grain).
 
 ---
 
@@ -269,7 +269,7 @@ let ``replaying events produces the same state as fold`` () =
 > surface, which the functional runtime does not have (and does not need -- see
 > [Testing Handler Logic Directly](#testing-handler-logic-directly-no-silo-required) above for why).
 > The nearest functional-runtime analogue for a context-free handler is calling your own function
-> directly; for a context-touching one, see [Testing a Functional Grain](#testing-a-functional-grain).
+> directly; for a context-touching one, see [Testing a Functional Grain](/orleans-fsharp/testing/#testing-a-functional-grain).
 
 All 12 CE handler variants can be tested without a silo by extracting the handler function from a
 `GrainDefinition` and calling it directly. Three dispatch helpers cover all variants:
@@ -512,7 +512,7 @@ module ScoreProperties =
 This suite's cross-variant equivalence check is specific to the classic CE's dispatch-helper family
 (`getHandler` vs. `getCancellableContextHandler`), which the functional runtime does not have; its
 unit test, property test, and TestingHost integration test are covered individually above under
-[Testing a Functional Grain](#testing-a-functional-grain).
+[Testing a Functional Grain](/orleans-fsharp/testing/#testing-a-functional-grain).
 
 ## Current testing guide
 

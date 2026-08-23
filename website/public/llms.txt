@@ -9,6 +9,7 @@ License: MIT
 - API reference: https://neftedollar.com/orleans-fsharp/api-reference/
 - How-to guide: https://neftedollar.com/orleans-fsharp/how-to/
 - Comparison: https://neftedollar.com/orleans-fsharp/comparison/
+- Full documentation corpus: https://neftedollar.com/orleans-fsharp/llms-full.txt
 
 ## Core Docs
 - Functional grain runtime (current authoring model): https://neftedollar.com/orleans-fsharp/functional-grains/

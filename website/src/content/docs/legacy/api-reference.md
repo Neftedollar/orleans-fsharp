@@ -71,7 +71,7 @@ interface and the CodeGen that comes with it. See [Event Sourcing](/orleans-fsha
 ## Deprecated: the `grain { }` cluster
 
 Everything below carries `[<Obsolete>]` (warning, not error) and is kept runnable. The replacement
-for each entry is the [functional grain runtime](#functional-grain-runtime) above; see
+for each entry is the [functional grain runtime](/orleans-fsharp/functional-grains/#functional-grain-runtime); see
 [Functional grains](/orleans-fsharp/functional-grains/), "Migrating from the `grain { }` CE", for the rewrite
 recipe.
 
@@ -226,3 +226,27 @@ declares.
 | `TestHarness.getFSharpGrain<'S,'M>` | `TestHarness -> string -> FSharpGrainHandle<'S,'M>` | Handle from a test cluster, by string key |
 | `TestHarness.getFSharpGrainGuid<'S,'M>` | `TestHarness -> Guid -> FSharpGrainGuidHandle<'S,'M>` | The same, by GUID key |
 | `TestHarness.getFSharpGrainInt<'S,'M>` | `TestHarness -> int64 -> FSharpGrainIntHandle<'S,'M>` | The same, by int64 key |
+
+### Other compatibility helpers
+
+The following helpers support C# CodeGen interfaces or the older class-based transactional model;
+they are not part of the functional authoring surface.
+
+| API | Purpose | Functional replacement |
+|---|---|---|
+| `GrainRef.ofString/ofGuid/ofInt64` and `GrainRef.invoke` | Wrap a generated C# grain interface | `FunctionalGrain.ref` / `rawRef` |
+| `GrainState.read/write/clear/current` | Operate directly on an injected `IPersistentState` | `PersistentState.create`, `stateFrom`, and `context.persistentState` |
+| `Observer.createRef/deleteRef/subscribe` and `FSharpObserverManager` | Generated C# observer interfaces | `observerContract`, `FunctionalObserver`, and `FunctionalObserverManager` |
+| `Transactions.TransactionalState` | Wrap an injected `ITransactionalState` | `transactionalStateFrom` and `FunctionalTransactionalState` |
+
+### CodeGen interface versioning
+
+These settings apply to Legacy C# CodeGen grain interfaces. Current functional contracts use
+`version`, `acceptsVersions`, and `sinceVersion` on `grainContract` instead.
+
+| API | Members |
+|---|---|
+| `CompatibilityStrategy` | `BackwardCompatible`, `StrictVersion`, `AllVersions` |
+| `VersionSelectorStrategy` | `AllCompatibleVersions`, `LatestVersion`, `MinimumVersion` |
+| `Versioning` | `compatibilityStrategyName`, `versionSelectorStrategyName` |
+| `TransactionalGrainDefinition`, `FSharpTransactionalGrain`, `AtmGrainDefinition`, `FSharpAtmGrain` | Class-based transactional grains | Contract-level `transactional` plus `transactionalStateFrom` |

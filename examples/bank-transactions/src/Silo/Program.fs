@@ -130,7 +130,11 @@ let run () : Task =
 
         // Atomic transfer: $500 from Alice to Bob, in ONE transaction the ATM creates.
         printfn "Atomic transfer: $500 from Alice to Bob..."
-        do! atm.transfer ("alice", "bob", 500m)
+        do!
+            atm.transfer
+                { FromAccount = "alice"
+                  ToAccount = "bob"
+                  Amount = 500m }
 
         let! aliceBalance = alice.balance ()
         let! bobBalance = bob.balance ()
@@ -139,12 +143,16 @@ let run () : Task =
 
         printfn ""
 
-        // Abort #1 -- the participant refuses. AccountGrainDef.withdraw throws on an overdraft,
-        // exactly as it does for the classic grain, and the whole transaction aborts.
+        // Abort #1 -- the pure domain rule returns a typed rejection; the Orleans boundary turns
+        // that rejection into the fault which aborts the whole transaction.
         printfn "Attempting transfer of $2000 from Alice to Bob (overdraft, should fail)..."
 
         try
-            do! atm.transfer ("alice", "bob", 2000m)
+            do!
+                atm.transfer
+                    { FromAccount = "alice"
+                      ToAccount = "bob"
+                      Amount = 2000m }
             printfn "  ERROR: Transfer should have failed!"
         with ex ->
             printfn "  Transaction rolled back: %s" (ex.GetBaseException().Message)
@@ -163,7 +171,11 @@ let run () : Task =
         printfn "Transferring $200 and then failing AFTER both accounts were written..."
 
         try
-            do! atm.transferThenFail ("alice", "bob", 200m)
+            do!
+                atm.transferThenFail
+                    { FromAccount = "alice"
+                      ToAccount = "bob"
+                      Amount = 200m }
             printfn "  ERROR: Transfer should have failed!"
         with ex ->
             printfn "  Transaction rolled back: %s" (ex.GetBaseException().Message)
@@ -177,11 +189,18 @@ let run () : Task =
 
         // Both balances read inside ONE transaction: a consistent snapshot, not two reads that
         // could straddle a commit.
-        let! (aliceSnapshot, bobSnapshot) = atm.totals ("alice", "bob")
-        printfn "Both balances in one transaction: Alice $%M, Bob $%M" aliceSnapshot bobSnapshot
+        let! snapshot =
+            atm.totals
+                { FirstAccount = "alice"
+                  SecondAccount = "bob" }
+
+        printfn
+            "Both balances in one transaction: Alice $%M, Bob $%M"
+            snapshot.FirstBalance
+            snapshot.SecondBalance
 
         // Verify total is preserved
-        let total = aliceSnapshot + bobSnapshot
+        let total = snapshot.FirstBalance + snapshot.SecondBalance
         printfn "Total across both accounts: $%M (should be $2000)" total
 
         printfn ""

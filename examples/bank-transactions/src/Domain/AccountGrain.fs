@@ -23,22 +23,28 @@ module AccountGrainDef =
         newBalance
 
     /// <summary>
-    /// Validates and applies a withdrawal to the account balance.
-    /// Throws InvalidOperationException if the withdrawal would cause an overdraft.
+    /// Validates and applies a withdrawal to the account balance as a pure domain decision.
     /// </summary>
     /// <param name="balance">The current account balance state.</param>
     /// <param name="amount">The amount to withdraw.</param>
-    /// <returns>The updated account balance state.</returns>
-    /// <exception cref="System.InvalidOperationException">
-    /// Thrown when the withdrawal amount exceeds the current balance.
-    /// </exception>
-    let withdraw (balance: AccountBalance) (amount: decimal) : AccountBalance =
+    /// <returns>The updated account balance, or a typed overdraft rejection.</returns>
+    let withdraw (balance: AccountBalance) (amount: decimal) : Result<AccountBalance, AccountError> =
         if balance.Balance < amount then
-            invalidOp $"Insufficient funds: balance={balance.Balance}, requested={amount}"
+            Error(InsufficientFunds(balance.Balance, amount))
+        else
+            let newBalance = AccountBalance()
+            newBalance.Balance <- balance.Balance - amount
+            Ok newBalance
 
-        let newBalance = AccountBalance()
-        newBalance.Balance <- balance.Balance - amount
-        newBalance
+    /// <summary>
+    /// Orleans aborts a transaction when its participant faults. This is the narrow OO boundary
+    /// that translates the pure domain <c>Result</c> into that framework signal.
+    /// </summary>
+    let withdrawAtBoundary (balance: AccountBalance) (amount: decimal) : AccountBalance =
+        match withdraw balance amount with
+        | Ok updated -> updated
+        | Error rejection ->
+            raise (System.InvalidOperationException(AccountError.describe rejection))
 
     /// <summary>
     /// The transactional account grain definition for use with FSharpTransactionalGrain.
@@ -46,7 +52,7 @@ module AccountGrainDef =
     let transactionalAccount : TransactionalGrainDefinition<AccountBalance> =
         {
             Deposit = deposit
-            Withdraw = withdraw
+            Withdraw = withdrawAtBoundary
             GetBalance = fun state -> state.Balance
             CopyState = fun source target -> target.Balance <- source.Balance
         }

@@ -1,628 +1,273 @@
 # Developer Guide
 
-This guide provides technical deep-dives into Orleans.FSharp's architecture, development patterns, and contribution workflows. It's intended for developers who want to understand how the library works internally or contribute to the codebase.
+This guide is for contributors to the current Orleans.FSharp functional runtime. Application-facing
+usage belongs in `docs/`; this file describes the architecture, change workflow, and invariants
+that maintainers need.
 
----
+## Architecture
 
-## 📚 Table of Contents
+The functional runtime separates four concerns:
 
-- [Architecture Deep Dive](#architecture-deep-dive)
-- [How Computation Expressions Work](#how-computation-expressions-work)
-- [Adding New CE Keywords](#adding-new-ce-keywords)
-- [Understanding the Universal Grain Pattern](#understanding-the-universal-grain-pattern)
-- [Testing Strategy](#testing-strategy)
-- [Serialization Architecture](#serialization-architecture)
-- [Release Process](#release-process)
-- [Performance Considerations](#performance-considerations)
-- [Common Contribution Patterns](#common-contribution-patterns)
+1. A `GrainContract<'Actor,'Key,'Api>` declares durable identity, key encoding, protocol version,
+   operation IDs, and delivery policy.
+2. A `FunctionalGrainDefinition<...>` or `FunctionalJournaledGrainDefinition<...>` binds that
+   contract to state and handlers.
+3. Runtime hosting registers a definition and the fixed functional transport with Orleans.
+4. `FunctionalGrain.ref` binds the same contract to an `IGrainFactory` and returns the typed API
+   record used by callers.
 
----
+The actor-brand type keeps unrelated contracts distinct at compile time. The API record describes
+the callable surface. The contract owns wire compatibility; the definition owns behavior. Callers
+cannot tell whether the hosted definition uses ordinary state or an event journal.
 
-## Architecture Deep Dive
+### Project roles
 
-### Core Design Principles
+| Project | Responsibility |
+|---|---|
+| `Orleans.FSharp` | Contracts, definition builders, typed references, observers, state descriptors, serialization, and shared helpers |
+| `Orleans.FSharp.Runtime` | Functional activation/dispatch, silo registration, and `siloConfig` / `clientConfig` |
+| `Orleans.FSharp.Abstractions` | Fixed C# transport interfaces and generated Orleans proxies |
+| `Orleans.FSharp.Testing` | TestingHost, web-host, FsCheck, mock-factory, and log-capture helpers |
+| `Orleans.FSharp.Analyzers` | F# analyzer rules |
+| `Orleans.FSharp.EventSourcing` | Legacy compatibility package; current journals are in `Orleans.FSharp` |
+| `Orleans.FSharp.CodeGen` | Legacy per-grain CodeGen compatibility |
 
-Orleans.FSharp is built around these principles:
+### Functional request path
 
-1. **Functional Core, Imperative Shell**: Grain handlers are pure functions. Orleans manages the imperative shell (persistence, lifecycle, clustering).
-
-2. **Type Safety Over Runtime Checks**: Use F#'s type system to prevent invalid states at compile time, not runtime validation.
-
-3. **Composability**: Every CE keyword is composable. You can combine `handle`, `persist`, `onActivate`, etc. in any order.
-
-4. **Zero Abstraction Penalty**: The CE layer adds negligible overhead vs raw Orleans API calls. Performance benchmarks confirm this.
-
-### Module Dependencies
-
-```
-Orleans.FSharp (core library)
-│
-├── Dependencies:
-│   ├── Orleans.FSharp.Abstractions (transitive)
-│   ├── FsToolkit.ErrorHandling (taskResult { } CE)
-│   ├── FSharp.Control.TaskSeq (streaming)
-│   ├── IcedTasks (cold tasks, cancellable tasks)
-│   ├── Polly (resilience patterns)
-│   └── Microsoft.Orleans.* (v10.1.*)
-│
-└── Provides:
-    ├── grain { } CE
-    ├── FSharpGrain module (universal grain pattern)
-    ├── Streaming, Reminders, Timers, Observers
-    ├── Serialization (F# Binary, JSON, Native)
-    └── GrainRef, GrainState, GrainContext modules
-
-Orleans.FSharp.Runtime
-│
-├── Dependencies:
-│   ├── Orleans.FSharp (core)
-│   ├── Microsoft.Orleans.Server
-│   ├── Serilog.Extensions.Logging
-│   └── Microsoft.Extensions.*
-│
-└── Provides:
-    ├── siloConfig { } CE
-    ├── clientConfig { } CE
-    ├── Serilog integration
-    └── GrainDiscovery
-
-Orleans.FSharp.Abstractions (C# project)
-│
-├── Dependencies:
-│   ├── Microsoft.Orleans.Sdk
-│   └── Microsoft.Orleans.EventSourcing
-│
-└── Provides:
-    ├── IFSharpGrain (universal interface)
-    ├── IFSharpGrainWithGuidKey
-    ├── IFSharpGrainWithIntKey
-    └── Orleans proxy generation
+```text
+typed API field
+  -> contract operation metadata
+  -> fixed Orleans proxy
+  -> functional request envelope
+  -> hosted definition registry
+  -> typed handler
+  -> encoded reply
 ```
 
-### Key Types
+The wire operation ID is the record-field name unless `operationId` overrides it. Contract
+version admission happens before handler dispatch. Key codecs must round-trip and are part of the
+grain's durable identity.
+
+## Computation-expression design
+
+The public builders are staged:
+
+- `grainContract` starts with an empty contract draft and seals a `GrainContract`.
+- `grainFor contract` requires `defaultState` or `initialState` before state-dependent
+  operations become available.
+- `journaledGrainFor contract` requires `initialEventState` first and `apply` second so the
+  state and event types are established before handlers are accepted.
+
+This staging is deliberate API validation, not just implementation detail. A new custom operation
+must preserve type inference and should reject invalid combinations while the definition is sealed,
+before a silo accepts traffic.
+
+### Adding a contract operation
+
+When adding a keyword:
+
+1. Decide whether it changes the wire contract, delivery policy, or only hosted behavior.
+2. Add it to the narrowest builder stage that has all required type information.
+3. Validate nulls, ranges, duplicate declarations, and incompatible combinations at sealing.
+4. Add reflection-based surface coverage so the public keyword set cannot drift silently.
+5. Add semantic tests for the behavior and a startup/integration test when Orleans configuration is
+   involved.
+6. Update `docs/api-reference.md`, the relevant guide, its website mirror, and
+   `QUICK-REFERENCE.md`.
+
+For a selector-based contract operation, retain the one-argument API-field invariant:
 
 ```fsharp
-// Grain definition result type
-type GrainDefinition<'S, 'M> = {
-    DefaultState: 'S
-    Handler: 'S -> 'M -> Task<'S * obj>
-    // ... other handlers, hooks, etc.
-}
-
-// Universal grain interface (in Abstractions, C#)
-public interface IFSharpGrain : IGrainWithStringKey
-{
-    Task<GrainDispatchResult> Handle(string commandType, object payload);
-}
-
-// F# dispatch result
-type GrainDispatchResult = {
-    State: obj option
-    Result: obj option
-}
+[<NoEquality; NoComparison>]
+type ExampleApi =
+    { update: (string * int) -> Task<unit>
+      read: unit -> Task<int> }
 ```
 
----
+Multiple logical inputs are one tuple argument. Curried fields are not a supported wire shape.
 
-## How Computation Expressions Work
+### Adding a definition operation
 
-### The `grain { }` Builder
-
-The `grain { }` CE is a `GrainBuilder<'S, 'M>` that accumulates configuration into a `GrainDefinition<'S, 'M>` record:
+State-changing handlers return replacement state explicitly:
 
 ```fsharp
-type GrainBuilder<'S, 'M>() =
-    let mutable defaultState = Unchecked.defaultof<'S>
-    let mutable handler = Unchecked.defaultof<'S -> 'M -> Task<'S * obj>>
-    let mutable persistProvider = None
-    // ... other mutable slots
-
-    member _.Yield(()) = ()
-
-    [<CustomOperation("defaultState")>]
-    member _.DefaultState(state: 'S) =
-        defaultState <- state
-        ()
-
-    [<CustomOperation("handle")>]
-    member _.Handle(handlerFunc: 'S -> 'M -> Task<'S * obj>) =
-        handler <- handlerFunc
-        ()
-
-    [<CustomOperation("persist")>]
-    member _.Persist(providerName: string) =
-        persistProvider <- Some providerName
-        ()
-
-    // ... more keywords
-
-    member _.Run() = {
-        DefaultState = defaultState
-        Handler = handler
-        // ... build complete definition
+let increment _context count () =
+    task {
+        let next = count + 1
+        return next, next
     }
 ```
 
-### Execution Flow
+Reply-only `handleQuery` callbacks do not return state and require a contract operation declared
+`readOnly`. Streaming handlers return `IAsyncEnumerable<'Item>` directly. Journaled handlers
+return `'Event list * 'Reply`; the runtime confirms the batch before releasing the reply.
 
-When you define a grain:
+## State and storage invariants
 
-```fsharp
-let counter = grain {
-    defaultState { Count = 0 }
-    handle handlerFunc
-    persist "Default"
-}
-```
+### Persistent state
 
-The CE executes in order:
-1. `Yield()` initializes builder
-2. `defaultState` sets initial state
-3. `handle` stores handler function
-4. `persist` stores provider name
-5. `Run()` returns complete `GrainDefinition`
+`PersistentState.create stateName providerName` produces an immutable descriptor. `stateFrom`
+attaches the primary state; `usePersistentState` attaches additional named facets. Descriptor
+identity includes state name, provider name, and stored type. Two provider writes are not an atomic
+transaction.
 
-This definition is then registered with Orleans via `AddFSharpGrain`:
+### Transactional state
 
-```fsharp
-siloBuilder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter)
-```
+`TransactionalState.create stateName storageName` plus `transactionalStateFrom` attaches an
+Orleans transactional facet. The contract's `transactional` operation takes
+`Orleans.TransactionOption`. The invocation-bound `FunctionalTransactionalState` exposes
+`read`, `readWith`, `update`, and `updateWith`.
 
-Which:
-1. Creates `FSharpGrainImpl<CounterState, CounterCommand>` class
-2. Registers it with Orleans grain activator
-3. Sets up message routing via `UniversalGrainHandlerRegistry`
+### Journals and snapshots
 
----
+`IFunctionalJournalStorage<'Key,'State,'Event>` is the application-owned custom-storage seam:
 
-## Adding New CE Keywords
+- `Read` returns an optional snapshot and the ordered retained tail after it.
+- `Append` compares `ExpectedVersion`, writes the entire event batch atomically, and may persist
+  the resulting snapshot in the same operation.
+- `Clear` deletes the complete journal for one storage identity.
 
-### Step 1: Identify the Need
+Ordinary storage exceptions raised through Orleans' CustomStorage adaptor remain transient to its
+retry protocol. A custom store throws `FunctionalJournalPermanentStorageException` only for a
+failure that retry cannot repair; the functional runtime fails the operation and requests
+activation deactivation. A zero-event manual snapshot calls `Append` directly: an ordinary
+exception fails that call without implicit retry or deactivation, while the permanent marker keeps
+the same fail-and-deactivate meaning.
 
-New keywords should solve a real developer pain point. Check:
-- GitHub issues requesting the feature
-- Common Orleans patterns not yet covered
-- Feedback from community surveys
+Snapshot precedence is fixed:
 
-### Step 2: Design the API
+1. `context.snapshotNow()` for a successful callback;
+2. the definition's `snapshotPolicy`;
+3. the silo-wide `FunctionalJournalSnapshotOptions.Policy` for `Inherit` or no local policy;
+4. `Disabled`.
 
-Keywords should:
-- Be **composable** with existing keywords
-- Follow **naming conventions** (lowercase camelCase)
-- Have **clear semantics** (one keyword = one concern)
-- Be **discoverable** (name should hint at purpose)
+`FunctionalJournalSnapshotOptions.ManualSnapshotMaxConflictRetries` is non-negative and defaults
+to `3`. It counts retries after the first CAS attempt for a zero-event manual snapshot, so the
+default allows four total attempts; every retry refreshes and recomputes from confirmed state.
 
-Example: Adding `handleState`
+Snapshots are available only with `customStorage`. LogStorage keeps and replays the event log;
+StateStorage writes the latest folded view and retains no event history.
 
-```fsharp
-// Problem: handle requires manual boxing
-handle (fun state cmd -> task {
-    let newState = { Count = state.Count + 1 }
-    return newState, box newState  // manual box
-})
+## Hosting
 
-// Solution: handleState returns state directly
-handleState (fun state cmd -> task {
-    return { Count = state.Count + 1 }  // no box needed
-})
-```
+`AddFunctionalGrain` and `AddFunctionalJournaledGrain` register definitions by value and install
+the client transport. Client-only processes call `AddFunctionalGrainClient`.
 
-### Step 3: Implement the Keyword
+A standalone F# host must make definition and payload assemblies visible before Orleans snapshots
+its application manifest. Use `SiloConfig.applyToHost` / `applyToSiloBuilder` and the functional
+registration methods in the order shown by `docs/getting-started.md`.
 
-Add to `GrainBuilder.fs`:
+Dashboard is optional. `addDashboard` uses package defaults;
+`addDashboardWithOptions counterUpdateIntervalMs historyLength hideTrace` configures the three
+runtime options. The host must reference `Microsoft.Orleans.Dashboard` and map the ASP.NET Core
+endpoint.
 
-```fsharp
-[<CustomOperation("handleState")>]
-member _.HandleState(handlerFunc: 'S -> 'M -> Task<'S>) =
-    // Wrap to match handle signature
-    let wrapped state msg = task {
-        let! newState = handlerFunc state msg
-        return newState, box newState  // auto-box
-    }
-    handler <- wrapped
-    ()
-```
+## Testing
 
-### Step 4: Add Tests
+### Fast tests
 
-```fsharp
-test "handleState should auto-box state in result" {
-    let grainDef = grain {
-        defaultState { Count = 0 }
-        handleState (fun state _ -> task {
-            return { Count = state.Count + 1 }
-        })
-    }
-    
-    let! newState, result = grainDef.Handler initialState Increment
-    newState.Count |> should equal 1
-    result :?> int |> should equal 1  // auto-boxed
-}
-```
+Keep pure folds and context-free handlers as named functions and test them directly. Test contract
+and definition sealing for invalid combinations and exact diagnostics.
 
-### Step 5: Update Documentation
+### Integration tests
 
-- Add to `QUICK-REFERENCE.md`
-- Add legacy `grain { }` documentation to `docs/legacy/grain-definition.md`
-- Add example to README if significant
-- Update CHANGELOG.md
+Use Orleans `TestCluster` for activation, persistence, serializer, reminder, stream, transaction,
+and journal behavior. Register the same definition value as production and call it through
+`FunctionalGrain.ref`. Do not fabricate `FunctionalGrainContext`; its constructor is
+runtime-owned.
 
----
-
-## Understanding the Universal Grain Pattern
-
-> **Deprecated authoring model.** This section describes the `grain { }` / `AddFSharpGrain` cluster,
-> whose public surface now carries `[<Obsolete>]` (warning, not error). The internal pieces named
-> below -- `FSharpGrainImpl` and `UniversalGrainHandlerRegistry` -- are reachable only through those
-> already-obsolete entry points, so they are not attributed themselves; see
-> [docs/functional-grains.md](docs/functional-grains.md) for the replacement authoring model and the
-> before/after mapping table. The section is kept because contributors still maintain this code.
-
-### Traditional Orleans Pattern
-
-```csharp
-// 1. Define interface (per grain!)
-public interface ICounterGrain : IGrainWithStringKey
-{
-    Task<int> Increment();
-    Task<int> GetCount();
-}
-
-// 2. Implement grain (C# class)
-public class CounterGrain : Grain, ICounterGrain
-{
-    public Task<int> Increment() { ... }
-    public Task<int> GetCount() { ... }
-}
-
-// 3. CodeGen project generates proxies
-```
-
-### Orleans.FSharp Universal Pattern
-
-```fsharp
-// 1. Define grain (pure F#, no interfaces)
-let counter = grain {
-    defaultState { Count = 0 }
-    handle (fun state cmd -> task {
-        match cmd with
-        | Increment -> return { Count = state.Count + 1 }, box (state.Count + 1)
-    })
-}
-
-// 2. Register once at silo startup
-siloBuilder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter)
-
-// 3. Call from anywhere
-let handle = FSharpGrain.ref<CounterState, CounterCommand> factory "counter-1"
-let! state = handle |> FSharpGrain.send Increment
-```
-
-### How It Works
-
-1. **Abstractions Project** (C#):
-   - Defines `IFSharpGrain`, `IFSharpGrainWithGuidKey`, `IFSharpGrainWithIntKey`
-   - Orleans SDK generates proxy classes for these interfaces
-   - Proxies are public and discoverable by Orleans runtime
-
-2. **FSharpGrainImpl** (C#, in Abstractions):
-   - Concrete grain class implementing `IFSharpGrain`
-   - Delegates to F# handler via `UniversalGrainHandlerRegistry`
-   - One implementation covers all F# grains
-
-3. **UniversalGrainHandlerRegistry** (F#):
-   - Maps DU type names to handler functions
-   - Routes messages to correct grain definitions
-   - Handles serialization/deserialization
-
-4. **AddFSharpGrain** (F#, in Runtime):
-   - Registers grain definition in DI container
-   - Sets up message routing
-   - Auto-registers `FSharpBinaryCodec` for serialization
-
-### Benefits
-
-- **No per-grain C# stubs**: One universal interface for all grains
-- **Pure F#**: Grains defined with computation expressions, not classes
-- **Type-safe**: DU commands prevent invalid messages at compile time
-- **Composable**: Keywords compose in any order
-- **Testable**: Handlers are pure functions, easy to unit test
-
----
-
-## Testing Strategy
-
-### Test Pyramid
-
-```
-        ╱╲
-       ╱  ╲         Integration (200 tests)
-      ╱────╲        with TestCluster
-     ╱      ╲
-    ╱────────╲       Unit (1200 tests)
-   ╱  Property ╲     with FsCheck
-  ╱____________╲
- ╱              ╲    Edge cases, error paths
-╱________________╲
-```
-
-### Unit Tests
-
-Test individual modules in isolation:
-
-```fsharp
-[<Fact>]
-let ``should increment counter when Increment command sent`` () = task {
-    let grainDef = counterGrain
-    let! newState, result = grainDef.Handler { Count = 0 } Increment
-    newState.Count |> should equal 1
-    result :?> int |> should equal 1
-}
-```
-
-### Property Tests (FsCheck)
-
-Test invariants across all inputs:
-
-```fsharp
-[<Property>]
-let ``applyMigrations should be idempotent`` (migrations: Migration list) (state: obj) =
-    let result1 = StateMigration.applyMigrations migrations 1 state
-    let result2 = StateMigration.applyMigrations migrations 1 result1
-    result1 = result2
-```
-
-### Integration Tests
-
-Test with real Orleans TestCluster:
-
-```fsharp
-[<Fact>]
-let ``grain should persist state to storage`` () = task {
-    use! cluster = TestHarness.createTestCluster config
-    let grain = cluster.GetGrain<IFSharpGrain> "test-1"
-    
-    let! result = grain.Handle("Increment", box ())
-    let grain2 = cluster.GetGrain<IFSharpGrain> "test-1"
-    let! state = grain2.Handle("GetCount", box ())
-    
-    state.Result |> should equal (box 1)
-}
-```
-
-### Running Tests
+### Required checks
 
 ```bash
-# All tests
+dotnet build
 dotnet test
-
-# Unit tests only
-dotnet test tests/Orleans.FSharp.Tests
-
-# Integration tests only
-dotnet test tests/Orleans.FSharp.Integration
-
-# Specific test
-dotnet test tests/Orleans.FSharp.Tests --filter "FullyQualifiedName~GrainBuilderTests"
-
-# With verbose output
-dotnet test tests/Orleans.FSharp.Tests --logger "console;verbosity=detailed"
+python3 scripts/check-deprecation-signal.py
+python3 scripts/check-docs-mirror.py
+python3 scripts/check-current-docs-api.py
+python3 scripts/generate-llms-full.py --check
+cd website
+npm run build
+cd ..
+python3 scripts/check-docs-links.py
 ```
 
----
+Use focused project or test filters while iterating, then run the checks proportional to the
+changed surface.
 
-## Serialization Architecture
+## Documentation workflow
 
-### Three Modes
+`docs/**/*.md` is the repository rendering; `website/src/content/docs/**/*.md` is the published
+mirror with Starlight frontmatter and site-form links. Content changes must land in both. Run the
+mirror check before handing off.
 
-1. **F# Binary** (default, fastest):
-   - Uses `FSharpBinaryCodec` (auto-registered)
-   - Native Orleans serialization
-   - Zero allocations for records and DUs
+Current pages teach only `grainContract`, `grainFor`, `journaledGrainFor`, typed functional
+references, and helpers that compose with them. Compatibility examples belong under `docs/legacy`.
+`website/public/llms-full.txt` is generated as a full concatenation of current docs followed by a
+clearly marked Legacy section; run `python3 scripts/generate-llms-full.py` after changing a source
+page. `llms.txt` remains the short navigation index.
 
-2. **JSON** (interoperable):
-   - Uses `FSharp.SystemTextJson`
-   - Human-readable, debuggable
-   - Slight performance penalty
+Examples should either compile on their own or say explicitly which immediately preceding
+definition they continue. Prefer immutable record updates, lowercase record fields for API
+operations, `task { }`, explicit `ignore` on fluent builders, and typed selectors such as
+`(_.increment)`.
 
-3. **Orleans Native** (fallback):
-   - Orleans default serialization
-   - Works for all types
-   - May require `[<GenerateSerializer>]` attributes
+## Serialization
 
-### How FSharpBinaryCodec Works
+The functional transport registers `FSharpBinaryCodec` for F# records, unions, tuples, options,
+lists, maps, and sets. Stored and wire types still need deterministic, evolvable shapes. Do not
+mutate a state object behind the runtime's replacement-state checks. Security-sensitive deployments
+must treat the binary codec as a trusted-data format; see `docs/security.md`.
 
-```fsharp
-// Auto-registered when using AddFSharpGrain
-FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder
+## Release process
 
-// Registers F#-specific codecs for:
-// - Records
-// - Discriminated unions
-// - Tuples
-// - Options
-// - Lists, Arrays, Maps, Sets
-```
+MinVer derives package versions from `v*` Git tags; there is no version field to edit in
+`Directory.Build.props`.
 
-### Adding Custom Serializers
+1. Move release notes from Unreleased to a dated version section.
+2. Build and test Release configuration on `main`.
+3. Tag the intended semantic version.
+4. CI publishes packages through the configured trusted publisher.
 
-```fsharp
-let config = siloConfig {
-    configureServices (fun services ->
-        services.AddSerializer(fun builder ->
-            builder.AddProvider<MyCustomCodecProvider>() |> ignore
-        )
-    )
-}
-```
-
----
-
-## Release Process
-
-### Version Numbering
-
-We use [Semantic Versioning](https://semver.org/):
-
-- **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)
-- **PATCH**: Bug fixes (backward compatible)
-
-### Release Steps
-
-Versioning is automated by [MinVer](https://github.com/adamralph/minver), which derives the package version from the latest `v*` git tag. There is no version field to edit in `Directory.Build.props`.
-
-1. **Update CHANGELOG.md**:
-   - Move items from `[Unreleased]` to a new version section
-   - Add date: `## [2.1.0] - 2026-04-15`
-   - Update the comparison links at the bottom
-
-2. **Build and test on `main`**:
-   ```bash
-   dotnet build --configuration Release
-   dotnet test
-   ```
-
-3. **Tag and push**:
-   ```bash
-   git tag v2.1.0           # use v2.1.0-alpha.1 for prereleases
-   git push origin v2.1.0
-   ```
-
-4. **CI publishes to NuGet**:
-   - GitHub Actions detects the `v*` tag
-   - MinVer reads the tag and stamps the package version
-   - Packages are published to NuGet.org via trusted publisher (OIDC)
-   - Pre-release tags (`-alpha.N`, `-rc.N`) produce pre-release packages
-
-### NuGet Packages
-
-Published packages:
-- `Orleans.FSharp`
-- `Orleans.FSharp.Runtime`
-- `Orleans.FSharp.Abstractions`
-- `Orleans.FSharp.EventSourcing`
-- `Orleans.FSharp.Testing`
-- `Orleans.FSharp.Analyzers`
-- `Orleans.FSharp.Templates`
-
----
-
-## Performance Considerations
-
-### Zero Abstraction Penalty
-
-Orleans.FSharp adds **negligible overhead** vs raw Orleans:
-
-- **CE builder**: One-time allocation at grain definition (not per-call)
-- **Handler dispatch**: Single dictionary lookup in `UniversalGrainHandlerRegistry`
-- **Boxing**: Only for `handle` (required by universal interface); avoided with `handleState` and `handleTyped`
-
-### Benchmarking
-
-Run benchmarks:
-
-```bash
-cd benchmarks
-dotnet run --configuration Release
-```
-
-Key metrics:
-- **Latency**: Time per grain call
-- **Throughput**: Calls per second
-- **Allocations**: Bytes per call
-
-### Optimization Tips
-
-1. **Use `handleState` or `handleTyped`** instead of `handle` to avoid manual boxing
-2. **Prefer records for state** (faster serialization than DUs)
-3. **Use F# Binary serialization** for performance-critical paths
-4. **Allow read-heavy message types to interleave** with `interleaveMessage typeof<Query>` to lift the one-message-at-a-time bottleneck
-5. **For `[StatelessWorker]` / `[Reentrant]` high-throughput grains**, use the per-grain `Orleans.FSharp.CodeGen` path (the universal pattern cannot carry per-grain attributes)
-
----
-
-## Common Contribution Patterns
-
-### Adding a Persistence Provider
-
-1. Create new project: `Orleans.FSharp.Persistence.MyProvider`
-2. Implement provider interface:
-   ```fsharp
-   type MyProvider(config: MyConfig) =
-       interface IGrainStorage with
-           member _.ReadAsync(...) = ...
-           member _.WriteAsync(...) = ...
-           member _.ClearAsync(...) = ...
-   ```
-3. Add `siloConfig { }` keyword:
-   ```fsharp
-   [<CustomOperation("addMyStorage")>]
-   member _.AddMyStorage(name: string, config: MyConfig) = ...
-   ```
-4. Write tests with real provider
-5. Document in `docs/` and update README
-
-### Adding an Analyzer Rule
-
-1. Open `Orleans.FSharp.Analyzers` project
-2. Create new analyzer:
-   ```fsharp
-   type MyAnalyzer() =
-       interface IAnalyzer with
-           member _.Analyze(ast: UntypedParse) =
-               // Walk AST, return diagnostics
-               [ ... ]
-   ```
-3. Add tests in `AnalyzerTests.fs`
-4. Document in `docs/analyzers.md`
-
-### Adding a CE Keyword
-
-See [Adding New CE Keywords](#adding-new-ce-keywords) section above.
-
----
+Do not put a major-version wildcard from an old release line in package README examples. Use the
+ordinary `dotnet add package Package.Name` command, or `Version="*"` when an XML example needs a
+placeholder.
 
 ## Troubleshooting
 
-### Build Fails with Warnings
+### Functional grain not found
 
-```
-error FSXXXX: Warning as error: ...
-```
+- Confirm the exact definition value was passed to `AddFunctionalGrain` or
+  `AddFunctionalJournaledGrain`.
+- Confirm client-only hosts called `AddFunctionalGrainClient`.
+- Confirm the contract key codec matches the supplied domain key.
+- Confirm definition and payload assemblies were loaded before the Orleans manifest snapshot.
 
-Fix the warning (usually a missing XML doc or unused variable). We don't suppress warnings except in specific cases.
+### Serialization failure
 
-### Tests Fail with "Grain Not Found"
+- Confirm the argument, reply, state, and event types have supported serializers.
+- Confirm a stored type is constructible by Orleans' activation path.
+- Confirm client and silo installed the same functional transport/codec configuration.
 
-Check:
-1. Grain is registered via `AddFSharpGrain`
-2. Key type matches (string vs GUID vs int)
-3. `Orleans.FSharp.Abstractions` is referenced in test project
+### Journal startup failure
 
-### Serialization Errors
+- Confirm `logProvider` names a registered log-consistency adaptor.
+- Confirm `journalStorage` names an `IGrainStorage`, or register the default storage.
+- For `customStorage`, register Orleans' CustomStorage provider with the same name and make the
+  typed storage implementation resolvable from DI.
+- Do not combine `journalStorage` with `customStorage`.
 
-Check:
-1. Type is serializable (record, DU, tuple, primitive)
-2. No circular references in state
-3. `FSharpBinaryCodec` is registered (auto-done by `AddFSharpGrain`)
+## Legacy maintenance
 
-### Orleans Source Generator Not Running
-
-Check:
-1. `Orleans.FSharp.Abstractions` is a C# project (generators only run on C#)
-2. Project references are correct
-3. Clean and rebuild: `dotnet clean && dotnet build`
-
----
+The obsolete universal grain, per-grain CodeGen, and original event-sourcing implementations are
+still maintained for compatibility. Their architecture and examples live under
+[docs/legacy](docs/legacy/index.md). Changes to those subsystems must not reintroduce their APIs into
+current guides or package quick starts.
 
 ## Resources
 
-- [F# for Fun and Profit](https://fsharpforfunandprofit.com/) - Learn F#
-- [Microsoft Orleans Docs](https://learn.microsoft.com/dotnet/orleans/) - Orleans internals
-- [F# Foundation](https://fsharp.org/) - F# community and standards
-- [Conventional Commits](https://www.conventionalcommits.org/) - Commit message convention
-
----
-
-**Questions?** Open an issue or discussion on [GitHub](https://github.com/Neftedollar/orleans-fsharp).
+- [Functional Grain Runtime](docs/functional-grains.md)
+- [API Reference](docs/api-reference.md)
+- [Event Sourcing](docs/event-sourcing.md)
+- [Testing](docs/testing.md)
+- [Microsoft Orleans documentation](https://learn.microsoft.com/dotnet/orleans/)
+- [F# language reference](https://learn.microsoft.com/dotnet/fsharp/language-reference/)

@@ -1,63 +1,91 @@
 # Orleans.FSharp
 
-Idiomatic F# computation expressions and helpers for [Microsoft Orleans](https://learn.microsoft.com/en-us/dotnet/orleans/) grain development.
-
-> **Deprecated authoring model.** The `grain {}` CE and the universal `FSharpGrain.*`
-> message-passing surface shown below -- builder, `GrainDefinition`/`GrainContext`, handles,
-> `IFSharpGrain*`, `ref`/`send`/`post`/`ask`, `Timers`, `Reminder` -- now carry `[<Obsolete>]`
-> (warning, not error). They keep
-> compiling and running; new code should use the functional grain runtime
-> (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) described under
-> [Functional grain runtime](#functional-grain-runtime) below. Migration guide:
-> [docs/functional-grains.md](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md).
-
-## What it does
-
-Orleans.FSharp replaces verbose C#-style grain implementations with a declarative `grain {}` computation expression. Define state, message handlers, persistence, timers, reminders, and streaming in a single expression. Concurrency is controlled per message type with `interleaveMessage typeof<'Msg>`, and `FSharpGrain.post` gives true fire-and-forget (`[OneWay]`) calls.
-
-### Modules included
-
-`GrainState` | `GrainRef` | `GrainBatch` | `Streaming` | `BroadcastChannel` | `Logging` | `Reminders` | `Timers` | `Observers` | `Filters` | `RequestCtx` | `Transactions` | `Versioning` | `GrainResilience` | `Shutdown` | `StateMigration` | `Serialization` | `FSharpSerialization` | `Scripting` | `Kubernetes` | `GrainDirectory` | `Immutable` | `StreamProviders`
+Idiomatic, functional F# actors on [Microsoft Orleans](https://learn.microsoft.com/dotnet/orleans/).
+The current authoring model uses typed API records, `grainContract`, `grainFor`, and
+`FunctionalGrain.ref`; it needs no application-owned C# grain interface or proxy project.
 
 ## Quick example
 
 ```fsharp
+open System.Threading.Tasks
 open Orleans.FSharp
 
-type CounterMsg = Increment | GetCount
+type CounterActor = private CounterActor of unit
 
-let counterGrain = grain {
-    defaultState 0
-    handle (fun state msg -> task {
-        match msg with
-        | Increment  -> return state + 1, box ()
-        | GetCount   -> return state,     box state
-    })
-    persist "Default"
-}
+[<NoEquality; NoComparison>]
+type CounterApi =
+    { increment: unit -> Task<int>
+      value: unit -> Task<int> }
+
+[<RequireQualifiedAccess>]
+module CounterApi =
+    let contract =
+        grainContract<CounterActor, string, CounterApi> {
+            grainType "counter"
+            version 1
+            stringKey
+            readOnly (_.value)
+        }
+
+    let ref = FunctionalGrain.ref contract
+
+let counterDefinition =
+    grainFor CounterApi.contract {
+        defaultState (fun () -> 0)
+
+        handle (_.increment) (fun _ count () ->
+            task {
+                let next = count + 1
+                return next, next
+            })
+
+        handleQuery (_.value) (fun _ count () -> task { return count })
+    }
+
+let callCounter (grainFactory: Orleans.IGrainFactory) =
+    task {
+        let counter = CounterApi.ref grainFactory "visits"
+        let! next = counter.increment ()
+        let! current = counter.value ()
+        return next, current
+    }
 ```
+
+Register `counterDefinition` with `ISiloBuilder.AddFunctionalGrain`; callers use
+`callCounter`'s typed API-record binding.
+
+## Current functional surface
+
+- `grainContract<'Actor,'Key,'Api> { }` declares stable identity, key encoding, versioning, and
+  delivery policy.
+- `grainFor contract { }` binds immutable state transitions, persistence, lifecycle hooks,
+  timers, reminders, streams, placement, and transactions.
+- `journaledGrainFor contract { }` binds a pure event fold and supports Orleans log-consistency
+  providers, typed custom storage, and snapshot policies.
+- `FunctionalGrain.ref` returns the typed API record; `FunctionalGrain.rawRef` additionally exposes
+  cancellable and server-streaming calls.
+- `FunctionalObserver` provides codegen-free typed push callbacks.
+
+See the [functional runtime guide](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md),
+[event-sourcing guide](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/event-sourcing.md),
+and [API reference](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/api-reference.md).
 
 ## Related packages
 
 | Package | Purpose |
-|---------|---------|
-| `Orleans.FSharp.Runtime` | Silo and client hosting via `siloConfig {}` CE |
-| `Orleans.FSharp.CodeGen` | C# bridge for Orleans Roslyn source generators |
-| `Orleans.FSharp.Testing` | Test harness, mocks, and FsCheck integration |
-| `Orleans.FSharp.EventSourcing` | Event-sourced grains via `eventSourcedGrain {}` CE |
-| `Orleans.FSharp.Analyzers` | F# analyzer detecting `async {}` usage |
+|---|---|
+| `Orleans.FSharp.Runtime` | Silo/client configuration and functional-definition hosting |
+| `Orleans.FSharp.Abstractions` | Pre-generated transport proxies, pulled in transitively |
+| `Orleans.FSharp.Testing` | TestingHost, web-host, FsCheck, and log-capture helpers |
+| `Orleans.FSharp.Analyzers` | F# analyzer that reports `async { }` where `task { }` is expected |
+| `Orleans.FSharp.CodeGen` | Legacy per-grain C# CodeGen bridge |
+| `Orleans.FSharp.EventSourcing` | Legacy `eventSourcedGrain { }` compatibility package |
 
-## Functional grain runtime
+## Legacy API
 
-A second, independent authoring model lives alongside the `grain {}` CE: user-authored API
-records (`grainContract` / `grainFor` / `FunctionalGrain.ref`) instead of a CodeGen-generated C#
-interface. See [Functional Grain Runtime](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md)
-for key-codec identity rules, operation rename and contract versioning, delivery semantics,
-immutable-state guidance, and the reminder rename/removal migration.
-
-## Documentation
-
-Full docs and examples: <https://github.com/Neftedollar/orleans-fsharp>
+The original `grain { }`, `FSharpGrain.*`, and `AddFSharpGrain` authoring model is obsolete but
+remains supported for existing applications. Its examples and migration mapping live only in the
+[Legacy documentation](https://github.com/Neftedollar/orleans-fsharp/tree/main/docs/legacy).
 
 ## License
 

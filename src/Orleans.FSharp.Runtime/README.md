@@ -1,47 +1,86 @@
 # Orleans.FSharp.Runtime
 
-F# computation expressions for configuring and starting Orleans silos and clients.
-
-## What it does
-
-Provides `siloConfig {}` and `clientConfig {}` computation expressions that replace verbose `ISiloBuilder` / `IClientBuilder` chains with a declarative, type-safe F# API. Also includes `GrainDiscovery` (automatic grain registration) and `SerilogIntegration`.
+F# configuration and hosting support for Orleans silos, clients, and functional grain definitions.
 
 ## Quick example
 
 ```fsharp
+open System.Threading.Tasks
+open Microsoft.Extensions.Hosting
+open Orleans.Hosting
+open Orleans.FSharp
 open Orleans.FSharp.Runtime
 
-let config = siloConfig {
-    localhost
-    memoryStorage "Default"
-    memoryStream "StreamProvider"
-    memoryReminder
-    useSerilog
-    healthChecks
-}
+type HealthActor = private HealthActor of unit
 
-let host = config |> SiloConfig.buildHost
-do! host.StartAsync()
+[<NoEquality; NoComparison>]
+type HealthApi = { ping: unit -> Task<string> }
+
+let healthContract =
+    grainContract<HealthActor, string, HealthApi> {
+        grainType "health"
+        version 1
+        stringKey
+        readOnly (_.ping)
+    }
+
+let healthDefinition =
+    grainFor healthContract {
+        defaultState (fun () -> ())
+        handleQuery (_.ping) (fun _ () () -> task { return "pong" })
+    }
+
+let config =
+    siloConfig {
+        useLocalhostClustering
+        addMemoryStorage "Default"
+        addMemoryStreams "StreamProvider"
+        addMemoryReminderService
+        enableHealthChecks
+    }
+
+let builder = HostApplicationBuilder()
+SiloConfig.applyToHost config builder
+
+builder.UseOrleans(fun siloBuilder ->
+    siloBuilder.AddFunctionalGrain(healthDefinition) |> ignore)
+|> ignore
+
+let host = builder.Build()
+host.Start()
 ```
 
-## Supported providers
+`healthDefinition` is the sealed value returned by `grainFor`. Use
+`AddFunctionalJournaledGrain` for `journaledGrainFor` definitions. A client-only process applies
+`clientConfig { }` and calls `AddFunctionalGrainClient()` on its `IClientBuilder`.
 
-| Category | Options |
-|----------|---------|
-| **Clustering** | Localhost, Redis, Azure Table, ADO.NET, Custom |
-| **Storage** | Memory, Redis, Azure Blob, Azure Table, ADO.NET, Cosmos DB, DynamoDB, Custom |
-| **Streaming** | Memory, Persistent (adapter factory), Custom |
-| **Reminders** | Memory, Redis, Custom |
-| **Security** | TLS (subject/cert), Mutual TLS (subject/cert) |
-| **Observability** | Serilog, Dashboard (default/custom options), Health Checks |
-| **Other** | Broadcast channels, versioning, grain call filters, grain services, lifecycle hooks |
+## Configuration surface
 
-The `siloConfig {}` CE supports 39 custom operations; `clientConfig {}` supports 11.
+| Category | Current operations |
+|---|---|
+| Clustering | `useLocalhostClustering`, `addRedisClustering`, `addAzureTableClustering`, `addAdoNetClustering` |
+| Storage | `addMemoryStorage`, `addRedisStorage`, `addAzureBlobStorage`, `addAzureTableStorage`, `addAdoNetStorage`, `addCosmosStorage`, `addDynamoDbStorage`, `addCustomStorage` |
+| Streaming | `addMemoryStreams`, `addPersistentStreams`, `addBroadcastChannel` |
+| Reminders | `addMemoryReminderService`, `addRedisReminderService`, `addCustomReminderService` |
+| Security | `useTls`, `useTlsWithCertificate`, `useMutualTls`, `useMutualTlsWithCertificate` |
+| Operations | `useSerilog`, `addDashboard`, `addDashboardWithOptions`, `enableHealthChecks`, filters, services, and startup tasks |
+
+`addDashboardWithOptions` takes `counterUpdateIntervalMs`, `historyLength`, and `hideTrace`, in
+that order. The optional `Microsoft.Orleans.Dashboard` package must be referenced by the host.
+
+See [Silo configuration](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/silo-configuration.md),
+[Client configuration](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/client-configuration.md),
+and [Dashboard](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/dashboard.md).
 
 ## Requirements
 
 - .NET 10+
-- `Orleans.FSharp` (pulled in automatically)
+- `Orleans.FSharp` (transitive)
+
+## Legacy API
+
+The package still contains runtime support for the obsolete `grain { }` model. Compatibility
+documentation is isolated under [docs/legacy](https://github.com/Neftedollar/orleans-fsharp/tree/main/docs/legacy).
 
 ## License
 

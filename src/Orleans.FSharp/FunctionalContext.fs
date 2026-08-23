@@ -144,6 +144,12 @@ type FunctionalJournalSnapshotOptions() =
     /// <summary>The silo-wide default. Per-definition <c>snapshotPolicy</c> overrides it.</summary>
     member val Policy = FunctionalJournalSnapshotDefault.Disabled with get, set
 
+    /// <summary>
+    /// The number of compare-and-swap conflicts a zero-event manual snapshot may retry after its
+    /// first attempt. Each retry synchronizes and recomputes the snapshot from confirmed state.
+    /// </summary>
+    member val ManualSnapshotMaxConflictRetries = 3 with get, set
+
 /// <summary>
 /// The activation-side journal of a <c>journaledGrainFor</c> definition, as an invocation context
 /// and the dispatch path see it. Implemented by the runtime over an Orleans log-view adaptor.

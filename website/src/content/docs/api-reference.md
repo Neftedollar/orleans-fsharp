@@ -75,9 +75,10 @@ static-class inference rule".
 `operationId` and `sinceVersion` are the only two per-operation declarations that compose with a
 streaming field; the four admission policies are refused at sealing.
 
-Every API field takes exactly one argument; a multi-input operation groups its inputs in a tuple
-(`typing: (string * bool) -> Task<unit>`). A field spelled curried fails contract construction. See
-[Functional grains](/orleans-fsharp/functional-grains/), "One operation, one argument".
+Every API field takes exactly one F# argument. Prefer a named record for multi-input domain data
+(`typing: Typing -> Task<unit>`); tuples remain valid when positional data is intentional. A field
+spelled curried fails contract construction. See [Functional grains](/orleans-fsharp/functional-grains/),
+"One operation, one argument".
 
 ### Definition builder — `grainFor contract { }`
 
@@ -300,6 +301,7 @@ so it must never be part of a persistent state type -- the F# codec refuses one.
 | `FunctionalJournalSnapshotDefault` | Silo-wide `Disabled`, `Every`, or heterogeneous `When` rule |
 | `FunctionalJournalSnapshotOptions` | Options whose `Policy` is inherited by custom-storage definitions |
 | `FunctionalJournalSnapshotContext` | Boxed identity, version, state type, and state passed to a global `When` rule |
+| `FunctionalJournalPermanentStorageException` | Marks a custom-storage failure as non-retryable; the runtime fails the operation and deactivates the grain |
 | `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context (members above) |
 | `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed reference wrapper (members above) |
 | `ObserverContract<'Brand, 'Api>` | Sealed result of `observerContract { }`; exposes `ObserverTypeName` and `Version` |
@@ -312,6 +314,50 @@ so it must never be part of a persistent state type -- the F# codec refuses one.
 | `LifecycleStage` | `First`, `SetupState`, `Activate`, `Last` (`Activate` is rejected by `onLifecycle`; use `onActivate`) |
 | `IFunctionalRequestMetadata` | `mayInterleave`'s argument: `GrainType`, `ContractVersion`, `OperationId`, `IsReadOnly`, `IsOneWay`, `IsAlwaysInterleave`, `PayloadLength` |
 | `FunctionalGrainTransportOptions` | Transport limits; `DefaultMaxPayloadBytes` is 16 MiB |
+
+### Custom journal storage and snapshots
+
+These are the complete application-facing members of the typed CustomStorage bridge. The storage
+implementation, not the runtime, owns durable I/O; the runtime owns replay through the definition's
+single `apply` fold.
+
+| Member | Signature | Contract |
+|---|---|---|
+| `IFunctionalJournalStorage.Read` | `FunctionalJournalStorageIdentity<'Key> -> Task<FunctionalJournalRead<'State,'Event>>` | Return the latest snapshot and the ordered retained tail strictly after it |
+| `IFunctionalJournalStorage.Append` | `FunctionalJournalStorageIdentity<'Key> * FunctionalJournalWrite<'State,'Event> -> Task<bool>` | Compare-and-swap on `ExpectedVersion`; append the batch and optional snapshot atomically, or return `false` without changing storage |
+| `IFunctionalJournalStorage.Clear` | `FunctionalJournalStorageIdentity<'Key> -> Task` | Delete the complete journal for that identity |
+
+| Type | Public members |
+|---|---|
+| `FunctionalJournalStorageIdentity<'Key>` | `GrainTypeName: string`, `GrainId: GrainId`, `Key: 'Key` |
+| `FunctionalJournalSnapshot<'State>` | `Version: int`, `State: 'State` |
+| `FunctionalJournalRead<'State,'Event>` | `Snapshot: FunctionalJournalSnapshot<'State> option`, `Events: IReadOnlyList<'Event>` |
+| `FunctionalJournalWrite<'State,'Event>` | `ExpectedVersion: int`, `Events: IReadOnlyList<'Event>`, `Snapshot: FunctionalJournalSnapshot<'State> option` |
+| `FunctionalJournalSnapshotPolicy<'State>` | `Inherit | Disabled | Every of int | When of (int -> 'State -> bool)` |
+| `FunctionalJournalSnapshotDefault` | `Disabled | Every of int | When of (FunctionalJournalSnapshotContext -> bool)` |
+| `FunctionalJournalSnapshotContext` | `GrainTypeName: string`, `GrainId: GrainId`, `Key: obj`, `Version: int`, `StateType: Type`, `State: obj` |
+| `FunctionalJournalSnapshotOptions` | Mutable `Policy`; mutable `ManualSnapshotMaxConflictRetries` (default `3`, must be `>= 0`, counts retries after the first CAS attempt) |
+| `FunctionalJournalPermanentStorageException` | Constructors `(message: string)` and `(message: string, innerException: Exception)` |
+
+Ordinary exceptions raised while Orleans' CustomStorage adaptor reads or appends events are
+considered transient and remain eligible for its retry loop. A zero-event manual snapshot and
+`Clear` call the typed store directly: an ordinary exception fails that call once without
+deactivation, and the caller may retry explicitly. Throw
+`FunctionalJournalPermanentStorageException` only when the same operation cannot succeed without
+an application, configuration, or durable-data change. The functional runtime exits that retry
+loop, fails the current journal operation, and requests deactivation so a later call starts with a
+fresh activation and durable read. The permanent exception also fails and deactivates on both
+direct paths.
+
+Snapshot resolution is deterministic: `context.snapshotNow()` for the successful callback wins;
+otherwise the definition's `snapshotPolicy` wins; `Inherit` or no definition policy uses
+`FunctionalJournalSnapshotOptions.Policy`; the silo default is `Disabled`. These policies apply
+only to definitions with `customStorage`. See [Event Sourcing](/orleans-fsharp/event-sourcing/#custom-storage-and-snapshots).
+
+`ManualSnapshotMaxConflictRetries` applies to a zero-event manual snapshot requested through
+`context.snapshotNow()`. The default `3` permits the initial compare-and-swap attempt plus three
+retries. Each retry refreshes durable state and recomputes the snapshot; `0` permits only the first
+attempt, and exhausting the limit fails the call without writing the snapshot.
 
 ### Hosting
 
@@ -334,7 +380,6 @@ value. A standalone F# host also has to make Orleans see the assemblies it reach
 | `FunctionalGrainRegistration.of'` | `FunctionalGrainDefinition<...> -> FunctionalGrainRegistration` | Erase an ordinary definition's four type parameters so a heterogeneous list can be passed around |
 | `FunctionalScripting.startOnPorts` | `int -> int -> FunctionalGrainRegistration list -> Task<Scripting.SiloHandle>` | Start a one-line localhost silo hosting those definitions, manifest pre-load included |
 | `Scripting.startOnPorts` | `int -> int -> Task<SiloHandle>` | The same without functional definitions (`Orleans.FSharp`) |
-| `Scripting.getGrain<'T>` | `SiloHandle -> int64 -> 'T` | Get a C# CodeGen grain by int64 key |
 | `Scripting.shutdown` | `SiloHandle -> Task<unit>` | Stop the silo |
 
 ### Calling a functional grain from C#
@@ -351,13 +396,12 @@ across the boundary. See [Calling from C#](/orleans-fsharp/calling-from-csharp/)
 
 ## Orleans.FSharp (Core)
 
-Shared Orleans helpers which compose with functional definitions, native Orleans interfaces, or hosting code.
+Shared Orleans helpers which compose with functional definitions and hosting code.
 
 ### Types
 
 | Type | Description |
 |---|---|
-| `GrainRef<'TInterface, 'TKey>` | Type-safe reference to a C# CodeGen Orleans grain |
 | `CompoundGuidKey` | Compound key: GUID + string extension |
 | `CompoundIntKey` | Compound key: int64 + string extension |
 | `Immutable<'T>` | Alias for `Orleans.Concurrency.Immutable<'T>` for zero-copy passing |
@@ -365,21 +409,6 @@ Shared Orleans helpers which compose with functional definitions, native Orleans
 | `FSharpOutgoingFilter` | Wraps an F# function as `IOutgoingGrainCallFilter` |
 | `Migration<'TOld, 'TNew>` | State migration definition from one version to another |
 | `AssemblyMarker` | Marker type for assembly discovery |
-
-#### `GrainRef`
-
-| Function | Signature | Description |
-|---|---|---|
-| `ofString<'T>` | `IGrainFactory -> string -> GrainRef<'T, string>` | Create ref by string key |
-| `ofGuid<'T>` | `IGrainFactory -> Guid -> GrainRef<'T, Guid>` | Create ref by GUID key |
-| `ofInt64<'T>` | `IGrainFactory -> int64 -> GrainRef<'T, int64>` | Create ref by int64 key |
-| `ofGuidCompound<'T>` | `IGrainFactory -> Guid -> string -> GrainRef<'T, CompoundGuidKey>` | Compound GUID key |
-| `ofIntCompound<'T>` | `IGrainFactory -> int64 -> string -> GrainRef<'T, CompoundIntKey>` | Compound int64 key |
-| `invoke` | `GrainRef -> ('T -> Task<'R>) -> Task<'R>` | Call a grain method |
-| `invokeOneWay` | `GrainRef -> ('T -> Task) -> Task` | Fire-and-forget call |
-| `invokeWithTimeout` | `GrainRef -> TimeSpan -> ('T -> Task<'R>) -> Task<'R>` | Call with timeout |
-| `unwrap` | `GrainRef -> 'T` | Get the underlying grain proxy |
-| `key` | `GrainRef -> 'TKey` | Get the primary key |
 
 #### `Filter`
 
@@ -421,27 +450,6 @@ Filters see a functional grain as an ordinary Orleans call -- see
 | `logDebug` | `ILogger -> string -> obj[] -> unit` | Log debug message |
 | `withCorrelation` | `string -> (unit -> Task<'T>) -> Task<'T>` | Scoped correlation ID |
 | `currentCorrelationId` | `unit -> string option` | Get current correlation ID |
-
-#### `GrainState`
-
-| Function | Signature | Description |
-|---|---|---|
-| `read<'T>` | `IPersistentState<'T> -> Task<'T>` | Read from storage |
-| `write<'T>` | `IPersistentState<'T> -> 'T -> Task<unit>` | Write to storage |
-| `clear<'T>` | `IPersistentState<'T> -> Task<unit>` | Clear storage |
-| `current<'T>` | `IPersistentState<'T> -> 'T` | Get in-memory value |
-
-#### `Observer` — C# CodeGen observers
-
-| Function | Signature | Description |
-|---|---|---|
-| `createRef<'T>` | `IGrainFactory -> 'T -> 'T` | Create observer reference |
-| `deleteRef<'T>` | `IGrainFactory -> 'T -> unit` | Delete observer reference |
-| `subscribe<'T>` | `IGrainFactory -> 'T -> IDisposable` | Subscribe with auto-cleanup |
-
-`FSharpObserverManager<'T>` (`.ctor(TimeSpan)`, `Subscribe`, `Unsubscribe`, `Notify`,
-`NotifyAsync`, `Count`) manages a set of them. These need a C#-declared observer interface; for the
-codegen-free equivalent see [Observers](#observers) above.
 
 #### `Shutdown`
 
@@ -503,8 +511,8 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainBatch.map<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list>` | Fan-out; fails if any call throws |
 | `GrainBatch.tryMap<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<Result<'TR, exn> list>` | Fan-out; captures individual failures |
 | `GrainBatch.aggregate<'TG,'TR,'TA>` | `'TG seq -> ('TG -> Task<'TR>) -> ('TR list -> 'TA) -> Task<'TA>` | Fan-out then reduce |
-| `GrainBatch.iter<'TG>` | `'TG seq -> ('TG -> Task) -> Task` | Concurrent fire-and-forget; fails if any throws |
-| `GrainBatch.tryIter<'TG>` | `'TG seq -> ('TG -> Task) -> Task<Result<unit, exn> list>` | Concurrent fire-and-forget; captures failures |
+| `GrainBatch.iter<'TG>` | `'TG seq -> ('TG -> Task) -> Task` | Concurrent fan-out; waits for every call and fails if any throws |
+| `GrainBatch.tryIter<'TG>` | `'TG seq -> ('TG -> Task) -> Task<Result<unit, exn> list>` | Concurrent fan-out; waits for every call and captures failures |
 | `GrainBatch.choose<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR option>) -> Task<'TR list>` | Fan-out; filters out None results |
 | `GrainBatch.partition<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list * exn list>` | Fan-out; separates successes from failures |
 
@@ -576,25 +584,6 @@ A functional definition consumes a stream declaratively with `onStream` instead;
 
 ---
 
-## Orleans.FSharp.Versioning
-
-| Type | Description |
-|---|---|
-| `CompatibilityStrategy` | `BackwardCompatible`, `StrictVersion`, `AllVersions` |
-| `VersionSelectorStrategy` | `AllCompatibleVersions`, `LatestVersion`, `MinimumVersion` |
-
-#### `Versioning`
-
-| Function | Signature | Description |
-|---|---|---|
-| `compatibilityStrategyName` | `CompatibilityStrategy -> string` | Convert to Orleans name |
-| `versionSelectorStrategyName` | `VersionSelectorStrategy -> string` | Convert to Orleans name |
-
-These configure Orleans' interface-version selection for C# CodeGen grains. A functional contract
-carries its own version instead -- `version`, `acceptsVersions`, `sinceVersion` above.
-
----
-
 ## Orleans.FSharp.GrainDirectory
 
 | Type | Description |
@@ -620,26 +609,6 @@ carries its own version instead -- `version`, `acceptsVersions`, `sinceVersion` 
 
 ---
 
-## Orleans.FSharp.Transactions
-
-Thin wrappers over Orleans' own `ITransactionalState<'T>`, for a C# CodeGen grain that injects one
-with `[<TransactionalState>]`. On the functional runtime use `transactionalStateFrom` and
-`context.transactionalState` instead.
-
-| Type | Description |
-|---|---|
-| `TransactionOption` | An F# DU -- `Create`, `Join`, `CreateOrJoin`, `Supported`, `NotAllowed`, `Suppress` -- with `TransactionOption.toOrleans` converting it to Orleans' own enum. A contract's `transactional` operation takes **Orleans' enum**, not this DU |
-
-#### `TransactionalState` (`Orleans.FSharp.Transactions`)
-
-| Function | Signature | Description |
-|---|---|---|
-| `read<'T>` | `ITransactionalState<'T> -> Task<'T>` | Read transactional state |
-| `update<'T>` | `('T -> 'T) -> ITransactionalState<'T> -> Task<unit>` | Update transactional state |
-| `performRead<'T, 'R>` | `('T -> 'R) -> ITransactionalState<'T> -> Task<'R>` | Read with projection |
-
----
-
 ## Orleans.FSharp.Runtime
 
 ### Types
@@ -655,17 +624,6 @@ with `[<TransactionalState>]`. On the functional runtime use `transactionalState
 | `ReminderProvider` | MemoryReminder, RedisReminder, CustomReminder |
 | `TlsConfig` | TlsSubject, TlsCertificate, MutualTlsSubject, MutualTlsCertificate |
 | `DashboardConfig` | DashboardDefaults, DashboardWithOptions |
-| `TransactionalGrainDefinition<'State>` | Record of pure functions describing transactional grain behaviour (`Deposit`, `Withdraw`, `GetBalance`, `CopyState`) |
-| `AtmGrainDefinition<'TAccountGrain>` | Record containing a `Transfer` function for orchestrating cross-grain atomic transfers |
-| `FSharpTransactionalGrain<'State>` | Generic base class that bridges a `TransactionalGrainDefinition` to Orleans ACID transactions |
-| `FSharpAtmGrain<'TAccountGrain>` | Generic base class for ATM grains that create and coordinate transactions across multiple account grains |
-
-### Transactional grain extension methods
-
-| Method | Signature | Description |
-|---|---|---|
-| `AddFSharpTransactionalGrain<'State>` | `IServiceCollection -> TransactionalGrainDefinition<'State> -> IServiceCollection` | Register a transactional grain definition as a singleton |
-| `AddFSharpAtmGrain<'TAccountGrain>` | `IServiceCollection -> AtmGrainDefinition<'TAccountGrain> -> IServiceCollection` | Register an ATM grain definition as a singleton |
 
 ### Computation expressions
 
@@ -794,26 +752,18 @@ dotnet add package Orleans.FSharp.Analyzers
 
 ```fsharp
 // Triggers OF0001 — use task { } in grain handlers
-let handler state cmd =
-    async { return state, box 0 }  // ⚠️ OF0001
+let invalidWork () =
+    async { return 0 }  // ⚠️ OF0001
 
 // Suppress when async is genuinely needed
 open Orleans.FSharp.Analyzers.AsyncUsageAnalyzer
 
 [<AllowAsync>]
-let legacyAdapter (url: string) : Async<string> =
-    async { return! fetchLegacy url }  // ✅ suppressed
+let allowedInterop () =
+    async { return 0 }  // ✅ suppressed
 ```
 
 See [Analyzers guide](/orleans-fsharp/analyzers/) for full documentation.
-
-### Internal API (test use only)
-
-| Module | Function | Signature | Description |
-|---|---|---|---|
-| `AstWalker` | `collectAsyncRanges` | `ParsedInput -> range list` | Walk AST and return all unsuppressed `async { }` ranges |
-
----
 
 ## Legacy API
 

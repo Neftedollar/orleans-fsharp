@@ -12,7 +12,7 @@ Register the analyzer with the [F# Analyzers SDK](https://github.com/ionide/FSha
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Orleans.FSharp.Analyzers" Version="3.*">
+  <PackageReference Include="Orleans.FSharp.Analyzers" Version="*">
     <IncludeAssets>analyzers</IncludeAssets>
   </PackageReference>
 </ItemGroup>

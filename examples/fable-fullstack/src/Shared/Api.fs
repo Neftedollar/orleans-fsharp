@@ -45,4 +45,4 @@ module Route =
     /// <param name="methodName">The method name being called.</param>
     /// <returns>The full route path.</returns>
     let builder typeName methodName =
-        sprintf "/api/%s/%s" typeName methodName
+        $"/api/{typeName}/{methodName}"

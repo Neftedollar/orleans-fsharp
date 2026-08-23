@@ -99,7 +99,7 @@ be. `Program.fs` demonstrates both directions, commented out because they do not
 ```fsharp
         // This compiles — the contract's key IS int64<UserId>:
         let userFn = UserApi.ref factory user1
-        let! _ = userFn.setProfile ("Alice", "alice@example.com")
+        let! _ = userFn.setProfile { Name = "Alice"; Email = "alice@example.com" }
         printfn "Set profile for User %d" (rawId user1)
 
         // This would NOT compile — wrong type:

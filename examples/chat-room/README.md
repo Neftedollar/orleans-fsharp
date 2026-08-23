@@ -49,7 +49,7 @@ silo with the ordinary Orleans builder plus `AddFunctionalGrain(RoomFunctionalDe
 its own `IChatRoom` interface, and binds it with
 `FunctionalGrainInterop.For<IChatRoom>(RoomApiModule.contract, factory, "general")`. No grain, no
 code generation and no wrapper is written on the C# side; the F# `Result` reply and the F# list of
-tuples arrive as `FSharpResult` and `FSharpList` and are read directly. See
+named `ChatEntry` records arrive as `FSharpResult` and `FSharpList` and are read directly. See
 [docs/calling-from-csharp.md](../../docs/calling-from-csharp.md).
 
 ## How to run
@@ -97,7 +97,7 @@ Charlie (not a member) -> Error (NotAMember)
 Alice posts whitespace -> Error (EmptyMessage)
 Bob left. Members: 1
 
---- History (an F# list of F# tuples, read from C#) ---
+--- History (an F# list of named records, read from C#) ---
   [17:13:07] Bob: Hi Alice!
   [17:13:07] Alice: Hey everyone!
 
@@ -109,14 +109,14 @@ C# interop demo complete.
 - **`grainContract` / `grainFor`** the functional grain runtime's contract + definition pair (this
   example's live path): `join` / `leave` / `say` / `history` / `typing` / `memberCount` /
   `subscribe` / `unsubscribe`
-- **`say: string * string -> Task<Result<int, ChatError>>`** membership + non-empty validation
-  returning a typed error instead of throwing
+- **`say: PostedMessage -> Task<Result<int, ChatError>>`** a named request record plus membership
+  and non-empty validation returning a typed error instead of throwing
 - **`readOnly (_.history)` / `readOnly (_.memberCount)`** query operations that never block on the
   write path and interleave with other read-only calls
 - **`oneWay (_.typing)` + `alwaysInterleave (_.typing)`** a fire-and-forget indicator that never
   waits for the target and always interleaves
-- **`typing: (string * bool) -> Task<unit>`** a multi-input operation: one argument always, with
-  the inputs grouped in a tuple -- called as `room.typing ("Bob", true)`
+- **`typing: TypingStatus -> Task<unit>`** a named request record prevents sender/flag positions
+  from becoming part of an implicit tuple protocol
 - **`observerContract` + `FunctionalObserver.create` + `FunctionalObserverManager`** live push to a
   client-hosted handler record, with a liveness window and no code generation
 - **`defaultState` + `usePersistentState` + explicit `WriteStateAsync`** the handler's state is the

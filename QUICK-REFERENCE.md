@@ -1,219 +1,160 @@
-# Quick Reference: Complete CE Keyword Tables
+# Quick Reference: Current Functional API
 
-This document contains exhaustive keyword references for all Orleans.FSharp computation expressions.
+This is the compact keyword and entry-point reference for new Orleans.FSharp applications. The
+original `grain { }`, `FSharpGrain.*`, and `eventSourcedGrain { }` APIs are documented only
+under [Legacy](docs/legacy/index.md).
 
-> **Note.** The `grain { }` CE, `AddFSharpGrain` and the `FSharpGrain.*` handle module tabulated
-> below now carry `[<Obsolete>]` (warning, not error) -- they still work exactly as documented. The
-> current grain authoring model is the functional grain runtime (`grainContract` / `grainFor` /
-> `FunctionalGrain.ref` / `AddFunctionalGrain`); see
-> [docs/functional-grains.md](docs/functional-grains.md) for the before/after mapping of every
-> deprecated entry point. `siloConfig { }`, `clientConfig { }` and `eventSourcedGrain { }` are
-> unaffected.
+## Contract: `grainContract<'Actor,'Key,'Api> { }`
 
----
-
-## `grain { }` — Grain Definition
-
-### Handler Keywords
-
-| Keyword | Signature | Description |
+| Keyword | Argument | Purpose |
 |---|---|---|
-| `defaultState` | `state` | Set the initial state value |
-| `handle` | `state -> msg -> Task<state * obj>` | Register a message handler with manual boxing |
-| `handleState` | `state -> msg -> Task<state>` | Simpler handler — result IS the new state (no manual box) |
-| `handleTyped` | `state -> msg -> Task<state * 'R>` | Typed result without manual boxing: use with `ask` |
-| `handleWithContext` | `GrainContext -> state -> msg -> Task<state * obj>` | Handler with `GrainContext` for grain-to-grain calls and DI |
-| `handleStateWithContext` | `GrainContext -> state -> msg -> Task<state>` | `GrainContext` + state-only result |
-| `handleTypedWithContext` | `GrainContext -> state -> msg -> Task<state * 'R>` | `GrainContext` + typed result |
-| `handleWithServices` | Alias for `handleWithContext` | Emphasizes DI access |
-| `handleStateWithServices` | Alias for `handleStateWithContext` | Services + state-only result |
-| `handleTypedWithServices` | Alias for `handleTypedWithContext` | Services + typed result |
-| `handleCancellable` | `state -> msg -> CancellationToken -> Task<state * obj>` | Handler with `CancellationToken` support |
-| `handleStateCancellable` | `state -> msg -> CancellationToken -> Task<state>` | State-only result + cancellation |
-| `handleTypedCancellable` | `state -> msg -> CancellationToken -> Task<state * 'R>` | Typed result + cancellation |
-| `handleWithContextCancellable` | `GrainContext -> state -> msg -> CancellationToken -> Task<state * obj>` | Context + cancellation |
-| `handleWithServicesCancellable` | Alias for `handleWithContextCancellable` | Services + cancellation |
-| `handleStateWithContextCancellable` | `GrainContext -> state -> msg -> CancellationToken -> Task<state>` | Context + state-only + cancellation |
-| `handleTypedWithContextCancellable` | `GrainContext -> state -> msg -> CancellationToken -> Task<state * 'R>` | Context + typed result + cancellation |
+| `grainType` | `string` | Stable routing and storage identity; optional when safe to derive |
+| `version` | `int` | Contract version; default `1` |
+| `acceptsVersions` | `Exact \| BackwardCompatible of int` | Admitted caller versions |
+| `stringKey`, `guidKey`, `int64Key` | — | Native Orleans key codec |
+| `stringKeyMapped`, `guidKeyMapped`, `int64KeyMapped` | encode + decode | Domain-key codec over a native key |
+| `guidCompoundKey`, `int64CompoundKey` | — | Native key plus string extension |
+| `guidCompoundKeyMapped`, `int64CompoundKeyMapped` | encode + decode | Domain-key codec over a compound key |
+| `operationId` | stable ID + selector | Override an operation or stream field's wire ID |
+| `sinceVersion` | version + selector | Mark when an operation or stream field was introduced |
+| `readOnly` | operation selector | State-neutral query; may interleave with read-only work |
+| `oneWay` | unit-reply selector | Complete the caller after local send acknowledgement |
+| `alwaysInterleave` | operation selector | Interleave one state-neutral operation |
+| `reentrant` | — | Whole-activation reentrancy |
+| `mayInterleave` | `IFunctionalRequestMetadata -> bool` | Protocol-metadata admission predicate |
+| `transactional` | `Orleans.TransactionOption` + selector | Orleans transaction policy for one operation |
 
-### Persistence Keywords
+Every API-record field takes one argument. Use a tuple for multiple logical inputs.
 
-| Keyword | Description |
+## Definition: `grainFor contract { }`
+
+| Keyword | Argument |
 |---|---|
-| `persist` | Name the storage provider for state persistence |
-| `additionalState` | Declare a named secondary persistent state |
+| `defaultState` | `unit -> 'State` |
+| `initialState` | `'Key -> 'State` |
+| `handle` | selector + `context -> state -> argument -> Task<state * reply>` |
+| `handleQuery` | selector + `context -> state -> argument -> Task<reply>` |
+| `handleStream` | stream selector + `context -> state -> argument -> IAsyncEnumerable<item>` |
+| `stateFrom` | `PersistentStateRef<'State>` |
+| `usePersistentState` | descriptor + `'Key -> storedState` |
+| `transactionalStateFrom` | descriptor + `'Key -> storedState` |
+| `collectionAge` | `TimeSpan` |
+| `placement` | `Random \| PreferLocal \| ActivationCountBased \| ResourceOptimized` |
+| `statelessWorker` | maximum local activations |
+| `onActivate`, `onDeactivate`, `onLifecycle` | lifecycle hook |
+| `onReminder` | name + due + period + hook |
+| `onTimer` | name + `GrainTimerCreationOptions` + hook |
+| `onStream` | provider + namespace + hook |
+| `onBroadcast` | provider + namespace + hook |
 
-### Lifecycle Hooks
+`handleQuery` requires the selected operation to be `readOnly`.
 
-| Keyword | Description |
+## Journaled definition: `journaledGrainFor contract { }`
+
+| Keyword | Argument |
 |---|---|
-| `onActivate` | Hook that runs on grain activation |
-| `onDeactivate` | Hook that runs on grain deactivation |
-| `onReminder` | Register a named reminder handler |
-| `onTimer` | Register a declarative timer with dueTime + period |
-| `onLifecycleStage` | Hook into grain lifecycle stages |
+| `initialEventState` | `'Key -> 'State` — required first |
+| `apply` | `'State -> 'Event -> 'State` — required second and pure |
+| `logProvider` | registered `ILogViewAdaptorFactory` name |
+| `journalStorage` | named `IGrainStorage` for LogStorage/StateStorage |
+| `customStorage` | `IServiceProvider -> IFunctionalJournalStorage<'Key,'State,'Event>` |
+| `snapshotPolicy` | `Inherit \| Disabled \| Every of int \| When of (int -> state -> bool)` |
+| `handle` | selector + callback returning `Task<event list * reply>` |
+| `handleQuery`, `handleStream` | state-neutral query or stream |
+| `onActivate`, `onDeactivate` | journal-aware lifecycle hook |
+| `onReminder`, `onTimer`, `onStream`, `onBroadcast` | callback returning events |
+| `onTentativeStateChanged`, `onStateChanged` | synchronous state notification |
+| `onConnectionIssue`, `onConnectionIssueResolved` | synchronous connection notification |
+| `collectionAge`, `placement` | same as `grainFor` |
 
-### Concurrency Keywords
+`journalStorage` and `customStorage` are mutually exclusive. Snapshot precedence is:
 
-| Keyword | Description |
+1. `context.snapshotNow()` for the current successful callback;
+2. the definition's `snapshotPolicy`;
+3. the global `FunctionalJournalSnapshotOptions.Policy` when the definition says `Inherit` or
+   declares no policy;
+4. `Disabled`.
+
+Automatic and manual snapshots require `customStorage`.
+
+`ManualSnapshotMaxConflictRetries` defaults to `3`, must be `>= 0`, and counts retries after the
+first CAS attempt for a zero-event manual snapshot (`3` means at most four attempts). Ordinary
+custom-storage exceptions raised while Orleans' adaptor reads or appends events are transient. A
+zero-event manual snapshot and `Clear` call the typed store directly, so an ordinary exception
+fails that call once without implicit retry or deactivation. Throw
+`FunctionalJournalPermanentStorageException(message[, innerException])` to stop retry, fail the
+operation, and request grain deactivation for a genuinely permanent failure.
+
+## Functional references
+
+| API | Signature |
 |---|---|
-| `interleaveMessage` | Allow a message type to interleave: `interleaveMessage typeof<Query>` |
+| `FunctionalGrain.ref` | contract → `IGrainFactory -> 'Key -> 'Api` |
+| `FunctionalGrain.rawRef` | contract → `IGrainFactory -> 'Key -> FunctionalGrainRef<...>` |
+| `FunctionalGrain.streamId` | contract → namespace → key → `StreamId` |
+| `FunctionalGrain.channelId` | contract → namespace → key → `ChannelId` |
+| `rawRef.call` | selector → argument → `Task<reply>` |
+| `rawRef.callCancellable` | selector → argument → token → `Task<reply>` |
+| `rawRef.stream` | selector → argument → `IAsyncEnumerable<item>` |
+| `rawRef.streamCancellable` | selector → argument → token → `IAsyncEnumerable<item>` |
 
-`interleaveMessage` is the one reentrancy lever that fits the universal grain pattern —
-the working replacement for the removed string-based `mayInterleave`. Pass the DU type
-itself (matched by assignability, so field-carrying cases are covered). Avoid registering a
-broad base type, interface, or `obj`, which would make every assignable message interleavable.
+## Hosting functional definitions
 
-### Per-grain Orleans attributes (C# CodeGen path)
-
-`[Reentrant]`, `[StatelessWorker]`, `[MayInterleave]`, `[ReadOnly]`, `[OneWay]`, placement
-strategies, `[ImplicitStreamSubscription]`, and `[GrainType]` are **not** `grain { }` CE
-keywords. The universal grain pattern shares a single `FSharpGrainImpl` class and one handler
-method, so per-grain class/method attributes cannot be expressed there. Apply them through the
-per-grain `Orleans.FSharp.CodeGen` path, where each grain compiles to its own C# class/method
-that carries the real Orleans attribute.
-
----
-
-## `siloConfig { }` — Silo Configuration
-
-### Clustering Keywords
-
-| Keyword | Description |
+| API | Purpose |
 |---|---|
-| `useLocalhostClustering` | Local dev clustering |
-| `addRedisClustering` | Redis-based clustering |
-| `addAzureTableClustering` | Azure Table clustering |
-| `addAdoNetClustering` | ADO.NET clustering (Postgres, SQL Server) |
+| `ISiloBuilder.AddFunctionalGrain` | Register a `grainFor` definition |
+| `ISiloBuilder.AddFunctionalJournaledGrain` | Register a `journaledGrainFor` definition |
+| `IClientBuilder.AddFunctionalGrainClient` | Install the client-only functional transport |
+| `UseFunctionalJournalSnapshots every` | Set a positive global fixed snapshot interval |
+| `ConfigureFunctionalJournalSnapshots` | Set global `Policy` and manual conflict retries |
+| `FunctionalGrainRegistration.of'` | Erase one ordinary definition for heterogeneous scripting lists |
+| `FunctionalScripting.startOnPorts` | Start a localhost silo from ordinary registrations |
 
-### Storage Keywords
+## `siloConfig { }`
 
-| Keyword | Description |
+| Area | Operations |
 |---|---|
-| `addMemoryStorage` | In-memory grain storage |
-| `addRedisStorage` | Redis grain storage |
-| `addAzureBlobStorage` | Azure Blob grain storage |
-| `addAzureTableStorage` | Azure Table grain storage |
-| `addAdoNetStorage` | ADO.NET grain storage |
-| `addCosmosStorage` | Cosmos DB grain storage |
-| `addDynamoDbStorage` | DynamoDB grain storage |
-| `addCustomStorage` | Custom storage provider |
+| Clustering | `useLocalhostClustering`, `addRedisClustering`, `addAzureTableClustering`, `addAdoNetClustering` |
+| Storage | `addMemoryStorage`, `addRedisStorage`, `addAzureBlobStorage`, `addAzureTableStorage`, `addAdoNetStorage`, `addCosmosStorage`, `addDynamoDbStorage`, `addCustomStorage` |
+| Streams | `addMemoryStreams`, `addPersistentStreams`, `addBroadcastChannel` |
+| Reminders | `addMemoryReminderService`, `addRedisReminderService`, `addCustomReminderService` |
+| Security | `useTls`, `useTlsWithCertificate`, `useMutualTls`, `useMutualTlsWithCertificate` |
+| Services | `configureServices`, `addIncomingFilter`, `addOutgoingFilter`, `addGrainService`, `addStartupTask` |
+| Operations | `useSerilog`, `enableHealthChecks`, `addDashboard`, `addDashboardWithOptions`, `useGrainVersioning` |
+| Identity/network | `clusterId`, `serviceId`, `siloName`, `siloPort`, `gatewayPort`, `advertisedIpAddress`, `grainCollectionAge` |
 
-### Streaming Keywords
+`addDashboardWithOptions counterUpdateIntervalMs historyLength hideTrace` has exactly those three
+arguments. Reference `Microsoft.Orleans.Dashboard`, then map
+`endpoints.MapOrleansDashboard("/dashboard")` in the ASP.NET Core host.
 
-| Keyword | Description |
+## `clientConfig { }`
+
+| Area | Operations |
 |---|---|
-| `addMemoryStreams` | In-memory stream provider |
-| `addPersistentStreams` | Durable stream provider |
-| `addBroadcastChannel` | Broadcast channel provider |
+| Connection | `useLocalhostClustering`, `useStaticClustering` |
+| Identity | `clusterId`, `serviceId` |
+| Gateway | `gatewayListRefreshPeriod`, `preferredGatewayIndex` |
+| Streams | `addMemoryStreams` |
+| Security | `useTls`, `useTlsWithCertificate`, `useMutualTls` |
+| Services/serialization | `configureServices`, `useFSharpBinarySerialization`, `useJsonFallbackSerialization` |
 
-### Reminder Keywords
+## Typed custom journal storage
 
-| Keyword | Description |
+| Member | Signature |
 |---|---|
-| `addMemoryReminderService` | In-memory reminders |
-| `addRedisReminderService` | Redis reminders |
-| `addCustomReminderService` | Custom reminder service |
+| `Read` | identity → `Task<FunctionalJournalRead<'State,'Event>>` |
+| `Append` | identity × write → `Task<bool>` |
+| `Clear` | identity → `Task` |
 
-### Security Keywords
+`Append` compares `write.ExpectedVersion`, appends `write.Events` atomically, and persists
+`write.Snapshot` in the same operation when present. A conflict returns `false` without changing
+storage.
 
-| Keyword | Description |
-|---|---|
-| `useTls` | TLS encryption |
-| `useTlsWithCertificate` | TLS with custom certificate |
-| `useMutualTls` | Mutual TLS (client certificate validation) |
-| `useMutualTlsWithCertificate` | Mutual TLS with custom certificate |
+## More detail
 
-### Infrastructure Keywords
-
-| Keyword | Description |
-|---|---|
-| `useSerilog` | Wire Serilog as logging provider |
-| `configureServices` | Register custom DI services |
-| `addIncomingFilter` | Incoming grain call filter |
-| `addOutgoingFilter` | Outgoing grain call filter |
-| `addGrainService` | Register a GrainService type |
-| `addStartupTask` | Run a task when the silo starts |
-| `enableHealthChecks` | Register health check endpoints |
-| `addDashboard` | Add Orleans Dashboard with default options |
-| `addDashboardWithOptions` | Add Orleans Dashboard with custom options |
-| `useGrainVersioning` | Enable grain interface versioning |
-
-### Identity & Network Keywords
-
-| Keyword | Description |
-|---|---|
-| `clusterId` | Set cluster identity |
-| `serviceId` | Set service identity |
-| `siloName` | Set silo name |
-| `siloPort` | Set silo communication port |
-| `gatewayPort` | Set client gateway port |
-| `advertisedIpAddress` | Set advertised IP address |
-| `grainCollectionAge` | Set global idle deactivation timeout |
-
----
-
-## `clientConfig { }` — Client Configuration
-
-| Keyword | Description |
-|---|---|
-| `useLocalhostClustering` | Local dev clustering |
-| `useStaticClustering` | Static gateway endpoints |
-| `addMemoryStreams` | In-memory stream provider |
-| `configureServices` | Register custom DI services |
-| `useTls` | TLS encryption |
-| `useTlsWithCertificate` | TLS with custom certificate |
-| `useMutualTls` | Mutual TLS |
-| `clusterId` | Set cluster identity |
-| `serviceId` | Set service identity |
-| `gatewayListRefreshPeriod` | Gateway refresh interval |
-| `preferredGatewayIndex` | Preferred gateway |
-
----
-
-## `eventSourcedGrain { }` — Event Sourcing
-
-| Keyword | Signature | Description |
-|---|---|---|
-| `defaultState` | `state` | Initial state before any events |
-| `apply` | `state -> event -> state` | Pure event fold: apply event to state |
-| `handle` | `state -> command -> event list` | Command handler: return events to apply |
-| `logConsistencyProvider` | provider name | Orleans log consistency provider name |
-
----
-
-## Universal Grain Pattern
-
-Call grains without per-grain C# interfaces:
-
-```fsharp
-// Register grain
-siloBuilder.Services.AddFSharpGrain<State, Command>(grainDef) |> ignore
-
-// Get reference
-let handle = FSharpGrain.ref<State, Command> factory "grain-id"
-
-// String key operations
-let! state  = handle |> FSharpGrain.send Command          // returns Task<State>
-let! result = handle |> FSharpGrain.ask<State, Cmd, 'R> Query  // typed result
-do! handle  |> FSharpGrain.post Command                   // fire-and-forget
-
-// GUID key operations
-let h = FSharpGrain.refGuid<State, Command> factory (Guid.NewGuid())
-let! s = h |> FSharpGrain.sendGuid Command
-let! r = h |> FSharpGrain.askGuid<State, Cmd, 'R> Query
-
-// Integer key operations
-let h = FSharpGrain.refInt<State, Command> factory 42L
-do! h |> FSharpGrain.postInt Command
-```
-
----
-
-## See Also
-
-- [Getting Started](docs/getting-started.md) — Complete tutorial
-- [Legacy Grain Definition Reference](docs/legacy/grain-definition.md) — Deprecated `grain { }` definition guide
-- [Silo Configuration Reference](docs/silo-configuration.md) — Detailed silo configuration guide
-- [Client Configuration Reference](docs/client-configuration.md) — Detailed client configuration guide
-- [API Reference](docs/api-reference.md) — All public modules, types, and functions
+- [API Reference](docs/api-reference.md)
+- [Functional Grain Runtime](docs/functional-grains.md)
+- [Event Sourcing](docs/event-sourcing.md)
+- [Silo Configuration](docs/silo-configuration.md)
+- [Dashboard](docs/dashboard.md)
+- [Legacy API](docs/legacy/index.md)

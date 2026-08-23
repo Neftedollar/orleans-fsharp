@@ -23,10 +23,13 @@ description: "Zero to working grain in 15 minutes."
 
 ## Step 1: Create the project
 
-The fastest way to start is with the project template:
+The template in this repository already uses the current functional API. The currently published
+NuGet template `4.1.0` still creates the Legacy CodeGen-based API, so until the next template
+release install the current template from a source checkout:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates
+git clone https://github.com/Neftedollar/orleans-fsharp.git
+dotnet new install ./orleans-fsharp/templates
 dotnet new orleans-fsharp -n MyCounter
 cd MyCounter
 ```

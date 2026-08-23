@@ -17,58 +17,44 @@
 
 ## Transactions
 
-The `Orleans.FSharp.Transactions` module provides F# wrappers for Orleans transactional state.
-
-### Transaction options
-
-```fsharp
-open Orleans.FSharp.Transactions
-
-// These map to Orleans [Transaction(option)] attributes in CodeGen
-type TransactionOption =
-    | Create           // Always creates a new transaction
-    | Join             // Must run within an existing transaction
-    | CreateOrJoin     // Joins if exists, creates otherwise
-    | Supported        // Not transactional but can be called within one
-    | NotAllowed       // Cannot be called within a transaction
-    | Suppress         // Suppresses any ambient transaction
-```
-
-### Reading transactional state
-
-```fsharp
-let! currentBalance = TransactionalState.read accountState
-```
-
-### Updating transactional state
-
-```fsharp
-do! TransactionalState.update
-    (fun state -> { state with Balance = state.Balance + amount })
-    accountState
-```
-
-### Performing a read with projection
-
-```fsharp
-let! balance =
-    TransactionalState.performRead
-        (fun state -> state.Balance)
-        accountState
-```
-
-### Converting options
-
-```fsharp
-let orleansOption = TransactionOption.toOrleans CreateOrJoin
-// Returns Orleans.TransactionOption.CreateOrJoin
-```
-
----
-
-## Functional transactional grains
-
 Use `transactionalStateFrom` on the definition and mark participating operations with `transactional` on the contract. The complete semantics and examples live in [Distributed ACID transactions](functional-grains.md#distributed-acid-transactions).
+
+```fsharp
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type LedgerActor = private LedgerActor of unit
+type Ledger = { balance: decimal }
+
+[<NoEquality; NoComparison>]
+type LedgerApi = { deposit: decimal -> Task<decimal> }
+
+let ledgerContract =
+    grainContract<LedgerActor, string, LedgerApi> {
+        grainType "ledger"
+        version 1
+        stringKey
+        transactional Orleans.TransactionOption.CreateOrJoin (_.deposit)
+    }
+
+let ledgerState = TransactionalState.create<Ledger> "ledger" "TransactionStore"
+
+let ledgerDefinition =
+    grainFor ledgerContract {
+        defaultState (fun () -> ())
+        transactionalStateFrom ledgerState (fun _ -> { balance = 0m })
+
+        handle (_.deposit) (fun context () amount ->
+            task {
+                let state = context.transactionalState ledgerState
+                let! balance =
+                    state.updateWith(fun current ->
+                        let next = { balance = current.balance + amount }
+                        next, next.balance)
+                return (), balance
+            })
+    }
+```
 
 ## Grain Directory
 
@@ -143,27 +129,27 @@ The `Shutdown` module provides helpers for clean silo shutdown.
 ### Configure drain timeout
 
 ```fsharp
+open System
+open Microsoft.Extensions.Hosting
 open Orleans.FSharp
 
-Shutdown.configureGracefulShutdown (TimeSpan.FromSeconds 30.) hostBuilder
-|> ignore
+let configureShutdown (hostBuilder: IHostBuilder) =
+    Shutdown.configureGracefulShutdown (TimeSpan.FromSeconds 30.) hostBuilder
 ```
 
 ### Stop the host
 
 ```fsharp
-do! Shutdown.stopHost host
+let stop (host: IHost) = Shutdown.stopHost host
 ```
 
 ### Register a shutdown handler
 
 ```fsharp
-Shutdown.onShutdown (fun ct ->
-    task {
-        printfn "Silo is shutting down..."
-        // Clean up resources
-    }) hostBuilder
-|> ignore
+let registerShutdownHandler (hostBuilder: IHostBuilder) =
+    Shutdown.onShutdown
+        (fun _ct -> task { printfn "Silo is shutting down..." })
+        hostBuilder
 ```
 
 Multiple shutdown handlers can be registered; they run in registration order.
@@ -178,6 +164,10 @@ The `StateMigration` module enables upgrading grain state schemas across deploym
 
 ```fsharp
 open Orleans.FSharp
+
+type CounterStateV1 = { Count: int }
+type CounterStateV2 = { Count: int; CreatedAt: DateTime }
+type CounterStateV3 = { Value: int; CreatedAt: DateTime }
 
 // Migration from v1 to v2: add a new field with a default value
 let v1ToV2 =
@@ -194,6 +184,7 @@ let v2ToV3 =
 
 ```fsharp
 let migrations = [ v1ToV2; v2ToV3 ]
+let oldV1State = { Count = 3 }
 
 // Upgrade from v1 to latest (throws if chain is invalid)
 let currentState : CounterStateV3 =
@@ -201,8 +192,8 @@ let currentState : CounterStateV3 =
 
 // Safe version — validate and apply in one call, returns Result
 match StateMigration.tryApplyMigrations<CounterStateV3> migrations 1 (box oldV1State) with
-| Ok newState -> // use newState
-| Error errs  -> for e in errs do log.LogError("Migration error: {Error}", e)
+| Ok newState -> printfn "Migrated value: %d" newState.Value
+| Error errors -> errors |> List.iter (printfn "Migration error: %s")
 ```
 
 Migrations are sorted by `FromVersion` and applied sequentially.
@@ -251,6 +242,8 @@ These options support:
 ### Register F# converters
 
 ```fsharp
+open System.Text.Json
+
 let myOptions = JsonSerializerOptions()
 Serialization.addFSharpConverters myOptions |> ignore
 ```
@@ -258,7 +251,10 @@ Serialization.addFSharpConverters myOptions |> ignore
 ### Create options with extra converters
 
 ```fsharp
-let options = Serialization.withConverters [ myCustomConverter ]
+open System.Text.Json.Serialization
+
+let options =
+    Serialization.withConverters [ JsonStringEnumConverter() :> JsonConverter ]
 ```
 
 ### Orleans native F# serialization
@@ -291,45 +287,36 @@ let values = unwrapImmutable data
 
 ---
 
-## Grain State Operations
+## Persistent State Operations
 
-The `GrainState` module wraps `IPersistentState<'T>` for idiomatic F# access:
+Functional definitions attach typed descriptors with `stateFrom` or `usePersistentState`.
+Inside a callback, resolve an additional facet through the functional context:
 
 ```fsharp
 open Orleans.FSharp
 
-// Read from storage
-let! value = GrainState.read persistentState
+type Profile = { displayName: string }
+type ProfileActor = private ProfileActor of unit
 
-// Write to storage
-do! GrainState.write persistentState newValue
+let profileState = PersistentState.create<Profile> "profile" "Default"
 
-// Clear storage
-do! GrainState.clear persistentState
-
-// Get in-memory value (no I/O)
-let current = GrainState.current persistentState
+let rename (context: FunctionalGrainContext<ProfileActor, string>) newName =
+    task {
+        let state = context.persistentState profileState
+        state.State <- { displayName = newName }
+        do! state.WriteStateAsync()
+    }
 ```
 
 ---
 
-## Observers
+## Functional Observers
 
-The `Observer` module manages grain observer lifecycle:
-
-```fsharp
-open Orleans.FSharp
-
-// Create a grain object reference for a local observer
-let observerRef = Observer.createRef<IMyObserver> grainFactory myObserver
-
-// Delete when done (prevents memory leaks)
-Observer.deleteRef<IMyObserver> grainFactory observerRef
-
-// Or use subscribe for automatic cleanup via IDisposable
-use subscription = Observer.subscribe<IMyObserver> grainFactory myObserver
-// observerRef is automatically deleted when subscription is disposed
-```
+Declare an `observerContract`, host a typed handler record with `FunctionalObserver.create`, and
+pass the resulting handle as an ordinary operation argument. The grain holds live handles in an
+ephemeral `FunctionalObserverManager` and pushes with `Notify`. See
+[Functional observers](functional-grains.md#push-to-clients-functional-observers) for the complete,
+self-contained example and lifetime rules.
 
 ---
 
@@ -353,18 +340,45 @@ let config = siloConfig {
 
 Orleans grains are independent actors — many queries can be issued concurrently. Orleans.FSharp provides two complementary approaches.
 
+```fsharp
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type BatchAccountActor = private BatchAccountActor of unit
+
+[<NoEquality; NoComparison>]
+type BatchAccountApi =
+    { balance: unit -> Task<decimal>
+      deposit: decimal -> Task<unit>
+      optIn: unit -> Task<string option> }
+
+[<RequireQualifiedAccess>]
+module BatchAccountApi =
+    let contract =
+        grainContract<BatchAccountActor, string, BatchAccountApi> {
+            grainType "batch-account"
+            version 1
+            stringKey
+            readOnly (_.balance)
+            readOnly (_.optIn)
+        }
+
+    let ref = FunctionalGrain.ref contract
+```
+
 ### `and!` — fixed parallel bindings (F# applicative CE syntax)
 
 For a **small, fixed set** of concurrent grain calls use the `and!` keyword inside a `task {}` expression. All bound tasks start simultaneously and the CE collects their results:
 
 ```fsharp
-task {
-    let! balance1 = account1.GetBalance()
-    and! balance2 = account2.GetBalance()
-    and! balance3 = account3.GetBalance()
+let totalThree (account1: BatchAccountApi) (account2: BatchAccountApi) (account3: BatchAccountApi) =
+  task {
+    let! balance1 = account1.balance ()
+    and! balance2 = account2.balance ()
+    and! balance3 = account3.balance ()
     // All three calls ran in parallel
     return balance1 + balance2 + balance3
-}
+  }
 ```
 
 `and!` goes through the task builder's `MergeSources`, which starts every bound task before awaiting any of them — three 400 ms calls take about 400 ms, not 1,200. It is the idiomatic F# way to express parallel fan-out for a known set of grain references.
@@ -376,35 +390,21 @@ When the number of grains is determined at runtime (e.g., retrieved from a roste
 ```fsharp
 open Orleans.FSharp
 
-// Collect balances from N account grains
-let keys = ["alice"; "bob"; "carol"; "dave"]
-let accounts = keys |> List.map (fun k -> factory.GetGrain<IAccountGrain>(k))
+let fanOut (factory: Orleans.IGrainFactory) =
+    task {
+        let keys = [ "alice"; "bob"; "carol"; "dave" ]
+        let accounts = keys |> List.map (BatchAccountApi.ref factory)
 
-// Fan-out: all calls run concurrently
-let! balances = GrainBatch.map accounts (fun a -> a.GetBalance())
-// balances: decimal list — same order as accounts
+        let! balances = GrainBatch.map accounts (fun account -> account.balance ())
+        let! total = GrainBatch.aggregate accounts (fun account -> account.balance ()) List.sum
+        let! results = GrainBatch.tryMap accounts (fun account -> account.balance ())
+        let! ok, failed = GrainBatch.partition accounts (fun account -> account.balance ())
+        let! opted = GrainBatch.choose accounts (fun account -> account.optIn ())
+        do! GrainBatch.iter accounts (fun account -> account.deposit 0.01m)
+        let! statuses = GrainBatch.tryIter accounts (fun account -> account.deposit 0.01m)
 
-// Aggregate
-let! total = GrainBatch.aggregate accounts (fun a -> a.GetBalance()) List.sum
-
-// Fault-tolerant: capture individual failures instead of failing the whole batch
-let! results = GrainBatch.tryMap accounts (fun a -> a.GetBalance())
-// results: Result<decimal, exn> list
-
-// Partition into successes and failures
-let! (ok, failed) = GrainBatch.partition accounts (fun a -> a.GetBalance())
-// ok: decimal list, failed: exn list
-
-// Filter: only accounts that opted in to notifications
-let! opted = GrainBatch.choose accounts (fun a -> a.GetOptInPreference())
-// opted: SomeType list — None results are removed
-
-// Fire-and-forget on all grains
-do! GrainBatch.iter accounts (fun a -> a.Deposit(0.01m))
-
-// Fire-and-forget with per-grain error capture
-let! statuses = GrainBatch.tryIter accounts (fun a -> a.Deposit(0.01m))
-// statuses: Result<unit, exn> list
+        return balances, total, results, ok, failed, opted, statuses
+    }
 ```
 
 ### When to use which
@@ -414,8 +414,8 @@ let! statuses = GrainBatch.tryIter accounts (fun a -> a.Deposit(0.01m))
 | 2–4 specific grain calls | `and!` — cleaner syntax, no list overhead |
 | N grains from a collection | `GrainBatch.map` / `GrainBatch.aggregate` |
 | Tolerating individual failures | `GrainBatch.tryMap` / `GrainBatch.partition` |
-| Fire-and-forget all | `GrainBatch.iter` |
-| Fire-and-forget, capture errors | `GrainBatch.tryIter` |
+| Await all side-effecting calls | `GrainBatch.iter` |
+| Await all side-effecting calls and capture errors | `GrainBatch.tryIter` |
 | Filter grain responses | `GrainBatch.choose` |
 
 ---
@@ -427,18 +427,11 @@ Utility functions for composing Task-based operations with Result:
 ```fsharp
 open Orleans.FSharp
 
-let! result = TaskHelpers.taskResult 42            // Task<Result<int, _>> = Ok 42
-let! error = TaskHelpers.taskError "failed"        // Task<Result<_, string>> = Error "failed"
-
-let! mapped =
-    TaskHelpers.taskResult 42
-    |> TaskHelpers.taskMap (fun n -> n * 2)         // Ok 84
-
-let! bound =
-    TaskHelpers.taskResult 42
+let composed n =
+    TaskHelpers.taskResult n
     |> TaskHelpers.taskBind (fun n ->
         if n > 0 then TaskHelpers.taskResult (n * 2)
-        else TaskHelpers.taskError "negative")      // Ok 84
+        else TaskHelpers.taskError "negative")
 ```
 
 ---
@@ -448,54 +441,29 @@ let! bound =
 The `Log` module provides structured logging with automatic correlation ID propagation:
 
 ```fsharp
+open System
+open Microsoft.Extensions.Logging
 open Orleans.FSharp
 
-// Structured log messages
-Log.logInfo logger "Processing order {OrderId}" [| box orderId |]
-Log.logWarning logger "Slow response from {Service}" [| box serviceName |]
-Log.logError logger exn "Failed to process {Command}" [| box command |]
-Log.logDebug logger "Cache hit for {Key}" [| box cacheKey |]
-
-// Correlation scopes
-do! Log.withCorrelation requestId (fun () ->
+let logOrder (logger: ILogger) orderId requestId =
     task {
-        // All logs in this scope include {CorrelationId}
-        Log.logInfo logger "Step 1" [||]
-        Log.logInfo logger "Step 2" [||]
-    })
-
-// Get current correlation ID
-let corrId = Log.currentCorrelationId()  // Some "abc-123" or None
+        Log.logInfo logger "Processing order {OrderId}" [| box orderId |]
+        do!
+            Log.withCorrelation requestId (fun () ->
+                task { Log.logInfo logger "Inside correlated operation" [||] })
+        return Log.currentCorrelationId()
+    }
 ```
 
 ---
 
-## Reminders (Module API)
+## Reminders and Timers
 
-For programmatic reminder management from Orleans grain infrastructure:
-
-```fsharp
-open Orleans.FSharp
-
-let! handle = Reminder.register grain "MyReminder" dueTime period
-do! Reminder.unregister grain "MyReminder"
-let! existing = Reminder.get grain "MyReminder"  // Some handle or None
-```
-
----
-
-## Timers (Module API)
-
-For programmatic timer management from Orleans grain infrastructure:
-
-```fsharp
-open Orleans.FSharp
-
-let timer = Timers.register grain callback dueTime period
-// Dispose to cancel: timer.Dispose()
-
-let timerWithState = Timers.registerWithState grain callback state dueTime period
-```
+Functional definitions declare durable reminders with `onReminder` and activation-local timers
+with `onTimer`. Both callbacks receive `FunctionalGrainContext` and return replacement state
+(or events on a journaled definition). Renaming or removing a reminder requires an explicit
+unregister migration because the durable registration outlives the old definition; see
+[Reminder rename and removal](functional-grains.md#reminder-rename-and-removal-the-explicit-unregister-migration).
 
 ---
 
@@ -531,12 +499,10 @@ RequestCtx.remove "tenantId"
 `withValue` sets a key before running a Task and removes it afterwards — even if the Task throws:
 
 ```fsharp
-let! result =
-    RequestCtx.withValue<OrderReply> "correlationId" (box requestId) (fun () ->
-        task {
-            // All functional API calls made here propagate correlationId automatically
-            return! orderApi.placeOrder placeOrder
-        })
+open System.Threading.Tasks
+
+let withCorrelation requestId (work: unit -> Task<'Reply>) =
+    RequestCtx.withValue<'Reply> "correlationId" (box requestId) work
 ```
 
 ### API summary
@@ -589,17 +555,23 @@ let pingDefinition =
         handle (_.count) (fun _ n () -> task { return n, n })
     }
 
-// Start an in-process silo on the given ports, hosting that definition
-let! silo =
-    FunctionalScripting.startOnPorts 11111 30000 [ FunctionalGrainRegistration.of' pingDefinition ]
+let run () =
+    task {
+        // Start an in-process silo on the given ports, hosting that definition.
+        let! silo =
+            FunctionalScripting.startOnPorts
+                11111
+                30000
+                [ FunctionalGrainRegistration.of' pingDefinition ]
 
-// Call it — the API record is the call site
-let api = FunctionalGrain.ref pingContract silo.GrainFactory "ping-1"
-let! n = api.ping ()
-printfn "Count: %d" n
+        let api = FunctionalGrain.ref pingContract silo.GrainFactory "ping-1"
+        let! n = api.ping ()
+        printfn "Count: %d" n
 
-// Shut down when done
-do! Scripting.shutdown silo
+        do! Scripting.shutdown silo
+    }
+
+run().GetAwaiter().GetResult()
 ```
 
 `samples/quickstart-functional.fsx` is this script, runnable.

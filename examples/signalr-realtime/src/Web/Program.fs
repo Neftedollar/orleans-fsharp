@@ -66,8 +66,12 @@ let startDashboard () =
         printfn "Press Ctrl+C to stop."
     }
 
-app.Lifetime.ApplicationStarted.Register(fun () ->
-    startDashboard().GetAwaiter().GetResult())
-|> ignore
+let run () =
+    task {
+        app.Urls.Add "http://localhost:5000"
+        do! app.StartAsync()
+        do! startDashboard ()
+        do! app.WaitForShutdownAsync()
+    }
 
-app.Run("http://localhost:5000")
+run().GetAwaiter().GetResult()

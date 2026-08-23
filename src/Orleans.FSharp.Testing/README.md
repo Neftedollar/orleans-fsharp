@@ -1,124 +1,94 @@
 # Orleans.FSharp.Testing
 
-Test utilities for Orleans.FSharp grains -- in-process clusters, mocks, property-based testing, and log capture.
+TestingHost, web-host, property-testing, mock-factory, and log-capture helpers for
+Orleans.FSharp.
 
-> **Note.** Several examples below drive the `grain {}` CE and the universal
-> `FSharpGrain.ref`/`send`/`ask` surface, which now carry `[<Obsolete>]` (warning, not error).
-> `getFSharpGrain`/`getFSharpGrainGuid`/`getFSharpGrainInt` and `GrainMock.withFSharpGrain*` exist
-> only to test that older authoring model, so they now carry `[<Obsolete>]` too; they stay
-> supported for as long as the model does. For grains written
-> against the functional runtime (`grainContract` / `grainFor`), call them through
-> `FunctionalGrain.ref` on `harness.Client` instead. See
-> [docs/functional-grains.md](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/functional-grains.md).
+## Functional grain integration tests
 
-## Components
-
-### TestHarness
-
-Wraps an Orleans `TestCluster` with memory storage, memory streams, and integrated log capture. Start and tear down a full in-process silo in a few lines:
+Functional definitions are registered on a real Orleans `TestCluster`, then called through the
+same typed API record used in production. This exercises transport, activation, serialization,
+and persistence without fabricating the runtime-owned `FunctionalGrainContext`.
 
 ```fsharp
-let! harness = TestHarness.createTestCluster ()
-let grain = harness.Client.GetGrain<IMyGrain>(grainId)
-// ... test grain calls ...
-do! harness.Cluster.StopAllSilosAsync()
-```
+open System.Threading.Tasks
+open Orleans
+open Orleans.Hosting
+open Orleans.TestingHost
+open Orleans.FSharp
 
-### GrainMock
+type CounterActor = private CounterActor of unit
 
-A `MockGrainFactory` that implements `IGrainFactory` with predefined grain responses. Useful for unit testing grain-to-grain interactions without a real silo:
+[<NoEquality; NoComparison>]
+type CounterApi = { increment: unit -> Task<int> }
 
-```fsharp
-let factory = MockGrainFactory()
-GrainMock.withGrain<IMyDep> "key" myMockImpl factory
-```
+let counterContract =
+    grainContract<CounterActor, string, CounterApi> {
+        grainType "testing.counter"
+        version 1
+        stringKey
+    }
 
-### WebTestHarness
-
-For HTTP endpoint tests, you can run ASP.NET Core `TestServer` without Orleans `TestCluster`
-and inject a mocked grain factory directly:
-
-```fsharp
-let! harness =
-    WebTestHarness.createWithMockFactory
-        (fun factory ->
-            factory
-            |> GrainMock.withFSharpGrain "company-1" companyGrainDefinition)
-        (fun web ->
-            web.Configure(fun app ->
-                app.Run(fun ctx ->
-                    task {
-                        let gf = ctx.RequestServices.GetRequiredService<IGrainFactory>()
-                        let handle = FSharpGrain.ref<CompanyState, CompanyCommand> gf "company-1"
-                        let! state = handle |> FSharpGrain.send Increment
-                        return! ctx.Response.WriteAsync(string state.Count)
-                    } :> Task))
-            |> ignore)
-```
-
-This keeps endpoint tests fast and deterministic while still exercising
-`FSharpGrain.ref`/`send` flows.
-
-`WebTestHarness.createWithFactory` and `createWithMockFactory` fail fast when
-`configureWeb` already registers `IGrainFactory`, preventing ambiguous DI setup.
-
-For typed query-style responses, use `FSharpGrain.ask`:
-
-```fsharp
-type CompanyState = { Count: int }
-type CompanyCommand =
-    | Increment
-    | GetCount
-
-let companyDef =
-    grain {
-        defaultState { Count = 0 }
-        handleTyped (fun state cmd ->
+let counterDefinition =
+    grainFor counterContract {
+        defaultState (fun () -> 0)
+        handle (_.increment) (fun _ count () ->
             task {
-                match cmd with
-                | Increment ->
-                    let next = { Count = state.Count + 1 }
-                    return next, next.Count
-                | GetCount ->
-                    return state, state.Count
+                let next = count + 1
+                return next, next
             })
     }
 
-let! harness =
-    WebTestHarness.createWithMockFactory
-        (fun factory -> factory |> GrainMock.withFSharpGrain "company-42" companyDef)
-        (fun web ->
-            web.Configure(fun app ->
-                app.Run(fun ctx ->
-                    task {
-                        let gf = ctx.RequestServices.GetRequiredService<IGrainFactory>()
-                        let handle = FSharpGrain.ref<CompanyState, CompanyCommand> gf "company-42"
-                        let! count = handle |> FSharpGrain.ask<CompanyState, CompanyCommand, int> GetCount
-                        return! ctx.Response.WriteAsync(string count)
-                    } :> Task))
-            |> ignore)
+type CounterSiloConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.AddMemoryGrainStorage("Default") |> ignore
+            siloBuilder.AddFunctionalGrain(counterDefinition) |> ignore
+
+type CounterClientConfigurator() =
+    interface IClientBuilderConfigurator with
+        member _.Configure(_configuration, clientBuilder: IClientBuilder) =
+            clientBuilder.AddFunctionalGrainClient() |> ignore
 ```
 
-Use `send` when the handler result is the state; use `ask` when the handler returns
-another typed value (for example `int`, DTO, tuple).
+`counterDefinition` and its typed reference come from the same `grainContract` / `grainFor`
+module as production code. See the complete, self-contained fixture in the
+[Testing guide](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/testing.md).
 
-### GrainArbitrary
+## Components
 
-TypeShape-based auto-generator of FsCheck `Arbitrary` instances for F# discriminated unions. Automatically discovers DU cases and field types to produce well-typed random grain states.
+| Component | Purpose |
+|---|---|
+| `TestHarness` | A conventional in-process Orleans cluster with memory providers and log capture |
+| `WebTestHarness` | Combined TestCluster and ASP.NET Core TestServer |
+| `WebTestHarness.createWithFactory` | TestServer over a supplied `IGrainFactory` |
+| `GrainMock.withGrain` | Register a mocked Orleans interface in `MockGrainFactory` |
+| `GrainArbitrary` | TypeShape-backed FsCheck generation for F# states and command DUs |
+| `FsCheckHelpers` | Command-sequence and state-machine property helpers |
+| `LogCapture` | Structured in-memory `ILogger` entries for assertions |
 
-### FsCheckHelpers
+## Log capture
 
-- `commandSequenceArb<'Command>` -- generates non-empty command sequences
-- `stateMachineProperty` -- verifies a state invariant holds after folding a command list
+```fsharp
+open Microsoft.Extensions.Logging
+open Orleans.FSharp.Testing
 
-### LogCapture
+let factory = LogCapture.create ()
+let logger = (factory :> ILoggerFactory).CreateLogger("Test")
+logger.LogInformation("Processed {Count}", 3)
 
-`CapturingLogger` / `CapturingLoggerFactory` -- an in-memory `ILogger` implementation that records structured log entries (`CapturedLogEntry`) for test assertions on log level, template, properties, and exceptions.
+let entries = LogCapture.captureLogs factory
+```
+
+## Legacy API
+
+`getFSharpGrain*` and `GrainMock.withFSharpGrain*` exist only for the obsolete universal
+`grain { }` model. Their examples live in
+[Legacy Testing](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/legacy/testing.md).
 
 ## Dependencies
 
 - `Microsoft.Orleans.TestingHost`
-- `FsCheck 3.x`
+- `FsCheck`
 - `TypeShape`
 - `xunit`
 

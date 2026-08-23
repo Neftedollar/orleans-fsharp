@@ -115,10 +115,16 @@ let run () : Task =
         // line it prints below arrived as a PUSH, not as the answer to a call.
         let watcher =
             FunctionalObserver.createFrom RoomObserverApi.contract host.Services
-                { onMessage = fun (sender, text) -> task { printfn "  [push] %s: %s" sender text }
+                { onMessage =
+                    fun message -> task { printfn "  [push] %s: %s" message.sender message.text }
                   onPresence =
-                    fun (who, joined) ->
-                        task { printfn "  [push] %s %s the room" who (if joined then "joined" else "left") } }
+                    fun change ->
+                        task {
+                            printfn
+                                "  [push] %s %s the room"
+                                change.memberName
+                                (if change.joined then "joined" else "left")
+                        } }
 
         let! subscribers = room.subscribe watcher
         printfn "--- Subscribed 1 observer (room reports %d) ---" subscribers
@@ -132,27 +138,27 @@ let run () : Task =
         printfn ""
 
         // Both members can post.
-        let! aliceResult = room.say ("Alice", "Hey everyone!")
+        let! aliceResult = room.say { sender = "Alice"; text = "Hey everyone!" }
         printfn "Alice: Hey everyone! -> %A" aliceResult
-        let! bobResult = room.say ("Bob", "Hi Alice, how's it going?")
+        let! bobResult = room.say { sender = "Bob"; text = "Hi Alice, how's it going?" }
         printfn "Bob: Hi Alice, how's it going? -> %A" bobResult
 
         // A non-member is rejected.
-        let! rejected = room.say ("Charlie", "Can I join in?")
+        let! rejected = room.say { sender = "Charlie"; text = "Can I join in?" }
         printfn "Charlie (not a member): Can I join in? -> %A" rejected
 
         // Empty text is rejected too.
-        let! emptyRejected = room.say ("Alice", "   ")
+        let! emptyRejected = room.say { sender = "Alice"; text = "   " }
         printfn "Alice (empty message) -> %A" emptyRejected
 
         // Typing indicator: fire-and-forget, always interleaves.
-        do! room.typing ("Bob", true)
+        do! room.typing { memberName = "Bob"; isTyping = true }
 
         printfn ""
 
         // Bob leaves; a message from Bob after leaving is rejected again.
         do! room.leave "Bob"
-        let! afterLeave = room.say ("Bob", "Anyone still here?")
+        let! afterLeave = room.say { sender = "Bob"; text = "Anyone still here?" }
         printfn "Bob left. Bob: Anyone still here? -> %A" afterLeave
 
         let! finalCount = room.memberCount ()
@@ -165,7 +171,7 @@ let run () : Task =
         printfn ""
         printfn "--- Unsubscribed (room reports %d subscribers) ---" remaining
         do! room.join "Bob"
-        let! silent = room.say ("Bob", "this message is posted but never pushed")
+        let! silent = room.say { sender = "Bob"; text = "this message is posted but never pushed" }
         printfn "Bob (after unsubscribe): -> %A  (no [push] line follows)" silent
         do! Task.Delay 250
         FunctionalObserver.unsubscribe factory watcher
@@ -174,8 +180,12 @@ let run () : Task =
         printfn ""
         printfn "--- History (an ordinary readOnly paged query) ---"
         let! history = room.history 10
-        for (sender, message, timestamp) in history do
-            printfn "  [%s] %s: %s" (timestamp.ToString("HH:mm:ss")) sender message
+        for entry in history do
+            printfn
+                "  [%s] %s: %s"
+                (entry.timestamp.ToString("HH:mm:ss"))
+                entry.sender
+                entry.text
 
         printfn ""
         printfn "Done. Shutting down..."

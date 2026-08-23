@@ -48,6 +48,11 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
         if obj.ReferenceEquals(snapshotOptions.Policy, null) then
             fail SiloStage "the silo-wide functional journal snapshot policy cannot be null."
 
+        if snapshotOptions.ManualSnapshotMaxConflictRetries < 0 then
+            fail
+                SiloStage
+                $"functional journal ManualSnapshotMaxConflictRetries cannot be negative, but {snapshotOptions.ManualSnapshotMaxConflictRetries} was configured."
+
         match snapshotOptions.Policy with
         | FunctionalJournalSnapshotDefault.Every eventCount when eventCount <= 0 ->
             fail

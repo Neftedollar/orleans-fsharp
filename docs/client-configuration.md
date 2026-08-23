@@ -144,8 +144,8 @@ clientConfig {
 ## Serialization
 
 Opt the client into the F# codecs. Both are already registered for you by
-`AddFunctionalGrainClient` and by the universal grain pattern; declare them when the client talks
-to per-grain C# CodeGen grains instead:
+`AddFunctionalGrainClient`; declare them explicitly only when other client code needs those
+serializers before the functional transport is installed:
 
 ```fsharp
 clientConfig {
@@ -200,10 +200,28 @@ activators. See [Functional Grain Runtime](functional-grains.md).
 
 ```fsharp
 open System
+open System.Threading.Tasks
 open Orleans
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Hosting
+
+type CounterActor = private CounterActor of unit
+
+[<NoEquality; NoComparison>]
+type CounterApi = { increment: unit -> Task<int> }
+
+[<RequireQualifiedAccess>]
+module CounterApi =
+    let contract =
+        grainContract<CounterActor, string, CounterApi> {
+            grainType "counter"
+            version 1
+            stringKey
+        }
+
+    let ref = FunctionalGrain.ref contract
 
 let config = clientConfig {
     useStaticClustering [ "10.0.0.1:30000"; "10.0.0.2:30000" ]
@@ -214,12 +232,18 @@ let config = clientConfig {
     addMemoryStreams "Events"
 }
 
-let host, client = ClientConfig.build config
-host.StartAsync().GetAwaiter().GetResult()
+let builder = HostApplicationBuilder()
+ClientConfig.applyToHost config builder
+builder.UseOrleansClient(fun clientBuilder ->
+    clientBuilder.AddFunctionalGrainClient() |> ignore)
+|> ignore
 
-// Get a grain reference and make calls
-let counterRef = GrainRef.ofString<ICounterGrain> (client :> IGrainFactory) "my-counter"
-let! result = GrainRef.invoke counterRef (fun g -> g.Increment())
+let host = builder.Build()
+host.Start()
+let client = host.Services.GetRequiredService<IClusterClient>()
+
+let counter = CounterApi.ref client "my-counter"
+let result = counter.increment().GetAwaiter().GetResult()
 ```
 
 ## Next steps

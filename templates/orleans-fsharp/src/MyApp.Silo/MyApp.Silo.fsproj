@@ -2,9 +2,6 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- Task 8 deprecation pass (ruling 6): this template keeps its AddFSharpGrain registration
-         running beside its functional-runtime twin (AddFunctionalGrain) on purpose. -->
-    <NoWarn>$(NoWarn);FS0044</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,7 +15,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MyApp.Grains\MyApp.Grains.fsproj" />
-    <ProjectReference Include="..\MyApp.CodeGen\MyApp.CodeGen.csproj" />
   </ItemGroup>
 
 </Project>
