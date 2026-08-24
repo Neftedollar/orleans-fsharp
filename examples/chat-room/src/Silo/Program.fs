@@ -10,7 +10,7 @@ let config =
     siloConfig {
         useLocalhostClustering
         addMemoryStorage "Default"
-        useJsonFallbackSerialization
+        useFSharpJsonSerialization
     }
 
 let builder = Host.CreateApplicationBuilder()

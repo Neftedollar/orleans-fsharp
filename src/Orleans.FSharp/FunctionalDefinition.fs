@@ -157,6 +157,8 @@ type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
         Primary: PersistentStateRef<'State> option
         /// Additional attached persistent states, in declaration order.
         Additional: FunctionalFacetBlueprint list
+        /// The grain-level durable codec override for persistent facets.
+        PersistenceCodec: FunctionalPersistenceCodec option
         /// Attached transactional states, in declaration order.
         TransactionalFacets: FunctionalTransactionalBlueprint list
         /// The declared idle collection age, when 'collectionAge' has been declared.
@@ -202,6 +204,9 @@ type FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
 
     /// <summary>Additional attached persistent states in declaration order.</summary>
     member internal _.Additional = state.Additional
+
+    /// <summary>The grain-level persistent-state codec override, when configured.</summary>
+    member internal _.PersistenceCodec = state.PersistenceCodec
 
     /// <summary>Attached transactional states in declaration order.</summary>
     member internal _.TransactionalFacets = state.TransactionalFacets
@@ -281,6 +286,7 @@ module internal DefinitionDraft =
               Initializer = initializer
               Primary = None
               Additional = []
+              PersistenceCodec = None
               TransactionalFacets = []
               CollectionAge = None
               OnActivate = None
@@ -436,15 +442,31 @@ module internal DefinitionDraft =
                     $"stateName '{descriptor.StateName}' is attached more than once to grain type '{grainTypeName}' (providers '{existing.ProviderName}' and '{descriptor.ProviderName}', stored types '{existing.StoredType.FullName}' and '{descriptor.StoredType.FullName}').{detail}"
             | _ -> seenStates.[descriptor.StateName] <- descriptor
 
-        // Stock Orleans cannot even construct an IPersistentState over some closed types, so an
-        // attachment of one of them can never activate on any storage provider.
-        for descriptor in attached do
-            match StoredStateType.unsupportedReason descriptor.StoredType with
-            | Some reason ->
-                fail
-                    DefinitionStage
-                    $"the stored type '{descriptor.StoredType.FullName}' of persistent state '{descriptor.StateName}' (provider '{descriptor.ProviderName}') attached to grain type '{grainTypeName}' cannot be held in an Orleans IPersistentState: {reason}."
-            | None -> ()
+        // An explicitly selected Orleans-binary facet exposes the application type directly to
+        // IPersistentState, so its activator limitation can be checked while sealing. When the
+        // codec is inherited from the silo, the effective choice is not known here: startup
+        // performs the same check after resolving the precedence chain. JSON-backed facets expose
+        // only FunctionalPersistenceEnvelope to Orleans and therefore do not have this limitation.
+        let validateExplicitCodec
+            (descriptor: PersistentStateDescriptor)
+            (elementCodec: FunctionalPersistenceCodec option)
+            =
+            match elementCodec |> Option.orElse state.PersistenceCodec with
+            | Some codec when codec.Kind = FunctionalPersistenceCodecKind.OrleansBinary ->
+                match StoredStateType.unsupportedReason descriptor.StoredType with
+                | Some reason ->
+                    fail
+                        DefinitionStage
+                        $"the stored type '{descriptor.StoredType.FullName}' of persistent state '{descriptor.StateName}' (provider '{descriptor.ProviderName}') attached to grain type '{grainTypeName}' cannot be held in a direct Orleans IPersistentState with codec '{codec.Id}': {reason}. Select FunctionalPersistenceCodec.FSharpJson for this state or grain, or configure it as the silo default."
+                | None -> ()
+            | _ -> ()
+
+        match state.Primary with
+        | Some primary -> validateExplicitCodec primary.Descriptor primary.CodecOverride
+        | None -> ()
+
+        for extra in state.Additional do
+            validateExplicitCodec extra.Descriptor extra.CodecOverride
 
         // Spec 004 item 2. Unique transactional state names. The name is the durable identity of
         // the participant: Orleans builds the ParticipantId Orleans addresses during the commit
@@ -815,6 +837,32 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
         DefinitionDraft.withState
             { draft with
                 Primary = DefinitionDraft.single "stateFrom" draft.Contract.GrainTypeName draft.Primary persistentState }
+
+    /// <summary>
+    /// Set the default durable payload codec for this grain's persistent facets. A codec attached
+    /// directly to a <c>PersistentStateRef</c> with <c>PersistentState.withCodec</c> still wins.
+    /// </summary>
+    [<CustomOperation("persistenceCodec")>]
+    member _.PersistenceCodec<'State>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            codec: FunctionalPersistenceCodec
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(codec, null) then
+            fail
+                DefinitionStage
+                $"'persistenceCodec' of grain type '{draft.Contract.GrainTypeName}' cannot be null."
+
+        DefinitionDraft.withState
+            { draft with
+                PersistenceCodec =
+                    DefinitionDraft.single
+                        "persistenceCodec"
+                        draft.Contract.GrainTypeName
+                        draft.PersistenceCodec
+                        codec }
 
     /// <summary>Attach an additional independently typed persistent state.</summary>
     /// <param name="persistentState">The persistent-state reference to attach.</param>

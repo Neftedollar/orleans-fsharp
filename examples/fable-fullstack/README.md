@@ -63,7 +63,6 @@ curl http://localhost:5000/api/ITodoApi/toggleTodo -d '["00000000-0000-0000-0000
 - **`grain {}`** (deprecated) the original computation expression, kept in `TodoGrain.fs` as
   reference -- needs a C#-generated proxy per grain interface and cannot resolve standalone in an
   F#-only project
-- **`useJsonFallbackSerialization`** clean F# record serialization without attributes
 - **Route builder** generates routes like `/api/ITodoApi/getTodos` automatically
 
 ## Adding a Fable frontend

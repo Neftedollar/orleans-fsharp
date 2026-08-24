@@ -208,7 +208,7 @@ Maintaining an older Orleans.FSharp application? Use the isolated [Legacy Gettin
 |---|---|
 | [Functional Grain Runtime](functional-grains.md) | The complete guide to the current authoring model |
 | [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
-| [Serialization](serialization.md) | FSharpBinaryCodec, JSON fallback, Orleans native |
+| [Serialization](serialization.md) | FSharpBinaryCodec, F# JSON, Orleans native |
 | [Streaming](streaming.md) | Publish, subscribe, TaskSeq, broadcast |
 | [Event Sourcing](event-sourcing.md) | `journaledGrainFor { }` — state as the fold of an event journal, including snapshots |
 | [Dashboard](dashboard.md) | Run Orleans Dashboard and inspect functional actor activations |

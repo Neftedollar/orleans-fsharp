@@ -5,35 +5,60 @@ open Xunit
 open Swensen.Unquote
 open Orleans.Hosting
 open Orleans.TestingHost
+open Orleans.FSharp
+open Orleans.FSharp.Runtime
 open Orleans.FSharp.Sample
 
+// This file uses the legacy universal grain only as a ready-made generated Orleans proxy for the
+// serializer integration test. The serialization API under test is the current Runtime CE API.
+#nowarn "44"
+
+/// <summary>An unattributed F# payload used to prove the generalized JSON path end to end.</summary>
+type CleanJsonMessage =
+    { Text: string
+      Count: int option }
+
+type CleanJsonState = { Last: CleanJsonMessage option }
+
+type CleanJsonCommand = RoundtripJson of CleanJsonMessage
+
+let private cleanJsonGrain =
+    grain {
+        defaultState { Last = None }
+        handle (fun _ (RoundtripJson message) ->
+            task {
+                let state = { Last = Some message }
+                return state, box state
+            })
+    }
+
 /// <summary>
-/// Silo configurator that enables JSON fallback serialization for clean F# types.
+/// Silo configurator that selects F# JSON generalized serialization for clean F# types.
 /// Types without [GenerateSerializer] will be serialized using System.Text.Json
 /// with FSharp.SystemTextJson converters.
 /// </summary>
-type JsonFallbackSiloConfigurator() =
+type FSharpJsonSiloConfigurator() =
     interface ISiloConfigurator with
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.AddMemoryGrainStorageAsDefault() |> ignore
             siloBuilder.AddMemoryGrainStorage("Default") |> ignore
             siloBuilder.UseInMemoryReminderService() |> ignore
+            siloBuilder.Services.AddFSharpGrain<CleanJsonState, CleanJsonCommand>(cleanJsonGrain) |> ignore
 
-            // Enable JSON fallback serialization
-            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
-                siloBuilder.Services,
-                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
-                    Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
-                        serializerBuilder,
-                        isSupported = System.Func<System.Type, bool>(fun _ -> true),
-                        jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
-                    |> ignore))
-            |> ignore
+            let config = siloConfig { useFSharpJsonSerialization }
+            SiloConfig.applyToSiloBuilder config siloBuilder
+
+/// <summary>Configures the TestCluster client with the same explicit F# JSON policy.</summary>
+type FSharpJsonClientConfigurator() =
+    interface IClientBuilderConfigurator with
+        member _.Configure(_, clientBuilder: IClientBuilder) =
+            let config = clientConfig { useFSharpJsonSerialization }
+            ClientConfig.applyToBuilder config clientBuilder
 
 /// <summary>
-/// xUnit fixture that starts a TestCluster with JSON fallback serialization enabled.
+/// xUnit fixture that starts a TestCluster with F# JSON serialization selected.
 /// </summary>
-type JsonFallbackClusterFixture() =
+type FSharpJsonClusterFixture() =
     let mutable cluster: TestCluster = Unchecked.defaultof<TestCluster>
 
     /// <summary>Gets the running TestCluster instance.</summary>
@@ -47,10 +72,13 @@ type JsonFallbackClusterFixture() =
             task {
                 let codeGenAssembly = typeof<Orleans.FSharp.CodeGen.CodeGenAssemblyMarker>.Assembly
                 let _ = codeGenAssembly.GetTypes()
+                let abstractionsAssembly = typeof<Orleans.FSharp.IFSharpGrain>.Assembly
+                let _ = abstractionsAssembly.GetTypes()
 
                 let builder = TestClusterBuilder()
                 builder.Options.InitialSilosCount <- 1s
-                builder.AddSiloBuilderConfigurator<JsonFallbackSiloConfigurator>() |> ignore
+                builder.AddSiloBuilderConfigurator<FSharpJsonSiloConfigurator>() |> ignore
+                builder.AddClientBuilderConfigurator<FSharpJsonClientConfigurator>() |> ignore
                 cluster <- builder.Build()
                 do! cluster.DeployAsync()
             }
@@ -63,11 +91,11 @@ type JsonFallbackClusterFixture() =
             }
 
 /// <summary>
-/// xUnit collection for tests sharing the JSON fallback cluster.
+/// xUnit collection for tests sharing the F# JSON cluster.
 /// </summary>
-[<CollectionDefinition("JsonFallbackCluster")>]
-type JsonFallbackClusterCollection() =
-    interface ICollectionFixture<JsonFallbackClusterFixture>
+[<CollectionDefinition("FSharpJsonCluster")>]
+type FSharpJsonClusterCollection() =
+    interface ICollectionFixture<FSharpJsonClusterFixture>
 
 // ---------------------------------------------------------------------------
 // Mode 3 (Explicit) integration tests — [GenerateSerializer] + [Id]
@@ -105,18 +133,18 @@ type ExplicitModeIntegrationTests(fixture: ClusterFixture) =
         }
 
 // ---------------------------------------------------------------------------
-// Mode 1 (Clean/JSON fallback) integration tests
+// Mode 1 (Clean/F# JSON) integration tests
 // ---------------------------------------------------------------------------
 
-[<Collection("JsonFallbackCluster")>]
-type JsonFallbackIntegrationTests(fixture: JsonFallbackClusterFixture) =
+[<Collection("FSharpJsonCluster")>]
+type FSharpJsonIntegrationTests(fixture: FSharpJsonClusterFixture) =
 
     /// <summary>
-    /// Mode 1 (Clean): explicitly attributed type still works with JSON fallback enabled.
-    /// This verifies the fallback doesn't break the native serializer for attributed types.
+    /// Mode 1 (Clean): explicitly attributed type still works with F# JSON selected.
+    /// This verifies the generalized policy does not override generated serializers.
     /// </summary>
     [<Fact>]
-    member _.``JSON fallback does not break explicitly attributed grain types`` () =
+    member _.``FSharp JSON does not override explicitly attributed grain types`` () =
         task {
             let grain = fixture.GrainFactory.GetGrain<ICounterGrain>(100L)
             let! result = grain.HandleMessage(Increment)
@@ -125,13 +153,22 @@ type JsonFallbackIntegrationTests(fixture: JsonFallbackClusterFixture) =
         }
 
     /// <summary>
-    /// Mode 1 (Clean): verify the JSON fallback cluster starts successfully.
+    /// Mode 1 (Clean): verify the F# JSON cluster starts successfully.
     /// </summary>
     [<Fact>]
-    member _.``JSON fallback cluster starts successfully`` () =
+    member _.``FSharp JSON cluster starts successfully`` () =
         task {
             test <@ fixture.Cluster <> null @>
             test <@ fixture.GrainFactory <> null @>
+        }
+
+    [<Fact>]
+    member _.``FSharp JSON roundtrips an unattributed FSharp record through a grain call`` () =
+        task {
+            let message = { Text = "hello"; Count = Some 3 }
+            let grain = FSharpGrain.ref<CleanJsonState, CleanJsonCommand> fixture.GrainFactory "json-clean-record"
+            let! actual = grain |> FSharpGrain.send (RoundtripJson message)
+            test <@ actual.Last = Some message @>
         }
 
 // ---------------------------------------------------------------------------

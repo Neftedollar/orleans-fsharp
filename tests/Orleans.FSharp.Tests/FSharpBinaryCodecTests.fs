@@ -550,67 +550,31 @@ let ``FSharpBinaryCodec type filter returns null for unsupported type`` () =
 // ===========================================================================
 
 [<Fact>]
-let ``siloConfig CE default has UseFSharpBinarySerialization false`` () =
+let ``siloConfig CE selects FSharp binary serialization`` () =
     let config = siloConfig { () }
-    test <@ config.UseFSharpBinarySerialization = false @>
+    test <@ config.FSharpSerialization = None @>
 
-[<Fact>]
-let ``siloConfig CE sets useFSharpBinarySerialization`` () =
-    let config = siloConfig { useFSharpBinarySerialization }
-    test <@ config.UseFSharpBinarySerialization = true @>
-
-[<Fact>]
-let ``siloConfig CE combines useFSharpBinarySerialization with other settings`` () =
-    let config =
+    let configured =
         siloConfig {
             useLocalhostClustering
             useFSharpBinarySerialization
             addMemoryStorage "Default"
         }
 
-    test <@ config.UseFSharpBinarySerialization = true @>
-    test <@ config.ClusteringMode.IsSome @>
-    test <@ config.StorageProviders |> Map.containsKey "Default" @>
+    test <@ configured.FSharpSerialization = Some FSharpSerialization.Binary @>
+    test <@ configured.ClusteringMode.IsSome @>
+    test <@ configured.StorageProviders |> Map.containsKey "Default" @>
 
 [<Fact>]
-let ``siloConfig CE useFSharpBinarySerialization and useJsonFallbackSerialization are independent`` () =
-    let config =
-        siloConfig {
-            useLocalhostClustering
-            useFSharpBinarySerialization
-        }
-
-    test <@ config.UseFSharpBinarySerialization = true @>
-    test <@ config.UseJsonFallbackSerialization = false @>
-
-[<Fact>]
-let ``clientConfig CE default has UseFSharpBinarySerialization false`` () =
-    let config = clientConfig { () }
-    test <@ config.UseFSharpBinarySerialization = false @>
-
-[<Fact>]
-let ``clientConfig CE sets useFSharpBinarySerialization`` () =
-    let config = clientConfig { useFSharpBinarySerialization }
-    test <@ config.UseFSharpBinarySerialization = true @>
-
-[<Fact>]
-let ``clientConfig CE combines useFSharpBinarySerialization with other settings`` () =
+let ``clientConfig CE selects FSharp binary serialization`` () =
     let config =
         clientConfig {
             useLocalhostClustering
             useFSharpBinarySerialization
         }
 
-    test <@ config.UseFSharpBinarySerialization = true @>
+    test <@ config.FSharpSerialization = Some FSharpSerialization.Binary @>
     test <@ config.ClusteringMode.IsSome @>
-
-[<Fact>]
-let ``SiloConfig Default has UseFSharpBinarySerialization false`` () =
-    test <@ SiloConfig.Default.UseFSharpBinarySerialization = false @>
-
-[<Fact>]
-let ``ClientConfig Default has UseFSharpBinarySerialization false`` () =
-    test <@ ClientConfig.Default.UseFSharpBinarySerialization = false @>
 
 // ===========================================================================
 // FsCheck property tests

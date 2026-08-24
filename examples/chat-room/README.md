@@ -128,7 +128,6 @@ C# interop demo complete.
 - **`FSharpObserverManager<T>`** (deprecated-reference path, `ChatGrain.fs`) the classic observer
   manager, kept as the reference implementation for the deprecated model -- see the note above for
   why it cannot run in this project and what replaces it
-- **`useJsonFallbackSerialization`** enables clean F# types without serialization attributes
 - **`FunctionalGrainInterop.For<IChatRoom>` + `[FunctionalOperation]`** (`src/Interop`) the
   C#-callable facade: a hand-written C# interface bound to this contract, with every mapping rule
   checked when the facade is created

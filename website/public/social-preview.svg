@@ -108,6 +108,6 @@
     <text x="560" y="540" font-size="26" font-weight="500" fill="#94A3B8" font-family="'SF Mono',Menlo,Consolas,monospace">github.com/Neftedollar/orleans-fsharp</text>
 
     <!-- Orleans 10.x note -->
-    <text x="560" y="586" font-size="22" font-weight="500" fill="#64748B">Full parity with Orleans 10.2 · .NET 10 · MIT</text>
+    <text x="560" y="586" font-size="22" font-weight="500" fill="#64748B">Functional API for Orleans 10.2 · .NET 10 · MIT</text>
   </g>
 </svg>

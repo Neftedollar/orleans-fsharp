@@ -532,6 +532,42 @@ of the activation; it does **not** imply a storage write -- the same rule the
 [Delivery semantics](#delivery-semantics) section below states from the caller's side: a successful
 call means the handler ran, not that anything was persisted.
 
+### Selecting a durable codec
+
+Each functional state holder resolves its persistence codec in this order:
+
+1. `PersistentState.withCodec` on that descriptor;
+2. `persistenceCodec` in the enclosing `grainFor` definition;
+3. `FunctionalPersistenceOptions.DefaultStateCodec` from the silo.
+
+The default is `FunctionalPersistenceCodec.OrleansBinary`. For supported direct types this keeps
+the existing provider schema, where the provider sees `'State` itself. F# JSON uses a different,
+runtime-owned envelope:
+
+```fsharp
+let roomState =
+    PersistentState.create<RoomState> "state" "Default"
+    |> PersistentState.withCodec FunctionalPersistenceCodec.FSharpJson
+
+let roomDefinition =
+    grainFor roomContract {
+        initialState (fun _ -> RoomState.empty)
+        stateFrom roomState
+        // handlers...
+    }
+```
+
+Use `persistenceCodec FunctionalPersistenceCodec.FSharpJson` instead when every attached state
+without an element override should use JSON. The descriptor remains immutable: `withCodec` returns
+a copied descriptor.
+
+Do not switch an existing state name between the direct binary schema and the JSON envelope in
+place. Both directions require a migration or a new `stateName`; selecting another codec alone
+cannot change the provider-facing stored type. Provider-wide `FSharpJsonGrainStorageSerializer`
+configuration is a separate layer and affects every grain using that provider. See
+[Serialization](/orleans-fsharp/serialization/#durable-persistence-codecs) for silo defaults, custom JSON
+options, and the distinction between these two layers.
+
 ### After `ClearStateAsync`, re-initialize the state yourself
 
 This one bites, and it is stock Orleans behaviour rather than anything the functional runtime adds.
@@ -1522,9 +1558,10 @@ confirmed state. A handler that returns an empty event list performs no storage 
 
 Journaled definitions also accept `onTimer`, `onReminder`, `onStream`, and `onBroadcast`; those
 hooks return an event list, which is confirmed with the same semantics as a request handler.
-The context exposes the full Orleans journal lifecycle (confirmed/tentative views, explicit
-submit/confirm/refresh, retrieval, clear, and statistics), plus the state-change and connection
-notification hooks. The complete C# `JournaledGrain` mapping is in the
+The context exposes the supported journal lifecycle operations (confirmed/tentative views,
+explicit submit/confirm/refresh, provider-dependent retrieval, clear, and statistics), plus the
+state-change and connection notification hooks. The detailed C# `JournaledGrain` mapping and its
+unsupported areas are in the
 [event-sourcing guide](/orleans-fsharp/event-sourcing/).
 
 `apply` is `'State -> 'Event -> 'State` and must be pure: it runs when an event is raised **and

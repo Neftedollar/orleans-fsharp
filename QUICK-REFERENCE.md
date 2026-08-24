@@ -37,6 +37,7 @@ Every API-record field takes one argument. Use a tuple for multiple logical inpu
 | `handleStream` | stream selector + `context -> state -> argument -> IAsyncEnumerable<item>` |
 | `stateFrom` | `PersistentStateRef<'State>` |
 | `usePersistentState` | descriptor + `'Key -> storedState` |
+| `persistenceCodec` | grain-wide `FunctionalPersistenceCodec` default |
 | `transactionalStateFrom` | descriptor + `'Key -> storedState` |
 | `collectionAge` | `TimeSpan` |
 | `placement` | `Random \| PreferLocal \| ActivationCountBased \| ResourceOptimized` |
@@ -49,6 +50,14 @@ Every API-record field takes one argument. Use a tuple for multiple logical inpu
 
 `handleQuery` requires the selected operation to be `readOnly`.
 
+Create a state descriptor with `PersistentState.create`, then use
+`PersistentState.withCodec codec descriptor` for an element-level override. Resolution is
+element > grain > silo `DefaultStateCodec`.
+
+Use `FunctionalPersistenceCodec.CreateFSharpJson("app-json-v1", options)` for a custom durable JSON
+contract. On a format change, keep the old decoder with `newWriter.WithReadCodec(oldCodec)` until
+old tagged payloads have been migrated.
+
 ## Journaled definition: `journaledGrainFor contract { }`
 
 | Keyword | Argument |
@@ -57,6 +66,7 @@ Every API-record field takes one argument. Use a tuple for multiple logical inpu
 | `apply` | `'State -> 'Event -> 'State` — required second and pure |
 | `logProvider` | registered `ILogViewAdaptorFactory` name |
 | `journalStorage` | named `IGrainStorage` for LogStorage/StateStorage |
+| `journalCodec` | definition-level `FunctionalPersistenceCodec` override |
 | `customStorage` | `IServiceProvider -> IFunctionalJournalStorage<'Key,'State,'Event>` |
 | `snapshotPolicy` | `Inherit \| Disabled \| Every of int \| When of (int -> state -> bool)` |
 | `handle` | selector + callback returning `Task<event list * reply>` |
@@ -105,6 +115,8 @@ operation, and request grain deactivation for a genuinely permanent failure.
 | `ISiloBuilder.AddFunctionalGrain` | Register a `grainFor` definition |
 | `ISiloBuilder.AddFunctionalJournaledGrain` | Register a `journaledGrainFor` definition |
 | `IClientBuilder.AddFunctionalGrainClient` | Install the client-only functional transport |
+| `ConfigureFunctionalPersistence` | Set independent state/journal codec defaults |
+| `UseFunctionalFSharpJsonPersistence` | Set both functional defaults to F# JSON |
 | `UseFunctionalJournalSnapshots every` | Set a positive global fixed snapshot interval |
 | `ConfigureFunctionalJournalSnapshots` | Set global `Policy` and manual conflict retries |
 | `FunctionalGrainRegistration.of'` | Erase one ordinary definition for heterogeneous scripting lists |
@@ -136,7 +148,7 @@ arguments. Reference `Microsoft.Orleans.Dashboard`, then map
 | Gateway | `gatewayListRefreshPeriod`, `preferredGatewayIndex` |
 | Streams | `addMemoryStreams` |
 | Security | `useTls`, `useTlsWithCertificate`, `useMutualTls` |
-| Services/serialization | `configureServices`, `useFSharpBinarySerialization`, `useJsonFallbackSerialization` |
+| Services/serialization | `configureServices`, `useFSharpBinarySerialization`, `useFSharpJsonSerialization`, `useFSharpSerialization` |
 
 ## Typed custom journal storage
 

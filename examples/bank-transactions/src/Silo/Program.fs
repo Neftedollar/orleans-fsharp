@@ -12,7 +12,7 @@ let config =
         useLocalhostClustering
         addMemoryStorage "Default"
         addMemoryStorage AccountApi.Storage
-        useJsonFallbackSerialization
+        useFSharpJsonSerialization
     }
 
 let builder = Host.CreateApplicationBuilder()

@@ -143,19 +143,23 @@ clientConfig {
 
 ## Serialization
 
-Opt the client into the F# codecs. Both are already registered for you by
-`AddFunctionalGrainClient`; declare them explicitly only when other client code needs those
-serializers before the functional transport is installed:
+Select one generalized-serialization policy. `AddFunctionalGrainClient` installs the binary
+functional default; configure an explicit policy only when this client should choose a different
+codec for ungenerated application types:
 
 ```fsharp
+let serialization =
+    FSharpSerialization.Binary
+    |> FSharpSerialization.forUnsupportedTypes FSharpSerialization.Json
+
 clientConfig {
     useLocalhostClustering
-    useFSharpBinarySerialization   // F# records, unions, lists, maps, options
-    useJsonFallbackSerialization   // System.Text.Json for the rest
+    useFSharpSerialization serialization
 }
 ```
 
-The client's serialization must match the silo's -- see [Serialization](serialization.md).
+The client and silo must select the same policy. Use `useFSharpJsonSerialization` when JSON should
+be the primary generalized codec. See [Serialization](serialization.md).
 
 ---
 

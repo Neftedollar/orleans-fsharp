@@ -44,10 +44,8 @@ type ClientConfig =
         GatewayListRefreshPeriod: TimeSpan option
         /// <summary>The preferred gateway index for client connections, or None if not set.</summary>
         PreferredGatewayIndex: int option
-        /// <summary>Whether to register FSharp.SystemTextJson as a fallback serializer for types without [GenerateSerializer].</summary>
-        UseJsonFallbackSerialization: bool
-        /// <summary>Whether to register FSharpBinaryCodec as a binary serializer for F# types without [GenerateSerializer] or [Id] attributes.</summary>
-        UseFSharpBinarySerialization: bool
+        /// <summary>The generalized serializer policy for types without an Orleans generated or built-in serializer.</summary>
+        FSharpSerialization: FSharpSerialization option
     }
 
 /// <summary>
@@ -69,8 +67,7 @@ module ClientConfig =
             ServiceId = None
             GatewayListRefreshPeriod = None
             PreferredGatewayIndex = None
-            UseJsonFallbackSerialization = false
-            UseFSharpBinarySerialization = false
+            FSharpSerialization = None
         }
 
     /// <summary>
@@ -183,25 +180,11 @@ module ClientConfig =
                 // Persistent streams are silo-side only; skip on client
                 ())
 
-        // Apply JSON fallback serialization (FSharp.SystemTextJson as fallback for unattributed types)
-        if config.UseJsonFallbackSerialization then
-            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
-                clientBuilder.Services,
-                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
-                    Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
-                        serializerBuilder,
-                        isSupported = System.Func<System.Type, bool>(fun _ -> true),
-                        jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
-                    |> ignore))
+        match config.FSharpSerialization with
+        | Some policy ->
+            FSharpSerializationRegistration.addToServices policy clientBuilder.Services
             |> ignore
-
-        // Apply F# binary serialization (FSharpBinaryCodec for DU/record/option/list/map without attributes)
-        if config.UseFSharpBinarySerialization then
-            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
-                clientBuilder.Services,
-                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
-                    Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder |> ignore))
-            |> ignore
+        | None -> ()
 
         // Apply TLS configuration
         match config.TlsConfig with
@@ -264,30 +247,39 @@ type ClientConfigBuilder() =
     member _.Zero() : ClientConfig = ClientConfig.Default
 
     /// <summary>
-    /// Registers FSharp.SystemTextJson as a fallback JSON serializer for Orleans.
-    /// Types without [GenerateSerializer] will be serialized using System.Text.Json
-    /// with FSharp.SystemTextJson converters (DU, Record, Option, etc.).
-    /// This enables "clean" F# types (no Orleans attributes) to pass through grain boundaries.
-    /// Requires the Microsoft.Orleans.Serialization.SystemTextJson NuGet package (included in Orleans.FSharp.Runtime).
-    /// </summary>
-    /// <param name="config">The current client configuration being built.</param>
-    /// <returns>The updated client configuration with JSON fallback serialization enabled.</returns>
-    [<CustomOperation("useJsonFallbackSerialization")>]
-    member _.UseJsonFallbackSerialization(config: ClientConfig) =
-        { config with UseJsonFallbackSerialization = true }
-
-    /// <summary>
-    /// Registers FSharpBinaryCodec as a binary serializer for F# types.
+    /// Selects FSharpBinaryCodec as the generalized serializer for F# types.
     /// Types without [GenerateSerializer] or [Id] attributes will be serialized using
     /// a compact binary format via FSharp.Reflection. Supports DUs, records, options,
     /// lists, maps, sets, arrays, and tuples.
-    /// This eliminates the need for the C# CodeGen project entirely.
     /// </summary>
     /// <param name="config">The current client configuration being built.</param>
     /// <returns>The updated client configuration with F# binary serialization enabled.</returns>
     [<CustomOperation("useFSharpBinarySerialization")>]
     member _.UseFSharpBinarySerialization(config: ClientConfig) =
-        { config with UseFSharpBinarySerialization = true }
+        { config with
+            FSharpSerialization =
+                FSharpSerialization.select config.FSharpSerialization FSharpSerialization.Binary }
+
+    /// <summary>
+    /// Selects F#-aware System.Text.Json as the primary generalized serializer. Orleans generated
+    /// and built-in serializers retain their normal higher priority.
+    /// </summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <returns>The updated client configuration with F# JSON serialization selected.</returns>
+    [<CustomOperation("useFSharpJsonSerialization")>]
+    member _.UseFSharpJsonSerialization(config: ClientConfig) =
+        { config with
+            FSharpSerialization =
+                FSharpSerialization.select config.FSharpSerialization FSharpSerialization.Json }
+
+    /// <summary>Selects an explicit generalized-serialization policy.</summary>
+    /// <param name="config">The current client configuration being built.</param>
+    /// <param name="policy">The serializer and optional unsupported-type fallback.</param>
+    /// <returns>The updated client configuration.</returns>
+    [<CustomOperation("useFSharpSerialization")>]
+    member _.UseFSharpSerialization(config: ClientConfig, policy: FSharpSerialization) =
+        { config with
+            FSharpSerialization = FSharpSerialization.select config.FSharpSerialization policy }
 
     /// <summary>
     /// Configures the client to use localhost clustering for local development.

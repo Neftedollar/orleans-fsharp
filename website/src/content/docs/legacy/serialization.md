@@ -5,7 +5,8 @@ description: "Serialization and CodeGen guidance for the original authoring mode
 
 # Legacy Serialization
 
-This archived page preserves serialization and CodeGen guidance for the original Orleans.FSharp authoring model. Choose based on your needs — you can switch at any time.
+This archived page preserves serialization and CodeGen guidance for the original Orleans.FSharp
+authoring model. Serializer changes which affect persisted data require an explicit migration.
 
 > **Note.** `AddFSharpGrain`, the `grain { }` CE and `GrainDefinition<_,_>` referenced below now
 > carry `[<Obsolete>]` (warning, not error). Codec registration works the same way under the
@@ -17,7 +18,7 @@ This archived page preserves serialization and CodeGen guidance for the original
 | Mode | CE Keyword | Speed | C# Project Needed? | Attributes? | Best For |
 |------|-----------|-------|-------------------|-------------|----------|
 | **F# Binary** | `useFSharpBinarySerialization` | Fast | No | None | Pure F# clusters (recommended) |
-| **JSON** | `useJsonFallbackSerialization` | Good | No | None | Prototyping, schema flexibility |
+| **JSON** | `useFSharpJsonSerialization` | Good | No | None | Readable generalized payloads |
 | **Orleans Native** | *(default)* | Fastest | Yes (CodeGen) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
 
 ## Universal Grain Pattern — auto-registration
@@ -31,7 +32,7 @@ builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
 
 The registration is idempotent: calling `AddFSharpGrain` multiple times for different `(State, Command)` pairs only registers the codec once.
 
-If you are NOT using the universal pattern (i.e., you are using per-grain C# stubs via `Orleans.FSharp.CodeGen`), you still need to opt in manually via `useFSharpBinarySerialization` or `useJsonFallbackSerialization`.
+If you are NOT using the universal pattern (i.e., you are using per-grain C# stubs via `Orleans.FSharp.CodeGen`), you still need to opt in manually via `useFSharpBinarySerialization` or `useFSharpJsonSerialization`.
 
 ---
 
@@ -79,7 +80,7 @@ let config = siloConfig {
 
 **When to use:** Pure F# Orleans clusters. This is the recommended mode for new projects.
 
-## Mode 2: JSON Fallback
+## Mode 2: F# JSON
 
 JSON serialization via FSharp.SystemTextJson — human-readable, flexible schema evolution.
 
@@ -91,7 +92,7 @@ type CounterCommand = Increment | Decrement | GetValue
 let config = siloConfig {
     useLocalhostClustering
     addMemoryStorage "Default"
-    useJsonFallbackSerialization
+    useFSharpJsonSerialization
 }
 ```
 
@@ -188,10 +189,11 @@ public class CounterGrainImpl : Grain, ICounterGrain
 
 ## Mixing Modes
 
-You can use multiple modes in the same silo. Orleans resolves serializers in priority order:
+Generated serializers and one explicit F# policy can coexist. Orleans resolves serializers in
+priority order:
 
 1. Orleans Native (types with `[GenerateSerializer]`) — highest priority
-2. F# Binary / JSON (fallback for types without attributes)
+2. The selected F# generalized policy for types without a generated or built-in serializer
 
 This means you can use Orleans Native for shared C#/F# types and F# Binary for F#-only types:
 
@@ -199,8 +201,22 @@ This means you can use Orleans Native for shared C#/F# types and F# Binary for F
 let config = siloConfig {
     useLocalhostClustering
     addMemoryStorage "Default"
-    useFSharpBinarySerialization  // fallback for F#-only types
+    useFSharpBinarySerialization  // generalized codec for F#-only types
     // Orleans Native types still work via [GenerateSerializer]
+}
+```
+
+To use binary first and JSON only for unsupported CLR types, configure one policy instead of
+enabling two independent flags:
+
+```fsharp
+let serialization =
+    FSharpSerialization.Binary
+    |> FSharpSerialization.forUnsupportedTypes FSharpSerialization.Json
+
+let config = siloConfig {
+    useLocalhostClustering
+    useFSharpSerialization serialization
 }
 ```
 

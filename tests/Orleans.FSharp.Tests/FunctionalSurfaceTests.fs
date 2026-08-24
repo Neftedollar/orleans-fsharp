@@ -974,6 +974,7 @@ let ``the definition builder declares exactly the specified custom operations`` 
            "onReminder"
            "onStream"
            "onTimer"
+           "persistenceCodec"
            "placement"
            "stateFrom"
            "statelessWorker"
@@ -1005,6 +1006,7 @@ let ``the journaled definition builder declares exactly the specified custom ope
            // no replacement state.
            "handleStream"
            "initialEventState"
+           "journalCodec"
            "journalStorage"
            "logProvider"
            "onActivate"

@@ -10,7 +10,7 @@
 
 ## What is Orleans.FSharp?
 
-Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides the functional grain runtime (`grainContract` / `grainFor` / `journaledGrainFor`) plus the `siloConfig { }` and `clientConfig { }` hosting computation expressions, so you define distributed actors in pure F# — no C# boilerplate needed. It has Orleans 10 parity and 2,500+ tests across unit and integration suites.
+Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides the functional grain runtime (`grainContract` / `grainFor` / `journaledGrainFor`) plus the `siloConfig { }` and `clientConfig { }` hosting computation expressions, so you define distributed actors in pure F# — no C# boilerplate needed. It supports Orleans 10 and has 2,500+ tests across unit and integration suites.
 
 ## How do I use Microsoft Orleans with F#?
 
@@ -127,7 +127,7 @@ Dispatch overhead is small and paid once per call: the repository's benchmark ho
 Yes. Orleans.FSharp has:
 
 - 2,500+ tests across unit and integration suites
-- Full Orleans 10 feature parity (137 CE operations across 8 builders)
+- Broad Orleans 10 feature coverage (137 CE operations across 8 builders)
 - Zero `Unchecked.defaultof` in source code
 - TLS/mTLS support, call filters, request context propagation
 - Input validation on all string parameters
@@ -172,7 +172,7 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 | State | Automatic persistence | Manual persistence |
 | .NET version | .NET 10 | .NET 6+ |
 | Clustering | Built-in (Redis, Azure, Kubernetes) | Akka.Cluster |
-| Maintenance | Active (Orleans 10 parity) | Community maintained |
+| Maintenance | Active (Orleans 10 compatible) | Community maintained |
 
 ## What NuGet packages does Orleans.FSharp include?
 
@@ -201,7 +201,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What is Orleans.FSharp?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (siloConfig {}, eventSourcedGrain {}) and the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) that let you define distributed actors using pure F# — no C# boilerplate needed. The original grain {} computation expression still works but is deprecated. It has Orleans 10 parity and 2,500+ tests."
+        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (siloConfig {}, eventSourcedGrain {}) and the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) that let you define distributed actors using pure F# — no C# boilerplate needed. The original grain {} computation expression still works but is deprecated. It supports Orleans 10 and has 2,500+ tests."
       }
     },
     {
@@ -217,7 +217,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "Is Orleans.FSharp production-ready?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Orleans.FSharp has 2,500+ tests, full Orleans 10 parity with 137 CE operations across 8 builders, zero Unchecked.defaultof in source code, TLS/mTLS support, call filters, request context propagation, input validation on all string parameters, and security scanning in CI."
+        "text": "Yes. Orleans.FSharp has 2,500+ tests, broad Orleans 10 feature coverage with 137 CE operations across 8 builders, zero Unchecked.defaultof in source code, TLS/mTLS support, call filters, request context propagation, input validation on all string parameters, and security scanning in CI."
       }
     },
     {

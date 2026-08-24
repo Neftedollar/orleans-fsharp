@@ -83,8 +83,6 @@ background timer keeps advancing it even between page loads).
   F#-only project
 - **wwwroot/index.html** minimal HTML + JS using `@microsoft/signalr`; reads the camelCase field
   names SignalR's default JSON protocol actually sends (see the fix above)
-- **`useJsonFallbackSerialization`** enables clean F# record serialization for Orleans grain calls
-  (independent of, and not the same serializer as, SignalR's own Hub protocol JSON)
 
 ## Architecture
 

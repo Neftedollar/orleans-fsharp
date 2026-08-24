@@ -48,6 +48,7 @@ type internal FunctionalJournalHost
         grainTypeName: string,
         grainContext: IGrainContext,
         codec: IFunctionalPayloadCodec,
+        persistenceCodec: FunctionalPersistenceCodec,
         logger: ILogger,
         key: obj
     ) =
@@ -88,6 +89,34 @@ type internal FunctionalJournalHost
     /// <summary>The declared initial state of this grain, boxed. Re-derived, never stored.</summary>
     member private _.InitialState = blueprint.Initial key
 
+    /// <summary>Encode one state value with this activation's selected write codec.</summary>
+    member private _.EncodeState(value: obj) =
+        blueprint.EncodeState persistenceCodec codec value
+
+    /// <summary>Decode one state value using the codec identifier stored beside it.</summary>
+    member private _.DecodeState(codecId: string, payload: byte[]) =
+        blueprint.DecodeState persistenceCodec codec codecId payload
+
+    /// <summary>Decode one event using the codec identifier stored beside it.</summary>
+    member private _.DecodeEvent(codecId: string, payload: byte[]) =
+        blueprint.DecodeEvent persistenceCodec codec codecId payload
+
+    /// <summary>Create a codec-tagged mutable view cell.</summary>
+    member private this.View(value: obj) =
+        FunctionalJournalView(
+            Payload = this.EncodeState value,
+            HasValue = true,
+            CodecId = persistenceCodec.Id
+        )
+
+    /// <summary>Create one codec-tagged journal entry.</summary>
+    member private _.Entry(event: obj, snapshotRequested: bool) =
+        FunctionalJournalEntry(
+            Payload = blueprint.EncodeEvent persistenceCodec codec event,
+            SnapshotRequested = snapshotRequested,
+            CodecId = persistenceCodec.Id
+        )
+
     /// <summary>
     /// The state a view cell holds. A cell that was never written — a fresh <c>new()</c> instance
     /// Orleans materialized on a read that found no record — reports the declared initial state
@@ -97,8 +126,13 @@ type internal FunctionalJournalHost
     member private this.ValueOf(view: FunctionalJournalView) : obj =
         if isNull (box view) then
             this.InitialState
-        elif view.HasValue && not (isNull view.Payload) then
-            blueprint.DecodeState codec view.Payload
+        elif view.HasValue then
+            if isNull view.Payload then
+                fail
+                    JournalStage
+                    $"The functional journal view of grain type '{grainTypeName}' for grain '{grainContext.GrainId}' is marked as containing a value but has a null payload. The durable record is corrupt."
+
+            this.DecodeState(view.CodecId, view.Payload)
         else
             this.InitialState
 
@@ -189,8 +223,7 @@ type internal FunctionalJournalHost
 
     /// <summary>A harmless read result used only to make Orleans leave its permanent retry loop.</summary>
     member private this.TerminalReadFallback() =
-        let view =
-            FunctionalJournalView(Payload = blueprint.EncodeState codec this.InitialState, HasValue = true)
+        let view = this.View this.InitialState
 
         KeyValuePair<int, FunctionalJournalView>(0, view)
 
@@ -438,8 +471,7 @@ type internal FunctionalJournalHost
         // new(). ValueOf makes the two agree, so the seed here is a courtesy rather than the
         // mechanism -- but it is also what a ClearLogAsync restores on both providers, so it
         // carries the real initial state rather than an empty cell.
-        let seed =
-            FunctionalJournalView(Payload = blueprint.EncodeState codec this.InitialState, HasValue = true)
+        let seed = this.View this.InitialState
 
         adaptor <-
             factory.MakeLogViewAdaptor<FunctionalJournalView, FunctionalJournalEntry>(
@@ -509,10 +541,11 @@ type internal FunctionalJournalHost
         member this.UpdateView(view: FunctionalJournalView, entry: FunctionalJournalEntry) =
             try
                 let current = this.ValueOf view
-                let event = blueprint.DecodeEvent codec entry.Payload
+                let event = this.DecodeEvent(entry.CodecId, entry.Payload)
                 let next = blueprint.Apply current event
-                view.Payload <- blueprint.EncodeState codec next
+                view.Payload <- this.EncodeState next
                 view.HasValue <- true
+                view.CodecId <- persistenceCodec.Id
             with cause ->
                 // Orleans swallows this; remember it so the runtime can fail the turn.
                 if isNull foldFailure then
@@ -593,8 +626,7 @@ type internal FunctionalJournalHost
                                             $"the 'apply' fold of grain type '{grainTypeName}' failed while replaying an event tail returned by custom storage for grain '{grainContext.GrainId}'."
                                             cause
 
-                                let view =
-                                    FunctionalJournalView(Payload = blueprint.EncodeState codec state, HasValue = true)
+                                let view = this.View state
 
                                 Ok(KeyValuePair<int, FunctionalJournalView>(int resultingVersion64, view))
                             with cause ->
@@ -652,7 +684,7 @@ type internal FunctionalJournalHost
                                         JournalStage
                                         $"Orleans CustomStorage supplied an empty functional journal entry to grain type '{grainTypeName}'."
 
-                                let event = blueprint.DecodeEvent codec update.Payload
+                                let event = this.DecodeEvent(update.CodecId, update.Payload)
                                 events.Add event
                                 forced <- forced || update.SnapshotRequested
 
@@ -732,7 +764,7 @@ type internal FunctionalJournalHost
         /// <inheritdoc/>
         member this.Unconfirmed =
             this.Adaptor.UnconfirmedSuffix
-            |> Seq.map (fun entry -> blueprint.DecodeEvent codec entry.Payload)
+            |> Seq.map (fun entry -> this.DecodeEvent(entry.CodecId, entry.Payload))
             |> Seq.toList
 
         /// <inheritdoc/>
@@ -750,7 +782,7 @@ type internal FunctionalJournalHost
 
                 let entries =
                     events
-                    |> List.map (fun event -> FunctionalJournalEntry(Payload = blueprint.EncodeEvent codec event))
+                    |> List.map (fun event -> this.Entry(event, false))
 
                 this.Adaptor.SubmitRange entries
                 this.RethrowFoldFailure "submitting events"
@@ -784,10 +816,7 @@ type internal FunctionalJournalHost
                     let entries =
                         events
                         |> List.mapi (fun index event ->
-                            FunctionalJournalEntry(
-                                Payload = blueprint.EncodeEvent codec event,
-                                SnapshotRequested = (forceSnapshot && index = events.Length - 1)
-                            ))
+                            this.Entry(event, forceSnapshot && index = events.Length - 1))
 
                     // SubmitRange appends the whole batch atomically: one storage write, and a
                     // later replay can never observe half of a handler's events.
@@ -813,7 +842,7 @@ type internal FunctionalJournalHost
                 task {
                     let entries =
                         events
-                        |> List.map (fun event -> FunctionalJournalEntry(Payload = blueprint.EncodeEvent codec event))
+                        |> List.map (fun event -> this.Entry(event, false))
 
                     let! accepted = this.Adaptor.TryAppendRange entries
                     this.RethrowJournalFailure "appending events conditionally"
@@ -852,7 +881,7 @@ type internal FunctionalJournalHost
 
                 return
                     entries
-                    |> Seq.map (fun entry -> blueprint.DecodeEvent codec entry.Payload)
+                    |> Seq.map (fun entry -> this.DecodeEvent(entry.CodecId, entry.Payload))
                     |> Seq.toList
             }
 

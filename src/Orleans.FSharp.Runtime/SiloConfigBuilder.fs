@@ -110,6 +110,152 @@ type ReminderProvider =
     | CustomReminder of (ISiloBuilder -> ISiloBuilder)
 
 /// <summary>
+/// Selects the generalized serializer used for CLR types which do not have an Orleans
+/// generated or built-in serializer.
+/// </summary>
+[<RequireQualifiedAccess>]
+type FSharpSerialization =
+    /// <summary>Use the compact F# binary codec for every type it supports.</summary>
+    | Binary
+    /// <summary>
+    /// Use F#-aware System.Text.Json as the generalized codec.
+    /// </summary>
+    | Json
+    /// <summary>Use the binary codec for supported types and JSON only for unsupported types.</summary>
+    | BinaryWithJsonForUnsupportedTypes
+
+/// <summary>Functions for composing an F# generalized-serialization policy.</summary>
+[<RequireQualifiedAccess>]
+module FSharpSerialization =
+
+    /// <summary>
+    /// Uses <paramref name="fallback"/> only when <paramref name="primary"/> does not support a
+    /// CLR type. This is type-based selection, not a retry after serialization has failed.
+    /// </summary>
+    /// <param name="fallback">The serializer used for types unsupported by the primary.</param>
+    /// <param name="primary">The primary generalized serializer.</param>
+    let forUnsupportedTypes
+        (fallback: FSharpSerialization)
+        (primary: FSharpSerialization)
+        : FSharpSerialization =
+        match primary, fallback with
+        | FSharpSerialization.Binary, FSharpSerialization.Json ->
+            FSharpSerialization.BinaryWithJsonForUnsupportedTypes
+        | FSharpSerialization.Binary, FSharpSerialization.Binary ->
+            invalidArg (nameof fallback) "The unsupported-type serializer must differ from the primary serializer."
+        | FSharpSerialization.Json, _ ->
+            invalidArg
+                (nameof primary)
+                "F# JSON is already the broad generalized serializer, so an unsupported-type fallback is unreachable."
+        | FSharpSerialization.BinaryWithJsonForUnsupportedTypes, _ ->
+            invalidArg (nameof primary) "The primary serializer already has an unsupported-type fallback."
+        | _, FSharpSerialization.BinaryWithJsonForUnsupportedTypes ->
+            invalidArg (nameof fallback) "A composed serialization policy cannot be used as a fallback."
+
+    let internal select
+        (current: FSharpSerialization option)
+        (requested: FSharpSerialization)
+        : FSharpSerialization option =
+        match current with
+        | None -> Some requested
+        | Some existing when existing = requested -> current
+        | Some existing ->
+            invalidOp
+                $"F# serialization is already configured as '{existing}' and cannot also be configured as '{requested}'. Use one explicit policy."
+
+/// <summary>Shared silo/client registration for one explicit F# serialization policy.</summary>
+[<RequireQualifiedAccess>]
+module internal FSharpSerializationRegistration =
+
+    let private addBinary (services: IServiceCollection) =
+        Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+            services,
+            Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
+                Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder
+                |> ignore)
+        )
+        |> ignore
+
+    let private moveAddedRegistrationsBeforeMarker
+        (markerType: Type)
+        (serviceType: Type)
+        (added: Microsoft.Extensions.DependencyInjection.ServiceDescriptor list)
+        (services: IServiceCollection)
+        =
+        let selected = added |> List.filter (fun descriptor -> descriptor.ServiceType = serviceType)
+
+        if not selected.IsEmpty then
+            let markerExists =
+                services
+                |> Seq.exists (fun descriptor -> descriptor.ServiceType = markerType)
+
+            if markerExists then
+                selected
+                |> List.iter (fun descriptor -> services.Remove(descriptor) |> ignore)
+
+                let insertionIndex =
+                    services
+                    |> Seq.findIndex (fun descriptor -> descriptor.ServiceType = markerType)
+
+                selected
+                |> List.iteri (fun offset descriptor -> services.Insert(insertionIndex + offset, descriptor))
+
+    let private addJson
+        (isSupported: Type -> bool)
+        (isPrimary: bool)
+        (services: IServiceCollection)
+        =
+        let previousCount = services.Count
+
+        Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
+            services,
+            Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
+                Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
+                    serializerBuilder,
+                    isSupported = Func<Type, bool>(isSupported),
+                    jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions
+                )
+                |> ignore)
+        )
+        |> ignore
+
+        if isPrimary then
+            let added =
+                [
+                    for index in previousCount .. services.Count - 1 do
+                        services[index]
+                ]
+
+            // Orleans selects the first matching generalized codec/copier. Put JSON ahead of our
+            // binary codec only; Orleans' specialized generalized codecs keep their priority.
+            moveAddedRegistrationsBeforeMarker
+                typeof<Orleans.FSharp.FSharpBinaryCodecMarker>
+                typeof<Orleans.Serialization.Serializers.IGeneralizedCodec>
+                added
+                services
+
+            moveAddedRegistrationsBeforeMarker
+                typeof<Orleans.FSharp.FSharpBinaryCopierMarker>
+                typeof<Orleans.Serialization.Cloning.IGeneralizedCopier>
+                added
+                services
+
+    let addToServices (policy: FSharpSerialization) (services: IServiceCollection) : IServiceCollection =
+        match policy with
+        | FSharpSerialization.Binary -> addBinary services
+        | FSharpSerialization.Json -> addJson (fun _ -> true) true services
+        | FSharpSerialization.BinaryWithJsonForUnsupportedTypes ->
+            addBinary services
+
+            addJson
+                (fun payloadType ->
+                    not (Orleans.FSharp.FSharpBinaryFormat.isSupportedType payloadType))
+                false
+                services
+
+        services
+
+/// <summary>
 /// Immutable record describing a complete silo configuration.
 /// Built using the <c>siloConfig { }</c> computation expression.
 /// </summary>
@@ -159,10 +305,8 @@ type SiloConfig =
         AdvertisedIpAddress: string option
         /// <summary>The global default grain collection age (idle timeout before deactivation), or None if not set.</summary>
         GrainCollectionAge: TimeSpan option
-        /// <summary>Whether to register FSharp.SystemTextJson as a fallback serializer for types without [GenerateSerializer].</summary>
-        UseJsonFallbackSerialization: bool
-        /// <summary>Whether to register FSharpBinaryCodec as a binary serializer for F# types without [GenerateSerializer] or [Id] attributes.</summary>
-        UseFSharpBinarySerialization: bool
+        /// <summary>The generalized serializer policy for types without an Orleans generated or built-in serializer.</summary>
+        FSharpSerialization: FSharpSerialization option
     }
 
 /// <summary>
@@ -198,8 +342,7 @@ module SiloConfig =
             GatewayPort = None
             AdvertisedIpAddress = None
             GrainCollectionAge = None
-            UseJsonFallbackSerialization = false
-            UseFSharpBinarySerialization = false
+            FSharpSerialization = None
         }
 
     /// <summary>
@@ -467,25 +610,11 @@ module SiloConfig =
             invokeExtensionMethod "AddDashboard" [| box configure |] "Microsoft.Orleans.Dashboard" siloBuilder
         | None -> ()
 
-        // Apply JSON fallback serialization (FSharp.SystemTextJson as fallback for unattributed types)
-        if config.UseJsonFallbackSerialization then
-            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
-                siloBuilder.Services,
-                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
-                    Orleans.Serialization.SerializationHostingExtensions.AddJsonSerializer(
-                        serializerBuilder,
-                        isSupported = System.Func<System.Type, bool>(fun _ -> true),
-                        jsonSerializerOptions = Orleans.FSharp.FSharpJson.serializerOptions)
-                    |> ignore))
+        match config.FSharpSerialization with
+        | Some policy ->
+            FSharpSerializationRegistration.addToServices policy siloBuilder.Services
             |> ignore
-
-        // Apply F# binary serialization (FSharpBinaryCodec for DU/record/option/list/map without attributes)
-        if config.UseFSharpBinarySerialization then
-            Orleans.Serialization.ServiceCollectionExtensions.AddSerializer(
-                siloBuilder.Services,
-                System.Action<Orleans.Serialization.ISerializerBuilder>(fun serializerBuilder ->
-                    Orleans.FSharp.FSharpBinaryCodecRegistration.addToSerializerBuilder serializerBuilder |> ignore))
-            |> ignore
+        | None -> ()
 
         // Apply startup tasks
         config.StartupTasks
@@ -782,30 +911,39 @@ type SiloConfigBuilder() =
     member _.UseSerilog(config: SiloConfig) = { config with UseSerilog = true }
 
     /// <summary>
-    /// Registers FSharp.SystemTextJson as a fallback JSON serializer for Orleans.
-    /// Types without [GenerateSerializer] will be serialized using System.Text.Json
-    /// with FSharp.SystemTextJson converters (DU, Record, Option, etc.).
-    /// This enables "clean" F# types (no Orleans attributes) to pass through grain boundaries.
-    /// Requires the Microsoft.Orleans.Serialization.SystemTextJson NuGet package (included in Orleans.FSharp.Runtime).
-    /// </summary>
-    /// <param name="config">The current silo configuration being built.</param>
-    /// <returns>The updated silo configuration with JSON fallback serialization enabled.</returns>
-    [<CustomOperation("useJsonFallbackSerialization")>]
-    member _.UseJsonFallbackSerialization(config: SiloConfig) =
-        { config with UseJsonFallbackSerialization = true }
-
-    /// <summary>
-    /// Registers FSharpBinaryCodec as a binary serializer for F# types.
+    /// Selects FSharpBinaryCodec as the generalized serializer for F# types.
     /// Types without [GenerateSerializer] or [Id] attributes will be serialized using
     /// a compact binary format via FSharp.Reflection. Supports DUs, records, options,
     /// lists, maps, sets, arrays, and tuples.
-    /// This eliminates the need for the C# CodeGen project entirely.
     /// </summary>
     /// <param name="config">The current silo configuration being built.</param>
     /// <returns>The updated silo configuration with F# binary serialization enabled.</returns>
     [<CustomOperation("useFSharpBinarySerialization")>]
     member _.UseFSharpBinarySerialization(config: SiloConfig) =
-        { config with UseFSharpBinarySerialization = true }
+        { config with
+            FSharpSerialization =
+                FSharpSerialization.select config.FSharpSerialization FSharpSerialization.Binary }
+
+    /// <summary>
+    /// Selects F#-aware System.Text.Json as the primary generalized serializer. Orleans generated
+    /// and built-in serializers retain their normal higher priority.
+    /// </summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <returns>The updated silo configuration with F# JSON serialization selected.</returns>
+    [<CustomOperation("useFSharpJsonSerialization")>]
+    member _.UseFSharpJsonSerialization(config: SiloConfig) =
+        { config with
+            FSharpSerialization =
+                FSharpSerialization.select config.FSharpSerialization FSharpSerialization.Json }
+
+    /// <summary>Selects an explicit generalized-serialization policy.</summary>
+    /// <param name="config">The current silo configuration being built.</param>
+    /// <param name="policy">The serializer and optional unsupported-type fallback.</param>
+    /// <returns>The updated silo configuration.</returns>
+    [<CustomOperation("useFSharpSerialization")>]
+    member _.UseFSharpSerialization(config: SiloConfig, policy: FSharpSerialization) =
+        { config with
+            FSharpSerialization = FSharpSerialization.select config.FSharpSerialization policy }
 
     /// <summary>
     /// Registers a custom service configuration function.

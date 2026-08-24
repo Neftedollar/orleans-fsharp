@@ -8,7 +8,7 @@ open FsCheck.Xunit
 open Orleans.FSharp
 
 // ===========================================================================
-// Mode 1: Clean (no attributes) — relies on JSON fallback serialization
+// Mode 1: Clean (no attributes) — compatible with the F# JSON generalized policy
 // ===========================================================================
 
 /// <summary>Simple fieldless DU for Mode 1 (Clean).</summary>

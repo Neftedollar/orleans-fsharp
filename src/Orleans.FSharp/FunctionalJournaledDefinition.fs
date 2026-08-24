@@ -57,6 +57,8 @@ type internal JournaledDraftState<'Actor, 'Key, 'Api, 'State, 'Event> =
         Apply: 'State -> 'Event -> 'State
         /// The named log-consistency provider and its storage, when 'logProvider' has been declared.
         Journal: JournalConfiguration option
+        /// The definition-level durable payload codec override for journal views and entries.
+        JournalCodec: FunctionalPersistenceCodec option
         /// Resolves the typed storage used by Orleans' CustomStorage provider.
         CustomStorage: (IServiceProvider -> IFunctionalJournalStorage<'Key, 'State, 'Event>) option
         /// The per-definition snapshot override; absence inherits the silo default.
@@ -109,6 +111,9 @@ type FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>
 
     /// <summary>The named log-consistency provider and its storage.</summary>
     member internal _.Journal = state.Journal
+
+    /// <summary>The definition-level journal payload codec override, when configured.</summary>
+    member internal _.JournalCodec = state.JournalCodec
 
     /// <summary>The typed custom-storage resolver, when declared.</summary>
     member internal _.CustomStorage = state.CustomStorage
@@ -473,6 +478,7 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api>
               Initial = draft.Initial
               Apply = fold
               Journal = None
+              JournalCodec = None
               CustomStorage = None
               SnapshotPolicy = None
               CollectionAge = None
@@ -660,6 +666,32 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api>
                   StorageName = None }
 
         JournaledDefinitionDraft.withState { draft with Journal = Some journal }
+
+    /// <summary>
+    /// Override the silo-wide payload codec for this journal's encoded state and event cells.
+    /// Existing entries retain their stored codec identifier and remain readable.
+    /// </summary>
+    [<CustomOperation("journalCodec")>]
+    member _.JournalCodec<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            codec: FunctionalPersistenceCodec
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(codec, null) then
+            fail
+                DefinitionStage
+                $"'journalCodec' of grain type '{draft.Contract.GrainTypeName}' cannot be null."
+
+        if draft.JournalCodec.IsSome then
+            fail
+                DefinitionStage
+                $"'journalCodec' is declared more than once for grain type '{draft.Contract.GrainTypeName}'. A repeated singleton operation is a definition error."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                JournalCodec = Some codec }
 
     /// <summary>
     /// Name the storage provider the log-consistency provider writes through. Optional: without

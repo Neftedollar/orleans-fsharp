@@ -1,70 +1,117 @@
 module Orleans.FSharp.Tests.SerializationModeTests
 
+open System
+open System.Text.Json
+open Microsoft.Extensions.DependencyInjection
 open Xunit
 open Swensen.Unquote
 open FsCheck
 open FsCheck.Xunit
+open Orleans.FSharp
 open Orleans.FSharp.Runtime
+open Orleans.Serialization
+open Orleans.Serialization.Cloning
+open Orleans.Serialization.Serializers
 
 // ---------------------------------------------------------------------------
-// Mode 1: Clean (JSON fallback) — CE keyword tests
+// Explicit generalized-serialization policy — CE keyword tests
 // ---------------------------------------------------------------------------
 
 [<Fact>]
-let ``siloConfig CE default has UseJsonFallbackSerialization false`` () =
+let ``siloConfig CE has no explicit FSharp serialization by default`` () =
     let config = siloConfig { () }
-    test <@ config.UseJsonFallbackSerialization = false @>
+    test <@ config.FSharpSerialization = None @>
 
 [<Fact>]
-let ``siloConfig CE sets useJsonFallbackSerialization`` () =
-    let config = siloConfig { useJsonFallbackSerialization }
-    test <@ config.UseJsonFallbackSerialization = true @>
+let ``clientConfig CE has no explicit FSharp serialization by default`` () =
+    let config = clientConfig { () }
+    test <@ config.FSharpSerialization = None @>
 
 [<Fact>]
-let ``siloConfig CE combines useJsonFallbackSerialization with other settings`` () =
+let ``siloConfig CE selects FSharp JSON as the primary generalized serializer`` () =
     let config =
         siloConfig {
             useLocalhostClustering
-            useJsonFallbackSerialization
+            useFSharpJsonSerialization
             addMemoryStorage "Default"
         }
 
-    test <@ config.UseJsonFallbackSerialization = true @>
+    test <@ config.FSharpSerialization = Some FSharpSerialization.Json @>
     test <@ config.ClusteringMode.IsSome @>
     test <@ config.StorageProviders |> Map.containsKey "Default" @>
 
 [<Fact>]
-let ``clientConfig CE default has UseJsonFallbackSerialization false`` () =
-    let config = clientConfig { () }
-    test <@ config.UseJsonFallbackSerialization = false @>
-
-[<Fact>]
-let ``clientConfig CE sets useJsonFallbackSerialization`` () =
-    let config = clientConfig { useJsonFallbackSerialization }
-    test <@ config.UseJsonFallbackSerialization = true @>
-
-[<Fact>]
-let ``clientConfig CE combines useJsonFallbackSerialization with other settings`` () =
+let ``clientConfig CE selects FSharp JSON as the primary generalized serializer`` () =
     let config =
         clientConfig {
             useLocalhostClustering
-            useJsonFallbackSerialization
+            useFSharpJsonSerialization
         }
 
-    test <@ config.UseJsonFallbackSerialization = true @>
+    test <@ config.FSharpSerialization = Some FSharpSerialization.Json @>
     test <@ config.ClusteringMode.IsSome @>
 
-// ---------------------------------------------------------------------------
-// Mode 1: SiloConfig.Default has correct default
-// ---------------------------------------------------------------------------
+[<Fact>]
+let ``binary and JSON compose only as an explicit unsupported type policy`` () =
+    let policy =
+        FSharpSerialization.Binary
+        |> FSharpSerialization.forUnsupportedTypes FSharpSerialization.Json
+
+    let silo = siloConfig { useFSharpSerialization policy }
+    let client = clientConfig { useFSharpSerialization policy }
+
+    test <@ policy = FSharpSerialization.BinaryWithJsonForUnsupportedTypes @>
+    test <@ silo.FSharpSerialization = Some policy @>
+    test <@ client.FSharpSerialization = Some policy @>
 
 [<Fact>]
-let ``SiloConfig Default has UseJsonFallbackSerialization false`` () =
-    test <@ SiloConfig.Default.UseJsonFallbackSerialization = false @>
+let ``repeating the same serialization policy is idempotent`` () =
+    let silo =
+        siloConfig {
+            useFSharpJsonSerialization
+            useFSharpJsonSerialization
+        }
+
+    let client =
+        clientConfig {
+            useFSharpBinarySerialization
+            useFSharpBinarySerialization
+        }
+
+    test <@ silo.FSharpSerialization = Some FSharpSerialization.Json @>
+    test <@ client.FSharpSerialization = Some FSharpSerialization.Binary @>
 
 [<Fact>]
-let ``ClientConfig Default has UseJsonFallbackSerialization false`` () =
-    test <@ ClientConfig.Default.UseJsonFallbackSerialization = false @>
+let ``conflicting serialization policies fail instead of depending on registration order`` () =
+    Assert.Throws<InvalidOperationException>(fun () ->
+        siloConfig {
+            useFSharpBinarySerialization
+            useFSharpJsonSerialization
+        }
+        |> ignore)
+    |> ignore
+
+    Assert.Throws<InvalidOperationException>(fun () ->
+        clientConfig {
+            useFSharpJsonSerialization
+            useFSharpBinarySerialization
+        }
+        |> ignore)
+    |> ignore
+
+[<Fact>]
+let ``unsupported type composition rejects unreachable policies`` () =
+    Assert.Throws<ArgumentException>(fun () ->
+        FSharpSerialization.Json
+        |> FSharpSerialization.forUnsupportedTypes FSharpSerialization.Binary
+        |> ignore)
+    |> ignore
+
+    Assert.Throws<ArgumentException>(fun () ->
+        FSharpSerialization.Binary
+        |> FSharpSerialization.forUnsupportedTypes FSharpSerialization.Binary
+        |> ignore)
+    |> ignore
 
 // ---------------------------------------------------------------------------
 // Mode 2: Auto ([GenerateSerializer] only) — verify attribute presence
@@ -151,7 +198,7 @@ let ``Auto mode DU cases construct without Id attributes`` () =
 
 /// <summary>
 /// Sample DU using Mode 1 (Clean): no Orleans attributes at all.
-/// Relies on JSON fallback serialization for grain boundary crossing.
+/// Can use the explicit F# JSON generalized policy for grain boundary crossing.
 /// </summary>
 type CleanCommand =
     | Activate
@@ -176,7 +223,7 @@ let ``Clean mode DU cases construct without any attributes`` () =
     test <@ cmd3 = SetLevel 5 @>
 
 // ---------------------------------------------------------------------------
-// JSON fallback roundtrip (in-process, no Orleans silo)
+// F# JSON roundtrip (in-process, no Orleans silo)
 // ---------------------------------------------------------------------------
 
 [<Fact>]
@@ -202,6 +249,81 @@ type CleanRecord =
     { Name: string
       Value: int option
       Tags: string list }
+
+let private buildSerializationServices policy =
+    let services = ServiceCollection()
+    FSharpSerializationRegistration.addToServices policy services |> ignore
+    services.BuildServiceProvider()
+
+[<Fact>]
+let ``binary policy registers only the binary generalized codec`` () =
+    use services = buildSerializationServices FSharpSerialization.Binary
+
+    let codecs =
+        services.GetServices<IGeneralizedCodec>()
+        |> Seq.map _.GetType()
+        |> Seq.toList
+
+    test <@ codecs |> List.contains typeof<FSharpBinaryCodec> @>
+    test <@ codecs |> List.contains typeof<JsonCodec> |> not @>
+
+[<Fact>]
+let ``JSON policy registers only the JSON generalized codec`` () =
+    use services = buildSerializationServices FSharpSerialization.Json
+
+    let codecs = services.GetServices<IGeneralizedCodec>() |> Seq.toList
+    let provider = services.GetRequiredService<ICodecProvider>()
+
+    test <@ codecs |> List.exists (fun codec -> codec.GetType() = typeof<JsonCodec>) @>
+    test <@ codecs |> List.exists (fun codec -> codec.GetType() = typeof<FSharpBinaryCodec>) |> not @>
+    test <@ provider.GetCodec(typeof<CleanRecord>).GetType() = typeof<JsonCodec> @>
+    test <@ provider.GetCodec(typeof<InvalidOperationException>).GetType() = typeof<ExceptionCodec> @>
+
+[<Fact>]
+let ``JSON policy wins when a binary codec was registered first`` () =
+    let serviceCollection = ServiceCollection()
+    FSharpSerializationRegistration.addToServices FSharpSerialization.Binary serviceCollection |> ignore
+    FSharpSerializationRegistration.addToServices FSharpSerialization.Json serviceCollection |> ignore
+    use services = serviceCollection.BuildServiceProvider()
+
+    let codecs = services.GetServices<IGeneralizedCodec>() |> Seq.toList
+    let copiers = services.GetServices<IGeneralizedCopier>() |> Seq.toList
+    let provider = services.GetRequiredService<ICodecProvider>()
+
+    let codecTypes = codecs |> List.map _.GetType()
+    let copierTypes = copiers |> List.map _.GetType()
+    let jsonIndex = codecTypes |> List.findIndex ((=) typeof<JsonCodec>)
+    let binaryIndex = codecTypes |> List.findIndex ((=) typeof<FSharpBinaryCodec>)
+    let jsonCopierIndex = copierTypes |> List.findIndex ((=) typeof<JsonCodec>)
+    let binaryCopierIndex = copierTypes |> List.findIndex ((=) typeof<FSharpBinaryCodec>)
+
+    test <@ jsonIndex < binaryIndex @>
+    test <@ jsonCopierIndex < binaryCopierIndex @>
+    test <@ provider.GetCodec(typeof<CleanRecord>).GetType() = typeof<JsonCodec> @>
+    test <@ provider.GetCodec(typeof<InvalidOperationException>).GetType() = typeof<ExceptionCodec> @>
+
+[<Fact>]
+let ``JSON policy keeps priority when a binary codec is registered afterward`` () =
+    let serviceCollection = ServiceCollection()
+    FSharpSerializationRegistration.addToServices FSharpSerialization.Json serviceCollection |> ignore
+    FSharpSerializationRegistration.addToServices FSharpSerialization.Binary serviceCollection |> ignore
+    use services = serviceCollection.BuildServiceProvider()
+
+    let provider = services.GetRequiredService<ICodecProvider>()
+
+    test <@ provider.GetCodec(typeof<CleanRecord>).GetType() = typeof<JsonCodec> @>
+
+[<Fact>]
+let ``binary then JSON policy selects by supported CLR type`` () =
+    use services =
+        buildSerializationServices FSharpSerialization.BinaryWithJsonForUnsupportedTypes
+
+    let provider = services.GetRequiredService<ICodecProvider>()
+
+    test <@ FSharpBinaryFormat.isSupportedType typeof<CleanRecord> @>
+    test <@ not (FSharpBinaryFormat.isSupportedType typeof<JsonElement>) @>
+    test <@ provider.GetCodec(typeof<CleanRecord>).GetType() = typeof<FSharpBinaryCodec> @>
+    test <@ provider.GetCodec(typeof<JsonElement>).GetType() = typeof<JsonCodec> @>
 
 [<Fact>]
 let ``Clean mode record roundtrips through FSharpJson serializer`` () =
@@ -238,13 +360,3 @@ let ``CleanRecord roundtrips for any int value option`` (value: int option) =
     let json = System.Text.Json.JsonSerializer.Serialize(original, options)
     let result = System.Text.Json.JsonSerializer.Deserialize<CleanRecord>(json, options)
     result = original
-
-[<Property>]
-let ``useJsonFallbackSerialization is idempotent in silo config`` () =
-    let config =
-        siloConfig {
-            useJsonFallbackSerialization
-            useJsonFallbackSerialization
-        }
-
-    config.UseJsonFallbackSerialization = true

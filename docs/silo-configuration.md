@@ -557,19 +557,23 @@ siloConfig {
 
 ## Serialization
 
-Opt a silo into the F# codecs. Functional definition registration already installs
-`FSharpBinaryCodec`; declare these explicitly when other host code needs the codec before
-functional registration, or when you want the JSON fallback as well:
+Select one generalized-serialization policy. Functional definition registration installs the
+binary default; configure an explicit policy when this silo should choose JSON or use it only for
+CLR types unsupported by the binary codec:
 
 ```fsharp
+let serialization =
+    FSharpSerialization.Binary
+    |> FSharpSerialization.forUnsupportedTypes FSharpSerialization.Json
+
 siloConfig {
     useLocalhostClustering
-    useFSharpBinarySerialization   // F# records, unions, lists, maps, options
-    useJsonFallbackSerialization   // System.Text.Json for the rest
+    useFSharpSerialization serialization
 }
 ```
 
-See [Serialization](serialization.md) for what each mode covers and how the two compose.
+Use `useFSharpJsonSerialization` when JSON should be the primary generalized codec. See
+[Serialization](serialization.md) for the exact selection order.
 
 ---
 

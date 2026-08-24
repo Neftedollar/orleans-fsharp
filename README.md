@@ -113,7 +113,8 @@ to guarantee.
 
 ### Functional grain runtime — the current authoring model
 
-Everything Orleans offers, as contract or definition operations — no attributes, no codegen:
+The supported functional surface is exposed as contract or definition operations — no attributes,
+no codegen:
 
 | Where | Operations |
 |---|---|
@@ -191,7 +192,8 @@ Everything Orleans offers, as contract or definition operations — no attribute
 | `addCustomReminderService` | Custom reminder service |
 | `useSerilog` | Wire Serilog as logging provider |
 | `useFSharpBinarySerialization` | F# binary codec for F# types |
-| `useJsonFallbackSerialization` | JSON fallback for types the binary codec declines |
+| `useFSharpJsonSerialization` | F# JSON as the primary generalized codec |
+| `useFSharpSerialization` | Explicit codec policy, including binary then JSON for unsupported types |
 | `configureServices` | Register custom DI services |
 | `addIncomingFilter` | Incoming grain call filter |
 | `addOutgoingFilter` | Outgoing grain call filter |
@@ -288,7 +290,7 @@ dotnet new orleans-fsharp -n MyApp
 
 4.0 is the **functional-era major**. The functional grain
 runtime (`grainContract` / `grainFor` / `journaledGrainFor`) is the recommended authoring model,
-with full Orleans parity as first-class operations — transactions, event sourcing over Orleans'
+with first-class operations for its supported Orleans surface — transactions, event sourcing over Orleans'
 log-consistency providers, implicit stream subscriptions, `IAsyncEnumerable` streaming replies,
 reentrancy policies, version-tolerant contracts, placement, lifecycle hooks, and a typed C#
 facade. Everything you had keeps compiling: the old `grain { }` / `FSharpGrain.*` surface is

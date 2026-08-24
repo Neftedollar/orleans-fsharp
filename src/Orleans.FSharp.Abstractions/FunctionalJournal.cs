@@ -58,6 +58,13 @@ public sealed class FunctionalJournalView
     /// </remarks>
     [Id(1)]
     public bool HasValue { get; set; }
+
+    /// <summary>
+    /// Stable payload codec identifier. Empty on records written before codec selection existed;
+    /// those records use the Orleans binary codec.
+    /// </summary>
+    [Id(2)]
+    public string CodecId { get; set; } = "";
 }
 
 /// <summary>
@@ -82,6 +89,33 @@ public sealed class FunctionalJournalEntry
     /// </summary>
     [Id(1)]
     public bool SnapshotRequested { get; set; }
+
+    /// <summary>
+    /// Stable payload codec identifier. Empty on entries written before codec selection existed;
+    /// those entries use the Orleans binary codec.
+    /// </summary>
+    [Id(2)]
+    public string CodecId { get; set; } = "";
+}
+
+/// <summary>
+/// Storage-provider-facing envelope used when one functional persistent-state element selects a
+/// payload codec instead of exposing its application type directly to the provider.
+/// </summary>
+[GenerateSerializer]
+internal sealed class FunctionalPersistenceEnvelope
+{
+    /// <summary>The stable identifier of the codec which wrote <see cref="Payload"/>.</summary>
+    [Id(0)]
+    public string CodecId { get; set; } = "";
+
+    /// <summary>The exact application-state payload.</summary>
+    [Id(1)]
+    public byte[] Payload { get; set; } = [];
+
+    /// <summary>Distinguishes an encoded default/null value from a fresh Orleans-created cell.</summary>
+    [Id(2)]
+    public bool HasValue { get; set; }
 }
 
 /// <summary>

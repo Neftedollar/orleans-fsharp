@@ -346,6 +346,8 @@ type internal FunctionalJournalBlueprint =
         StorageName: string option
         /// The typed storage bridge used by Orleans' CustomStorage provider, when declared.
         CustomStorage: FunctionalJournalStorageBlueprint option
+        /// Definition-level payload codec override. Absence inherits the silo journal default.
+        CodecOverride: FunctionalPersistenceCodec option
         /// The per-definition snapshot rule, already closed over the exact state type.
         SnapshotRule: FunctionalJournalSnapshotRule
         /// The definition's declared state type.
@@ -357,13 +359,13 @@ type internal FunctionalJournalBlueprint =
         /// The replay fold over boxed state and boxed event.
         Apply: obj -> obj -> obj
         /// Serialize the boxed state as its exact declared type.
-        EncodeState: IFunctionalPayloadCodec -> obj -> byte[]
+        EncodeState: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> obj -> byte[]
         /// Deserialize the boxed state as its exact declared type.
-        DecodeState: IFunctionalPayloadCodec -> byte[] -> obj
+        DecodeState: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> string -> byte[] -> obj
         /// Serialize a boxed event as its exact declared type.
-        EncodeEvent: IFunctionalPayloadCodec -> obj -> byte[]
+        EncodeEvent: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> obj -> byte[]
         /// Deserialize a boxed event as its exact declared type.
-        DecodeEvent: IFunctionalPayloadCodec -> byte[] -> obj
+        DecodeEvent: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> string -> byte[] -> obj
         /// The preclosed activation hook, when the definition declares one.
         OnActivate: FunctionalJournaledHookAdapter option
         /// The preclosed deactivation hook, when the definition declares one.
@@ -837,6 +839,12 @@ module internal FunctionalHosted =
             definition.Primary
             |> Option.map (fun reference ->
                 FunctionalFacet.blueprint reference (fun key -> box (definition.Initializer(unbox<'Key> key))))
+            |> Option.map (FunctionalFacet.withDefaultCodec definition.PersistenceCodec)
+
+        let additionalFacets =
+            definition.Additional
+            |> List.map (FunctionalFacet.withDefaultCodec definition.PersistenceCodec)
+            |> List.toArray
 
         let onActivate =
             definition.OnActivate
@@ -919,7 +927,7 @@ module internal FunctionalHosted =
             (fun key -> box (definition.Initializer(unbox<'Key> key))),
             contract.DeclaredTypes,
             primaryFacet,
-            List.toArray definition.Additional,
+            additionalFacets,
             List.toArray definition.TransactionalFacets,
             onActivate,
             onDeactivate,
@@ -1157,15 +1165,24 @@ module internal FunctionalJournaledHosted =
             { ProviderName = configuration.ProviderName
               StorageName = configuration.StorageName
               CustomStorage = customStorage
+              CodecOverride = definition.JournalCodec
               SnapshotRule = snapshotRule
               StateType = typeof<'State>
               EventType = typeof<'Event>
               Initial = fun key -> box (definition.Initial(unbox<'Key> key))
               Apply = fun state event -> box (definition.Apply (unbox<'State> state) (unbox<'Event> event))
-              EncodeState = fun codec value -> codec.Serialize<'State>(unbox<'State> value)
-              DecodeState = fun codec payload -> box (codec.Deserialize<'State> payload)
-              EncodeEvent = fun codec value -> codec.Serialize<'Event>(unbox<'Event> value)
-              DecodeEvent = fun codec payload -> box (codec.Deserialize<'Event> payload)
+              EncodeState =
+                fun selected codec value ->
+                    FunctionalPersistenceEncoding.encode<'State> selected codec (unbox<'State> value)
+              DecodeState =
+                fun selected codec storedCodecId payload ->
+                    box (FunctionalPersistenceEncoding.decode<'State> selected codec storedCodecId payload)
+              EncodeEvent =
+                fun selected codec value ->
+                    FunctionalPersistenceEncoding.encode<'Event> selected codec (unbox<'Event> value)
+              DecodeEvent =
+                fun selected codec storedCodecId payload ->
+                    box (FunctionalPersistenceEncoding.decode<'Event> selected codec storedCodecId payload)
               OnActivate = onActivate
               OnDeactivate = onDeactivate
               OnTentativeStateChanged = stateChanged definition.OnTentativeStateChanged

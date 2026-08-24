@@ -41,6 +41,7 @@
     <Compile Include="FSharpGrainRef.fs" />
     <Compile Include="FunctionalApiShape.fs" />
     <Compile Include="FunctionalProtocol.fs" />
+    <Compile Include="FunctionalPersistenceSerialization.fs" />
     <Compile Include="FunctionalPersistentState.fs" />
     <Compile Include="FunctionalTransactionalState.fs" />
     <Compile Include="FunctionalKeyCodec.fs" />

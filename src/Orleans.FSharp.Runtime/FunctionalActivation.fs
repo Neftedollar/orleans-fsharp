@@ -6,6 +6,7 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
+open Microsoft.Extensions.Options
 open Orleans
 open Orleans.BroadcastChannel
 open Orleans.Metadata
@@ -152,6 +153,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
             let grainRuntime = services.GetRequiredService<IGrainRuntime>()
             let grainFactory = services.GetRequiredService<IGrainFactory>()
             let codec = services.GetRequiredService<FunctionalPayloadCodec>()
+            let persistenceOptions = services.GetRequiredService<IOptions<FunctionalPersistenceOptions>>().Value
 
             let timeProvider =
                 match services.GetService typeof<TimeProvider> with
@@ -180,8 +182,25 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
 
                     definition.Facets
                     |> Array.map (fun blueprint ->
+                        let selectedCodec =
+                            defaultArg blueprint.CodecOverride persistenceOptions.DefaultStateCodec
+                            |> FunctionalPersistenceEncoding.ensure "DefaultStateCodec"
+
+                        if selectedCodec.Kind = FunctionalPersistenceCodecKind.OrleansBinary then
+                            match StoredStateType.unsupportedReason blueprint.Descriptor.StoredType with
+                            | Some reason ->
+                                fail
+                                    StartupStage
+                                    $"the stored type '{blueprint.Descriptor.StoredType.FullName}' of persistent state '{blueprint.Descriptor.StateName}' (provider '{blueprint.Descriptor.ProviderName}') attached to grain type '{definition.GrainTypeName}' cannot be held in a direct Orleans IPersistentState with codec '{selectedCodec.Id}': {reason}. Select FunctionalPersistenceCodec.FSharpJson for this state or grain, or configure it as the silo default."
+                            | None -> ()
+
                         { Blueprint = blueprint
-                          Instance = blueprint.Create stateFactory grainContext })
+                          Instance =
+                            blueprint.Create
+                                selectedCodec
+                                (codec :> IFunctionalPayloadCodec)
+                                stateFactory
+                                grainContext })
 
             // Step 1b, same reasoning and the same moment: Orleans' transactional states subscribe
             // to GrainLifecycleStage.SetupState from inside ITransactionalStateFactory.Create
@@ -238,12 +257,17 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                 match definition.Journal with
                 | None -> None
                 | Some blueprint ->
+                    let selectedCodec =
+                        defaultArg blueprint.CodecOverride persistenceOptions.DefaultJournalCodec
+                        |> FunctionalPersistenceEncoding.ensure "DefaultJournalCodec"
+
                     let host =
                         FunctionalJournalHost(
                             blueprint,
                             definition.GrainTypeName,
                             grainContext,
                             codec :> IFunctionalPayloadCodec,
+                            selectedCodec,
                             logger,
                             key
                         )

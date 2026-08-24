@@ -260,37 +260,39 @@ let ``two additional states with one name and one provider but different stored 
     test <@ error.Message.Contains typeof<AuditState>.FullName @>
 
 [<Fact>]
-let ``a stored type stock Orleans cannot construct fails sealing with the Orleans reason`` () =
+let ``an explicit direct Orleans binary state fails sealing with the Orleans reason`` () =
     let text = PersistentState.create<string> "text" "Default"
 
     let error =
         throws (fun () ->
             grainFor stateContract {
                 defaultState (fun () -> { count = 0 })
+                persistenceCodec FunctionalPersistenceCodec.OrleansBinary
                 usePersistentState text (fun _ -> "")
                 handle (_.touch) touchHandler
             }
             |> ignore)
 
-    test <@ error.Message.Contains "cannot be held in an Orleans IPersistentState" @>
+    test <@ error.Message.Contains "cannot be held in a direct Orleans IPersistentState" @>
     test <@ error.Message.Contains "GetUninitializedObject" @>
     test <@ error.Message.Contains "Uninitialized Strings cannot be created" @>
     test <@ error.Message.Contains "text" @>
 
 [<Fact>]
-let ``an unconstructable primary stored type fails sealing too`` () =
+let ``an explicit direct Orleans binary primary stored type fails sealing too`` () =
     let bytes = PersistentState.create<byte[]> "blob" "Default"
 
     let error =
         throws (fun () ->
             grainFor stateContract {
                 defaultState (fun () -> Array.empty<byte>)
+                persistenceCodec FunctionalPersistenceCodec.OrleansBinary
                 stateFrom bytes
                 handle (_.touch) (fun _ state (_: string) -> task { return state, 1 })
             }
             |> ignore)
 
-    test <@ error.Message.Contains "cannot be held in an Orleans IPersistentState" @>
+    test <@ error.Message.Contains "cannot be held in a direct Orleans IPersistentState" @>
     test <@ error.Message.Contains "array" @>
 
 [<Fact>]

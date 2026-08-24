@@ -37,7 +37,6 @@ Done. Shutting down...
   grain references, preserving input order before aggregation
 - **`StateMigration.tryApplyMigrations`** validation plus a typed, pure state-schema upgrade chain
 - **`siloConfig {}`** computation expression for silo configuration
-- **`useJsonFallbackSerialization`** enables clean F# types without `[GenerateSerializer]` attributes
 - **`grain {}`** (deprecated) the original computation expression, kept in `CounterGrain.fs` as
   reference -- it needs a C#-generated proxy per grain interface and cannot resolve standalone in
   an F#-only project; the functional runtime's proxies are pre-generated, so it needs no such bridge

@@ -11,6 +11,7 @@ description: "journaledGrainFor: a functional grain whose state is the fold of a
 
 - How to define a journaled grain: `initialEventState`, `apply`, and handlers that raise events
 - Which Orleans log-consistency provider to name, and what each one actually stores
+- How binary or F# JSON journal payloads are selected and identified durably
 - How typed CustomStorage snapshots are configured globally or per definition
 - Exactly when events become durable, and what a caller can conclude from a reply
 - Which `grainFor` operations carry over to a journaled definition, and why the rest do not
@@ -73,6 +74,7 @@ let accountDefinition =
 
         logProvider "LogStorage"
         journalStorage "Journals"
+        journalCodec FunctionalPersistenceCodec.FSharpJson
 
         handle (_.deposit) (fun _ state amount ->
             task { return [ Deposited amount ], state.balance + amount })
@@ -123,8 +125,10 @@ Silo startup validates, before the silo admits any traffic, that:
   need (every stock `Add*BasedLogConsistencyProvider` call registers it);
 - the name given to `journalStorage` — or the silo's default `IGrainStorage`, when the
   operation is omitted — resolves, whenever the provider writes through storage;
-- the state type and the event type both have an Orleans serializer, and both are declared as
-  top-level payload types.
+- with `OrleansBinary`, the state and event types are supported by the functional exact-type
+  payload codec and are declared as top-level payload types. F# JSON does not require Orleans
+  serializers for those application types; the selected `JsonSerializerOptions` must support
+  them, and an incompatible converter/schema fails when a payload is encoded or decoded.
 
 `logProvider` is **required**. The two built-in providers store completely different things
 under the same key and cannot read each other's records, so defaulting one silently would make
@@ -155,6 +159,35 @@ The adaptors also expose a **complete** clear (`ClearLogAsync`). The functional 
 `initialEventState` seed. It is a destructive reset, not truncation up to a selected version and
 not snapshotting.
 
+### Journal payload codec
+
+`journalCodec` selects how the functional runtime encodes state and event payloads inside its
+Orleans adaptor view and entries. A definition-level choice wins over
+`FunctionalPersistenceOptions.DefaultJournalCodec`; the silo default is
+`FunctionalPersistenceCodec.OrleansBinary`.
+
+```fsharp
+let accountDefinition =
+    journaledGrainFor accountContract {
+        initialEventState initialAccount
+        apply applyAccount
+        logProvider "LogStorage"
+        journalCodec FunctionalPersistenceCodec.FSharpJson
+        // handlers...
+    }
+```
+
+Both `FunctionalJournalView` and `FunctionalJournalEntry` store the `CodecId` that wrote their
+payload. A missing, empty, or whitespace id identifies a record from before codec selection and is
+read as Orleans binary. New payloads use stable ids, so replay decodes each stored view or entry by
+its own format instead of assuming the definition's current write format.
+
+The one-argument `CreateFSharpJson(options)` compatibility overload uses `fsharp-json-v1`; the
+options themselves are not stored. Prefer `CreateFSharpJson("account-json-v1", options)` for a
+custom durable contract. When the write format changes, register the previous codec with
+`currentCodec.WithReadCodec(previousCodec)` for as long as old payloads can be replayed. See
+[Serialization](/orleans-fsharp/serialization/#custom-json-options-are-a-durable-contract).
+
 ### Custom storage and snapshots
 
 `journaledGrainFor` implements Orleans'
@@ -184,6 +217,13 @@ type AccountJournalStore(backend: AccountJournalBackend) =
         member _.Clear(identity) =
             backend.clear identity
 ```
+
+The `journalCodec` governs the adaptor payloads which cross Orleans' journal boundary. It does
+**not** prescribe the durable representation of `AccountJournalStore`. The runtime decodes adaptor
+payloads before calling `IFunctionalJournalStorage` and gives the store typed states and events;
+that implementation owns its database schema and may use JSON, binary columns, another serializer,
+or no serializer at all. Provider-wide `FSharpJsonGrainStorageSerializer` likewise does not control
+a custom `IFunctionalJournalStorage`, because that path does not write through `IGrainStorage`.
 
 `Read` returns `FunctionalJournalRead<'State,'Event>`: `Snapshot = None` starts at
 `initialEventState`, and `Events` is the ordered tail the runtime folds with the definition's one
@@ -372,11 +412,12 @@ handle (_.deposit) (fun context state amount ->
 
 ---
 
-## Journal API parity with C# `JournaledGrain`
+## Journal API mapping to C# `JournaledGrain`
 
 The functional grain drives the same Orleans `ILogViewAdaptor` directly instead of inheriting
 `JournaledGrain<'State,'Event>`. Its API is therefore idiomatic F#, but the C# journal surface
-has a direct equivalent:
+members below have functional equivalents. This is a mapping of the supported surface, not a
+completeness claim; provider-dependent and unsupported areas are listed later in this guide.
 
 | C# `JournaledGrain` member | Functional F# equivalent |
 |---|---|
@@ -550,11 +591,10 @@ See [calling-from-csharp.md](/orleans-fsharp/calling-from-csharp/).
   `ILogConsistencyProtocolServices` carries no message-sending member at all. A journal is
   single-cluster.
 - **No event upcasting.** An event is serialized with the definition's exact declared event type
-  through the F# binary codec, whose union format is positional. Adding a case at the **end** of
-  a union is safe; reordering cases, or changing the fields of an existing case, is not — old
-  entries decode into the new shape by position. There is no hook that sees an old event and
-  returns a new one. Until there is, evolve an event type by adding cases and keeping the old
-  ones foldable.
+  through the selected journal codec. Binary union data is positional; JSON compatibility depends
+  on the stable `JsonSerializerOptions` contract described above. There is no hook that sees an old
+  event and returns a new one. Keep old event cases foldable and migrate incompatible schema
+  changes explicitly.
 - **No transactions.** See the table above.
 - **Event-history reads are provider-dependent.** `retrieveConfirmedEvents` works with
   `LogStorage`; `StateStorage` has discarded the entries, and Orleans' CustomStorage adaptor does

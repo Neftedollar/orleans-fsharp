@@ -4,6 +4,14 @@
 
 ### Added
 
+- **First-class F# JSON for durable functional state and journals.**
+  `FunctionalPersistenceCodec` now selects the compatibility binary format or F#-aware JSON with
+  independent state and journal silo defaults. Persistent state resolves element
+  (`PersistentState.withCodec`) over grain (`persistenceCodec`) over silo; journals resolve
+  definition (`journalCodec`) over silo. Journal views and entries carry their writer codec id,
+  explicit application-owned JSON ids plus `WithReadCodec` keep historical payloads readable, and
+  pre-feature blank ids remain binary. `FSharpJsonGrainStorageSerializer` also exposes the same F#
+  JSON support at an Orleans storage-provider boundary for ordinary persistence.
 - **Custom journal storage can classify a failure as permanent.**
   `FunctionalJournalPermanentStorageException(message[, innerException])` gives a typed
   `IFunctionalJournalStorage` implementation an explicit exit from Orleans CustomStorage's
@@ -39,6 +47,13 @@
 
 ### Changed
 
+- **BREAKING — generalized F# serializer selection is now one explicit policy.**
+  `useFSharpJsonSerialization` replaces the ambiguous `useJsonFallbackSerialization`, which has
+  been removed. `useFSharpBinarySerialization` and JSON can no longer be enabled as independent
+  booleans. Compose `FSharpSerialization.Binary |> FSharpSerialization.forUnsupportedTypes FSharpSerialization.Json`
+  and pass it to `useFSharpSerialization` when binary should handle supported CLR types and JSON
+  only the unsupported remainder. Selection is type-based and never retries with a second codec
+  after serialization has started.
 - **Runnable examples use domain records and pure decision cores at functional boundaries.**
   Stringly tuples, process-wide actor state, sync-over-async callbacks, and business exceptions
   were removed from the active paths where a typed record, activation state, `task`, or
@@ -170,7 +185,7 @@ operations that can honour a token), and the classic `Stream` module gained a re
 
 The functional-era release: everything specs 003 and 004 delivered, in one version.
 Highlights — the functional grain runtime (`grainContract` / `grainFor` / `journaledGrainFor`,
-API records instead of interfaces, no code generation), full Orleans parity as first-class
+API records instead of interfaces, no code generation), broad Orleans feature coverage as first-class
 operations (transactions, event sourcing, implicit stream subscriptions, `IAsyncEnumerable`
 streaming replies, reentrancy policies, version-tolerant contracts, placement, lifecycle hooks),
 a typed C# facade, and the classic `grain { }` surface deprecated with per-entry-point
@@ -403,7 +418,7 @@ Removed) — most callers only used the universal pattern and are unaffected.
 
 ### Changed
 
-- **Orleans parity raised from 10.0.1 to 10.2.1.**
+- **Orleans compatibility raised from 10.0.1 to 10.2.1.**
 - **Adopted Central Package Management** — all package versions are managed centrally in
   `Directory.Packages.props`.
 
@@ -721,7 +736,7 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 
 ## [1.0.0] - 2026-04-03
 
-### First stable release — full Orleans 10.0.1 parity from F#
+### First stable release — broad Orleans 10.0.1 coverage from F#
 
 804 tests (718 unit + 86 integration), zero warnings, zero `Unchecked.defaultof` in source.
 

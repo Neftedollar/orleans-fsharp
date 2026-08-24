@@ -10,7 +10,7 @@ let config =
         useLocalhostClustering
         addMemoryStorage "Default"
         addMemoryReminderService
-        useJsonFallbackSerialization
+        useFSharpJsonSerialization
     }
 
 let builder = Host.CreateApplicationBuilder()

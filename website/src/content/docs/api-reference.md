@@ -91,6 +91,7 @@ spelled curried fails contract construction. See [Functional grains](/orleans-fs
 | `handleStream` | `streamSelector` + `StreamHandler<'Actor,'Key,'State,'Arg,'Item>` | Attach a handler to one server-streaming operation ([Streaming replies](/orleans-fsharp/streaming-replies/)) |
 | `stateFrom` | `PersistentStateRef<'State>` | Attach the primary persistent-state holder |
 | `usePersistentState` | `PersistentStateRef<'S>` + `('Key -> 'S)` | Attach an additional named persistent-state facet (repeatable) |
+| `persistenceCodec` | `FunctionalPersistenceCodec` | Grain-level durable codec for attached persistent states; an element-level `PersistentState.withCodec` wins |
 | `transactionalStateFrom` | `TransactionalStateRef<'S>` + `('Key -> 'S)` | Attach a transactional facet (repeatable) |
 | `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
 | `placement` | `PlacementStrategy` | `Random` / `PreferLocal` / `ActivationCountBased` / `ResourceOptimized` |
@@ -116,6 +117,7 @@ participant or be shared by the many activations of a stateless worker. See
 | `apply` | `'State -> 'Event -> 'State` | The pure fold. **Required, and second** -- it introduces the event type |
 | `logProvider` | `string` | The registered log-consistency provider. **Required** |
 | `journalStorage` | `string` | The grain storage a built-in provider writes through; defaults to the silo's default `IGrainStorage` and cannot be combined with `customStorage` |
+| `journalCodec` | `FunctionalPersistenceCodec` | Definition-level state/event payload codec; overrides the silo's `DefaultJournalCodec` |
 | `customStorage` | `IServiceProvider -> IFunctionalJournalStorage<'Key,'State,'Event>` | Typed storage bridge for Orleans' `CustomStorage` provider |
 | `snapshotPolicy` | `FunctionalJournalSnapshotPolicy<'State>` | Per-definition `Inherit`, `Disabled`, `Every n`, or `When` override; requires `customStorage` |
 | `handle` | `selector` + `JournaledHandler<'Actor,'Key,'State,'Event,'Arg,'Reply>` | A handler returning `events, reply` |
@@ -214,9 +216,34 @@ all refuse with a definition-stage diagnostic on an ordinary `grainFor` definiti
 | Function | Signature | Description |
 |---|---|---|
 | `PersistentState.create<'State>` | `string -> string -> PersistentStateRef<'State>` | `stateName -> providerName -> descriptor` |
+| `PersistentState.withCodec` | `FunctionalPersistenceCodec -> PersistentStateRef<'State> -> PersistentStateRef<'State>` | Copy a descriptor with an element-level codec override |
 
 The descriptor's `(stateName, providerName, storedType)` triple is its logical identity, and it is
 durable identity -- see [Functional grains](/orleans-fsharp/functional-grains/), "Persistence model".
+
+Codec resolution is `withCodec` > `persistenceCodec` > silo `DefaultStateCodec`. The default
+`OrleansBinary` path preserves the existing direct state schema for supported types; F# JSON uses a
+functional envelope, so changing an existing state name in either direction requires migration.
+See [Serialization](/orleans-fsharp/serialization/#durable-persistence-codecs).
+
+### Functional persistence codecs
+
+| Name | Signature | Description |
+|---|---|---|
+| `FunctionalPersistenceCodec.OrleansBinary` | `FunctionalPersistenceCodec` | Compatibility default; functional exact-type binary payload |
+| `FunctionalPersistenceCodec.FSharpJson` | `FunctionalPersistenceCodec` | F#-aware JSON with the library's standard options |
+| `FunctionalPersistenceCodec.CreateFSharpJson` | `JsonSerializerOptions -> FunctionalPersistenceCodec` | Compatibility overload using `fsharp-json-v1` with copied custom options |
+| `FunctionalPersistenceCodec.CreateFSharpJson` | `string * JsonSerializerOptions -> FunctionalPersistenceCodec` | F# JSON with an application-owned stable codec id; prefer this for custom durable contracts |
+| `codec.WithReadCodec` | `FunctionalPersistenceCodec -> FunctionalPersistenceCodec` | Keep a historical JSON decoder registered while the returned codec remains the current writer; duplicate reader ids are rejected |
+| `FunctionalPersistenceCodec.Id` | `string` | Stable durable id; built-ins use `orleans-binary-v1` / `fsharp-json-v1`, explicit custom codecs use the supplied id |
+| `FunctionalPersistenceOptions.DefaultStateCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional state without grain/element overrides |
+| `FunctionalPersistenceOptions.DefaultJournalCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional journals without `journalCodec` |
+| `FSharpJsonGrainStorageSerializer()` | `FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with standard options |
+| `FSharpJsonGrainStorageSerializer(options)` | `JsonSerializerOptions -> FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with copied custom options |
+
+`FSharpJsonGrainStorageSerializer` belongs to a provider's `GrainStorageSerializer` setting and
+also affects ordinary Orleans grains. It is independent of functional per-element envelopes and
+does not define the durable format of a user implementation of `IFunctionalJournalStorage`.
 
 ### Transactional state
 
@@ -302,6 +329,9 @@ so it must never be part of a persistent state type -- the F# codec refuses one.
 | `FunctionalJournalSnapshotOptions` | Options whose `Policy` is inherited by custom-storage definitions |
 | `FunctionalJournalSnapshotContext` | Boxed identity, version, state type, and state passed to a global `When` rule |
 | `FunctionalJournalPermanentStorageException` | Marks a custom-storage failure as non-retryable; the runtime fails the operation and deactivates the grain |
+| `FunctionalPersistenceCodec` | Durable functional payload descriptor: Orleans binary or F# JSON |
+| `FunctionalPersistenceOptions` | Mutable silo-wide state and journal codec defaults |
+| `FSharpJsonGrainStorageSerializer` | Provider-wide `IGrainStorageSerializer` for F# JSON |
 | `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context (members above) |
 | `FunctionalGrainRef<'Actor, 'Key, 'Api>` | Typed reference wrapper (members above) |
 | `ObserverContract<'Brand, 'Api>` | Sealed result of `observerContract { }`; exposes `ObserverTypeName` and `Version` |
@@ -365,6 +395,8 @@ attempt, and exhausting the limit fails the call without writing the snapshot.
 |---|---|---|
 | `AddFunctionalGrain` | `ISiloBuilder -> FunctionalGrainDefinition<...> -> ISiloBuilder` | Register a hosted definition (`Orleans.FSharp.Runtime`) |
 | `AddFunctionalJournaledGrain` | `ISiloBuilder -> FunctionalJournaledGrainDefinition<...> -> ISiloBuilder` | Register a hosted journaled definition (`Orleans.FSharp.Runtime`) |
+| `ConfigureFunctionalPersistence` | `ISiloBuilder * Action<FunctionalPersistenceOptions> -> ISiloBuilder` | Configure the independent silo-wide state and journal codec defaults |
+| `UseFunctionalFSharpJsonPersistence` | `ISiloBuilder -> ISiloBuilder` | Set both functional persistence defaults to `FSharpJson` |
 | `ConfigureFunctionalJournalSnapshots` | `ISiloBuilder * Action<FunctionalJournalSnapshotOptions> -> ISiloBuilder` | Configure the silo-wide rule inherited by custom-storage definitions |
 | `UseFunctionalJournalSnapshots` | `ISiloBuilder * every:int -> ISiloBuilder` | Set a positive fixed event-count default |
 | `AddFunctionalGrainClient` | `IClientBuilder -> IClientBuilder` | Register the client-side transport on a client-only process (`Orleans.FSharp`) |
@@ -617,6 +649,7 @@ A functional definition consumes a stream declaratively with `onStream` instead;
 |---|---|
 | `SiloConfig` | Immutable silo configuration record |
 | `ClientConfig` | Immutable client configuration record |
+| `FSharpSerialization` | Explicit generalized policy: `Binary`, `Json`, or binary with JSON for unsupported CLR types |
 | `ClusteringMode` | Localhost, RedisClustering, AzureTableClustering, AdoNetClustering, CustomClustering |
 | `ClientClusteringMode` | Localhost, StaticGateway, Custom |
 | `StorageProvider` | Memory, RedisStorage, AzureBlobStorage, AzureTableStorage, AdoNetStorage, CosmosStorage, DynamoDbStorage, CustomStorage |
@@ -634,6 +667,21 @@ A functional definition consumes a stream declaratively with `onStream` instead;
 
 See [Silo configuration](/orleans-fsharp/silo-configuration/) and [Client configuration](/orleans-fsharp/client-configuration/)
 for the full keyword lists.
+
+#### Generalized serialization
+
+| Name | Signature | Description |
+|---|---|---|
+| `FSharpSerialization.Binary` | `FSharpSerialization` | Compact F# binary generalized codec |
+| `FSharpSerialization.Json` | `FSharpSerialization` | F#-aware JSON as the primary generalized codec |
+| `FSharpSerialization.BinaryWithJsonForUnsupportedTypes` | `FSharpSerialization` | Binary when supported; otherwise F# JSON |
+| `FSharpSerialization.forUnsupportedTypes` | `FSharpSerialization -> FSharpSerialization -> FSharpSerialization` | Compose binary primary with JSON selected only for CLR types unsupported by binary |
+| `useFSharpBinarySerialization` | silo/client CE operation | Select `Binary` |
+| `useFSharpJsonSerialization` | silo/client CE operation | Select `Json` |
+| `useFSharpSerialization` | `FSharpSerialization ->` silo/client CE operation | Select an explicit composed policy |
+
+Only one policy can be selected per builder. Unsupported-type selection happens before writing; it
+does not retry with JSON after a serialization exception. See [Serialization](/orleans-fsharp/serialization/#explicit-generalized-serializers).
 
 #### `SiloConfig`
 
