@@ -35,6 +35,8 @@ SCRIPTISH = re.compile(r'<(script|style)\b[^>]*>.*?</\1>', re.S | re.I)
 HREF = re.compile(r'href="([^"]+)"')
 ID = re.compile(r'\bid="([^"]+)"', re.I)
 NAMED_ANCHOR = re.compile(r'<a\b[^>]*\bname="([^"]+)"', re.I)
+H1 = re.compile(r'<h1\b', re.I)
+META_REFRESH = re.compile(r'<meta\b[^>]*http-equiv="refresh"', re.I)
 EXTERNAL = re.compile(r'^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|//)')
 
 
@@ -68,11 +70,15 @@ def main() -> int:
         return 1
 
     broken: dict[str, set[str]] = {}
+    bad_h1: dict[str, int] = {}
     fragment_cache: dict[Path, set[str]] = {}
     pages = list(DIST.rglob('*.html'))
     checked_links = 0
     for page in pages:
         html = SCRIPTISH.sub('', page.read_text(encoding='utf-8', errors='replace'))
+        h1_count = len(H1.findall(html))
+        if not META_REFRESH.search(html) and h1_count != 1:
+            bad_h1[page.relative_to(DIST).as_posix()] = h1_count
         # URL of this page as the browser sees it, so relative hrefs resolve the same way.
         page_url = f'{BASE}/{page.relative_to(DIST).parent.as_posix()}/'.replace('/./', '/')
         for raw_href in HREF.findall(html):
@@ -109,13 +115,16 @@ def main() -> int:
 
     for target in sorted(broken):
         print(f'BROKEN {target} <- {sorted(broken[target])}')
+    for page, count in sorted(bad_h1.items()):
+        print(f'BAD H1 COUNT {page}: expected 1, found {count}')
     print(f'checked {len(pages)} built pages, {checked_links} internal link(s); '
-          f'{len(broken)} broken internal page/fragment target(s)')
+          f'{len(broken)} broken internal page/fragment target(s), '
+          f'{len(bad_h1)} page(s) without exactly one H1')
     if broken:
         print('\nInside website/src/content/docs use the site form '
               '`/orleans-fsharp/<page>/`; a relative `<page>.md` link is correct only in '
               'docs/, which GitHub renders directly.')
-    return 1 if broken else 0
+    return 1 if (broken or bad_h1) else 0
 
 
 if __name__ == '__main__':

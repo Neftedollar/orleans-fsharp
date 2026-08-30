@@ -11,6 +11,78 @@ open Orleans.Runtime
 open Orleans.Streams
 open Orleans.FSharp.FunctionalDiagnostics
 
+/// <summary>
+/// Activation-local information supplied while constructing an Orleans migration participant.
+/// The factory runs once per activation, before Orleans can rehydrate a migrated instance.
+/// </summary>
+[<Sealed>]
+type FunctionalActivationMigrationContext<'Actor, 'Key>
+    internal (key: 'Key, grainId: GrainId, services: IServiceProvider, logger: ILogger) =
+
+    /// <summary>The decoded domain key of the activation.</summary>
+    member _.key = key
+
+    /// <summary>The complete Orleans grain identity.</summary>
+    member _.grainId = grainId
+
+    /// <summary>The activation service provider.</summary>
+    member _.services = services
+
+    /// <summary>The logger scoped to this functional grain type.</summary>
+    member _.logger = logger
+
+/// <summary>
+/// Creates one activation-scoped Orleans migration participant. A fresh participant is created
+/// on both the source and destination activation, before Orleans calls <c>OnDehydrate</c> or
+/// <c>OnRehydrate</c>.
+/// </summary>
+type FunctionalMigrationParticipantFactory<'Actor, 'Key> =
+    FunctionalActivationMigrationContext<'Actor, 'Key> -> IGrainMigrationParticipant
+
+/// <summary>Idiomatic F# helpers for Orleans activation-migration payloads.</summary>
+[<RequireQualifiedAccess>]
+module ActivationMigration =
+
+    let private requireKey (operationName: string) (key: string) =
+        if String.IsNullOrWhiteSpace key then
+            invalidArg (nameof key) $"{operationName} requires a non-blank key."
+
+    /// <summary>Create an Orleans migration participant from two synchronous F# callbacks.</summary>
+    let participant
+        (onDehydrate: IDehydrationContext -> unit)
+        (onRehydrate: IRehydrationContext -> unit)
+        : IGrainMigrationParticipant =
+        if obj.ReferenceEquals(onDehydrate, null) then
+            nullArg (nameof onDehydrate)
+
+        if obj.ReferenceEquals(onRehydrate, null) then
+            nullArg (nameof onRehydrate)
+
+        { new IGrainMigrationParticipant with
+            member _.OnDehydrate(context) = onDehydrate context
+            member _.OnRehydrate(context) = onRehydrate context }
+
+    /// <summary>
+    /// Add one typed value to the migration payload using the configured Orleans serializer.
+    /// Keys are shared by all participants of the activation and therefore must be unique.
+    /// </summary>
+    let addValue<'T> (key: string) (value: 'T) (context: IDehydrationContext) =
+        requireKey "ActivationMigration.addValue" key
+        ArgumentNullException.ThrowIfNull context
+
+        if not (context.TryAddValue<'T>(key, value)) then
+            invalidOp
+                $"ActivationMigration.addValue could not add key '{key}'. The key is already present or Orleans has no serializer for '{typeof<'T>.FullName}'."
+
+    /// <summary>Try to read one typed value from a rehydrated activation payload.</summary>
+    let tryValue<'T> (key: string) (context: IRehydrationContext) : 'T option =
+        requireKey "ActivationMigration.tryValue" key
+        ArgumentNullException.ThrowIfNull context
+
+        let mutable value = Unchecked.defaultof<'T>
+
+        if context.TryGetValue<'T>(key, &value) then Some value else None
+
 /// <summary>A materialized journal view and the number of events represented by it.</summary>
 [<NoEquality; NoComparison>]
 type FunctionalJournalSnapshot<'State> =
@@ -331,6 +403,9 @@ type internal FunctionalContextCore =
         StreamSequenceToken: StreamSequenceToken
         /// Wrapper for the protected Orleans deactivate-on-idle method.
         DeactivateOnIdle: unit -> unit
+        /// Wrapper for Orleans activation migration after the current turn becomes idle. An
+        /// optional silo address is carried as the stock Orleans placement hint.
+        MigrateOnIdle: SiloAddress option -> unit
         /// Wrapper for the protected Orleans delay-deactivation method.
         DelayDeactivation: TimeSpan -> unit
         /// Typed lookup of an attached persistent state facet, boxed as <c>IPersistentState&lt;_&gt;</c>.
@@ -438,6 +513,23 @@ type FunctionalGrainContext<'Actor, 'Key> internal (key: 'Key, core: FunctionalC
 
     /// <summary>Request deactivation once the current turn completes.</summary>
     member _.deactivateOnIdle() = core.DeactivateOnIdle()
+
+    /// <summary>
+    /// Ask Orleans to migrate this activation after the current turn completes. The placement
+    /// director selects the destination; migration is skipped when it selects no alternative.
+    /// </summary>
+    member _.migrateOnIdle() = core.MigrateOnIdle None
+
+    /// <summary>
+    /// Ask Orleans to migrate this activation to a specific compatible silo after the current
+    /// turn completes. Orleans can reject the hint when the silo is no longer eligible.
+    /// </summary>
+    /// <param name="targetSilo">The preferred Orleans silo address.</param>
+    member _.migrateOnIdle(targetSilo: SiloAddress) =
+        if obj.ReferenceEquals(targetSilo, null) then
+            nullArg (nameof targetSilo)
+
+        core.MigrateOnIdle(Some targetSilo)
 
     /// <summary>Extend the activation's idle lifetime.</summary>
     /// <param name="timeSpan">The duration to extend the idle deadline by.</param>

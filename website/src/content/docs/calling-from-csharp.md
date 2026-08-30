@@ -26,20 +26,28 @@ followed by `await api.say.Invoke(...)` compiles and runs. It is also not C# any
 ## Overview
 
 ```csharp
+using System.Threading.Tasks;
+using ChatRoom.Grains;
+using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Core;
 using Orleans.FSharp;
 
 public interface IChatRoom
 {
     Task Join(string user);
-    Task<FSharpResult<int, ChatError>> Say(string sender, string message);
+    Task Leave(string user);
+    Task<FSharpResult<int, ChatError>> Say(PostedMessage message);
+    Task<FSharpList<ChatEntry>> History(int take);
     Task<int> MemberCount();
+
+    [FunctionalOperation("typing")]
+    Task NotifyTyping(TypingStatus status);
 }
 
 var room = FunctionalGrainInterop.For<IChatRoom>(RoomApiModule.contract, factory, "general");
 
 await room.Join("Alice");
-var posted = await room.Say("Alice", "Hey everyone!");
+var posted = await room.Say(new PostedMessage("Alice", "Hey everyone!"));
 ```
 
 Nothing generates `IChatRoom`. You write the members you want, and `For` checks every one of them
@@ -47,7 +55,7 @@ against the contract before it returns: name mapping, argument shape, reply shap
 shapes a facade cannot dispatch. A mistake is an exception with the member's name in it at the
 `For` call — never a failure on the first call, and never a silent mismatch.
 
-A runnable end-to-end version of exactly this lives in
+A runnable end-to-end version of this exact interface and call shape lives in
 [`examples/chat-room/src/Interop`](https://github.com/Neftedollar/orleans-fsharp/tree/main/examples/chat-room/src/Interop): a C# console project that
 hosts the F# chat room and drives it through the facade.
 
@@ -224,6 +232,10 @@ An operation takes exactly one argument. Three member shapes express that:
 | a single type `T` | one parameter of type `T` — `Task Join(string user)` |
 | a tuple `T1 * T2 * …` | that many parameters, in order — `Task Say(string sender, string message)` |
 
+The runnable chat-room facade above deliberately uses the named `PostedMessage` record. The tuple
+form below is a separate shape example for a contract which actually declares `string * string`;
+it is not another spelling of that runnable contract.
+
 A tuple argument may also be taken as **one** parameter of the tuple type
 (`Task Say(Tuple<string, string> post)`) when that reads better. Both forms are exact: a parameter
 whose type is not the argument type, or a parameter count that is neither 1 nor the tuple's arity,
@@ -297,15 +309,15 @@ them without conversion:
 
 ```csharp
 // Result<int, ChatError>  ->  FSharpResult<int, ChatError>
-var posted = await room.Say("Alice", "Hey everyone!");
+var posted = await room.Say(new PostedMessage("Alice", "Hey everyone!"));
 if (posted.IsOk)
     Console.WriteLine($"message #{posted.ResultValue}");
 else if (posted.ErrorValue.IsNotAMember)
     Console.WriteLine("not a member");
 
-// (string * string * DateTimeOffset) list  ->  FSharpList<Tuple<string, string, DateTimeOffset>>
-foreach (var (sender, message, at) in await room.History(10))
-    Console.WriteLine($"[{at:HH:mm:ss}] {sender}: {message}");
+// ChatEntry list  ->  FSharpList<ChatEntry>
+foreach (var entry in await room.History(10))
+    Console.WriteLine($"[{entry.timestamp:HH:mm:ss}] {entry.sender}: {entry.text}");
 
 // int option  ->  FSharpOption<int>   (illustrative: this contract has no option reply)
 FSharpOption<int> maybe = await other.LastSeen("Alice");
@@ -316,7 +328,7 @@ Every case of an F# discriminated union is reachable from C#: a nullary case suc
 is both `ChatError.NotAMember` (a static property returning the singleton) and `error.IsNotAMember`
 (an instance test), and a case with fields exposes them as properties. `error.Tag` gives the case
 index when a `switch` reads better than a chain of `Is…` tests. `FSharpList<T>` implements
-`IEnumerable<T>`, so `foreach` and LINQ work on it directly, and `System.Tuple` deconstructs. An
+`IEnumerable<T>`, so `foreach` and LINQ work on it directly. An
 `FSharpOption<T>` is `null` when it is `None`, so `maybe is null` is equivalent to the
 `get_IsSome` test above — prefer whichever reads better, but do not call `.Value` without one.
 

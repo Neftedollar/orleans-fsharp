@@ -36,8 +36,51 @@ let private token = ProtocolToken.request "chat.room" 1 "join"
 let private replyToken = ProtocolToken.reply "chat.room" 1 "join"
 let private payload = [| 1uy; 2uy; 3uy; 4uy |]
 
+let private durableFixture name =
+    System.IO.Path.Combine(__SOURCE_DIRECTORY__, "Fixtures", name)
+    |> System.IO.File.ReadAllText
+    |> Convert.FromBase64String
+
 let private envelope () =
     FunctionalRequestEnvelope("chat.room", 1, "join", token, AdmissionFlags.ReadOnly, payload)
+
+[<Fact>]
+let ``pre-schema durable envelopes deserialize as schema version zero`` () =
+    let state =
+        (serializer ()).Deserialize<FunctionalPersistenceEnvelope>(
+            durableFixture "functional-persistence-envelope-v0.base64"
+        )
+
+    let view =
+        (serializer ()).Deserialize<FunctionalJournalView>(durableFixture "functional-journal-view-v0.base64")
+
+    let entry =
+        (serializer ()).Deserialize<FunctionalJournalEntry>(durableFixture "functional-journal-entry-v0.base64")
+
+    test <@ state.SchemaVersion = 0 @>
+    test <@ state.CodecId = "fsharp-json-v1" @>
+    test <@ state.Payload = [| 1uy; 2uy; 3uy |] @>
+    test <@ state.HasValue @>
+    test <@ view.SchemaVersion = 0 @>
+    test <@ view.CodecId = "fsharp-json-v1" @>
+    test <@ view.Payload = [| 4uy; 5uy |] @>
+    test <@ view.HasValue @>
+    test <@ entry.SchemaVersion = 0 @>
+    test <@ entry.CodecId = "fsharp-json-v1" @>
+    test <@ entry.Payload = [| 6uy; 7uy |] @>
+    test <@ entry.SnapshotRequested @>
+
+    state.SchemaVersion <- 11
+    view.SchemaVersion <- 12
+    entry.SchemaVersion <- 13
+
+    let stateCurrent = (serializer ()).Deserialize<FunctionalPersistenceEnvelope>((serializer ()).SerializeToArray state)
+    let viewCurrent = (serializer ()).Deserialize<FunctionalJournalView>((serializer ()).SerializeToArray view)
+    let entryCurrent = (serializer ()).Deserialize<FunctionalJournalEntry>((serializer ()).SerializeToArray entry)
+
+    test <@ stateCurrent.SchemaVersion = 11 @>
+    test <@ viewCurrent.SchemaVersion = 12 @>
+    test <@ entryCurrent.SchemaVersion = 13 @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Wire inspection helpers

@@ -250,6 +250,9 @@ type internal FunctionalGrainTargetBase(grainContext: IGrainContext, grainRuntim
     /// <summary>Narrow wrapper for the protected <c>Grain.DeactivateOnIdle</c>.</summary>
     member this.DeactivateNow() = this.DeactivateOnIdle()
 
+    /// <summary>Narrow wrapper for the protected <c>Grain.MigrateOnIdle</c>.</summary>
+    member this.MigrateNow() = this.MigrateOnIdle()
+
     /// <summary>Narrow wrapper for the protected <c>Grain.DelayDeactivation</c>.</summary>
     /// <param name="timeSpan">How long to delay deactivation by.</param>
     member this.DelayDeactivationFor(timeSpan: TimeSpan) = this.DelayDeactivation timeSpan

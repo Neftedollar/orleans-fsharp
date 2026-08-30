@@ -94,19 +94,20 @@ type internal FunctionalJournalHost
         blueprint.EncodeState persistenceCodec codec value
 
     /// <summary>Decode one state value using the codec identifier stored beside it.</summary>
-    member private _.DecodeState(codecId: string, payload: byte[]) =
-        blueprint.DecodeState persistenceCodec codec codecId payload
+    member private _.DecodeState(schemaVersion: int, codecId: string, payload: byte[]) =
+        blueprint.DecodeState persistenceCodec codec schemaVersion codecId payload
 
     /// <summary>Decode one event using the codec identifier stored beside it.</summary>
-    member private _.DecodeEvent(codecId: string, payload: byte[]) =
-        blueprint.DecodeEvent persistenceCodec codec codecId payload
+    member private _.DecodeEvent(schemaVersion: int, codecId: string, payload: byte[]) =
+        blueprint.DecodeEvent persistenceCodec codec schemaVersion codecId payload
 
     /// <summary>Create a codec-tagged mutable view cell.</summary>
     member private this.View(value: obj) =
         FunctionalJournalView(
             Payload = this.EncodeState value,
             HasValue = true,
-            CodecId = persistenceCodec.Id
+            CodecId = persistenceCodec.Id,
+            SchemaVersion = blueprint.StateSchemaVersion
         )
 
     /// <summary>Create one codec-tagged journal entry.</summary>
@@ -114,7 +115,8 @@ type internal FunctionalJournalHost
         FunctionalJournalEntry(
             Payload = blueprint.EncodeEvent persistenceCodec codec event,
             SnapshotRequested = snapshotRequested,
-            CodecId = persistenceCodec.Id
+            CodecId = persistenceCodec.Id,
+            SchemaVersion = blueprint.EventSchemaVersion
         )
 
     /// <summary>
@@ -132,7 +134,7 @@ type internal FunctionalJournalHost
                     JournalStage
                     $"The functional journal view of grain type '{grainTypeName}' for grain '{grainContext.GrainId}' is marked as containing a value but has a null payload. The durable record is corrupt."
 
-            this.DecodeState(view.CodecId, view.Payload)
+            this.DecodeState(view.SchemaVersion, view.CodecId, view.Payload)
         else
             this.InitialState
 
@@ -541,11 +543,12 @@ type internal FunctionalJournalHost
         member this.UpdateView(view: FunctionalJournalView, entry: FunctionalJournalEntry) =
             try
                 let current = this.ValueOf view
-                let event = this.DecodeEvent(entry.CodecId, entry.Payload)
+                let event = this.DecodeEvent(entry.SchemaVersion, entry.CodecId, entry.Payload)
                 let next = blueprint.Apply current event
                 view.Payload <- this.EncodeState next
                 view.HasValue <- true
                 view.CodecId <- persistenceCodec.Id
+                view.SchemaVersion <- blueprint.StateSchemaVersion
             with cause ->
                 // Orleans swallows this; remember it so the runtime can fail the turn.
                 if isNull foldFailure then
@@ -684,7 +687,7 @@ type internal FunctionalJournalHost
                                         JournalStage
                                         $"Orleans CustomStorage supplied an empty functional journal entry to grain type '{grainTypeName}'."
 
-                                let event = this.DecodeEvent(update.CodecId, update.Payload)
+                                let event = this.DecodeEvent(update.SchemaVersion, update.CodecId, update.Payload)
                                 events.Add event
                                 forced <- forced || update.SnapshotRequested
 
@@ -764,7 +767,7 @@ type internal FunctionalJournalHost
         /// <inheritdoc/>
         member this.Unconfirmed =
             this.Adaptor.UnconfirmedSuffix
-            |> Seq.map (fun entry -> this.DecodeEvent(entry.CodecId, entry.Payload))
+            |> Seq.map (fun entry -> this.DecodeEvent(entry.SchemaVersion, entry.CodecId, entry.Payload))
             |> Seq.toList
 
         /// <inheritdoc/>
@@ -881,7 +884,8 @@ type internal FunctionalJournalHost
 
                 return
                     entries
-                    |> Seq.map (fun entry -> this.DecodeEvent(entry.CodecId, entry.Payload))
+                    |> Seq.map (fun entry ->
+                        this.DecodeEvent(entry.SchemaVersion, entry.CodecId, entry.Payload))
                     |> Seq.toList
             }
 

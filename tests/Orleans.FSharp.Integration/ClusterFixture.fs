@@ -9,6 +9,7 @@ open Xunit
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
 open Orleans.FSharp.EventSourcing
+open Orleans.Streams.Filtering
 
 
 /// <summary>
@@ -837,12 +838,22 @@ module TestGrains15 =
 /// Silo configurator that adds memory grain storage and ensures the CodeGen assembly is loaded
 /// for grain discovery by Orleans.
 /// </summary>
+type TestStreamFilter() =
+    interface IStreamFilter with
+        member _.ShouldDeliver(_streamId, item, filterData) =
+            match filterData, item with
+            | "even", (:? int as value) -> value % 2 = 0
+            | null, _
+            | "", _ -> true
+            | _ -> false
+
 type TestSiloConfigurator() =
     interface ISiloConfigurator with
         member _.Configure(siloBuilder: ISiloBuilder) =
             siloBuilder.AddMemoryGrainStorageAsDefault() |> ignore
             siloBuilder.AddMemoryGrainStorage("Default") |> ignore
             siloBuilder.AddMemoryStreams("StreamProvider") |> ignore
+            siloBuilder.AddStreamFilter<TestStreamFilter>("StreamProvider") |> ignore
             siloBuilder.AddMemoryGrainStorage("PubSubStore") |> ignore
             siloBuilder.UseInMemoryReminderService() |> ignore
             siloBuilder.AddLogStorageBasedLogConsistencyProviderAsDefault() |> ignore
@@ -936,6 +947,7 @@ type TestClientConfigurator() =
     interface IClientBuilderConfigurator with
         member _.Configure(_configuration, clientBuilder: IClientBuilder) =
             clientBuilder.AddMemoryStreams("StreamProvider") |> ignore
+            clientBuilder.AddStreamFilter<TestStreamFilter>("StreamProvider") |> ignore
 
             // Register F# binary serialization on the client so the proxy can deep-copy
             // F# types passed as `object` to IFSharpGrain.HandleMessage.

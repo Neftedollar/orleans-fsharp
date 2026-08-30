@@ -421,6 +421,12 @@ siloConfig {
 }
 ```
 
+Functional contract `version` is published as this native Orleans interface version. During a
+rolling update, Orleans' compatibility/selector pair decides which silo can receive the call;
+the selected functional host then applies its own `acceptsVersions` envelope policy. Configure
+both layers consistently. `StrictVersion` plus the default functional `Exact` policy is exact at
+both boundaries.
+
 Compatibility strategies:
 
 | Strategy | Description |

@@ -172,7 +172,7 @@ type GrainContract<'Actor, 'Key, 'Api>
 
     /// The closed actor-specific Orleans target metadata, constructed once per contract.
     let targetMetadata =
-        lazy (FunctionalTarget.metadataFor typeof<'Actor> grainTypeName)
+        lazy (FunctionalTarget.metadataFor typeof<'Actor> grainTypeName version)
 
     /// The declared argument and reply types, in the shape the serializer preflight consumes.
     let declaredTypes =
@@ -429,6 +429,11 @@ module internal ContractDraft =
             grainTypeName
 
         let version = state.Version |> Option.defaultValue 1
+
+        if version > FunctionalIds.MaxInterfaceVersion then
+            fail
+                ContractStage
+                $"'version' must fit Orleans' native interface-version range 1 through {FunctionalIds.MaxInterfaceVersion}, but {version} was supplied."
 
         let acceptedVersions = state.AcceptedVersions |> Option.defaultValue Exact
 
@@ -703,7 +708,7 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
                     GrainTypeName = Some value }
 
     /// <summary>Set the application contract version; defaults to <c>1</c>.</summary>
-    /// <param name="value">The application contract version; must be positive.</param>
+    /// <param name="value">The application contract version; must be between 1 and 65535.</param>
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when <paramref name="value"/> is not positive, or 'version' is already set.
     /// </exception>
@@ -711,6 +716,11 @@ type GrainContractBuilder<'Actor, 'Key, 'Api> internal () =
     member _.Version(state: GrainContractDraft<'Actor, 'Key, 'Api>, value: int) =
         if value <= 0 then
             fail ContractStage $"'version' must be a positive integer, but {value} was supplied."
+
+        if value > FunctionalIds.MaxInterfaceVersion then
+            fail
+                ContractStage
+                $"'version' must fit Orleans' native interface-version range 1 through {FunctionalIds.MaxInterfaceVersion}, but {value} was supplied."
 
         match state.State.Version with
         | Some existing -> fail ContractStage $"'version' is already set to {existing}; it is allowed at most once."

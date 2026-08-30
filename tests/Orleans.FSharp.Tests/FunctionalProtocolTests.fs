@@ -8,6 +8,7 @@ module Orleans.FSharp.Tests.FunctionalProtocolTests
 open System
 open Xunit
 open Swensen.Unquote
+open Orleans.Runtime
 open Orleans.FSharp
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -290,4 +291,31 @@ let ``the default payload limit is 16 MiB`` () =
 let ``the functional interface id is the reserved prefix plus the grain type`` () =
     test <@ FunctionalIds.interfaceId "chat.room" = "orleans.fsharp.functional/chat.room" @>
     test <@ FunctionalIds.grainInterfaceType("chat.room").ToString() = "orleans.fsharp.functional/chat.room" @>
-    test <@ FunctionalIds.InterfaceVersion = 1us @>
+
+    test <@ FunctionalIds.referenceInterfaceId "chat.room" 7 = "orleans.fsharp.functional-ref/7/chat.room" @>
+
+[<Fact>]
+let ``the local reference lookup id yields the stable interface and native version`` () =
+    let grainType = GrainType.Create "chat.room"
+    let lookup = FunctionalIds.referenceGrainInterfaceType "chat.room" 7
+
+    match FunctionalIds.tryReferenceTarget grainType lookup with
+    | Some struct (interfaceType, version) ->
+        test <@ interfaceType = FunctionalIds.grainInterfaceType "chat.room" @>
+        test <@ version = 7us @>
+    | None -> failwith "the valid lookup ID was declined"
+
+[<Fact>]
+let ``the local reference lookup id rejects another grain type and invalid versions`` () =
+    let grainType = GrainType.Create "chat.room"
+
+    test
+        <@
+            FunctionalIds.tryReferenceTarget grainType (FunctionalIds.referenceGrainInterfaceType "chat.other" 7)
+            |> Option.isNone
+        @>
+
+    for invalid in [ "orleans.fsharp.functional-ref/0/chat.room"
+                     "orleans.fsharp.functional-ref/not-a-version/chat.room"
+                     "orleans.fsharp.functional-ref/7/" ] do
+        test <@ FunctionalIds.tryReferenceTarget grainType (GrainInterfaceType.Create invalid) |> Option.isNone @>

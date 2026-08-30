@@ -192,7 +192,7 @@ module internal FunctionalBinding =
             | None ->
                 let addressable =
                     try
-                        factory.GetGrain(grainId, metadata.GrainInterfaceType)
+                        factory.GetGrain(grainId, metadata.ReferenceGrainInterfaceType)
                     with cause ->
                         failCause
                             BindingStage
@@ -201,6 +201,12 @@ module internal FunctionalBinding =
 
                 match box addressable with
                 | :? FunctionalGrainReference as reference ->
+                    if reference.InterfaceType <> metadata.GrainInterfaceType
+                       || reference.InterfaceVersion <> metadata.InterfaceVersion then
+                        fail
+                            BindingStage
+                            $"binding grain type '{grainTypeName}' created a functional reference for interface '{reference.InterfaceType}' version {reference.InterfaceVersion}, but contract version {contract.Version} requires interface '{metadata.GrainInterfaceType}' version {metadata.InterfaceVersion}."
+
                     let codec =
                         match reference.PayloadCodec with
                         | :? FunctionalPayloadCodec as payloadCodec -> payloadCodec

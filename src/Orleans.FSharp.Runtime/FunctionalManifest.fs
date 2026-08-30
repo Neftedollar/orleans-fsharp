@@ -39,8 +39,8 @@ type internal FunctionalGrainInterfaceTypeProvider(registry: FunctionalGrainRegi
             | None -> false
 
 /// <summary>
-/// Publishes the fixed internal Orleans interface version and the default grain type of every
-/// registered functional interface.
+/// Publishes the application contract as the native Orleans interface version together with the
+/// default grain type of every registered functional interface.
 /// </summary>
 [<Sealed>]
 type internal FunctionalGrainInterfacePropertiesProvider(registry: FunctionalGrainRegistry) =
@@ -51,7 +51,7 @@ type internal FunctionalGrainInterfacePropertiesProvider(registry: FunctionalGra
             match registry.TryByInterface candidate with
             | Some entry ->
                 properties.[WellKnownGrainInterfaceProperties.Version] <-
-                    (int FunctionalIds.InterfaceVersion).ToString CultureInfo.InvariantCulture
+                    entry.Definition.Version.ToString CultureInfo.InvariantCulture
 
                 properties.[WellKnownGrainInterfaceProperties.DefaultGrainType] <- entry.GrainTypeName
             | None -> ()
@@ -236,6 +236,8 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
                         | PreferLocal -> "PreferLocalPlacement"
                         | ActivationCountBased -> "ActivationCountBasedPlacement"
                         | ResourceOptimized -> "ResourceOptimizedPlacement"
+                        | HashBased -> "HashBasedPlacement"
+                        | SiloRoleBased -> "SiloRoleBasedPlacement"
 
                     properties.[WellKnownGrainTypeProperties.PlacementStrategy] <- value
                 | Some(StatelessWorker maxLocalWorkers) ->

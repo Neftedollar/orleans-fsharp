@@ -62,14 +62,15 @@ internal sealed class FunctionalGrainReference : GrainReference
     /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     /// <param name="cancellationToken">The token that cancels the call.</param>
     /// <returns>The fixed reply once the target has completed the call.</returns>
-    internal Task<FunctionalReply> SendAsync(
+    internal async Task<FunctionalReply> SendAsync(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,
         MethodInfo dispatchMethod,
         CancellationToken cancellationToken)
     {
         var request = CreateRequest(envelope, closedInterfaceType, dispatchMethod, cancellationToken);
-        return InvokeAsync<FunctionalReply>(request).AsTask();
+        return await InvokeAsync<FunctionalReply>(request).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Orleans returned a null functional reply.");
     }
 
     /// <summary>
@@ -103,7 +104,7 @@ internal sealed class FunctionalGrainReference : GrainReference
     /// <param name="dispatchMethod">The interface method the target should dispatch to.</param>
     /// <param name="cancellationToken">The token that cancels the call.</param>
     /// <returns>The fixed reply once the target has completed the call.</returns>
-    internal Task<FunctionalReply> SendTransactionalAsync(
+    internal async Task<FunctionalReply> SendTransactionalAsync(
         FunctionalRequestEnvelope envelope,
         Type closedInterfaceType,
         MethodInfo dispatchMethod,
@@ -121,7 +122,8 @@ internal sealed class FunctionalGrainReference : GrainReference
 
         request.SetCallerMetadata(closedInterfaceType, dispatchMethod);
         request.ApplyAdmissionOptions();
-        return InvokeAsync<FunctionalReply>(request).AsTask();
+        return await InvokeAsync<FunctionalReply>(request).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Orleans returned a null functional reply.");
     }
 
     /// <summary>

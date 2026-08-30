@@ -19,10 +19,11 @@ namespace Orleans.FSharp;
 /// </para>
 /// <list type="bullet">
 /// <item>
-/// Durability: the StateStorage log-consistency provider persists the view itself. Bytes produced
-/// by the definition's exact-type payload codec carry no CLR type names, so a stored view does not
-/// depend on the assembly-qualified identity of the application's state type — the same byte
-/// boundary the functional transport puts between a caller and a handler.
+/// Durability: the StateStorage log-consistency provider persists the view itself. The exact-type
+/// payload boundary avoids assembly-qualified type identity. The F# binary codec does retain
+/// <c>Type.FullName</c>, so namespace/type names remain part of that durable format; F# JSON follows
+/// its configured JSON contract. This is the same byte boundary the functional transport puts
+/// between a caller and a handler.
 /// </item>
 /// <item>
 /// Copying: <c>PrimaryBasedLogViewAdaptor</c> deep-copies the view through the Orleans serializer
@@ -65,6 +66,13 @@ public sealed class FunctionalJournalView
     /// </summary>
     [Id(2)]
     public string CodecId { get; set; } = "";
+
+    /// <summary>
+    /// Application schema version of <see cref="Payload"/>. Zero identifies records written
+    /// before first-class schema evolution was introduced.
+    /// </summary>
+    [Id(3)]
+    public int SchemaVersion { get; set; }
 }
 
 /// <summary>
@@ -96,6 +104,13 @@ public sealed class FunctionalJournalEntry
     /// </summary>
     [Id(2)]
     public string CodecId { get; set; } = "";
+
+    /// <summary>
+    /// Application event schema version of <see cref="Payload"/>. Zero identifies entries written
+    /// before first-class schema evolution was introduced.
+    /// </summary>
+    [Id(3)]
+    public int SchemaVersion { get; set; }
 }
 
 /// <summary>
@@ -116,6 +131,13 @@ internal sealed class FunctionalPersistenceEnvelope
     /// <summary>Distinguishes an encoded default/null value from a fresh Orleans-created cell.</summary>
     [Id(2)]
     public bool HasValue { get; set; }
+
+    /// <summary>
+    /// Application state schema version of <see cref="Payload"/>. Zero identifies records written
+    /// before first-class schema evolution was introduced.
+    /// </summary>
+    [Id(3)]
+    public int SchemaVersion { get; set; }
 }
 
 /// <summary>

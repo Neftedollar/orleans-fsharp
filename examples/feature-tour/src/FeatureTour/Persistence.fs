@@ -34,6 +34,9 @@ type LedgerActor = private LedgerActor of unit
 /// <summary>The primary durable state, loaded by <c>stateFrom</c>.</summary>
 type LedgerState = { balance: int64; entries: int }
 
+/// <summary>The retained shape used by version-zero envelope fixtures.</summary>
+type LedgerStateV0 = { balance: int; entries: int }
+
 /// <summary>The second holder's stored type — a different type, a different provider.</summary>
 type AuditState = { events: string list }
 
@@ -79,8 +82,20 @@ module LedgerApi =
 [<RequireQualifiedAccess>]
 module LedgerDefinition =
 
+    let private upcastLedger (old: LedgerStateV0) : LedgerState =
+        { balance = int64 old.balance
+          entries = old.entries }
+
+    /// A typed reader chain is independent of the selected payload codec. New records use
+    /// version 1; a version-zero envelope is decoded as LedgerStateV0 and mapped here.
+    let private ledgerSchema =
+        FunctionalSchema.current<LedgerStateV0> 0
+        |> FunctionalSchema.upcaster upcastLedger
+
     /// The primary holder: its loaded value IS the handler's `state` argument.
-    let primary = PersistentState.create<LedgerState> "ledger" "Default"
+    let primary =
+        PersistentState.create<LedgerState> "ledger" "Default"
+        |> PersistentState.withSchema ledgerSchema
 
     /// A second, independently typed holder on a DIFFERENT provider. State names must be unique
     /// within a definition even across providers — Orleans derives the per-facet
@@ -89,7 +104,7 @@ module LedgerDefinition =
 
     let definition =
         grainFor LedgerApi.contract {
-            defaultState (fun () -> { balance = 0L; entries = 0 })
+            defaultState (fun () -> ({ balance = 0L; entries = 0 }: LedgerState))
 
             stateFrom primary
             usePersistentState audit (fun _key -> { events = [] })
@@ -104,7 +119,7 @@ module LedgerDefinition =
                 (_.deposit)
                 (fun context state amount ->
                     task {
-                        let next =
+                        let next: LedgerState =
                             { balance = state.balance + amount
                               entries = state.entries + 1 }
 
@@ -183,7 +198,7 @@ module LedgerDefinition =
 
                         trail.State <- { events = [] }
 
-                        return { balance = 0L; entries = 0 }, observed
+                        return ({ balance = 0L; entries = 0 }: LedgerState), observed
                     })
 
             handle

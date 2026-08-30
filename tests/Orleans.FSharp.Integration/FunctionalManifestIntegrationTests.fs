@@ -113,7 +113,7 @@ type ManifestTests(fixture: FunctionalClusterFixture) =
         )
 
     [<Fact>]
-    member _.``the published interface entry carries the fixed version and default grain type``() =
+    member _.``the published interface entry carries the contract version and default grain type``() =
         let manifest = localManifest primary
 
         let properties =
@@ -216,7 +216,7 @@ type ManifestTests(fixture: FunctionalClusterFixture) =
         let addressable =
             fixture.Client.GetGrain(
                 GrainId.Create(GrainType.Create FunctionalGrainTypes.Probe, "manifest-ref"),
-                GrainInterfaceType.Create(functionalInterfaceId FunctionalGrainTypes.Probe)
+                FunctionalIds.referenceGrainInterfaceType FunctionalGrainTypes.Probe probeContract.Version
             )
 
         Assert.IsType<FunctionalGrainReference>(addressable, exactMatch = true) |> ignore

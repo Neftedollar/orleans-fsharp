@@ -11,6 +11,7 @@ open Orleans
 open Orleans.BroadcastChannel
 open Orleans.Metadata
 open Orleans.Runtime
+open Orleans.Runtime.Placement
 open Orleans.Streams.Core
 open Orleans.Transactions.Abstractions
 open Orleans.FSharp.FunctionalDiagnostics
@@ -299,6 +300,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                     Some host
 
             let mutable deactivate = fun () -> ()
+            let mutable migrate = fun (_: SiloAddress option) -> ()
             let mutable delay = fun (_: TimeSpan) -> ()
 
             let mutable registerReminder =
@@ -326,6 +328,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                   Key = key
                   State = activationState
                   DeactivateOnIdle = fun () -> deactivate ()
+                  MigrateOnIdle = fun targetSilo -> migrate targetSilo
                   DelayDeactivation = fun timeSpan -> delay timeSpan
                   RegisterReminder = fun name dueTime period -> registerReminder name dueTime period
                   CreateTimer = fun callback options -> createTimer callback options }
@@ -349,6 +352,13 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                     new FunctionalStreamingGrainTarget<'Actor>(env, grainContext, grainRuntime)
 
             deactivate <- fun () -> target.DeactivateNow()
+            migrate <-
+                fun targetSilo ->
+                    match targetSilo with
+                    | Some address -> RequestContext.Set(IPlacementDirector.PlacementHintKey, address)
+                    | None -> ()
+
+                    target.MigrateNow()
             delay <- fun timeSpan -> target.DelayDeactivationFor timeSpan
             registerReminder <- fun name dueTime period -> target.RegisterReminderNow(name, dueTime, period)
             createTimer <- fun callback options -> target.CreateTrackedTimer(callback, options) |> ignore
@@ -380,6 +390,33 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                 fail
                     StartupStage
                     $"the functional activation target of grain type '{definition.GrainTypeName}' did not receive the supplied IGrainContext."
+
+            // Orleans invokes migration participants before OnActivateAsync on the destination,
+            // so every participant must be registered during CreateInstance. An ephemeral
+            // ordinary definition gets an internal participant which carries its authoritative
+            // in-memory state. Persistent facets and journal adaptors already participate through
+            // their Orleans holders and must not be shadowed by a second authoritative payload.
+            let lifecycle = grainContext.ObservableLifecycle
+
+            if not (obj.ReferenceEquals(lifecycle, null)) then
+                if definition.PrimaryFacet.IsNone && definition.Journal.IsNone then
+                    lifecycle.AddMigrationParticipant(
+                        FunctionalEphemeralStateMigrationParticipant(definition.GrainTypeName, activationState)
+                    )
+
+                for factory in definition.MigrationParticipants do
+                    let participant = factory.Invoke(key, grainContext.GrainId, services, logger)
+
+                    if obj.ReferenceEquals(participant, null) then
+                        fail
+                            StartupStage
+                            $"a 'migrationParticipant' factory of grain type '{definition.GrainTypeName}' returned null."
+
+                    lifecycle.AddMigrationParticipant participant
+            elif definition.MigrationParticipants.Length > 0 then
+                fail
+                    StartupStage
+                    $"grain type '{definition.GrainTypeName}' declares migration participants, but its IGrainContext exposes no lifecycle."
 
             // "onLifecycle" hooks: subscribed directly on the Orleans-supplied observable
             // lifecycle, exactly the seam persistent-state facets already use to load at

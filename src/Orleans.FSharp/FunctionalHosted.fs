@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Reflection
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.EventSourcing
 open Orleans.Runtime
@@ -354,6 +355,10 @@ type internal FunctionalJournalBlueprint =
         StateType: Type
         /// The definition's declared event type.
         EventType: Type
+        /// The schema version written for materialized state and snapshot views.
+        StateSchemaVersion: int
+        /// The schema version written for journal entries.
+        EventSchemaVersion: int
         /// The declared initial state for one boxed domain key.
         Initial: obj -> obj
         /// The replay fold over boxed state and boxed event.
@@ -361,11 +366,11 @@ type internal FunctionalJournalBlueprint =
         /// Serialize the boxed state as its exact declared type.
         EncodeState: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> obj -> byte[]
         /// Deserialize the boxed state as its exact declared type.
-        DecodeState: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> string -> byte[] -> obj
+        DecodeState: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> int -> string -> byte[] -> obj
         /// Serialize a boxed event as its exact declared type.
         EncodeEvent: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> obj -> byte[]
         /// Deserialize a boxed event as its exact declared type.
-        DecodeEvent: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> string -> byte[] -> obj
+        DecodeEvent: FunctionalPersistenceCodec -> IFunctionalPayloadCodec -> int -> string -> byte[] -> obj
         /// The preclosed activation hook, when the definition declares one.
         OnActivate: FunctionalJournaledHookAdapter option
         /// The preclosed deactivation hook, when the definition declares one.
@@ -412,6 +417,12 @@ type internal FunctionalTimerAdapter = delegate of obj * FunctionalContextCore *
 /// the <c>onLifecycle</c> custom operation's remarks); it neither receives nor returns state.
 /// </summary>
 type internal FunctionalLifecycleAdapter = delegate of obj * FunctionalContextCore -> Task
+
+/// <summary>
+/// The key-type-closed factory for one activation-scoped Orleans migration participant.
+/// </summary>
+type internal FunctionalMigrationParticipantFactoryAdapter =
+    delegate of obj * GrainId * IServiceProvider * ILogger -> IGrainMigrationParticipant
 
 /// <summary>One declared reminder frozen into the hosted view: identity plus its preclosed adapter.</summary>
 [<ReferenceEquality>]
@@ -562,6 +573,7 @@ type internal FunctionalHostedDefinition
         timers: FunctionalHostedTimer[],
         streamBindings: FunctionalStreamDeclaration[],
         placement: PlacementConfiguration option,
+        migrationParticipants: FunctionalMigrationParticipantFactoryAdapter[],
         lifecycleHooks: (LifecycleStage * FunctionalLifecycleAdapter)[],
         journal: FunctionalJournalBlueprint option
     ) =
@@ -711,6 +723,9 @@ type internal FunctionalHostedDefinition
     /// <summary>The configured placement, when <c>statelessWorker</c> or <c>placement</c> was
     /// declared.</summary>
     member _.Placement = placement
+
+    /// <summary>Activation-scoped migration-participant factories in declaration order.</summary>
+    member _.MigrationParticipants = migrationParticipants
 
     /// <summary>Declared <c>onLifecycle</c> hooks with their preclosed adapters.</summary>
     member _.LifecycleHooks = lifecycleHooks
@@ -910,6 +925,21 @@ module internal FunctionalHosted =
 
                 stage, adapter)
 
+        let migrationParticipants =
+            definition.MigrationParticipants
+            |> List.map (fun factory ->
+                FunctionalMigrationParticipantFactoryAdapter(fun key grainId services logger ->
+                    let context =
+                        FunctionalActivationMigrationContext<'Actor, 'Key>(
+                            unbox<'Key> key,
+                            grainId,
+                            services,
+                            logger
+                        )
+
+                    factory context))
+            |> List.toArray
+
         FunctionalHostedDefinition(
             box definition,
             contract.GrainTypeName,
@@ -936,6 +966,7 @@ module internal FunctionalHosted =
             timers,
             List.toArray definition.StreamBindings,
             definition.Placement,
+            migrationParticipants,
             lifecycleHooks,
             None
         )
@@ -1161,6 +1192,21 @@ module internal FunctionalJournaledHosted =
             | Some(FunctionalJournalSnapshotPolicy.When predicate) ->
                 ConditionalSnapshotRule(fun version state -> predicate version (unbox<'State> state))
 
+        let migrationParticipants =
+            definition.MigrationParticipants
+            |> List.map (fun factory ->
+                FunctionalMigrationParticipantFactoryAdapter(fun key grainId services logger ->
+                    let context =
+                        FunctionalActivationMigrationContext<'Actor, 'Key>(
+                            unbox<'Key> key,
+                            grainId,
+                            services,
+                            logger
+                        )
+
+                    factory context))
+            |> List.toArray
+
         let blueprint =
             { ProviderName = configuration.ProviderName
               StorageName = configuration.StorageName
@@ -1169,20 +1215,44 @@ module internal FunctionalJournaledHosted =
               SnapshotRule = snapshotRule
               StateType = typeof<'State>
               EventType = typeof<'Event>
+              StateSchemaVersion =
+                definition.StateSchema |> Option.map _.CurrentVersion |> Option.defaultValue 0
+              EventSchemaVersion =
+                definition.EventSchema |> Option.map _.CurrentVersion |> Option.defaultValue 0
               Initial = fun key -> box (definition.Initial(unbox<'Key> key))
               Apply = fun state event -> box (definition.Apply (unbox<'State> state) (unbox<'Event> event))
               EncodeState =
                 fun selected codec value ->
                     FunctionalPersistenceEncoding.encode<'State> selected codec (unbox<'State> value)
               DecodeState =
-                fun selected codec storedCodecId payload ->
-                    box (FunctionalPersistenceEncoding.decode<'State> selected codec storedCodecId payload)
+                fun selected codec storedSchemaVersion storedCodecId payload ->
+                    match definition.StateSchema with
+                    | Some schema ->
+                        box (schema.Decode(selected, codec, storedSchemaVersion, storedCodecId, payload))
+                    | None when storedSchemaVersion = 0 ->
+                        box (FunctionalPersistenceEncoding.decode<'State> selected codec storedCodecId payload)
+                    | None ->
+                        raise (
+                            InvalidOperationException(
+                                $"Functional journal state has schema version {storedSchemaVersion}, but grain type '{contract.GrainTypeName}' declares no 'stateSchema'. Restore that schema pipeline before reading the durable view."
+                            )
+                        )
               EncodeEvent =
                 fun selected codec value ->
                     FunctionalPersistenceEncoding.encode<'Event> selected codec (unbox<'Event> value)
               DecodeEvent =
-                fun selected codec storedCodecId payload ->
-                    box (FunctionalPersistenceEncoding.decode<'Event> selected codec storedCodecId payload)
+                fun selected codec storedSchemaVersion storedCodecId payload ->
+                    match definition.EventSchema with
+                    | Some schema ->
+                        box (schema.Decode(selected, codec, storedSchemaVersion, storedCodecId, payload))
+                    | None when storedSchemaVersion = 0 ->
+                        box (FunctionalPersistenceEncoding.decode<'Event> selected codec storedCodecId payload)
+                    | None ->
+                        raise (
+                            InvalidOperationException(
+                                $"Functional journal event has schema version {storedSchemaVersion}, but grain type '{contract.GrainTypeName}' declares no 'eventSchema'. Restore that schema pipeline before replaying the journal."
+                            )
+                        )
               OnActivate = onActivate
               OnDeactivate = onDeactivate
               OnTentativeStateChanged = stateChanged definition.OnTentativeStateChanged
@@ -1216,6 +1286,7 @@ module internal FunctionalJournaledHosted =
             timers,
             List.toArray definition.StreamBindings,
             definition.Placement,
+            migrationParticipants,
             Array.empty,
             Some blueprint
         )

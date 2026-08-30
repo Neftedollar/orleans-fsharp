@@ -28,7 +28,12 @@ type internal PersistentStateDescriptor =
 /// </summary>
 [<Sealed>]
 type PersistentStateRef<'State> internal
-    (stateName: string, providerName: string, codecOverride: FunctionalPersistenceCodec option) =
+    (
+        stateName: string,
+        providerName: string,
+        codecOverride: FunctionalPersistenceCodec option,
+        schema: FunctionalSchema<'State> option
+    ) =
 
     let descriptor =
         { StateName = stateName
@@ -47,13 +52,17 @@ type PersistentStateRef<'State> internal
     /// <summary>The element-level durable codec override, when configured.</summary>
     member internal _.CodecOverride = codecOverride
 
+    /// <summary>The element-level durable schema and upcaster pipeline, when configured.</summary>
+    member internal _.Schema = schema
+
     /// <summary>The logical <c>(stateName, providerName, storedType)</c> identity of this facet.</summary>
     member internal _.Descriptor = descriptor
 
     override _.ToString() =
         let codec = codecOverride |> Option.map _.Id |> Option.defaultValue "inherit"
+        let schemaVersion = schema |> Option.map _.CurrentVersion |> Option.map string |> Option.defaultValue "legacy"
 
-        $"PersistentStateRef(stateName = '{stateName}', providerName = '{providerName}', storedType = '{typeof<'State>.FullName}', codec = '{codec}')"
+        $"PersistentStateRef(stateName = '{stateName}', providerName = '{providerName}', storedType = '{typeof<'State>.FullName}', codec = '{codec}', schemaVersion = {schemaVersion})"
 
 /// <summary>Creation of immutable persistent-state descriptors.</summary>
 [<RequireQualifiedAccess>]
@@ -87,7 +96,7 @@ module PersistentState =
                 PersistentStage
                 $"the stored type '{typeof<'State>.FullName}' for stateName '{stateName}' must be a closed type."
 
-        PersistentStateRef<'State>(stateName, providerName, None)
+        PersistentStateRef<'State>(stateName, providerName, None, None)
 
     /// <summary>
     /// Override the durable payload codec for one persistent-state element. This selection wins
@@ -105,7 +114,34 @@ module PersistentState =
         if obj.ReferenceEquals(persistentState, null) then
             fail PersistentStage "PersistentState.withCodec requires a PersistentStateRef value."
 
-        PersistentStateRef<'State>(persistentState.StateName, persistentState.ProviderName, Some codec)
+        PersistentStateRef<'State>(
+            persistentState.StateName,
+            persistentState.ProviderName,
+            Some codec,
+            persistentState.Schema
+        )
+
+    /// <summary>
+    /// Attach a schema version and typed upcaster pipeline to one persistent-state element.
+    /// This element is stored in a versioned envelope even when its selected payload codec is
+    /// Orleans binary. Element-level schema configuration is independent of codec precedence.
+    /// </summary>
+    let withSchema
+        (schema: FunctionalSchema<'State>)
+        (persistentState: PersistentStateRef<'State>)
+        : PersistentStateRef<'State> =
+        if obj.ReferenceEquals(schema, null) then
+            fail PersistentStage "PersistentState.withSchema requires a non-null FunctionalSchema value."
+
+        if obj.ReferenceEquals(persistentState, null) then
+            fail PersistentStage "PersistentState.withSchema requires a PersistentStateRef value."
+
+        PersistentStateRef<'State>(
+            persistentState.StateName,
+            persistentState.ProviderName,
+            persistentState.CodecOverride,
+            Some schema
+        )
 
 /// <summary>
 /// Which closed stored types stock Orleans cannot hold in an <c>IPersistentState</c> at all.
@@ -424,7 +460,8 @@ type internal FunctionalEncodedPersistentState<'State>
     (
         inner: IPersistentState<FunctionalPersistenceEnvelope>,
         selectedCodec: FunctionalPersistenceCodec,
-        orleansCodec: IFunctionalPayloadCodec
+        orleansCodec: IFunctionalPayloadCodec,
+        schema: FunctionalSchema<'State> option
     ) =
 
     let decode () =
@@ -442,17 +479,32 @@ type internal FunctionalEncodedPersistentState<'State>
                 PersistentStage
                 "A codec-backed functional persistent-state record contains a null payload. The record is corrupt."
         else
-            FunctionalPersistenceEncoding.decode<'State>
-                selectedCodec
-                orleansCodec
-                envelope.CodecId
-                envelope.Payload
+            match schema with
+            | Some evolution ->
+                evolution.Decode(
+                    selectedCodec,
+                    orleansCodec,
+                    envelope.SchemaVersion,
+                    envelope.CodecId,
+                    envelope.Payload
+                )
+            | None when envelope.SchemaVersion = 0 ->
+                FunctionalPersistenceEncoding.decode<'State>
+                    selectedCodec
+                    orleansCodec
+                    envelope.CodecId
+                    envelope.Payload
+            | None ->
+                fail
+                    PersistentStage
+                    $"A functional persistent-state value has schema version {envelope.SchemaVersion}, but its PersistentStateRef declares no schema. Restore PersistentState.withSchema before reading the durable record."
 
     let encode (value: 'State) =
         FunctionalPersistenceEnvelope(
             CodecId = selectedCodec.Id,
             Payload = FunctionalPersistenceEncoding.encode selectedCodec orleansCodec value,
-            HasValue = true
+            HasValue = true,
+            SchemaVersion = (schema |> Option.map _.CurrentVersion |> Option.defaultValue 0)
         )
 
     interface IPersistentState<'State>
@@ -546,14 +598,19 @@ module internal FunctionalFacet =
           CodecOverride = reference.CodecOverride
           Create =
             fun selectedCodec orleansCodec factory context ->
-                match selectedCodec.Kind with
-                | FunctionalPersistenceCodecKind.OrleansBinary ->
+                match selectedCodec.Kind, reference.Schema with
+                | FunctionalPersistenceCodecKind.OrleansBinary, None ->
                     box (factory.Create<'StoredState>(context, configuration))
-                | FunctionalPersistenceCodecKind.FSharpJson ->
+                | _ ->
                     let inner = factory.Create<FunctionalPersistenceEnvelope>(context, configuration)
 
                     box (
-                        FunctionalEncodedPersistentState<'StoredState>(inner, selectedCodec, orleansCodec)
+                        FunctionalEncodedPersistentState<'StoredState>(
+                            inner,
+                            selectedCodec,
+                            orleansCodec,
+                            reference.Schema
+                        )
                         :> IPersistentState<'StoredState>
                     )
           Facade =

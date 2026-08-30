@@ -167,6 +167,200 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
             test <@ condition () @>
         }
 
+    member private this.SeedCheckpoint(streamRef: StreamRef<int>, itemCount: int, checkpointItem: int) =
+        task {
+            let received = ConcurrentQueue<int * StreamSequenceToken option>()
+
+            let! sub =
+                Stream.subscribeWithToken streamRef (fun item token ->
+                    task { received.Enqueue(item, token) })
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> not received.IsEmpty)
+
+            for item in 1..itemCount do
+                do! Stream.publish streamRef item
+
+            let payload () = received |> Seq.filter (fun (item, _) -> item > 0) |> Seq.toList
+
+            do!
+                this.WaitUntil(fun () ->
+                    payload ()
+                    |> List.map fst
+                    |> List.distinct
+                    |> List.length
+                    |> (=) itemCount)
+
+            let checkpoint =
+                payload ()
+                |> List.find (fun (item, _) -> item = checkpointItem)
+                |> snd
+
+            test <@ checkpoint.IsSome @>
+            return sub, checkpoint.Value
+        }
+
+    [<Fact>]
+    member this.``batch publish and batch subscription preserve every item`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> streamProvider "batch-ns" (Guid.NewGuid().ToString())
+            let batches = ConcurrentQueue<StreamBatchItem<int> array>()
+
+            let! sub =
+                Stream.subscribeBatch streamRef (
+                    StreamBatchHandlers.create (fun batch ->
+                        task {
+                            batches.Enqueue batch
+                        })
+                )
+
+            do!
+                this.ProveSubscriptionLive(
+                    streamRef,
+                    fun () -> not batches.IsEmpty
+                )
+
+            do! Stream.publishBatch streamRef [ 1..10 ]
+
+            let received () =
+                batches
+                |> Seq.collect id
+                |> Seq.map _.Item
+                |> Seq.filter (fun item -> item > 0)
+                |> Seq.distinct
+                |> Seq.sort
+                |> Seq.toList
+
+            do! this.WaitUntil(fun () -> (received ()).Length = 10)
+            test <@ received () = [ 1..10 ] @>
+            do! Stream.unsubscribe sub
+        }
+
+    [<Fact>]
+    member this.``publishBatchFrom accepts a real provider token and publishes the batch`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> streamProvider "batch-token-ns" (Guid.NewGuid().ToString())
+            let batches = ConcurrentQueue<StreamBatchItem<int> array>()
+
+            let! sub =
+                Stream.subscribeBatch streamRef (
+                    StreamBatchHandlers.create (fun batch ->
+                        task {
+                            batches.Enqueue batch
+                        })
+                )
+
+            let checkpoint () =
+                batches
+                |> Seq.collect id
+                |> Seq.tryPick _.Token
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> checkpoint () |> Option.isSome)
+            let checkpointToken = checkpoint () |> Option.get
+
+            // Orleans' memory adapter owns its delivery cursors and intentionally ignores a
+            // producer-supplied token. This proves the live-provider overload accepts a real
+            // cursor; StreamingTests proves the wrapper forwards that exact object.
+            do! Stream.publishBatchFrom streamRef checkpointToken [ 1; 2; 3 ]
+
+            let received () =
+                batches
+                |> Seq.collect id
+                |> Seq.map _.Item
+                |> Seq.filter (fun item -> item > 0)
+                |> Seq.distinct
+                |> Seq.sort
+                |> Seq.toList
+
+            do! this.WaitUntil(fun () -> (received ()).Length = 3)
+            test <@ received () = [ 1; 2; 3 ] @>
+            do! Stream.unsubscribe sub
+        }
+
+    [<Fact>]
+    member this.``resumeAllBatch reattaches every durable batch subscription`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> streamProvider "resume-batch-ns" (Guid.NewGuid().ToString())
+            let initiallyReceived = ConcurrentQueue<int>()
+
+            let! sub =
+                Stream.subscribeBatch streamRef (
+                    StreamBatchHandlers.create (fun batch ->
+                        task {
+                            batch |> Array.iter (fun item -> initiallyReceived.Enqueue item.Item)
+                        })
+                )
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> not initiallyReceived.IsEmpty)
+
+            let resumed = ConcurrentQueue<int>()
+
+            do!
+                Stream.resumeAllBatch streamRef (
+                    StreamBatchHandlers.create (fun batch ->
+                        task {
+                            batch |> Array.iter (fun item -> resumed.Enqueue item.Item)
+                        })
+                )
+
+            do! Stream.publishBatch streamRef [ 1; 2; 3 ]
+            do! this.WaitUntil(fun () -> resumed |> Seq.filter (fun item -> item > 0) |> Seq.length = 3)
+
+            let received = resumed |> Seq.filter (fun item -> item > 0) |> Seq.sort |> Seq.toList
+            test <@ received = [ 1; 2; 3 ] @>
+            do! Stream.unsubscribe sub
+        }
+
+    [<Fact>]
+    member _.``producer completion and error preserve Orleans provider semantics`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> streamProvider "terminal-ns" (Guid.NewGuid().ToString())
+
+            // Orleans 10.2.2 exposes producer terminal methods, but its persistent producer
+            // deliberately throws NotImplementedException for both. The F# wrapper must not hide
+            // or translate that provider contract. Consumer terminal callbacks are exercised by
+            // the adapter unit tests and work for providers which emit them.
+            let! completion =
+                Assert.ThrowsAsync<NotImplementedException>(fun () -> Stream.complete streamRef :> Task)
+
+            let! failure =
+                Assert.ThrowsAsync<NotImplementedException>(fun () ->
+                    Stream.fail streamRef (InvalidOperationException "stream failed") :> Task)
+
+            test <@ completion.Message.Contains "not implemented" @>
+            test <@ failure.Message.Contains "not implemented" @>
+        }
+
+    [<Fact>]
+    member this.``filter data is evaluated by the Orleans stream filter`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> streamProvider "server-filter-ns" (Guid.NewGuid().ToString())
+            let received = ConcurrentQueue<int>()
+
+            let! sub =
+                Stream.subscribeFiltered
+                    streamRef
+                    "even"
+                    (StreamHandlers.create (fun item ->
+                        task {
+                            received.Enqueue item
+                        }))
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> not received.IsEmpty)
+
+            for item in 1..10 do
+                do! Stream.publish streamRef item
+
+            let payload () = received |> Seq.filter (fun item -> item > 0) |> Seq.distinct |> Seq.sort |> Seq.toList
+            do! this.WaitUntil(fun () -> (payload ()).Length = 5)
+            test <@ payload () = [ 2; 4; 6; 8; 10 ] @>
+            do! Stream.unsubscribe sub
+        }
+
     /// <summary>
     /// Publishes <paramref name="nudge"/> until <paramref name="condition"/> holds.
     /// A rewound subscription's backlog is delivered on the pulling agent's next cycle for the
@@ -184,6 +378,175 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
                 do! Task.Delay 100
 
             test <@ condition () @>
+        }
+
+    [<Fact>]
+    member this.``resume and resumeAllHandlers reattach item callbacks`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let oneRef = Stream.getStream<int> streamProvider "resume-item-ns" (Guid.NewGuid().ToString())
+            let initial = ConcurrentQueue<int>()
+
+            let! one =
+                Stream.subscribeHandlers oneRef (StreamHandlers.create (fun item -> task { initial.Enqueue item }))
+
+            do! this.ProveSubscriptionLive(oneRef, fun () -> not initial.IsEmpty)
+
+            let resumed = ConcurrentQueue<int>()
+
+            let! resumedSub =
+                Stream.resume one (StreamHandlers.create (fun item -> task { resumed.Enqueue item }))
+
+            do! Stream.publish oneRef 11
+            do! this.WaitUntil(fun () -> Seq.contains 11 resumed)
+            test <@ Seq.contains 11 resumed @>
+            do! Stream.unsubscribe resumedSub
+
+            let allRef = Stream.getStream<int> streamProvider "resume-all-item-ns" (Guid.NewGuid().ToString())
+            let allInitial = ConcurrentQueue<int>()
+
+            let! allSub =
+                Stream.subscribeHandlers
+                    allRef
+                    (StreamHandlers.create (fun item -> task { allInitial.Enqueue item }))
+
+            do! this.ProveSubscriptionLive(allRef, fun () -> not allInitial.IsEmpty)
+
+            let allResumed = ConcurrentQueue<int>()
+
+            do!
+                Stream.resumeAllHandlers
+                    allRef
+                    (StreamHandlers.create (fun item -> task { allResumed.Enqueue item }))
+
+            do! Stream.publish allRef 22
+            do! this.WaitUntil(fun () -> Seq.contains 22 allResumed)
+            test <@ Seq.contains 22 allResumed @>
+            do! Stream.unsubscribe allSub
+        }
+
+    [<Fact>]
+    member this.``resumeFrom and subscribeFromHandlers rewind item callbacks`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let resumeRef = Stream.getStream<int> streamProvider "resume-from-item-ns" (Guid.NewGuid().ToString())
+            let! seedSub, checkpoint = this.SeedCheckpoint(resumeRef, 5, 3)
+            let resumed = ConcurrentQueue<int>()
+
+            let! resumedSub =
+                Stream.resumeFrom
+                    seedSub
+                    checkpoint
+                    (StreamHandlers.create (fun item -> task { resumed.Enqueue item }))
+
+            do! this.NudgeUntil(resumeRef, 6, fun () -> Seq.contains 4 resumed && Seq.contains 5 resumed)
+            // ResumeAsync reattaches the existing durable handle. Since that handle already
+            // acknowledged the checkpoint event, Orleans continues after it rather than
+            // redelivering it as a new SubscribeAsync(..., token) call does.
+            test <@ not (Seq.contains 3 resumed) @>
+            test <@ not (Seq.contains 1 resumed) @>
+            test <@ not (Seq.contains 2 resumed) @>
+            do! Stream.unsubscribe resumedSub
+
+            let subscribeRef =
+                Stream.getStream<int> streamProvider "subscribe-from-handlers-ns" (Guid.NewGuid().ToString())
+
+            let! sourceSub, sourceCheckpoint = this.SeedCheckpoint(subscribeRef, 5, 3)
+            do! Stream.unsubscribe sourceSub
+            let subscribed = ConcurrentQueue<int>()
+
+            let! subscribedSub =
+                Stream.subscribeFromHandlers
+                    subscribeRef
+                    sourceCheckpoint
+                    (StreamHandlers.create (fun item -> task { subscribed.Enqueue item }))
+
+            do!
+                this.NudgeUntil(
+                    subscribeRef,
+                    6,
+                    fun () -> Seq.contains 4 subscribed && Seq.contains 5 subscribed
+                )
+
+            test <@ Seq.contains 3 subscribed @>
+            test <@ not (Seq.contains 1 subscribed) @>
+            test <@ not (Seq.contains 2 subscribed) @>
+            do! Stream.unsubscribe subscribedSub
+        }
+
+    [<Fact>]
+    member this.``resumeBatch reattaches one durable batch subscription`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> streamProvider "resume-one-batch-ns" (Guid.NewGuid().ToString())
+            let initial = ConcurrentQueue<int>()
+
+            let! sub =
+                Stream.subscribeBatch streamRef (
+                    StreamBatchHandlers.create (fun batch ->
+                        task { batch |> Array.iter (fun item -> initial.Enqueue item.Item) })
+                )
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> not initial.IsEmpty)
+            let resumed = ConcurrentQueue<int>()
+
+            let! resumedSub =
+                Stream.resumeBatch sub (
+                    StreamBatchHandlers.create (fun batch ->
+                        task { batch |> Array.iter (fun item -> resumed.Enqueue item.Item) })
+                )
+
+            do! Stream.publishBatch streamRef [ 31; 32 ]
+            do! this.WaitUntil(fun () -> Seq.contains 31 resumed && Seq.contains 32 resumed)
+            test <@ resumed |> Seq.filter (fun item -> item > 0) |> Seq.sort |> Seq.toList = [ 31; 32 ] @>
+            do! Stream.unsubscribe resumedSub
+        }
+
+    [<Fact>]
+    member this.``subscribeBatchFrom and resumeBatchFrom rewind batch callbacks`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+
+            let subscribeRef =
+                Stream.getStream<int> streamProvider "subscribe-from-batch-ns" (Guid.NewGuid().ToString())
+
+            let! sourceSub, checkpoint = this.SeedCheckpoint(subscribeRef, 5, 3)
+            do! Stream.unsubscribe sourceSub
+            let subscribed = ConcurrentQueue<int>()
+
+            let! subscribedSub =
+                Stream.subscribeBatchFrom subscribeRef checkpoint (
+                    StreamBatchHandlers.create (fun batch ->
+                        task { batch |> Array.iter (fun item -> subscribed.Enqueue item.Item) })
+                )
+
+            do!
+                this.NudgeUntil(
+                    subscribeRef,
+                    6,
+                    fun () -> Seq.contains 4 subscribed && Seq.contains 5 subscribed
+                )
+
+            test <@ Seq.contains 3 subscribed @>
+            test <@ not (Seq.contains 1 subscribed) @>
+            test <@ not (Seq.contains 2 subscribed) @>
+            do! Stream.unsubscribe subscribedSub
+
+            let resumeRef = Stream.getStream<int> streamProvider "resume-from-batch-ns" (Guid.NewGuid().ToString())
+            let! resumeSource, resumeCheckpoint = this.SeedCheckpoint(resumeRef, 5, 3)
+            let resumed = ConcurrentQueue<int>()
+
+            let! resumedSub =
+                Stream.resumeBatchFrom resumeSource resumeCheckpoint (
+                    StreamBatchHandlers.create (fun batch ->
+                        task { batch |> Array.iter (fun item -> resumed.Enqueue item.Item) })
+                )
+
+            do! this.NudgeUntil(resumeRef, 6, fun () -> Seq.contains 4 resumed && Seq.contains 5 resumed)
+            test <@ not (Seq.contains 3 resumed) @>
+            test <@ not (Seq.contains 1 resumed) @>
+            test <@ not (Seq.contains 2 resumed) @>
+            do! Stream.unsubscribe resumedSub
         }
 
     [<Fact>]
@@ -288,6 +651,46 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
             test <@ secondCheckpoint.IsSome @>
             test <@ secondCheckpoint.Value.CompareTo(checkpoint.Value) > 0 @>
 
+            do! Stream.unsubscribe resumedSub
+        }
+
+    [<Fact>]
+    member this.``subscribeFromFiltered combines rewind and server-side filtering`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> streamProvider "cursor-filter-ns" (Guid.NewGuid().ToString())
+            let received = ConcurrentQueue<int * StreamSequenceToken option>()
+
+            let! sub =
+                Stream.subscribeWithToken streamRef (fun item token ->
+                    task { received.Enqueue(item, token) })
+
+            do! this.ProveSubscriptionLive(streamRef, fun () -> not received.IsEmpty)
+
+            for item in 1..5 do
+                do! Stream.publish streamRef item
+
+            let payload () = received |> Seq.filter (fun (item, _) -> item > 0) |> Seq.toList
+            do! this.WaitUntil(fun () -> payload () |> List.map fst |> List.distinct |> List.length = 5)
+
+            let checkpoint = payload () |> List.find (fun (item, _) -> item = 3) |> snd
+            test <@ checkpoint.IsSome @>
+            do! Stream.unsubscribe sub
+
+            let resumed = ConcurrentQueue<int>()
+
+            let! resumedSub =
+                Stream.subscribeFromFiltered
+                    streamRef
+                    checkpoint.Value
+                    "even"
+                    (StreamHandlers.create (fun item -> task { resumed.Enqueue item }))
+
+            do! this.NudgeUntil(streamRef, 6, fun () -> Seq.contains 4 resumed)
+
+            test <@ Seq.contains 4 resumed @>
+            test <@ not (Seq.contains 3 resumed) @>
+            test <@ not (Seq.contains 5 resumed) @>
             do! Stream.unsubscribe resumedSub
         }
 

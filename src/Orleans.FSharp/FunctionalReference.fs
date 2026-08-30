@@ -31,8 +31,10 @@ type internal FunctionalGrainReferenceActivator
 
 /// <summary>
 /// The functional reference activator provider. It accepts only the reserved functional
-/// interface ID <c>orleans.fsharp.functional/&lt;grainType&gt;</c> whose non-empty, NUL-free
-/// suffix exactly equals the supplied <c>GrainId.Type</c>, and declines every other ID so the
+/// local lookup interface ID
+/// <c>orleans.fsharp.functional-ref/&lt;version&gt;/&lt;grainType&gt;</c>. It validates the suffix
+/// against <c>GrainId.Type</c>, then creates a reference carrying the stable functional interface
+/// ID and the requested native Orleans interface version. Every other ID is declined so the
 /// stock Orleans providers keep serving generated references.
 /// </summary>
 [<Sealed>]
@@ -57,23 +59,14 @@ type internal FunctionalGrainReferenceActivatorProvider(services: IServiceProvid
         member _.TryGet
             (grainType: GrainType, interfaceType: GrainInterfaceType, activator: byref<IGrainReferenceActivator>)
             =
-            let id = interfaceType.ToString()
-
-            if isNull id || not (id.StartsWith(FunctionalIds.Prefix, StringComparison.Ordinal)) then
-                false
-            else
-                let suffix = id.Substring FunctionalIds.Prefix.Length
-
-                if String.IsNullOrEmpty suffix || suffix.IndexOf '\000' >= 0 then
-                    false
-                elif not (String.Equals(suffix, grainType.ToString(), StringComparison.Ordinal)) then
-                    false
-                else
+            match FunctionalIds.tryReferenceTarget grainType interfaceType with
+            | None -> false
+            | Some struct (targetInterfaceType, interfaceVersion) ->
                     let shared =
                         GrainReferenceShared(
                             grainType,
-                            interfaceType,
-                            FunctionalIds.InterfaceVersion,
+                            targetInterfaceType,
+                            interfaceVersion,
                             runtime.Value,
                             InvokeMethodOptions.None,
                             codecProvider.Value,

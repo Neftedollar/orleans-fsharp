@@ -59,6 +59,8 @@ type ProducerActor = private ProducerActor of unit
 type ProducerApi =
     { /// Publishes one event onto the tour's stream and replies with the running count.
       publish: string -> Task<int>
+      /// Publishes one Orleans provider-native batch and advances the same count.
+      publishBatch: string list -> Task<int>
       /// Reports how the provider lookup went, without publishing.
       providerProbe: unit -> Task<string> }
 
@@ -67,7 +69,7 @@ module ProducerApi =
     let contract =
         grainContract<ProducerActor, string, ProducerApi> {
             grainType "tour.stream.producer"
-            version 1
+            version 2
             stringKey
 
             readOnly (_.providerProbe)
@@ -100,6 +102,17 @@ module ProducerDefinition =
                         let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
                         do! Stream.publish stream text
                         return state + 1, state + 1
+                    })
+
+            handle
+                (_.publishBatch)
+                (fun context state events ->
+                    task {
+                        let provider = streamProvider context.services
+                        let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
+                        do! Stream.publishBatch stream events
+                        let next = state + List.length events
+                        return next, next
                     })
 
             handle
@@ -161,9 +174,15 @@ module ConsumerDefinition =
 
                         let stream = Stream.getStream<string> provider TourStream.Namespace TourStream.Key
 
-                        let! _subscription =
-                            Stream.subscribe stream (fun event ->
+                        let handlers =
+                            StreamHandlers.create (fun event ->
                                 task { StreamInbox.add ConsumerApi.Subscriber event })
+                            |> StreamHandlers.withError (fun error ->
+                                task { StreamInbox.add ConsumerApi.Subscriber $"ERROR:{error.Message}" })
+                            |> StreamHandlers.withCompletion (fun () ->
+                                task { StreamInbox.add ConsumerApi.Subscriber "COMPLETED" })
+
+                        let! _subscription = Stream.subscribeHandlers stream handlers
 
                         return "subscribed from onActivate"
                     with error ->

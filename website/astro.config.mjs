@@ -16,7 +16,14 @@ export default defineConfig({
 		starlight({
 			title: 'Orleans.FSharp',
 			description: 'Idiomatic F# API for Microsoft Orleans',
-			plugins: [starlightThemeBlack({})],
+			// Markdown mirrors keep their H1 so docs/ remains readable on GitHub.
+			// Render only the breadcrumb here to avoid a duplicate H1 and repeated lede.
+			components: {
+				PageTitle: './src/components/DocBreadcrumb.astro',
+			},
+			plugins: [starlightThemeBlack({
+				footerText: 'Orleans.FSharp is open source on [GitHub](https://github.com/Neftedollar/orleans-fsharp). Documentation is built with [Starlight](https://starlight.astro.build/).',
+			})],
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/Neftedollar/orleans-fsharp' },
 			],
@@ -25,27 +32,44 @@ export default defineConfig({
 			},
 			sidebar: [
 				{ label: 'Getting Started', link: '/getting-started' },
+				{ label: 'Recipes', link: '/how-to' },
+				{ label: 'Examples', link: '/examples' },
 				{
-					label: 'Core Guides',
+					label: 'Functional Runtime',
 					items: [
-						{ label: 'Functional Grain Runtime', link: '/functional-grains' },
-						{ label: 'Silo Configuration', link: '/silo-configuration' },
-						{ label: 'Orleans Dashboard', link: '/dashboard' },
-						{ label: 'Client Configuration', link: '/client-configuration' },
+						{ label: 'Overview', link: '/functional-runtime' },
+						{ label: 'Contracts and Keys', link: '/functional-grains/contracts' },
+						{ label: 'State and Lifecycle', link: '/functional-grains/state-and-lifecycle' },
+						{ label: 'Calls and Delivery', link: '/functional-grains/delivery-and-streaming' },
+						{ label: 'Placement and Transactions', link: '/functional-grains/placement-and-transactions' },
+						{ label: 'Complete Reference', link: '/functional-grains' },
+					],
+				},
+				{
+					label: 'Data and Messaging',
+					items: [
 						{ label: 'Serialization', link: '/serialization' },
 						{ label: 'Streaming', link: '/streaming' },
 						{ label: 'Event Sourcing', link: '/event-sourcing' },
 						{ label: 'Server-Streaming Replies', link: '/streaming-replies' },
+					],
+				},
+				{
+					label: 'Hosting and Operations',
+					items: [
+						{ label: 'Silo Configuration', link: '/silo-configuration' },
+						{ label: 'Orleans Dashboard', link: '/dashboard' },
+						{ label: 'Client Configuration', link: '/client-configuration' },
 						{ label: 'Testing', link: '/testing' },
 						{ label: 'Security', link: '/security' },
 						{ label: 'Resilience', link: '/resilience' },
-						{ label: 'Advanced', link: '/advanced' },
+						{ label: 'Additional APIs', link: '/advanced' },
 						{ label: 'Analyzers', link: '/analyzers' },
 						{ label: 'Calling from C#', link: '/calling-from-csharp' },
 					],
 				},
 				{ label: 'API Reference', link: '/api-reference' },
-				{ label: 'How To', link: '/how-to' },
+				{ label: 'Orleans Compatibility', link: '/compatibility' },
 				{ label: 'Comparison', link: '/comparison' },
 				{ label: 'FAQ', link: '/faq' },
 				{

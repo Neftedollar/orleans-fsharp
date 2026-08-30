@@ -274,6 +274,20 @@ let ``a non-positive version fails contract construction`` () =
     test <@ error.Message.Contains "positive integer" @>
 
 [<Fact>]
+let ``a version above Orleans native interface range fails contract construction`` () =
+    let error =
+        throws (fun () ->
+            grainContract<ChatActor, string, ChatApi> {
+                grainType "chat.room"
+                version 65536
+                stringKey
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "native interface-version range" @>
+    test <@ error.Message.Contains "65535" @>
+
+[<Fact>]
 let ``a repeated version fails contract construction`` () =
     let error =
         throws (fun () ->

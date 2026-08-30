@@ -33,6 +33,12 @@ type internal FunctionalTargetMetadata =
         InterfaceId: string
         /// The Orleans interface type built from that ID.
         GrainInterfaceType: GrainInterfaceType
+        /// The native Orleans interface version carried by every reference for this contract.
+        InterfaceVersion: uint16
+        ///
+        /// A local-only, version-qualified lookup ID. It is the cache key used to create the
+        /// reference; the resulting reference carries <see cref="P:GrainInterfaceType"/> instead.
+        ReferenceGrainInterfaceType: GrainInterfaceType
     }
 
 /// <summary>Construction of the per-contract closed target metadata.</summary>
@@ -49,7 +55,7 @@ module internal FunctionalTarget =
     /// <paramref name="actorBrand"/> is an open generic type, or the closed target interface does
     /// not expose the dispatch method.
     /// </exception>
-    let metadataFor (actorBrand: Type) (grainTypeName: string) : FunctionalTargetMetadata =
+    let metadataFor (actorBrand: Type) (grainTypeName: string) (version: int) : FunctionalTargetMetadata =
         if actorBrand.ContainsGenericParameters then
             fail
                 ContractStage
@@ -67,10 +73,14 @@ module internal FunctionalTarget =
                         $"the closed target interface '{closed.FullName}' does not expose '{FunctionalRequest.DispatchMethodName}'."
                 | method -> method
 
+        let interfaceVersion = uint16 version
+
         { InterfaceType = closed
           DispatchMethod = dispatch
           InterfaceId = FunctionalIds.interfaceId grainTypeName
-          GrainInterfaceType = FunctionalIds.grainInterfaceType grainTypeName }
+          GrainInterfaceType = FunctionalIds.grainInterfaceType grainTypeName
+          InterfaceVersion = interfaceVersion
+          ReferenceGrainInterfaceType = FunctionalIds.referenceGrainInterfaceType grainTypeName version }
 
 /// <summary>
 /// The transport sender of one bound reference: it takes complete fixed request data and

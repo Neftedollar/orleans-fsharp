@@ -260,3 +260,182 @@ module internal FunctionalPersistenceEncoding =
                         $"Functional durable payload codec '{codecId}' is not registered for reading. Keep the codec which wrote the data available with FunctionalPersistenceCodec.WithReadCodec while migrating it."
                     )
                 )
+
+/// <summary>One closed, typed step in a durable payload's schema-upcasting pipeline.</summary>
+[<ReferenceEquality>]
+type internal FunctionalSchemaStep =
+    {
+        FromVersion: int
+        ToVersion: int
+        InputType: Type
+        OutputType: Type
+        Upcast:
+            FunctionalPersistenceCodec
+                -> IFunctionalPayloadCodec
+                -> string
+                -> byte[]
+                -> struct (string * byte[])
+    }
+
+/// <summary>
+/// A typed, immutable schema evolution pipeline for one functional durable value.
+/// </summary>
+/// <remarks>
+/// The current schema version is stored beside every encoded payload. Reading walks the registered
+/// steps from the stored version to <see cref="P:Orleans.FSharp.FunctionalSchema`1.CurrentVersion"/>,
+/// decoding each historical CLR type before invoking its pure F# upcaster. Records written before
+/// schema evolution existed have version zero, so a pipeline which upgrades those records starts
+/// with <c>FunctionalSchema.current&lt;LegacyType&gt; 0</c>.
+/// </remarks>
+[<Sealed>]
+type FunctionalSchema<'Current> internal
+    (earliestVersion: int, currentVersion: int, steps: Map<int, FunctionalSchemaStep>) =
+
+    /// <summary>The version written for new values.</summary>
+    member _.CurrentVersion = currentVersion
+
+    /// <summary>The oldest version for which this pipeline has a typed decoder.</summary>
+    member _.EarliestVersion = earliestVersion
+
+    member internal _.Steps = steps
+
+    /// <summary>Decode a current payload or walk every required typed upcaster first.</summary>
+    member internal _.Decode
+        (
+            selectedCodec: FunctionalPersistenceCodec,
+            orleansCodec: IFunctionalPayloadCodec,
+            storedSchemaVersion: int,
+            storedCodecId: string,
+            payload: byte[]
+        )
+        : 'Current =
+        if storedSchemaVersion < 0 then
+            raise (
+                InvalidOperationException(
+                    $"Functional durable payload schema version {storedSchemaVersion} is invalid; schema versions cannot be negative."
+                )
+            )
+
+        if storedSchemaVersion > currentVersion then
+            raise (
+                InvalidOperationException(
+                    $"Functional durable payload schema version {storedSchemaVersion} is newer than the configured current version {currentVersion} for '{typeof<'Current>.FullName}'. Deploy code which understands the newer schema before reading this record."
+                )
+            )
+
+        let rec evolve version codecId bytes =
+            if version = currentVersion then
+                FunctionalPersistenceEncoding.decode<'Current> selectedCodec orleansCodec codecId bytes
+            else
+                match steps |> Map.tryFind version with
+                | None ->
+                    raise (
+                        InvalidOperationException(
+                            $"Functional durable payload schema version {version} cannot reach configured version {currentVersion} for '{typeof<'Current>.FullName}'. Register an upcaster from version {version}; records written before schema evolution use version 0."
+                        )
+                    )
+                | Some step ->
+                    try
+                        let struct (nextCodecId, nextPayload) =
+                            step.Upcast selectedCodec orleansCodec codecId bytes
+
+                        evolve step.ToVersion nextCodecId nextPayload
+                    with
+                    | :? InvalidOperationException as cause
+                        when cause.Message.StartsWith("Functional durable payload schema version", StringComparison.Ordinal) ->
+                        reraise ()
+                    | cause ->
+                        raise (
+                            InvalidOperationException(
+                                $"Functional durable payload upcaster from schema version {step.FromVersion} ('{step.InputType.FullName}') to {step.ToVersion} ('{step.OutputType.FullName}') failed.",
+                                cause
+                            )
+                        )
+
+        evolve storedSchemaVersion storedCodecId payload
+
+    override _.ToString() =
+        $"FunctionalSchema(currentVersion = {currentVersion}, type = '{typeof<'Current>.FullName}')"
+
+/// <summary>Construction and composition of typed durable-schema pipelines.</summary>
+[<RequireQualifiedAccess>]
+module FunctionalSchema =
+
+    let private validateVersion argumentName version =
+        if version < 0 then
+            invalidArg argumentName "A functional durable schema version cannot be negative."
+
+    /// <summary>
+    /// Define a value at one schema version. Compose older-to-newer steps with
+    /// <c>FunctionalSchema.upcasterTo</c>.
+    /// </summary>
+    let current<'T> (version: int) : FunctionalSchema<'T> =
+        validateVersion (nameof version) version
+
+        if typeof<'T>.ContainsGenericParameters then
+            invalidArg "typeParameter" "A functional durable schema requires a closed current type."
+
+        FunctionalSchema<'T>(version, version, Map.empty)
+
+    /// <summary>
+    /// Append a typed upcaster and make its output type the pipeline's current durable type.
+    /// The target version must be greater than the preceding current version; skipped numeric
+    /// versions are allowed and remain explicit in the envelope.
+    /// </summary>
+    let upcasterTo<'Previous, 'Current>
+        (targetVersion: int)
+        (mapping: 'Previous -> 'Current)
+        (schema: FunctionalSchema<'Previous>)
+        : FunctionalSchema<'Current> =
+        if obj.ReferenceEquals(schema, null) then
+            nullArg (nameof schema)
+
+        if obj.ReferenceEquals(mapping, null) then
+            nullArg (nameof mapping)
+
+        validateVersion (nameof targetVersion) targetVersion
+
+        if targetVersion <= schema.CurrentVersion then
+            invalidArg
+                (nameof targetVersion)
+                $"The next functional durable schema version ({targetVersion}) must be greater than the pipeline's current version ({schema.CurrentVersion})."
+
+        if typeof<'Current>.ContainsGenericParameters then
+            invalidArg "typeParameter" "A functional durable schema requires a closed target type."
+
+        let step =
+            { FromVersion = schema.CurrentVersion
+              ToVersion = targetVersion
+              InputType = typeof<'Previous>
+              OutputType = typeof<'Current>
+              Upcast =
+                fun selectedCodec orleansCodec storedCodecId payload ->
+                    let previous =
+                        FunctionalPersistenceEncoding.decode<'Previous>
+                            selectedCodec
+                            orleansCodec
+                            storedCodecId
+                            payload
+
+                    let current = mapping previous
+                    let encoded = FunctionalPersistenceEncoding.encode selectedCodec orleansCodec current
+                    struct (selectedCodec.Id, encoded) }
+
+        FunctionalSchema<'Current>(
+            schema.EarliestVersion,
+            targetVersion,
+            schema.Steps.Add(step.FromVersion, step)
+        )
+
+    /// <summary>Append a typed upcaster whose target is the next integer schema version.</summary>
+    let upcaster<'Previous, 'Current>
+        (mapping: 'Previous -> 'Current)
+        (schema: FunctionalSchema<'Previous>)
+        : FunctionalSchema<'Current> =
+        if obj.ReferenceEquals(schema, null) then
+            nullArg (nameof schema)
+
+        if schema.CurrentVersion = Int32.MaxValue then
+            invalidArg (nameof schema) "The functional durable schema is already at Int32.MaxValue."
+
+        upcasterTo (schema.CurrentVersion + 1) mapping schema

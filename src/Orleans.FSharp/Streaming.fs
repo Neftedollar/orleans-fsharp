@@ -1,6 +1,7 @@
 namespace Orleans.FSharp.Streaming
 
 open System
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Channels
 open System.Threading.Tasks
@@ -29,6 +30,129 @@ type StreamSubscription<'T> =
         /// <summary>The underlying Orleans stream subscription handle.</summary>
         Handle: StreamSubscriptionHandle<'T>
     }
+
+/// <summary>Callbacks for item-by-item Orleans stream delivery.</summary>
+[<NoEquality; NoComparison>]
+type StreamHandlers<'T> =
+    {
+        /// <summary>Handle one item and its optional provider sequence token.</summary>
+        OnNext: 'T -> StreamSequenceToken option -> Task<unit>
+        /// <summary>Handle terminal stream failure.</summary>
+        OnError: exn -> Task<unit>
+        /// <summary>Handle normal stream completion.</summary>
+        OnCompleted: unit -> Task<unit>
+    }
+
+/// <summary>Construction and immutable customization of item stream callbacks.</summary>
+[<RequireQualifiedAccess>]
+module StreamHandlers =
+
+    let private completed = Task.FromResult()
+
+    /// <summary>Create callbacks from an item handler, ignoring sequence tokens.</summary>
+    let create (onNext: 'T -> Task<unit>) : StreamHandlers<'T> =
+        if obj.ReferenceEquals(onNext, null) then
+            nullArg (nameof onNext)
+
+        { OnNext = fun item _ -> onNext item
+          OnError = fun _ -> completed
+          OnCompleted = fun () -> completed }
+
+    /// <summary>Create callbacks whose item handler also receives the sequence token.</summary>
+    let withToken (onNext: 'T -> StreamSequenceToken option -> Task<unit>) : StreamHandlers<'T> =
+        if obj.ReferenceEquals(onNext, null) then
+            nullArg (nameof onNext)
+
+        { OnNext = onNext
+          OnError = fun _ -> completed
+          OnCompleted = fun () -> completed }
+
+    /// <summary>Replace the terminal error callback.</summary>
+    let withError (onError: exn -> Task<unit>) (handlers: StreamHandlers<'T>) =
+        if obj.ReferenceEquals(onError, null) then
+            nullArg (nameof onError)
+
+        { handlers with OnError = onError }
+
+    /// <summary>Replace the normal completion callback.</summary>
+    let withCompletion (onCompleted: unit -> Task<unit>) (handlers: StreamHandlers<'T>) =
+        if obj.ReferenceEquals(onCompleted, null) then
+            nullArg (nameof onCompleted)
+
+        { handlers with OnCompleted = onCompleted }
+
+/// <summary>One immutable item delivered inside an Orleans stream batch.</summary>
+[<NoEquality; NoComparison>]
+type StreamBatchItem<'T> =
+    {
+        /// <summary>The delivered application item.</summary>
+        Item: 'T
+        /// <summary>The provider sequence token for this item, when available.</summary>
+        Token: StreamSequenceToken option
+    }
+
+/// <summary>Callbacks for batch-oriented Orleans stream delivery.</summary>
+[<NoEquality; NoComparison>]
+type StreamBatchHandlers<'T> =
+    {
+        /// <summary>Handle one ordered batch. The array is a detached immutable-by-convention snapshot.</summary>
+        OnNextBatch: StreamBatchItem<'T> array -> Task<unit>
+        /// <summary>Handle terminal stream failure.</summary>
+        OnError: exn -> Task<unit>
+        /// <summary>Handle normal stream completion.</summary>
+        OnCompleted: unit -> Task<unit>
+    }
+
+/// <summary>Construction and immutable customization of batch stream callbacks.</summary>
+[<RequireQualifiedAccess>]
+module StreamBatchHandlers =
+
+    let private completed = Task.FromResult()
+
+    /// <summary>Create batch callbacks with no-op terminal handlers.</summary>
+    let create (onNextBatch: StreamBatchItem<'T> array -> Task<unit>) : StreamBatchHandlers<'T> =
+        if obj.ReferenceEquals(onNextBatch, null) then
+            nullArg (nameof onNextBatch)
+
+        { OnNextBatch = onNextBatch
+          OnError = fun _ -> completed
+          OnCompleted = fun () -> completed }
+
+    /// <summary>Replace the terminal error callback.</summary>
+    let withError (onError: exn -> Task<unit>) (handlers: StreamBatchHandlers<'T>) =
+        if obj.ReferenceEquals(onError, null) then
+            nullArg (nameof onError)
+
+        { handlers with OnError = onError }
+
+    /// <summary>Replace the normal completion callback.</summary>
+    let withCompletion (onCompleted: unit -> Task<unit>) (handlers: StreamBatchHandlers<'T>) =
+        if obj.ReferenceEquals(onCompleted, null) then
+            nullArg (nameof onCompleted)
+
+        { handlers with OnCompleted = onCompleted }
+
+[<Sealed>]
+type internal FunctionalAsyncObserver<'T>(handlers: StreamHandlers<'T>) =
+    interface IAsyncObserver<'T> with
+        member _.OnNextAsync(item, token) = handlers.OnNext item (Option.ofObj token) :> Task
+        member _.OnErrorAsync(error) = handlers.OnError error :> Task
+        member _.OnCompletedAsync() = handlers.OnCompleted() :> Task
+
+[<Sealed>]
+type internal FunctionalAsyncBatchObserver<'T>(handlers: StreamBatchHandlers<'T>) =
+    interface IAsyncBatchObserver<'T> with
+        member _.OnNextAsync(items: IList<SequentialItem<'T>>) =
+            items
+            |> Seq.map (fun item ->
+                { Item = item.Item
+                  Token = Option.ofObj item.Token })
+            |> Seq.toArray
+            |> handlers.OnNextBatch
+            :> Task
+
+        member _.OnErrorAsync(error) = handlers.OnError error :> Task
+        member _.OnCompletedAsync() = handlers.OnCompleted() :> Task
 
 /// <summary>
 /// Functions for creating, publishing to, subscribing to, and consuming Orleans streams
@@ -63,6 +187,41 @@ module Stream =
         task {
             let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
             do! asyncStream.OnNextAsync(event)
+        }
+
+    /// <summary>Publish one provider-native batch with no explicit starting token.</summary>
+    let publishBatch<'T> (stream: StreamRef<'T>) (events: seq<'T>) : Task<unit> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            do! asyncStream.OnNextBatchAsync(events, null)
+        }
+
+    /// <summary>Publish one provider-native batch starting at an explicit sequence token.</summary>
+    let publishBatchFrom<'T>
+        (stream: StreamRef<'T>)
+        (token: StreamSequenceToken)
+        (events: seq<'T>)
+        : Task<unit> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            do! asyncStream.OnNextBatchAsync(events, token)
+        }
+
+    /// <summary>Notify subscribers that the stream completed normally.</summary>
+    let complete<'T> (stream: StreamRef<'T>) : Task<unit> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            do! asyncStream.OnCompletedAsync()
+        }
+
+    /// <summary>Notify subscribers that the stream terminated with an error.</summary>
+    let fail<'T> (stream: StreamRef<'T>) (error: exn) : Task<unit> =
+        if isNull error then
+            nullArg (nameof error)
+
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            do! asyncStream.OnErrorAsync(error)
         }
 
     /// <summary>
@@ -115,6 +274,46 @@ module Stream =
                     task { do! handler item (Option.ofObj token) })
 
             let! handle = asyncStream.SubscribeAsync(onNext)
+            return { Handle = handle }
+        }
+
+    /// <summary>Subscribe with first-class next/error/completion callbacks.</summary>
+    let subscribeHandlers<'T>
+        (stream: StreamRef<'T>)
+        (handlers: StreamHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let observer = FunctionalAsyncObserver handlers :> IAsyncObserver<'T>
+            let! handle = asyncStream.SubscribeAsync(observer)
+            return { Handle = handle }
+        }
+
+    /// <summary>
+    /// Subscribe with server-side filter data. The named provider must have an Orleans
+    /// <c>IStreamFilter</c> registered; the filter receives this opaque string for every item.
+    /// </summary>
+    let subscribeFiltered<'T>
+        (stream: StreamRef<'T>)
+        (filterData: string)
+        (handlers: StreamHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let observer = FunctionalAsyncObserver handlers :> IAsyncObserver<'T>
+            let! handle = asyncStream.SubscribeAsync(observer, null, filterData)
+            return { Handle = handle }
+        }
+
+    /// <summary>Subscribe with provider-native batch delivery and terminal callbacks.</summary>
+    let subscribeBatch<'T>
+        (stream: StreamRef<'T>)
+        (handlers: StreamBatchHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let observer = FunctionalAsyncBatchObserver handlers :> IAsyncBatchObserver<'T>
+            let! handle = asyncStream.SubscribeAsync(observer)
             return { Handle = handle }
         }
 
@@ -234,6 +433,46 @@ module Stream =
             return { Handle = handle }
         }
 
+    /// <summary>Resume item delivery from a token while preserving error and completion callbacks.</summary>
+    let subscribeFromHandlers<'T>
+        (stream: StreamRef<'T>)
+        (token: StreamSequenceToken)
+        (handlers: StreamHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let observer = FunctionalAsyncObserver handlers :> IAsyncObserver<'T>
+            let! handle = asyncStream.SubscribeAsync(observer, token, null)
+            return { Handle = handle }
+        }
+
+    /// <summary>Resume filtered item delivery from a token.</summary>
+    let subscribeFromFiltered<'T>
+        (stream: StreamRef<'T>)
+        (token: StreamSequenceToken)
+        (filterData: string)
+        (handlers: StreamHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let observer = FunctionalAsyncObserver handlers :> IAsyncObserver<'T>
+            let! handle = asyncStream.SubscribeAsync(observer, token, filterData)
+            return { Handle = handle }
+        }
+
+    /// <summary>Resume provider-native batch delivery from a token.</summary>
+    let subscribeBatchFrom<'T>
+        (stream: StreamRef<'T>)
+        (token: StreamSequenceToken)
+        (handlers: StreamBatchHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let observer = FunctionalAsyncBatchObserver handlers :> IAsyncBatchObserver<'T>
+            let! handle = asyncStream.SubscribeAsync(observer, token)
+            return { Handle = handle }
+        }
+
     /// <summary>
     /// Always returns <c>None</c>: <c>StreamSubscriptionHandle</c> does not expose the sequence
     /// token directly, so this is a permanent stub rather than a lookup. The token is delivered
@@ -276,6 +515,52 @@ module Stream =
                 |> Seq.toList
         }
 
+    /// <summary>Reattach item callbacks to one durable subscription.</summary>
+    let resume<'T>
+        (sub: StreamSubscription<'T>)
+        (handlers: StreamHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let observer = FunctionalAsyncObserver handlers :> IAsyncObserver<'T>
+            let! handle = sub.Handle.ResumeAsync(observer, null)
+            return { Handle = handle }
+        }
+
+    /// <summary>Reattach item callbacks to one durable subscription from an explicit token.</summary>
+    let resumeFrom<'T>
+        (sub: StreamSubscription<'T>)
+        (token: StreamSequenceToken)
+        (handlers: StreamHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let observer = FunctionalAsyncObserver handlers :> IAsyncObserver<'T>
+            let! handle = sub.Handle.ResumeAsync(observer, token)
+            return { Handle = handle }
+        }
+
+    /// <summary>Reattach batch callbacks to one durable subscription.</summary>
+    let resumeBatch<'T>
+        (sub: StreamSubscription<'T>)
+        (handlers: StreamBatchHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let observer = FunctionalAsyncBatchObserver handlers :> IAsyncBatchObserver<'T>
+            let! handle = sub.Handle.ResumeAsync(observer, null)
+            return { Handle = handle }
+        }
+
+    /// <summary>Reattach batch callbacks from an explicit token.</summary>
+    let resumeBatchFrom<'T>
+        (sub: StreamSubscription<'T>)
+        (token: StreamSequenceToken)
+        (handlers: StreamBatchHandlers<'T>)
+        : Task<StreamSubscription<'T>> =
+        task {
+            let observer = FunctionalAsyncBatchObserver handlers :> IAsyncBatchObserver<'T>
+            let! handle = sub.Handle.ResumeAsync(observer, token)
+            return { Handle = handle }
+        }
+
     /// <summary>
     /// Resume all existing subscriptions for a stream with a new handler.
     /// Useful after grain reactivation to reattach handlers to durable subscriptions.
@@ -295,5 +580,29 @@ module Stream =
 
             for handle in handles do
                 let! _ = handle.ResumeAsync(onNext)
+                ()
+        }
+
+    /// <summary>Resume every durable subscription with item/error/completion callbacks.</summary>
+    let resumeAllHandlers<'T> (stream: StreamRef<'T>) (handlers: StreamHandlers<'T>) : Task<unit> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let! handles = asyncStream.GetAllSubscriptionHandles()
+
+            for handle in handles do
+                let observer = FunctionalAsyncObserver handlers :> IAsyncObserver<'T>
+                let! _ = handle.ResumeAsync(observer, null)
+                ()
+        }
+
+    /// <summary>Resume every durable subscription with provider-native batch callbacks.</summary>
+    let resumeAllBatch<'T> (stream: StreamRef<'T>) (handlers: StreamBatchHandlers<'T>) : Task<unit> =
+        task {
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+            let! handles = asyncStream.GetAllSubscriptionHandles()
+
+            for handle in handles do
+                let observer = FunctionalAsyncBatchObserver handlers :> IAsyncBatchObserver<'T>
+                let! _ = handle.ResumeAsync(observer, null)
                 ()
         }

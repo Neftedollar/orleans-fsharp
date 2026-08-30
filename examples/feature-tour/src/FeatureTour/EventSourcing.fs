@@ -17,10 +17,18 @@ type Balance =
     { amount: decimal
       entries: string list }
 
+/// <summary>The version-zero materialized view retained for typed snapshot upcasting.</summary>
+type BalanceV0 = { amountInCents: int64; entries: string list }
+
 /// <summary>The events. Handlers raise these; only <c>apply</c> turns them into state.</summary>
 type BalanceEvent =
     | Deposited of decimal
     | Withdrawn of decimal
+
+/// <summary>The version-zero event representation retained for replay upcasting.</summary>
+type BalanceEventV0 =
+    | DepositedCents of int64
+    | WithdrawnCents of int64
 
 [<NoEquality; NoComparison>]
 type BalanceApi =
@@ -98,6 +106,18 @@ module BalanceApi =
 [<RequireQualifiedAccess>]
 module BalanceDefinition =
 
+    let private balanceStateSchema =
+        FunctionalSchema.current<BalanceV0> 0
+        |> FunctionalSchema.upcaster (fun (old: BalanceV0) ->
+            ({ amount = decimal old.amountInCents / 100m
+               entries = old.entries }: Balance))
+
+    let private balanceEventSchema =
+        FunctionalSchema.current<BalanceEventV0> 0
+        |> FunctionalSchema.upcaster (function
+            | DepositedCents amount -> Deposited(decimal amount / 100m)
+            | WithdrawnCents amount -> Withdrawn(decimal amount / 100m))
+
     /// <summary>One journaled definition, instantiated once per provider.</summary>
     let forProvider (contract: GrainContract<'Actor, string, BalanceApi>) (provider: string) =
         journaledGrainFor contract {
@@ -109,6 +129,8 @@ module BalanceDefinition =
 
             logProvider provider
             journalStorage JournalProviders.Store
+            stateSchema balanceStateSchema
+            eventSchema balanceEventSchema
 
             // The activation hook raises no events and returns no state: on a journaled
             // definition the journal is the only way to change anything.

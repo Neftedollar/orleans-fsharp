@@ -5,13 +5,16 @@
 module Orleans.FSharp.Tests.FunctionalPersistenceSerializationTests
 
 open System
+open System.IO
 open System.Text
 open System.Text.Json
 open System.Text.Json.Serialization
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Extensions.DependencyInjection
 open Orleans.Core
 open Orleans.Runtime
+open Orleans.Serialization
 open Orleans.Storage
 open Xunit
 open Swensen.Unquote
@@ -29,6 +32,17 @@ type JsonPayload =
       Retry: int option }
 
 type TaggedJsonPayload = { Value: int }
+
+type EvolutionV0 = { Amount: int }
+
+type EvolutionV1 =
+    { Amount: int64
+      Currency: string }
+
+type EvolutionV2 =
+    { MinorUnits: int64
+      Currency: string
+      Source: string option }
 
 [<Sealed>]
 type private TaggedJsonPayloadConverter() =
@@ -66,6 +80,11 @@ let private binaryCodec () =
         [| "payload", typeof<JsonPayload> |]
 
     services, (payloadCodec services :> IFunctionalPayloadCodec)
+
+let private durableFixture name =
+    Path.Combine(__SOURCE_DIRECTORY__, "Fixtures", name)
+    |> File.ReadAllText
+    |> Convert.FromBase64String
 
 [<Fact>]
 let ``provider-wide FSharp JSON serializer round-trips records unions options and maps`` () =
@@ -225,6 +244,231 @@ let ``an unknown durable codec id fails with a migration diagnostic`` () =
     test <@ error.Message.Contains "future-codec-v1" @>
     test <@ error.Message.Contains "migrating" @>
 
+[<Fact>]
+let ``typed schema pipeline upcasts legacy payloads step by step`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+
+    let schema =
+        FunctionalSchema.current<EvolutionV0> 0
+        |> FunctionalSchema.upcasterTo 1 (fun old ->
+            { Amount = int64 old.Amount
+              Currency = "USD" })
+        |> FunctionalSchema.upcaster (fun previous ->
+            { MinorUnits = previous.Amount * 100L
+              Currency = previous.Currency
+              Source = Some "legacy" })
+
+    let legacy = { Amount = 42 }
+
+    let payload =
+        FunctionalPersistenceEncoding.encode FunctionalPersistenceCodec.FSharpJson binary legacy
+
+    let restored =
+        schema.Decode(
+            FunctionalPersistenceCodec.FSharpJson,
+            binary,
+            0,
+            FunctionalPersistenceCodec.FSharpJson.Id,
+            payload
+        )
+
+    test <@ schema.EarliestVersion = 0 @>
+    test <@ schema.CurrentVersion = 2 @>
+
+    test
+        <@
+            restored =
+                { MinorUnits = 4200L
+                  Currency = "USD"
+                  Source = Some "legacy" }
+        @>
+
+[<Fact>]
+let ``reader-first bridge supports rollout and marks the safe rollback boundary`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+
+    let toV1 (old: EvolutionV0) =
+        { Amount = int64 old.Amount
+          Currency = "USD" }
+
+    let bridgeSchema =
+        FunctionalSchema.current<EvolutionV0> 0
+        |> FunctionalSchema.upcaster toV1
+
+    let finalSchema =
+        FunctionalSchema.current<EvolutionV0> 0
+        |> FunctionalSchema.upcaster toV1
+        |> FunctionalSchema.upcaster (fun previous ->
+            { MinorUnits = previous.Amount * 100L
+              Currency = previous.Currency
+              Source = Some "bridge" })
+
+    let codec = FunctionalPersistenceCodec.FSharpJson
+
+    let v0Payload =
+        FunctionalPersistenceEncoding.encode codec binary { Amount = 42 }
+
+    let bridgeValue = bridgeSchema.Decode(codec, binary, 0, codec.Id, v0Payload)
+    test <@ bridgeValue = { Amount = 42L; Currency = "USD" } @>
+
+    // During the reader-first phase the bridge writes only schema 1. Both bridge and N+1 can
+    // therefore read the durable value, so rolling back to the bridge remains safe.
+    let v1Payload = FunctionalPersistenceEncoding.encode codec binary bridgeValue
+    let finalValue = finalSchema.Decode(codec, binary, 1, codec.Id, v1Payload)
+
+    test
+        <@
+            finalValue =
+                { MinorUnits = 4200L
+                  Currency = "USD"
+                  Source = Some "bridge" }
+        @>
+
+    // Once N+1 writes schema 2, an older bridge must fail explicitly instead of silently
+    // misreading future data. This is the point after which rollback requires a newer bridge.
+    let v2Payload = FunctionalPersistenceEncoding.encode codec binary finalValue
+
+    let rollbackFailure =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            bridgeSchema.Decode(codec, binary, 2, codec.Id, v2Payload) |> ignore)
+
+    test <@ rollbackFailure.Message.Contains "newer" @>
+
+[<Fact>]
+let ``released v4.1.0 journal fixtures decode their historical FSharp payload through upcasters`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+    let serializer = services.GetRequiredService<Serializer>()
+
+    let view =
+        serializer.Deserialize<FunctionalJournalView>(durableFixture "functional-journal-view-v4.1.0.base64")
+
+    let entry =
+        serializer.Deserialize<FunctionalJournalEntry>(durableFixture "functional-journal-entry-v4.1.0.base64")
+
+    let schema =
+        FunctionalSchema.current<EvolutionV0> 0
+        |> FunctionalSchema.upcasterTo 1 (fun old ->
+            { Amount = int64 old.Amount
+              Currency = "USD" })
+        |> FunctionalSchema.upcaster (fun previous ->
+            { MinorUnits = previous.Amount * 100L
+              Currency = previous.Currency
+              Source = Some "v4.1.0" })
+
+    let decode codecId payload =
+        schema.Decode(FunctionalPersistenceCodec.OrleansBinary, binary, 0, codecId, payload)
+
+    let restoredView = decode view.CodecId view.Payload
+    let restoredEntry = decode entry.CodecId entry.Payload
+
+    test <@ view.SchemaVersion = 0 @>
+    test <@ view.CodecId = "" @>
+    test <@ entry.SchemaVersion = 0 @>
+    test <@ entry.CodecId = "" @>
+
+    test
+        <@
+            restoredView =
+                { MinorUnits = 4200L
+                  Currency = "USD"
+                  Source = Some "v4.1.0" }
+        @>
+
+    test <@ restoredEntry = restoredView @>
+
+[<Fact>]
+let ``schema pipeline rejects future versions and missing steps explicitly`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+
+    let schema =
+        FunctionalSchema.current<EvolutionV0> 0
+        |> FunctionalSchema.upcasterTo 2 (fun old ->
+            { MinorUnits = int64 old.Amount
+              Currency = "USD"
+              Source = None })
+
+    let payload =
+        FunctionalPersistenceEncoding.encode
+            FunctionalPersistenceCodec.FSharpJson
+            binary
+            { MinorUnits = 1L
+              Currency = "USD"
+              Source = None }
+
+    let future =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            schema.Decode(
+                FunctionalPersistenceCodec.FSharpJson,
+                binary,
+                3,
+                FunctionalPersistenceCodec.FSharpJson.Id,
+                payload
+            )
+            |> ignore)
+
+    let gap =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            schema.Decode(
+                FunctionalPersistenceCodec.FSharpJson,
+                binary,
+                1,
+                FunctionalPersistenceCodec.FSharpJson.Id,
+                payload
+            )
+            |> ignore)
+
+    let negative =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            schema.Decode(
+                FunctionalPersistenceCodec.FSharpJson,
+                binary,
+                -1,
+                FunctionalPersistenceCodec.FSharpJson.Id,
+                payload
+            )
+            |> ignore)
+
+    test <@ future.Message.Contains "newer" @>
+    test <@ gap.Message.Contains "Register an upcaster from version 1" @>
+    test <@ negative.Message.Contains "cannot be negative" @>
+
+[<Fact>]
+let ``schema pipeline identifies the failing upcaster and preserves its cause`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+
+    let schema =
+        FunctionalSchema.current<EvolutionV0> 0
+        |> FunctionalSchema.upcasterTo<EvolutionV0, EvolutionV1> 1 (fun _ ->
+            raise (FormatException "historical amount is malformed"))
+
+    let payload =
+        FunctionalPersistenceEncoding.encode
+            FunctionalPersistenceCodec.FSharpJson
+            binary
+            { Amount = 42 }
+
+    let failure =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            schema.Decode(
+                FunctionalPersistenceCodec.FSharpJson,
+                binary,
+                0,
+                FunctionalPersistenceCodec.FSharpJson.Id,
+                payload
+            )
+            |> ignore)
+
+    test <@ failure.Message.Contains "upcaster from schema version 0" @>
+    test <@ failure.Message.Contains typeof<EvolutionV0>.FullName @>
+    test <@ failure.Message.Contains typeof<EvolutionV1>.FullName @>
+    test <@ failure.InnerException :? FormatException @>
+    test <@ failure.InnerException.Message = "historical amount is malformed" @>
+
 [<Sealed>]
 type private RecordingEnvelopeFacet(initial: FunctionalPersistenceEnvelope, recordExists: bool) =
     let mutable current = initial
@@ -287,7 +531,8 @@ let ``codec-backed persistent state stores a tagged envelope and preserves stora
             FunctionalEncodedPersistentState<JsonPayload>(
                 inner :> IPersistentState<FunctionalPersistenceEnvelope>,
                 FunctionalPersistenceCodec.FSharpJson,
-                binary
+                binary,
+                None
             )
             :> IPersistentState<JsonPayload>
 
@@ -314,6 +559,63 @@ let ``codec-backed persistent state stores a tagged envelope and preserves stora
         test <@ inner.Clears = 1 @>
         test <@ not state.RecordExists @>
     }
+
+[<Fact>]
+let ``persistent state reads version zero through upcasters and writes the current schema`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+
+    let schema =
+        FunctionalSchema.current<EvolutionV0> 0
+        |> FunctionalSchema.upcasterTo 1 (fun old ->
+            { Amount = int64 old.Amount
+              Currency = "EUR" })
+        |> FunctionalSchema.upcaster (fun previous ->
+            { MinorUnits = previous.Amount * 100L
+              Currency = previous.Currency
+              Source = Some "state-v0" })
+
+    let legacyPayload =
+        FunctionalPersistenceEncoding.encode
+            FunctionalPersistenceCodec.FSharpJson
+            binary
+            { Amount = 17 }
+
+    let legacyEnvelope =
+        FunctionalPersistenceEnvelope(
+            CodecId = FunctionalPersistenceCodec.FSharpJson.Id,
+            Payload = legacyPayload,
+            HasValue = true,
+            SchemaVersion = 0
+        )
+
+    let inner = RecordingEnvelopeFacet(legacyEnvelope, true)
+
+    let state =
+        FunctionalEncodedPersistentState<EvolutionV2>(
+            inner :> IPersistentState<FunctionalPersistenceEnvelope>,
+            FunctionalPersistenceCodec.FSharpJson,
+            binary,
+            Some schema
+        )
+        :> IPersistentState<EvolutionV2>
+
+    test
+        <@
+            state.State =
+                { MinorUnits = 1700L
+                  Currency = "EUR"
+                  Source = Some "state-v0" }
+        @>
+
+    state.State <-
+        { MinorUnits = 2500L
+          Currency = "GBP"
+          Source = None }
+
+    test <@ inner.Current.SchemaVersion = 2 @>
+    test <@ inner.Current.CodecId = FunctionalPersistenceCodec.FSharpJson.Id @>
+    test <@ state.State.MinorUnits = 2500L @>
 
 type CodecActor = private CodecActor of unit
 
@@ -395,6 +697,8 @@ type JournalCodecApi = { add: int -> Task<unit> }
 
 type JournalCodecState = { Total: int }
 type JournalCodecEvent = Added of int
+type JournalStateV0 = { Sum: int }
+type JournalEventV0 = Deposited of int
 
 let private journalCodecContract =
     grainContract<JournalCodecActor, string, JournalCodecApi> {
@@ -422,16 +726,77 @@ let ``journal definition override is retained and encodes state and events as FS
     let eventBytes = journal.EncodeEvent FunctionalPersistenceCodec.FSharpJson binary (box (Added 4))
 
     let state =
-        journal.DecodeState FunctionalPersistenceCodec.FSharpJson binary "fsharp-json-v1" stateBytes
+        journal.DecodeState FunctionalPersistenceCodec.FSharpJson binary 0 "fsharp-json-v1" stateBytes
         |> unbox<JournalCodecState>
 
     let event =
-        journal.DecodeEvent FunctionalPersistenceCodec.FSharpJson binary "fsharp-json-v1" eventBytes
+        journal.DecodeEvent FunctionalPersistenceCodec.FSharpJson binary 0 "fsharp-json-v1" eventBytes
         |> unbox<JournalCodecEvent>
 
     test <@ journal.CodecOverride.Value.Id = "fsharp-json-v1" @>
     test <@ state = { Total = 9 } @>
     test <@ event = Added 4 @>
+
+[<Fact>]
+let ``journal state snapshots and events have independent typed schema pipelines`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+
+    let stateEvolution =
+        FunctionalSchema.current<JournalStateV0> 0
+        |> FunctionalSchema.upcaster (fun legacy -> { Total = legacy.Sum })
+
+    let eventEvolution =
+        FunctionalSchema.current<JournalEventV0> 0
+        |> FunctionalSchema.upcaster (fun (Deposited amount) -> Added amount)
+
+    let definition =
+        journaledGrainFor journalCodecContract {
+            initialEventState (fun (_: string) -> { Total = 0 })
+            apply (fun state (Added amount) -> { Total = state.Total + amount })
+            logProvider "LogStorage"
+            journalCodec FunctionalPersistenceCodec.FSharpJson
+            stateSchema stateEvolution
+            eventSchema eventEvolution
+            handle (_.add) (fun _ _ amount -> task { return [ Added amount ], () })
+        }
+
+    let journal = (FunctionalJournaledHosted.create definition).Journal.Value
+
+    let oldState =
+        FunctionalPersistenceEncoding.encode
+            FunctionalPersistenceCodec.FSharpJson
+            binary
+            { Sum = 12 }
+
+    let oldEvent =
+        FunctionalPersistenceEncoding.encode
+            FunctionalPersistenceCodec.FSharpJson
+            binary
+            (Deposited 5)
+
+    let state =
+        journal.DecodeState
+            FunctionalPersistenceCodec.FSharpJson
+            binary
+            0
+            FunctionalPersistenceCodec.FSharpJson.Id
+            oldState
+        |> unbox<JournalCodecState>
+
+    let event =
+        journal.DecodeEvent
+            FunctionalPersistenceCodec.FSharpJson
+            binary
+            0
+            FunctionalPersistenceCodec.FSharpJson.Id
+            oldEvent
+        |> unbox<JournalCodecEvent>
+
+    test <@ journal.StateSchemaVersion = 1 @>
+    test <@ journal.EventSchemaVersion = 1 @>
+    test <@ state = { Total = 12 } @>
+    test <@ event = Added 5 @>
 
 [<Fact>]
 let ``journalCodec rejects null and duplicate declarations`` () =

@@ -1203,14 +1203,15 @@ module internal FSharpBinaryFormat =
 
     /// <summary>
     /// Deserializes a value from a codec-level byte array produced by <see cref="serializeWithType"/>.
-    /// If <paramref name="hintType"/> is non-null it is used directly; otherwise the type name
-    /// embedded in the bytes is resolved via <see cref="Type.GetType"/> with an assembly
-    /// allow-list for defense-in-depth.
+    /// If <paramref name="hintType"/> is non-null it is used directly. Otherwise an exact match
+    /// with the ambient expected payload type is used first (which keeps historical application
+    /// types resolvable from their <c>FullName</c> alone); every other embedded name goes through
+    /// the declaration table or <see cref="Type.GetType"/> with an assembly allow-list.
     /// </summary>
     /// <param name="data">The bytes previously produced by <see cref="serializeWithType"/>.</param>
     /// <param name="hintType">
-    /// The type to decode as, bypassing wire-name resolution; pass <c>null</c> to resolve the
-    /// embedded name instead.
+    /// The type to decode as, bypassing wire-name resolution; pass <c>null</c> to match or resolve
+    /// the embedded name instead.
     /// </param>
     /// <exception cref="System.InvalidOperationException">
     /// Thrown when the length-prefixed payload declares more value bytes than remain (see
@@ -1229,9 +1230,20 @@ module internal FSharpBinaryFormat =
         let actualType =
             if isNull hintType then
                 let resolved =
-                    match declaredTypes.TryGetValue typeName with
-                    | true, declared -> declared
-                    | _ -> resolveWireType typeName
+                    // Historical payloads contain Type.FullName rather than an
+                    // assembly-qualified name. Type.GetType cannot resolve such a name from an
+                    // application assembly in a fresh process. When the caller has already
+                    // supplied the exact expected type, matching the embedded FullName is both
+                    // safer and sufficient: no wire-selected assembly lookup is needed.
+                    match ExpectedPayloadType.Current with
+                    | expected
+                        when not (isNull expected)
+                             && String.Equals(expected.FullName, typeName, StringComparison.Ordinal) ->
+                        expected
+                    | _ ->
+                        match declaredTypes.TryGetValue typeName with
+                        | true, declared -> declared
+                        | _ -> resolveWireType typeName
 
                 // The caller's expected type, when it published one, is authoritative over the
                 // name the payload carries: wire-name resolution stays (a declared abstract or

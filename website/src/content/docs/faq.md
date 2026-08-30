@@ -42,7 +42,7 @@ The returned value has the exact API-record type.
 
 ## Which Orleans versions are supported?
 
-The current package range starts at Orleans 10.1.0 and is tested against both 10.1.0 and 10.2.2. A NuGet lower bound means older 10.0.x versions are not selected.
+The current package range starts at Orleans 10.1.0 and is tested against both 10.1.0 and 10.3.1. A NuGet lower bound means older 10.0.x versions are not selected. See [Orleans Compatibility](/orleans-fsharp/compatibility/) for release-specific notes.
 
 ## Does event sourcing support snapshots?
 
@@ -51,6 +51,27 @@ Yes. `journaledGrainFor` supports Orleans log-consistency providers and typed cu
 ## Do streams, broadcasts, timers, and reminders work on journaled grains?
 
 Yes. Journaled definitions support `onStream`, `onBroadcast`, `onTimer`, and `onReminder` with the same functional hooks as ordinary definitions. Event state changes still go through raised and confirmed events.
+
+## Can a functional grain survive a rolling update and schema change?
+
+Transport versions participate in native Orleans routing, and the integration suite runs separate
+N/N+1 silo binaries plus rollback. Durable compatibility is configured separately:
+`PersistentState.withSchema`, journal `stateSchema`, and journal `eventSchema` provide typed
+upcasters. New-schema writes still cannot be read by an older binary, so use a reader-first bridge
+release when rollback must remain possible.
+
+## What stream-provider surface is covered?
+
+Item and batch publish/subscribe, sequence-token resume, error/completion callbacks, durable
+reattachment, and Orleans `IStreamFilter` data are exposed. Producer completion/error remains
+provider-dependent; Orleans 10.3.1's persistent producer reports those operations as not
+implemented, and the wrapper preserves that behavior.
+
+## Are DurableGrain, Microsoft.Orleans.Journaling, and Durable Jobs included?
+
+Not in the current main package. They are intentionally deferred; the current journaled functional
+grain is built over Orleans log-consistency providers. Experimental journaling support can be
+isolated in a future opt-in subpackage instead of making the stable package depend on it.
 
 ## Can C# call a functional grain?
 
@@ -65,11 +86,13 @@ The Dashboard activation table displays the functional manifest type, for exampl
 ## How do I start a project?
 
 ```bash
-dotnet new install Orleans.FSharp.Templates
+git clone https://github.com/Neftedollar/orleans-fsharp.git
+dotnet new install ./orleans-fsharp/templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
-Then follow [Getting Started](/orleans-fsharp/getting-started/).
+The published template package 4.1.0 still scaffolds the Legacy model. Until the next template
+release, use the source-checkout command above, then follow [Getting Started](/orleans-fsharp/getting-started/).
 
 ## Where is documentation for existing applications on the original API?
 

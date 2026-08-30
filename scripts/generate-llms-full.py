@@ -18,6 +18,34 @@ WEBSITE_DOCS = ROOT / 'website' / 'src' / 'content' / 'docs'
 OUTPUT = ROOT / 'website' / 'public' / 'llms-full.txt'
 BASE_URL = 'https://neftedollar.com/orleans-fsharp'
 
+CURRENT_ORDER = [
+    'getting-started.md',
+    'how-to.md',
+    'examples.md',
+    'functional-runtime.md',
+    'functional-grains/contracts.md',
+    'functional-grains/state-and-lifecycle.md',
+    'functional-grains/delivery-and-streaming.md',
+    'functional-grains/placement-and-transactions.md',
+    'functional-grains.md',
+    'serialization.md',
+    'streaming.md',
+    'event-sourcing.md',
+    'streaming-replies.md',
+    'silo-configuration.md',
+    'client-configuration.md',
+    'dashboard.md',
+    'testing.md',
+    'security.md',
+    'resilience.md',
+    'advanced.md',
+    'analyzers.md',
+    'calling-from-csharp.md',
+    'compatibility.md',
+    'api-reference.md',
+    'faq.md',
+]
+
 
 def without_frontmatter(text: str, *, remove_imports: bool = False) -> str:
     """Remove one leading YAML frontmatter block and optional MDX import lines."""
@@ -56,8 +84,19 @@ def generate() -> str:
     homepage = (WEBSITE_DOCS / 'index.mdx').read_text(encoding='utf-8')
     chunks.append(source('', without_frontmatter(homepage, remove_imports=True)))
 
-    for path in sorted(DOCS.glob('*.md')):
-        chunks.append(source(path.stem, path.read_text(encoding='utf-8')))
+    current = {
+        path.relative_to(DOCS).as_posix(): path
+        for path in DOCS.rglob('*.md')
+        if path.relative_to(DOCS).parts[0] != 'legacy'
+    }
+
+    ordered = [name for name in CURRENT_ORDER if name in current]
+    ordered.extend(sorted(set(current) - set(ordered)))
+
+    for name in ordered:
+        path = current[name]
+        route = name.removesuffix('.md')
+        chunks.append(source(route, path.read_text(encoding='utf-8')))
 
     comparison = (WEBSITE_DOCS / 'comparison.md').read_text(encoding='utf-8')
     chunks.append(source('comparison', without_frontmatter(comparison)))

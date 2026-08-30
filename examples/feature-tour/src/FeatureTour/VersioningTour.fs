@@ -1,7 +1,8 @@
 /// <summary>
 /// Feature 6 — contract versioning: two contracts over the same <c>grainType</c> differing only
-/// in <c>version</c>. The silo hosts version 1; a caller bound to version 2 is rejected before
-/// any handler runs, with the exact diagnostic the transport produces. The second half of the
+/// in <c>version</c>. Version is carried by Orleans' native interface routing and by the functional
+/// envelope. The silo hosts version 1; a caller bound to version 2 is rejected before any handler
+/// runs. The second half of the
 /// section shows the opt-in the other way round: a version-3 host that <c>acceptsVersions</c>
 /// down to 2, with one operation marked <c>sinceVersion 3</c>.
 /// </summary>
@@ -34,9 +35,9 @@ module VersionedApi =
 
     /// <summary>
     /// A second contract over the SAME grain type at a different version. Nothing hosts it: it
-    /// exists to show that the DEFAULT policy is exact (<c>=</c>, not <c>&gt;=</c>) and has no
-    /// rolling-upgrade tolerance, so a caller one version ahead fails the call outright rather
-    /// than negotiating down.
+    /// exists to show that the DEFAULT functional admission policy is exact (<c>=</c>, not
+    /// <c>&gt;=</c>). Orleans also sees this as native interface version 2, so cluster versioning
+    /// participates before the target validates the envelope.
     /// </summary>
     let v2 =
         grainContract<VersionedActor, string, VersionedApi> {
@@ -75,7 +76,8 @@ module RollingApi =
     let GrainType = "tour.rolling"
 
     /// <summary>
-    /// The hosted contract. <c>acceptsVersions (BackwardCompatible 2)</c> admits 2 and 3;
+    /// The hosted contract. <c>acceptsVersions (BackwardCompatible 2)</c> admits 2 and 3 after
+    /// Orleans' own compatibility strategy has routed the call;
     /// <c>sinceVersion 3</c> says <c>refund</c> did not exist at 2. Accepting a version ASSERTS
     /// that the argument and reply shapes of every operation an admitted caller can invoke are
     /// still the ones this definition declares — nothing converts between shapes.

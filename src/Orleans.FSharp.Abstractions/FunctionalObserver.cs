@@ -290,14 +290,16 @@ internal sealed class FunctionalNotificationEnvelopeCodec : IFieldCodec<Function
     public void WriteField<TBufferWriter>(
         ref Writer<TBufferWriter> writer,
         uint fieldIdDelta,
-        Type expectedType,
-        FunctionalNotificationEnvelope value)
+        Type? expectedType,
+        FunctionalNotificationEnvelope? value)
         where TBufferWriter : IBufferWriter<byte>
     {
         if (ReferenceCodec.TryWriteReferenceField(ref writer, fieldIdDelta, expectedType, value))
         {
             return;
         }
+
+        ArgumentNullException.ThrowIfNull(value);
 
         writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
         StringCodec.WriteField(ref writer, 0U, value.ObserverType);
@@ -316,7 +318,7 @@ internal sealed class FunctionalNotificationEnvelopeCodec : IFieldCodec<Function
     {
         if (field.IsReference)
         {
-            return ReferenceCodec.ReadReference<FunctionalNotificationEnvelope, TInput>(ref reader, field);
+            return ReferenceCodec.ReadReference<FunctionalNotificationEnvelope, TInput>(ref reader, field)!;
         }
 
         field.EnsureWireTypeTagDelimited();
@@ -350,19 +352,19 @@ internal sealed class FunctionalNotificationEnvelopeCodec : IFieldCodec<Function
             switch (id)
             {
                 case 0U:
-                    observerType = StringCodec.ReadValue(ref reader, header);
+                    observerType = StringCodec.ReadValue(ref reader, header)!;
                     break;
                 case 1U:
                     contractVersion = Int32Codec.ReadValue(ref reader, header);
                     break;
                 case 2U:
-                    operationId = StringCodec.ReadValue(ref reader, header);
+                    operationId = StringCodec.ReadValue(ref reader, header)!;
                     break;
                 case 3U:
-                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header);
+                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header)!;
                     break;
                 case 4U:
-                    payload = ByteArrayCodec.ReadValue(ref reader, header);
+                    payload = ByteArrayCodec.ReadValue(ref reader, header)!;
                     break;
                 default:
                     throw FunctionalWire.UnknownField(TypeName, id);
@@ -414,14 +416,16 @@ internal sealed class FunctionalObserverHandleCodec<TBrand, TApi> : IFieldCodec<
     public void WriteField<TBufferWriter>(
         ref Writer<TBufferWriter> writer,
         uint fieldIdDelta,
-        Type expectedType,
-        FunctionalObserverHandle<TBrand, TApi> value)
+        Type? expectedType,
+        FunctionalObserverHandle<TBrand, TApi>? value)
         where TBufferWriter : IBufferWriter<byte>
     {
         if (ReferenceCodec.TryWriteReferenceField(ref writer, fieldIdDelta, expectedType, value))
         {
             return;
         }
+
+        ArgumentNullException.ThrowIfNull(value);
 
         writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
         StringCodec.WriteField(ref writer, 0U, value.ObserverType);
@@ -439,7 +443,7 @@ internal sealed class FunctionalObserverHandleCodec<TBrand, TApi> : IFieldCodec<
     {
         if (field.IsReference)
         {
-            return ReferenceCodec.ReadReference<FunctionalObserverHandle<TBrand, TApi>, TInput>(ref reader, field);
+            return ReferenceCodec.ReadReference<FunctionalObserverHandle<TBrand, TApi>, TInput>(ref reader, field)!;
         }
 
         field.EnsureWireTypeTagDelimited();
@@ -469,7 +473,7 @@ internal sealed class FunctionalObserverHandleCodec<TBrand, TApi> : IFieldCodec<
             switch (id)
             {
                 case 0U:
-                    observerType = StringCodec.ReadValue(ref reader, header);
+                    observerType = StringCodec.ReadValue(ref reader, header)!;
                     break;
                 case 1U:
                     contractVersion = Int32Codec.ReadValue(ref reader, header);

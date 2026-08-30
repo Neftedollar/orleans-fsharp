@@ -52,7 +52,7 @@ static-class inference rule".
 | Keyword | Signature | Description |
 |---|---|---|
 | `grainType` | `string` | The wire `GrainType` string -- routing and storage identity. Optional; see [Functional grains](functional-grains.md), "Optional grainType" |
-| `version` | `int` | Contract version -- matched exactly unless `acceptsVersions` widens it. Defaults to `1` |
+| `version` | `int` | Native Orleans interface version plus functional envelope version (`1..65535`); matched exactly unless `acceptsVersions` widens payload admission. Defaults to `1` |
 | `stringKey` / `guidKey` / `int64Key` | — | Native key codec: the domain key type *is* the Orleans key type |
 | `stringKeyMapped` / `guidKeyMapped` / `int64KeyMapped` | `('Key -> K)` `(K -> 'Key)` | Mapped key codec over a domain key type |
 | `guidCompoundKey` / `int64CompoundKey` | — | Native compound key (Guid/int64 + string extension) |
@@ -89,8 +89,9 @@ spelled curried fails contract construction. See [Functional grains](functional-
 | `persistenceCodec` | `FunctionalPersistenceCodec` | Grain-level durable codec for attached persistent states; an element-level `PersistentState.withCodec` wins |
 | `transactionalStateFrom` | `TransactionalStateRef<'S>` + `('Key -> 'S)` | Attach a transactional facet (repeatable) |
 | `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
-| `placement` | `PlacementStrategy` | `Random` / `PreferLocal` / `ActivationCountBased` / `ResourceOptimized` |
+| `placement` | `PlacementStrategy` | `Random` / `PreferLocal` / `ActivationCountBased` / `ResourceOptimized` / `HashBased` / `SiloRoleBased` |
 | `statelessWorker` | `int` | Stateless-worker placement with a max-local-workers cap |
+| `migrationParticipant` | `FunctionalMigrationParticipantFactory<'Actor,'Key>` | Add an activation-scoped Orleans migration participant; repeatable and created before rehydration |
 | `onActivate` | `ActivateHook<'Actor,'Key,'State>` | Activation hook; its returned state is published in memory |
 | `onDeactivate` | `DeactivateHook<'Actor,'Key,'State>` | Deactivation hook; no replacement state |
 | `onLifecycle` | `LifecycleStage` + `LifecycleHook<'Actor,'Key>` | Hook a numbered Orleans grain-lifecycle stage |
@@ -113,6 +114,8 @@ participant or be shared by the many activations of a stateless worker. See
 | `logProvider` | `string` | The registered log-consistency provider. **Required** |
 | `journalStorage` | `string` | The grain storage a built-in provider writes through; defaults to the silo's default `IGrainStorage` and cannot be combined with `customStorage` |
 | `journalCodec` | `FunctionalPersistenceCodec` | Definition-level state/event payload codec; overrides the silo's `DefaultJournalCodec` |
+| `stateSchema` | `FunctionalSchema<'State>` | Version and typed upcasters for materialized state/views/snapshots |
+| `eventSchema` | `FunctionalSchema<'Event>` | Version and typed upcasters for journal entries |
 | `customStorage` | `IServiceProvider -> IFunctionalJournalStorage<'Key,'State,'Event>` | Typed storage bridge for Orleans' `CustomStorage` provider |
 | `snapshotPolicy` | `FunctionalJournalSnapshotPolicy<'State>` | Per-definition `Inherit`, `Disabled`, `Every n`, or `When` override; requires `customStorage` |
 | `handle` | `selector` + `JournaledHandler<'Actor,'Key,'State,'Event,'Arg,'Reply>` | A handler returning `events, reply` |
@@ -130,6 +133,7 @@ participant or be shared by the many activations of a stateless worker. See
 | `onConnectionIssueResolved` | `JournaledConnectionIssueHook<...>` | Synchronous recovery notification |
 | `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
 | `placement` | `PlacementStrategy` | As above. `statelessWorker` has no journaled form at all: many activations of one grain cannot share a journal |
+| `migrationParticipant` | `FunctionalMigrationParticipantFactory<'Actor,'Key>` | Add an activation-scoped Orleans migration participant; repeatable |
 
 ### `FunctionalGrainContext<'Actor, 'Key>` — the per-invocation context
 
@@ -147,6 +151,8 @@ Passed to every handler, hook, timer, reminder, and stream callback.
 | `cancellationToken` | `CancellationToken` | Selected by callback kind |
 | `streamSequenceToken` | `StreamSequenceToken option` | The delivery cursor; `Some` only inside an `onStream` delivery on a rewindable provider |
 | `deactivateOnIdle()` | `unit -> unit` | Request deactivation once this turn ends |
+| `migrateOnIdle()` | `unit -> unit` | Ask the configured placement director to migrate after this turn; advisory, and a non-migrating Orleans 10.x attempt can become ordinary deactivation |
+| `migrateOnIdle(targetSilo)` | `SiloAddress -> unit` | Request a specific compatible destination through Orleans' placement hint |
 | `delayDeactivation(span)` | `TimeSpan -> unit` | Postpone idle collection |
 | `persistentState(ref)` | `PersistentStateRef<'S> -> IPersistentState<'S>` | Look up an attached persistent-state facet |
 | `transactionalState(ref)` | `TransactionalStateRef<'S> -> FunctionalTransactionalState<'S>` | Look up an attached transactional facet |
@@ -212,6 +218,7 @@ all refuse with a definition-stage diagnostic on an ordinary `grainFor` definiti
 |---|---|---|
 | `PersistentState.create<'State>` | `string -> string -> PersistentStateRef<'State>` | `stateName -> providerName -> descriptor` |
 | `PersistentState.withCodec` | `FunctionalPersistenceCodec -> PersistentStateRef<'State> -> PersistentStateRef<'State>` | Copy a descriptor with an element-level codec override |
+| `PersistentState.withSchema` | `FunctionalSchema<'State> -> PersistentStateRef<'State> -> PersistentStateRef<'State>` | Copy a descriptor with a versioned envelope and typed upcaster pipeline |
 
 The descriptor's `(stateName, providerName, storedType)` triple is its logical identity, and it is
 durable identity -- see [Functional grains](functional-grains.md), "Persistence model".
@@ -220,6 +227,29 @@ Codec resolution is `withCodec` > `persistenceCodec` > silo `DefaultStateCodec`.
 `OrleansBinary` path preserves the existing direct state schema for supported types; F# JSON uses a
 functional envelope, so changing an existing state name in either direction requires migration.
 See [Serialization](serialization.md#durable-persistence-codecs).
+
+### Durable schema evolution
+
+| Name | Signature | Description |
+|---|---|---|
+| `FunctionalSchema.current<'T>` | `int -> FunctionalSchema<'T>` | Start a pipeline at one schema version; use `0` for pre-versioning envelopes |
+| `FunctionalSchema.upcaster` | `('Previous -> 'Current) -> FunctionalSchema<'Previous> -> FunctionalSchema<'Current>` | Add the next integer version and typed pure mapping |
+| `FunctionalSchema.upcasterTo` | `int -> ('Previous -> 'Current) -> FunctionalSchema<'Previous> -> FunctionalSchema<'Current>` | Add a mapping to an explicit greater version |
+
+Schemas are per persistent-state element (`PersistentState.withSchema`) or independently per
+journal state/event (`stateSchema` / `eventSchema`). See
+[Serialization](serialization.md#versioned-state-and-upcasters).
+
+### Activation migration helpers
+
+| Name | Signature | Description |
+|---|---|---|
+| `ActivationMigration.participant` | `(IDehydrationContext -> unit) -> (IRehydrationContext -> unit) -> IGrainMigrationParticipant` | Build one participant from F# callbacks |
+| `ActivationMigration.addValue` | `string -> 'T -> IDehydrationContext -> unit` | Add one Orleans-serialized migration value; duplicate keys fail |
+| `ActivationMigration.tryValue<'T>` | `string -> IRehydrationContext -> 'T option` | Read one typed migration value |
+
+Ordinary ephemeral functional state participates automatically. Custom participants are declared
+with `migrationParticipant`; see [Functional grains](functional-grains.md#live-activation-migration).
 
 ### Functional persistence codecs
 
@@ -264,6 +294,14 @@ state's reader-writer lock and rejects re-entering the same state from inside a 
 A streaming field is `'Arg -> IAsyncEnumerable<'Item>`, not `'Arg -> Task<...>`; that is what makes
 it a second field kind rather than an ordinary operation. See
 [Streaming replies](streaming-replies.md).
+
+### Orleans streams
+
+These are push-provider streams from `Orleans.FSharp.Streaming`, distinct from a functional grain
+method returning `IAsyncEnumerable<'T>`.
+
+The canonical, complete function catalog is under `Orleans.FSharp.Streaming` below. See
+[Streaming](streaming.md) for provider semantics and worked examples.
 
 ### Observers
 
@@ -325,6 +363,7 @@ so it must never be part of a persistent state type -- the F# codec refuses one.
 | `FunctionalJournalSnapshotContext` | Boxed identity, version, state type, and state passed to a global `When` rule |
 | `FunctionalJournalPermanentStorageException` | Marks a custom-storage failure as non-retryable; the runtime fails the operation and deactivates the grain |
 | `FunctionalPersistenceCodec` | Durable functional payload descriptor: Orleans binary or F# JSON |
+| `FunctionalSchema<'Current>` | Immutable typed durable-schema pipeline; exposes `EarliestVersion` and `CurrentVersion` |
 | `FunctionalPersistenceOptions` | Mutable silo-wide state and journal codec defaults |
 | `FSharpJsonGrainStorageSerializer` | Provider-wide `IGrainStorageSerializer` for F# JSON |
 | `FunctionalGrainContext<'Actor, 'Key>` | Per-invocation context (members above) |
@@ -334,7 +373,9 @@ so it must never be part of a persistent state type -- the F# codec refuses one.
 | `PersistentStateRef<'State>` | Immutable descriptor returned by `PersistentState.create` |
 | `TransactionalStateRef<'State>` | Immutable descriptor returned by `TransactionalState.create` |
 | `FunctionalTransactionalState<'State>` | The invocation-bound transactional facade |
-| `PlacementStrategy` | `Random`, `PreferLocal`, `ActivationCountBased`, `ResourceOptimized` |
+| `PlacementStrategy` | `Random`, `PreferLocal`, `ActivationCountBased`, `ResourceOptimized`, `HashBased`, `SiloRoleBased` |
+| `FunctionalActivationMigrationContext<'Actor,'Key>` | Per-activation key, `GrainId`, services, and logger supplied to a migration-participant factory |
+| `FunctionalMigrationParticipantFactory<'Actor,'Key>` | Creates one `IGrainMigrationParticipant` per activation before Orleans rehydrates it |
 | `VersionPolicy` | `Exact`, `BackwardCompatible of int` |
 | `LifecycleStage` | `First`, `SetupState`, `Activate`, `Last` (`Activate` is rejected by `onLifecycle`; use `onActivate`) |
 | `IFunctionalRequestMetadata` | `mayInterleave`'s argument: `GrainType`, `ContractVersion`, `OperationId`, `IsReadOnly`, `IsOneWay`, `IsAlwaysInterleave`, `PayloadLength` |
@@ -562,6 +603,9 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 |---|---|
 | `StreamRef<'T>` | Typed reference to an Orleans stream (`Provider`, `StreamId`) |
 | `StreamSubscription<'T>` | Active stream subscription handle (`Handle`) |
+| `StreamHandlers<'T>` | Immutable item/error/completion callback set; item callbacks may receive a sequence token |
+| `StreamBatchItem<'T>` | One batch item and its optional provider sequence token |
+| `StreamBatchHandlers<'T>` | Immutable batch/error/completion callback set |
 
 #### `Stream`
 
@@ -569,15 +613,34 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 |---|---|---|
 | `getStream<'T>` | `IStreamProvider -> string -> string -> StreamRef<'T>` | Get stream reference |
 | `publish<'T>` | `StreamRef<'T> -> 'T -> Task<unit>` | Publish event |
+| `publishBatch<'T>` | `StreamRef<'T> -> seq<'T> -> Task<unit>` | Publish a provider-native batch |
+| `publishBatchFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> seq<'T> -> Task<unit>` | Publish a batch with an explicit starting token |
+| `complete<'T>` / `fail<'T>` | `StreamRef<'T> -> Task<unit>` / `StreamRef<'T> -> exn -> Task<unit>` | Forward producer terminal signals; provider semantics are preserved |
 | `subscribe<'T>` | `StreamRef<'T> -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe with callback |
 | `subscribeWithToken<'T>` | `StreamRef<'T> -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe with the event's cursor — the way to checkpoint for `subscribeFrom` |
+| `subscribeHandlers<'T>` | `StreamRef<'T> -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe with item/error/completion callbacks |
+| `subscribeFiltered<'T>` | `StreamRef<'T> -> string -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Pass filter data to the provider's `IStreamFilter` |
+| `subscribeBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe through `IAsyncBatchObserver<'T>` |
 | `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption |
 | `subscribeFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe from token (rewind is inclusive of that event) |
 | `subscribeFromWithToken<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Rewind and keep checkpointing |
+| `subscribeFromHandlers<'T>` | `StreamRef<'T> -> StreamSequenceToken -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Rewind with item/error/completion callbacks |
+| `subscribeFromFiltered<'T>` | `StreamRef<'T> -> StreamSequenceToken -> string -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Rewind with provider filter data |
+| `subscribeBatchFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Rewind with provider-native batch callbacks |
 | `unsubscribe<'T>` | `StreamSubscription<'T> -> Task<unit>` | Cancel subscription |
 | `getSubscriptions<'T>` | `StreamRef<'T> -> Task<StreamSubscription<'T> list>` | List subscriptions |
 | `resumeAll<'T>` | `StreamRef<'T> -> ('T -> Task<unit>) -> Task<unit>` | Resume all subscriptions |
+| `resume<'T>` | `StreamSubscription<'T> -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Reattach one item subscription |
+| `resumeFrom<'T>` | `StreamSubscription<'T> -> StreamSequenceToken -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Reattach one item subscription from a token |
+| `resumeBatch<'T>` | `StreamSubscription<'T> -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Reattach one batch subscription |
+| `resumeBatchFrom<'T>` | `StreamSubscription<'T> -> StreamSequenceToken -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Reattach one batch subscription from a token |
+| `resumeAllHandlers<'T>` | `StreamRef<'T> -> StreamHandlers<'T> -> Task<unit>` | Reattach all durable subscriptions with item callbacks |
+| `resumeAllBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<unit>` | Reattach all durable subscriptions with batch callbacks |
 | `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | **Deprecated** — carries `[<Obsolete>]` (a warning, not an error) and still returns **always `None`**: `StreamSubscriptionHandle` exposes no token, so there was never anything to return. Replacement: `subscribeWithToken` / `subscribeFromWithToken`, or `context.streamSequenceToken` in an `onStream` hook |
+
+`StreamHandlers.create` / `withToken` create item callbacks; `withError` and `withCompletion`
+replace terminal callbacks immutably. `StreamBatchHandlers` exposes the corresponding `create`,
+`withError`, and `withCompletion` functions.
 
 A functional definition consumes a stream declaratively with `onStream` instead; see
 [Streaming](streaming.md) and [Functional grains](functional-grains.md), "Implicit subscriptions".

@@ -4,6 +4,28 @@
 
 ### Added
 
+- **Native Orleans routing for functional contract versions.** Contract `version` now becomes the
+  published Orleans grain-interface version (range `1..65535`) while the actor-specific interface
+  identity remains stable. Version-qualified local reference-cache keys prevent cross-version
+  aliasing. A multi-process integration harness starts separate N and N+1 silo binaries in one
+  cluster and verifies the mixed deployment plus rollback to N.
+- **Typed durable schema evolution.** Functional state envelopes, journal views, and journal
+  entries now carry independent application schema versions. `FunctionalSchema.current`,
+  `upcaster`, and `upcasterTo` compose closed typed pipelines;
+  `PersistentState.withSchema`, journal `stateSchema`, and journal `eventSchema` select them.
+  Pre-feature envelopes are version zero, pinned by pre-schema envelope fixtures and released
+  v4.1.0 journal payload fixtures which run through the current typed upcaster pipeline.
+- **Complete provider-level stream callbacks.** The F# stream module now exposes native batch
+  publish/subscribe, item and batch error/completion handlers, server-side Orleans filter data,
+  token-aware subscribe/resume variants, and durable reattachment helpers. Producer terminal
+  methods preserve the selected provider's behavior, including Orleans persistent streams which
+  report them as unsupported.
+- **Live activation migration and the remaining stock placement strategies.** Functional contexts
+  expose advisory and target-hinted `migrateOnIdle`; ordinary ephemeral state participates
+  automatically, and repeatable `migrationParticipant` factories support application-local
+  payloads on ordinary and journaled definitions. `HashBased` and `SiloRoleBased` complete the six
+  stock non-stateless placement choices. Real two-silo tests verify state/payload transfer and
+  native placement.
 - **First-class F# JSON for durable functional state and journals.**
   `FunctionalPersistenceCodec` now selects the compatibility binary format or F#-aware JSON with
   independent state and journal silo defaults. Persistent state resolves element
@@ -29,6 +51,10 @@
 
 ### Fixed
 
+- **Source compatibility with Orleans 10.3.x.** Hand-written functional transport codecs now
+  implement Orleans' nullable `IFieldCodec<T>` contract, and acknowledged grain calls reject an
+  impossible null reply explicitly. The wire layout and the Orleans 10.1.0 package floor are
+  unchanged; the newest CI leg now targets Orleans 10.3.1.
 - **Functional CustomStorage failures now terminate without acknowledging non-durable state.**
   Permanent read/append/clear failures, malformed snapshot data, retained-tail `apply` failures,
   and snapshot-predicate failures are surfaced to the caller instead of being trapped inside
@@ -221,13 +247,17 @@ replacement pointers. Details in the sections below (accumulated since 3.0.x).
   that guessed a 500 ms subscription-setup delay now proves the subscription live with a
   re-published sentinel instead of sleeping. (Attribution correction: main's red
   full-integration job since 2026-08-12 was NOT this test's race — it was SDK 10.0.400
-  reaching the CI runners and compiling `taskSeq` bodies down the dynamic resumable path
-  TaskSeq 0.6.0 does not implement; the SDK is now pinned to 10.0.201. This fix stands on
-  its own merits: a fire-and-forget subscription whose failure vanishes is a real defect
-  regardless.)
+  reaching the CI runners while the repository still used TaskSeq 0.6.0, whose dynamic
+  resumable path was not implemented. This fix stands on its own merits: a fire-and-forget
+  subscription whose failure vanishes is a real defect regardless.)
 
 ### Changed
 
+- **FSharp.Control.TaskSeq is 1.1.1; the SDK remains pinned to 10.0.201.** The newer package has a
+  dynamic implementation, but the real Orleans matrix shows its SDK 10.0.400 path regressing
+  stream delivery and producer-disposal propagation. On the verified static path both wrapping
+  forms still duplicate the final item under Orleans 10.1.0 and 10.2.2, so the runtime retains
+  its hand-written direct-enumeration workaround and CI retains the exact SDK pin.
 - **The declared Orleans dependency is now a floor of 10.1.0, not the newest release.**
   NuGet emits a bare `version="x"` in the nuspec as `>= x`, so whatever sits in
   `Directory.Packages.props` is the version every consumer is *forced* onto — and it

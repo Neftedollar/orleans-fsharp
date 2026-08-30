@@ -9,16 +9,16 @@
 [![CI](https://github.com/Neftedollar/orleans-fsharp/actions/workflows/ci.yml/badge.svg)](https://github.com/Neftedollar/orleans-fsharp/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
-[![Orleans 10](https://img.shields.io/badge/Orleans-10.1.0%20%E2%80%93%2010.2.2-blue)](https://learn.microsoft.com/dotnet/orleans/)
+[![Orleans 10](https://img.shields.io/badge/Orleans-10.1.0%20%E2%80%93%2010.3.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
-[![Tests](https://img.shields.io/badge/tests-2500%2B-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-CI%20verified-brightgreen)]()
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 
 ---
 
 ## Why this exists
 
-Orleans is a powerful virtual actor framework, but using it from F# means fighting C# idioms at every turn: mutable state bags, attribute-heavy classes, interface-plus-codegen ceremony. Orleans.FSharp replaces all of that: a grain's public surface is a plain F# record of functions, its behavior is pure `state -> reply` handlers, and silos are configured with computation expressions -- discriminated unions as state, explicit storage writes, no code generation anywhere. The full Orleans runtime does the heavy lifting underneath.
+Orleans is a powerful virtual actor framework, but using it from F# can pull application code toward C# idioms: mutable state bags, attribute-heavy classes, and interface-plus-codegen ceremony. Orleans.FSharp adds a functional authoring path: a grain's public surface is a plain F# record of functions, behavior uses explicit state transitions, and silos are configured with computation expressions. Orleans still provides clustering, activation, storage, streams, placement, and transactions underneath.
 
 ## Quick Start
 
@@ -119,10 +119,15 @@ no codegen:
 | Where | Operations |
 |---|---|
 | `contract<'Key, 'Api> { }` / `grainContract<'Actor, 'Key, 'Api> { }` | `grainType` (optional for ephemeral grains), `version`, key codecs (`stringKey` / `guidKey` / `int64Key`, compound + mapped forms), per-operation `readOnly` / `oneWay` / `alwaysInterleave` / `operationId` / `sinceVersion` / `transactional`, whole-grain `reentrant` / `mayInterleave`, `acceptsVersions` |
-| `grainFor { }` | `defaultState` / `initialState` / `stateFrom`, `usePersistentState`, `transactionalStateFrom`, `onActivate` / `onDeactivate` / `onLifecycle`, `onTimer` / `onReminder`, `onStream` / `onBroadcast` (implicit subscriptions), `statelessWorker` / `placement`, `collectionAge`, `handle` / `handleQuery` (reply-only, `readOnly` operations) / `handleStream` |
-| `journaledGrainFor { }` | event sourcing over Orleans' log-consistency providers: `initialEventState`, pure `apply`, event-returning handlers, and typed CustomStorage snapshots — see [Event Sourcing](docs/event-sourcing.md) |
+| `grainFor { }` | `defaultState` / `initialState` / `stateFrom`, per-element codecs and schema upcasters, `usePersistentState`, `transactionalStateFrom`, `onActivate` / `onDeactivate` / `onLifecycle`, `onTimer` / `onReminder`, `onStream` / `onBroadcast` (implicit subscriptions), all six stock placement strategies, `migrationParticipant`, `collectionAge`, `handle` / `handleQuery` / `handleStream` |
+| `journaledGrainFor { }` | event sourcing over Orleans' log-consistency providers: `initialEventState`, pure `apply`, independent `stateSchema` / `eventSchema` upcasters, event-returning handlers, activation migration participants, and typed CustomStorage snapshots — see [Event Sourcing](docs/event-sourcing.md) |
 | API field shapes | `'Arg -> Task<'Reply>` and `'Arg -> IAsyncEnumerable<'Item>` ([streaming replies](docs/streaming-replies.md)) |
 | From C# | a typed facade over any contract: awaited calls and `await foreach` — [Calling from C#](docs/calling-from-csharp.md) |
+
+Contract versions are native Orleans interface versions, so Orleans routing participates in mixed
+N/N+1 deployments. The repository tests separate versioned silo executables and rollback. Durable
+state/events use independent schema envelopes and typed upcasters; transport compatibility does
+not imply storage compatibility.
 
 ### `grain { }` -- Grain Definition *(deprecated -- see [Functional Grain Runtime](docs/functional-grains.md))*
 
@@ -279,10 +284,13 @@ dotnet add package Orleans.FSharp.EventSourcing   # the classic eventSourcedGrai
 
 ## Project Template
 
-Scaffold a new project in seconds:
+The repository template already uses the current functional API. The published template package
+4.1.0 still scaffolds the Legacy model, so install the current template from a source checkout
+until the next template release:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates
+git clone https://github.com/Neftedollar/orleans-fsharp.git
+dotnet new install ./orleans-fsharp/templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
@@ -319,22 +327,27 @@ pattern, use `interleaveMessage typeof<'Msg>`. `FSharpGrain.post` is now a **tru
 | Guide | Description |
 |---|---|
 | [Getting Started](docs/getting-started.md) | Zero to working grain in 15 minutes |
-| [Legacy: Grain Definition](docs/legacy/grain-definition.md) | Complete `grain { }` CE reference (deprecated authoring model) |
-| [Functional Grain Runtime](docs/functional-grains.md) | User-authored API records: contracts, key codecs, delivery semantics, immutable state |
+| [Recipes](docs/how-to.md) | Task-oriented paths for persistence, streaming, upgrades, and hosting |
+| [Examples](docs/examples.md) | Runnable projects mapped to the features they prove |
+| [Functional Grain Runtime](docs/functional-runtime.md) | Short path through contracts, state, delivery, placement, and transactions |
+| [Functional Runtime Reference](docs/functional-grains.md) | Exhaustive builder operations, invariants, and edge cases |
 | [Silo Configuration](docs/silo-configuration.md) | Complete `siloConfig { }` CE reference |
 | [Client Configuration](docs/client-configuration.md) | `clientConfig { }` CE reference |
-| [Serialization](docs/serialization.md) | 3 modes: F# Binary, JSON, Orleans Native |
+| [Serialization](docs/serialization.md) | Transport, native interop, durable formats, and schema evolution |
 | [Streaming](docs/streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](docs/event-sourcing.md) | `journaledGrainFor { }` — a grain whose state is the fold of an event journal (and the superseded `eventSourcedGrain { }` CE) |
+| [Event Sourcing](docs/event-sourcing.md) | `journaledGrainFor { }` — state as the fold of an event journal |
 | [Server-Streaming Replies](docs/streaming-replies.md) | `'Arg -> IAsyncEnumerable<'Item>` — items delivered as they are produced, over Orleans' async-enumerable grain extension |
-| [Testing](docs/testing.md) | TestHarness, FsCheck, GrainMock |
+| [Testing](docs/testing.md) | Pure handlers, TestingHost, FsCheck, rolling updates, and durable fixtures |
 | [Analyzers](docs/analyzers.md) | OF0001: async {} detection, AllowAsync opt-out |
 | [Security](docs/security.md) | TLS, mTLS, filters, secrets |
-| [Advanced](docs/advanced.md) | Transactions, OpenTelemetry, shutdown, migration |
+| [Additional APIs](docs/advanced.md) | OpenTelemetry, shutdown, scripting, Kubernetes, and shared utilities |
 | [Resilience](docs/resilience.md) | Polly v8 retry, circuit-breaker, and timeout patterns |
 | [Calling from C#](docs/calling-from-csharp.md) | Bind a hand-written C# interface to a functional grain contract |
-| [Legacy: Redis Example](docs/legacy/redis-example.md) | End-to-end shopping cart using the deprecated authoring model |
+| [Orleans Compatibility](docs/compatibility.md) | Tested Orleans range and newly released capabilities |
 | [API Reference](docs/api-reference.md) | All public modules, types, functions |
+
+Documentation for the original authoring model is isolated under
+[Legacy API](docs/legacy/index.md), including its migration guide and examples.
 
 ## Package Structure
 

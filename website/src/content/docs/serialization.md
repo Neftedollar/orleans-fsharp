@@ -11,6 +11,20 @@ Transport serialization and durable persistence are separate choices. The functi
 continues to use its own payload codec; the persistence settings below affect only values written
 to grain storage or a journal.
 
+## Choose by boundary
+
+| Boundary | Recommended starting point |
+|---|---|
+| Functional API arguments and replies used only through `FunctionalGrain.ref` | Keep the functional runtime default |
+| A CLR type shared with a native C# or F# Orleans grain contract | Orleans `[<GenerateSerializer>]` plus stable `[<Id>]` values |
+| Functional persistent state or journal payload | Keep `OrleansBinary` for compatibility, or deliberately select an F# JSON codec and version it |
+| Every value written by one Orleans storage provider | Configure that provider's `GrainStorageSerializer`; this also affects non-functional grains |
+
+There is no single “production serializer” switch for all four boundaries. Generated Orleans
+serialization is the clearest choice for a type intentionally shared with ordinary C# contracts.
+It does not replace the per-state and per-journal persistence decisions below, and enabling an F#
+generalized serializer does not override a generated codec.
+
 ## Functional runtime default
 
 Registering a definition with `AddFunctionalGrain` and a client with `AddFunctionalGrainClient` installs the functional transport and its binary payload codec. API records themselves are local typed facades; only operation arguments and replies cross the wire.
@@ -131,23 +145,61 @@ The two layers may be combined. In that case the provider serializer owns the ou
 while the functional codec owns the exact application payload inside it. Configuring one does not
 implicitly configure the other.
 
-### Stored schema and migrations
+### Versioned state and upcasters
 
-For supported direct state types, the default `OrleansBinary` path keeps the pre-feature storage
-schema: the provider still sees the application state type directly. Selecting F# JSON for a
-functional state element changes that provider-facing value to a codec-tagged envelope.
+Attach an application schema to one persistent-state element when its durable F# shape must evolve:
 
-Consequently, changing an existing functional state from direct `OrleansBinary` storage to the
-JSON envelope -- **or changing it back** -- requires an explicit data migration or a new
-`stateName`. Merely changing the selected codec cannot reinterpret the other provider schema.
-Changing a provider-wide `GrainStorageSerializer` is a separate provider-format migration and must
-be assessed according to that provider's guarantees.
+```fsharp
+type AccountV0 = { Balance: int }
 
-Functional journal views and entries already have a stable envelope shape and each stored value
-carries its own `CodecId`. Records written before this feature have an empty `CodecId`; the runtime
-reads an empty or whitespace id as `OrleansBinary`. New binary and JSON payloads are tagged with
-their stable ids, so a journal can decode existing entries according to the format that wrote each
-one.
+type Account =
+    { Balance: int64
+      Currency: string }
+
+let accountSchema =
+    FunctionalSchema.current<AccountV0> 0
+    |> FunctionalSchema.upcasterTo 1 (fun old ->
+        { Balance = int64 old.Balance
+          Currency = "EUR" })
+
+let accountState =
+    PersistentState.create<Account> "account" "Default"
+    |> PersistentState.withCodec FunctionalPersistenceCodec.FSharpJson
+    |> PersistentState.withSchema accountSchema
+```
+
+Every stored envelope carries `SchemaVersion`. A read decodes the historical CLR type, executes
+each pure typed upcaster in order, and returns the current type. A write always stores
+`schema.CurrentVersion`. `FunctionalSchema.upcaster` advances by one; `upcasterTo n` permits an
+explicit numeric jump. A future stored version or a missing step fails before application code can
+use the value.
+
+Version `0` is reserved for envelopes written before first-class schema versioning. The repository
+keeps pre-schema envelope fixtures to prove the absent field becomes `0`, plus released `v4.1.0`
+journal fixtures containing a real historical F# binary payload which is decoded through the
+current typed upcaster pipeline. Keep the old CLR types and every required upcaster in the deployed
+binary until all retained records have been rewritten at the current version. With the F# binary
+codec, the historical type's CLR `FullName` is part of the payload: do not rename or move that old
+type before the retained version has been migrated.
+
+Codec and schema are orthogonal. `withCodec` decides how each historical/current CLR value is
+encoded; `withSchema` decides which type and mapping apply at each schema version. Attaching a
+schema always uses a versioned functional envelope, even when the payload codec is
+`OrleansBinary`.
+
+That last point preserves an important outer-schema boundary. Without `withSchema`, supported
+`OrleansBinary` state keeps the original direct provider schema: the provider sees the application
+type itself. F# JSON already uses a codec-tagged envelope. Therefore:
+
+- an old JSON functional envelope is read as schema version `0` and can be upcast directly;
+- changing direct binary state to a versioned envelope, or changing an envelope back to direct
+  state, still requires an explicit data migration or a new `stateName`;
+- changing a provider-wide `GrainStorageSerializer` is a separate provider-format migration.
+
+Functional journal views and entries also carry `CodecId` and independent state/event
+`SchemaVersion` values. Configure their pipelines with `stateSchema` and `eventSchema`; see
+[Event Sourcing](/orleans-fsharp/event-sourcing/#versioned-events-and-snapshots). Records with an empty codec id
+remain readable as `OrleansBinary`, and pre-versioning envelopes are schema version `0`.
 
 ### Custom JSON options are a durable contract
 

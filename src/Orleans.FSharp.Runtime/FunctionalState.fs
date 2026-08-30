@@ -1,7 +1,10 @@
 namespace Orleans.FSharp
 
+open System
 open System.Collections.Generic
+open Orleans.Runtime
 open Orleans.FSharp.FunctionalDiagnostics
+open Orleans.FSharp.FunctionalSiloDiagnostics
 
 /// <summary>One attached persistent facet of one activation: its blueprint and the real
 /// Orleans <c>IPersistentState</c> instance created for this activation, boxed.</summary>
@@ -157,6 +160,30 @@ type internal FunctionalActivationState
                 JournalStage
                 $"the state of grain type '{definition.GrainTypeName}' is the fold of its journal and cannot be replaced directly. Raise an event instead."
 
+    /// <summary>
+    /// Restore the ephemeral primary state supplied by Orleans activation migration. Called from
+    /// <c>IGrainMigrationParticipant.OnRehydrate</c>, before <c>OnActivateAsync</c>; marking the
+    /// holder initialized prevents normal activation initialization from overwriting it.
+    /// </summary>
+    member _.RestoreMigrated(value: obj) =
+        if primary.IsSome || not (isNull journal) then
+            fail
+                StartupStage
+                $"grain type '{definition.GrainTypeName}' attempted to restore an ephemeral migration payload even though its primary state is durable."
+
+        if isNull value then
+            if definition.StateType.IsValueType then
+                fail
+                    StartupStage
+                    $"the migrated state of grain type '{definition.GrainTypeName}' is null, but '{definition.StateType.FullName}' is a value type."
+        elif not (definition.StateType.IsInstanceOfType value) then
+            fail
+                StartupStage
+                $"the migrated state of grain type '{definition.GrainTypeName}' has runtime type '{value.GetType().FullName}', expected '{definition.StateType.FullName}'."
+
+        ephemeral <- value
+        initialized <- true
+
     /// <summary>Resolve an attached facet by its logical descriptor.</summary>
     /// <param name="descriptor">The logical descriptor of the persistent facet to resolve.</param>
     member _.TryResolve(descriptor: PersistentStateDescriptor) =
@@ -184,7 +211,30 @@ type internal FunctionalActivationState
 
         // A journaled definition has no in-memory cell to seed: its state is the fold of the
         // journal, which the log-view adaptor has already replayed by the time this runs.
-        if primary.IsNone && isNull journal then
+        if primary.IsNone && isNull journal && not initialized then
             ephemeral <- definition.CreateState key
 
         initialized <- true
+
+/// <summary>
+/// Transfers an ordinary functional grain's ephemeral primary state through Orleans activation
+/// migration. Persistent facets and journal adaptors register their own migration participants,
+/// so this participant is installed only when neither is the authoritative holder.
+/// </summary>
+[<Sealed>]
+type internal FunctionalEphemeralStateMigrationParticipant
+    (grainTypeName: string, state: FunctionalActivationState) =
+
+    let payloadKey = "orleans.fsharp/functional-state/v1"
+
+    interface IGrainMigrationParticipant with
+        member _.OnDehydrate(context: IDehydrationContext) =
+            if state.IsInitialized && not (context.TryAddValue<obj>(payloadKey, state.Current)) then
+                invalidOp
+                    $"Activation migration of functional grain type '{grainTypeName}' could not add its ephemeral state payload. The reserved key '{payloadKey}' is already present or Orleans has no serializer for the state."
+
+        member _.OnRehydrate(context: IRehydrationContext) =
+            let mutable value: obj = null
+
+            if context.TryGetValue<obj>(payloadKey, &value) then
+                state.RestoreMigrated value

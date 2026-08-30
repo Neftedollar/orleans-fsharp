@@ -262,9 +262,17 @@ module internal FunctionalIds =
     [<Literal>]
     let Prefix = "orleans.fsharp.functional/"
 
-    /// <summary>The fixed internal Orleans interface version of this transport family.</summary>
+    /// <summary>
+    /// Prefix used only while asking the local Orleans reference activator for a reference at a
+    /// particular application-contract version. The activator replaces this lookup ID with the
+    /// stable actor-specific interface ID before the reference can leave the process.
+    /// </summary>
     [<Literal>]
-    let InterfaceVersion = 1us
+    let ReferencePrefix = "orleans.fsharp.functional-ref/"
+
+    /// <summary>The largest contract version Orleans can carry in a grain reference.</summary>
+    [<Literal>]
+    let MaxInterfaceVersion = 65535
 
     /// <summary>The functional interface ID of one explicit grain type.</summary>
     /// <param name="grainType">The explicit grain type name.</param>
@@ -274,6 +282,42 @@ module internal FunctionalIds =
     /// <param name="grainType">The explicit grain type name.</param>
     let grainInterfaceType (grainType: string) =
         GrainInterfaceType.Create(interfaceId grainType)
+
+    /// <summary>
+    /// The local, version-qualified lookup ID used to keep Orleans' reference-activator cache
+    /// separate for two contract versions in the same process.
+    /// </summary>
+    let referenceInterfaceId (grainType: string) (version: int) =
+        ReferencePrefix + version.ToString(CultureInfo.InvariantCulture) + "/" + grainType
+
+    /// <summary>The local lookup interface type for one contract version.</summary>
+    let referenceGrainInterfaceType (grainType: string) (version: int) =
+        GrainInterfaceType.Create(referenceInterfaceId grainType version)
+
+    /// <summary>
+    /// Parse and validate a local version-qualified lookup ID. On success returns the stable
+    /// interface type which must travel on the reference and its native Orleans version.
+    /// </summary>
+    let tryReferenceTarget (grainType: GrainType) (candidate: GrainInterfaceType) =
+        let id = candidate.ToString()
+
+        if isNull id || not (id.StartsWith(ReferencePrefix, StringComparison.Ordinal)) then
+            None
+        else
+            let remainder = id.Substring ReferencePrefix.Length
+            let separator = remainder.IndexOf '/'
+
+            if separator <= 0 || separator = remainder.Length - 1 then
+                None
+            else
+                let versionText = remainder.Substring(0, separator)
+                let targetGrainType = remainder.Substring(separator + 1)
+
+                match UInt16.TryParse(versionText, NumberStyles.None, CultureInfo.InvariantCulture) with
+                | true, version when version > 0us
+                                     && String.Equals(targetGrainType, grainType.ToString(), StringComparison.Ordinal) ->
+                    Some(struct (grainInterfaceType targetGrainType, version))
+                | _ -> None
 
 /// <summary>The eight boundaries at which the payload limit is enforced.</summary>
 type internal PayloadBoundary =

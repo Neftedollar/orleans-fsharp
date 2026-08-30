@@ -587,14 +587,15 @@ let ``statelessWorker publishes exactly what a live StatelessWorkerAttribute(4) 
 
 /// <remarks>
 /// The same exactness proof for every plain stock strategy the DU mirrors, each against its own
-/// live Orleans attribute. Random, PreferLocal, ActivationCountBased, and ResourceOptimized are
-/// all confirmed present with identical Populate() output on both Orleans 10.1.0 and 10.2.2.
+/// live Orleans attribute, including hash-based and silo-role placement.
 /// </remarks>
 [<Theory>]
 [<InlineData("Random", "runtime.placement.random")>]
 [<InlineData("PreferLocal", "runtime.placement.preferlocal")>]
 [<InlineData("ActivationCountBased", "runtime.placement.activationcountbased")>]
 [<InlineData("ResourceOptimized", "runtime.placement.resourceoptimized")>]
+[<InlineData("HashBased", "runtime.placement.hashbased")>]
+[<InlineData("SiloRoleBased", "runtime.placement.silorolebased")>]
 let ``placement publishes exactly what the matching live Orleans placement attribute publishes``
     (strategyName: string)
     (grainTypeName: string)
@@ -605,6 +606,8 @@ let ``placement publishes exactly what the matching live Orleans placement attri
         | "PreferLocal" -> PreferLocal
         | "ActivationCountBased" -> ActivationCountBased
         | "ResourceOptimized" -> ResourceOptimized
+        | "HashBased" -> HashBased
+        | "SiloRoleBased" -> SiloRoleBased
         | other -> failwith $"unhandled strategy '{other}' in test data"
 
     let referenceAttribute: IGrainPropertiesProviderAttribute =
@@ -613,6 +616,8 @@ let ``placement publishes exactly what the matching live Orleans placement attri
         | "PreferLocal" -> PreferLocalPlacementAttribute()
         | "ActivationCountBased" -> ActivationCountBasedPlacementAttribute()
         | "ResourceOptimized" -> ResourceOptimizedPlacementAttribute()
+        | "HashBased" -> HashBasedPlacementAttribute()
+        | "SiloRoleBased" -> SiloRoleBasedPlacementAttribute()
         | other -> failwith $"unhandled strategy '{other}' in test data"
 
     let actor = typeof<PreferLocalActor> // a stand-in marker CLR type; only the grain-type match matters here

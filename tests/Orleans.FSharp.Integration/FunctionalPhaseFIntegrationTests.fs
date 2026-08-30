@@ -631,7 +631,7 @@ type FunctionalPhaseFTests(fixture: FunctionalPhaseFFixture) =
     /// difference between the two counts is a property of the consuming construct alone.
     /// </summary>
     [<Fact>]
-    member _.``consuming an upstream stream inside a grain yields the same count both ways``() =
+    member _.``taskSeq wrappers stay within the known final-item duplication``() =
         task {
             let suffix = unique ()
             let key = $"probe-{suffix}"
@@ -646,14 +646,11 @@ type FunctionalPhaseFTests(fixture: FunctionalPhaseFFixture) =
             // producer yielded.
             test <@ direct = 3 @>
 
-            // What it does not own: FSharp.Control.TaskSeq 0.6.0's WRAPPING combinators over that
-            // same stream. Measured on 2026-08-18 inside the activation's task scheduler, both
-            // `TaskSeq.map` and `taskSeq { for … }` answered 4 for a 3-item stream — the last item
-            // twice — while enumerating it directly answered 3. That is why `relay` above is a
-            // hand-written enumerator and why every assertion in this file drains through the
-            // plain `await foreach` shape. The divergence is deliberately not pinned to an exact
-            // value: an upstream fix must not turn this suite red.
-            test <@ viaMap >= direct && viaFor >= direct @>
+            // TaskSeq 1.1.1's static path (SDK 10.0.201) still duplicates the final item for both
+            // wrappers under Orleans 10.1.0 and 10.2.2. Allow that single known upstream defect
+            // while rejecting item loss or larger amplification. An upstream fix remains green.
+            test <@ viaMap = direct || viaMap = direct + 1 @>
+            test <@ viaFor = direct || viaFor = direct + 1 @>
         }
 
     /// <summary>

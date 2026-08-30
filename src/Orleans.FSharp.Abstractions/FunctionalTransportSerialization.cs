@@ -151,14 +151,16 @@ internal sealed class FunctionalRequestEnvelopeCodec : IFieldCodec<FunctionalReq
     public void WriteField<TBufferWriter>(
         ref Writer<TBufferWriter> writer,
         uint fieldIdDelta,
-        Type expectedType,
-        FunctionalRequestEnvelope value)
+        Type? expectedType,
+        FunctionalRequestEnvelope? value)
         where TBufferWriter : IBufferWriter<byte>
     {
         if (ReferenceCodec.TryWriteReferenceField(ref writer, fieldIdDelta, expectedType, value))
         {
             return;
         }
+
+        ArgumentNullException.ThrowIfNull(value);
 
         writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
         StringCodec.WriteField(ref writer, 0U, value.GrainType);
@@ -179,7 +181,7 @@ internal sealed class FunctionalRequestEnvelopeCodec : IFieldCodec<FunctionalReq
     {
         if (field.IsReference)
         {
-            return ReferenceCodec.ReadReference<FunctionalRequestEnvelope, TInput>(ref reader, field);
+            return ReferenceCodec.ReadReference<FunctionalRequestEnvelope, TInput>(ref reader, field)!;
         }
 
         field.EnsureWireTypeTagDelimited();
@@ -214,22 +216,22 @@ internal sealed class FunctionalRequestEnvelopeCodec : IFieldCodec<FunctionalReq
             switch (id)
             {
                 case 0U:
-                    grainType = StringCodec.ReadValue(ref reader, header);
+                    grainType = StringCodec.ReadValue(ref reader, header)!;
                     break;
                 case 1U:
                     contractVersion = Int32Codec.ReadValue(ref reader, header);
                     break;
                 case 2U:
-                    operationId = StringCodec.ReadValue(ref reader, header);
+                    operationId = StringCodec.ReadValue(ref reader, header)!;
                     break;
                 case 3U:
-                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header);
+                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header)!;
                     break;
                 case 4U:
                     admissionFlags = ByteCodec.ReadValue(ref reader, header);
                     break;
                 case 5U:
-                    payload = ByteArrayCodec.ReadValue(ref reader, header);
+                    payload = ByteArrayCodec.ReadValue(ref reader, header)!;
                     break;
                 default:
                     throw FunctionalWire.UnknownField(TypeName, id);
@@ -269,14 +271,16 @@ internal sealed class FunctionalReplyCodec : IFieldCodec<FunctionalReply>
     public void WriteField<TBufferWriter>(
         ref Writer<TBufferWriter> writer,
         uint fieldIdDelta,
-        Type expectedType,
-        FunctionalReply value)
+        Type? expectedType,
+        FunctionalReply? value)
         where TBufferWriter : IBufferWriter<byte>
     {
         if (ReferenceCodec.TryWriteReferenceField(ref writer, fieldIdDelta, expectedType, value))
         {
             return;
         }
+
+        ArgumentNullException.ThrowIfNull(value);
 
         writer.WriteStartObject(fieldIdDelta, expectedType, _codecFieldType);
         ByteArrayCodec.WriteField(ref writer, 0U, value.ProtocolToken);
@@ -292,7 +296,7 @@ internal sealed class FunctionalReplyCodec : IFieldCodec<FunctionalReply>
     {
         if (field.IsReference)
         {
-            return ReferenceCodec.ReadReference<FunctionalReply, TInput>(ref reader, field);
+            return ReferenceCodec.ReadReference<FunctionalReply, TInput>(ref reader, field)!;
         }
 
         field.EnsureWireTypeTagDelimited();
@@ -323,10 +327,10 @@ internal sealed class FunctionalReplyCodec : IFieldCodec<FunctionalReply>
             switch (id)
             {
                 case 0U:
-                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header);
+                    protocolToken = ByteArrayCodec.ReadValue(ref reader, header)!;
                     break;
                 case 1U:
-                    payload = ByteArrayCodec.ReadValue(ref reader, header);
+                    payload = ByteArrayCodec.ReadValue(ref reader, header)!;
                     break;
                 default:
                     throw FunctionalWire.UnknownField(TypeName, id);
@@ -373,8 +377,8 @@ internal sealed class FunctionalRequestCodec : IFieldCodec<FunctionalRequest>
     public void WriteField<TBufferWriter>(
         ref Writer<TBufferWriter> writer,
         uint fieldIdDelta,
-        Type expectedType,
-        FunctionalRequest value)
+        Type? expectedType,
+        FunctionalRequest? value)
         where TBufferWriter : IBufferWriter<byte>
     {
         if (value is null)
@@ -397,7 +401,7 @@ internal sealed class FunctionalRequestCodec : IFieldCodec<FunctionalRequest>
     {
         if (field.IsReference)
         {
-            return ReferenceCodec.ReadReference<FunctionalRequest, TInput>(ref reader, field);
+            return ReferenceCodec.ReadReference<FunctionalRequest, TInput>(ref reader, field)!;
         }
 
         field.EnsureWireTypeTagDelimited();
@@ -490,8 +494,8 @@ internal sealed class FunctionalTransactionRequestCodec : IFieldCodec<Functional
     public void WriteField<TBufferWriter>(
         ref Writer<TBufferWriter> writer,
         uint fieldIdDelta,
-        Type expectedType,
-        FunctionalTransactionRequest value)
+        Type? expectedType,
+        FunctionalTransactionRequest? value)
         where TBufferWriter : IBufferWriter<byte>
     {
         if (value is null)
@@ -516,7 +520,7 @@ internal sealed class FunctionalTransactionRequestCodec : IFieldCodec<Functional
     {
         if (field.IsReference)
         {
-            return ReferenceCodec.ReadReference<FunctionalTransactionRequest, TInput>(ref reader, field);
+            return ReferenceCodec.ReadReference<FunctionalTransactionRequest, TInput>(ref reader, field)!;
         }
 
         field.EnsureWireTypeTagDelimited();
@@ -611,8 +615,8 @@ internal sealed class FunctionalStreamRequestCodec : IFieldCodec<FunctionalStrea
     public void WriteField<TBufferWriter>(
         ref Writer<TBufferWriter> writer,
         uint fieldIdDelta,
-        Type expectedType,
-        FunctionalStreamRequest value)
+        Type? expectedType,
+        FunctionalStreamRequest? value)
         where TBufferWriter : IBufferWriter<byte>
     {
         if (value is null)
@@ -637,7 +641,7 @@ internal sealed class FunctionalStreamRequestCodec : IFieldCodec<FunctionalStrea
     {
         if (field.IsReference)
         {
-            return ReferenceCodec.ReadReference<FunctionalStreamRequest, TInput>(ref reader, field);
+            return ReferenceCodec.ReadReference<FunctionalStreamRequest, TInput>(ref reader, field)!;
         }
 
         field.EnsureWireTypeTagDelimited();

@@ -7,12 +7,14 @@ License: MIT
 ## High-Value Actions
 - Start here: https://neftedollar.com/orleans-fsharp/getting-started/
 - API reference: https://neftedollar.com/orleans-fsharp/api-reference/
-- How-to guide: https://neftedollar.com/orleans-fsharp/how-to/
+- Recipes: https://neftedollar.com/orleans-fsharp/how-to/
+- Runnable examples: https://neftedollar.com/orleans-fsharp/examples/
 - Comparison: https://neftedollar.com/orleans-fsharp/comparison/
 - Full documentation corpus: https://neftedollar.com/orleans-fsharp/llms-full.txt
 
 ## Core Docs
-- Functional grain runtime (current authoring model): https://neftedollar.com/orleans-fsharp/functional-grains/
+- Functional grain runtime overview: https://neftedollar.com/orleans-fsharp/functional-runtime/
+- Complete functional runtime reference: https://neftedollar.com/orleans-fsharp/functional-grains/
 - Silo configuration: https://neftedollar.com/orleans-fsharp/silo-configuration/
 - Orleans Dashboard: https://neftedollar.com/orleans-fsharp/dashboard/
 - Client configuration: https://neftedollar.com/orleans-fsharp/client-configuration/
@@ -25,6 +27,7 @@ License: MIT
 - Advanced: https://neftedollar.com/orleans-fsharp/advanced/
 - Analyzers: https://neftedollar.com/orleans-fsharp/analyzers/
 - Calling from C#: https://neftedollar.com/orleans-fsharp/calling-from-csharp/
+- Orleans compatibility: https://neftedollar.com/orleans-fsharp/compatibility/
 
 ## Legacy API
 - Maintenance documentation for earlier authoring models: https://neftedollar.com/orleans-fsharp/legacy/

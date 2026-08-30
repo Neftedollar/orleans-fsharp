@@ -326,6 +326,12 @@ let private runVersioning (factory: IGrainFactory) =
         say $"caller on version 2, same grainType '{VersioningTour.VersionedApi.GrainType}' ->"
         detail mismatch
 
+        // The rejection may come from Orleans native version routing before the functional
+        // dispatcher runs. Its text is deliberately not coupled to an Orleans implementation
+        // detail; reaching the v1 handler would be the actual failure.
+        let aheadRejected =
+            not (mismatch.StartsWith("NO REJECTION", StringComparison.Ordinal))
+
         // ── The opt-in: spec 004 item 7 ──────────────────────────────────────
         // A version-3 host that accepts 2 as well, with one operation introduced at 3.
         let current = RollingApi.refV3 factory "order-1"
@@ -354,8 +360,9 @@ let private runVersioning (factory: IGrainFactory) =
         detail $"caller v3, 'refund'  -> {currentRefund}"
         detail $"caller v2, 'refund' (sinceVersion 3) -> {previousRefund}"
 
-        // Admission only: the older caller reached the SAME activation and the same state, so
-        // nothing about routing or storage identity moved with the wider policy.
+        // Native routing selected the compatible v3 implementation; functional envelope
+        // admission then accepted the older caller. Both references still address the same
+        // grain identity and therefore the same activation state.
         let! sameActivation = attempt (fun () -> previous.settle "B")
         let! readBack = attempt (fun () -> current.refund "ignored")
 
@@ -363,7 +370,7 @@ let private runVersioning (factory: IGrainFactory) =
 
         let versioningHolds =
             reply.Contains "version-1 handler"
-            && mismatch.Contains "hosts contract version 1 but received version 2"
+            && aheadRejected
             && currentSettle.StartsWith "ADMITTED"
             && previousSettle.StartsWith "ADMITTED"
             && ancientSettle.Contains "accepts versions 2 through 3, but received version 1"
@@ -374,9 +381,9 @@ let private runVersioning (factory: IGrainFactory) =
 
         if versioningHolds then
             verdict
-                "SUPPORTED — exact by default; acceptsVersions admits an older caller, sinceVersion still refuses a newer operation"
+                "SUPPORTED — native routing rejects an incompatible version; acceptsVersions admits a compatible older caller, and sinceVersion still refuses a newer operation"
         else
-            verdict "FAILED — the matching call, the version rejection, or the tolerance opt-in did not behave as documented"
+            verdict "FAILED — native routing, functional admission, or the sinceVersion guard did not behave as documented"
     }
 
 let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider) =
@@ -424,7 +431,8 @@ let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider)
         clientBuilder.UseOrleansClient(fun client ->
             client.UseLocalhostClustering() |> ignore
             client.AddMemoryStreams TourStream.Provider |> ignore
-            // Every process that BINDS a functional contract installs the fixed transport once.
+            // Every process that binds a functional contract installs the shared transport once;
+            // each reference still carries its contract's native Orleans interface version.
             client.AddFunctionalGrainClient() |> ignore)
         |> ignore
 
@@ -454,20 +462,20 @@ let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider)
         say $"external client calling a functional grain -> {externalCall}"
 
         let! _ = producer.publish "order-placed"
-        let! total = producer.publish "order-shipped"
+        let! total = producer.publishBatch [ "order-packed"; "order-shipped" ]
         say $"published {total} events through the producer's handler"
 
-        let expected = [ "order-placed"; "order-shipped" ]
+        let expected = [ "order-placed"; "order-packed"; "order-shipped" ]
 
-        let! _ =
+        let! allConsumersReady =
             waitUntil (TimeSpan.FromSeconds 20.0) (fun () ->
                 task {
                     let! report = consumer.report ()
 
                     return
-                        List.length report.received >= 2
-                        && List.length (StreamInbox.read outOfGrainSubscriber) >= 2
-                        && List.length (StreamInbox.read externalSubscriber) >= 2
+                        List.length report.received >= 3
+                        && List.length (StreamInbox.read outOfGrainSubscriber) >= 3
+                        && List.length (StreamInbox.read externalSubscriber) >= 3
                 })
 
         let! finalReport = consumer.report ()
@@ -480,7 +488,12 @@ let private runStreams (factory: IGrainFactory) (siloServices: IServiceProvider)
 
         do! clientHost.StopAsync()
 
-        if finalReport.received = expected && externalReceived = expected then
+        if
+            allConsumersReady
+            && finalReport.received = expected
+            && outOfGrainReceived = expected
+            && externalReceived = expected
+        then
             verdict "SUPPORTED — publish from a handler, and all three consumer arms deliver"
         else
             verdict "PARTIAL — see the per-arm lines above and the README for the exact failure"

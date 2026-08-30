@@ -25,6 +25,7 @@ existed; reconciling those is a content question (which side is correct?), not a
 question, so they are listed rather than silently ignored.
 """
 import posixpath
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -65,8 +66,27 @@ def strip_frontmatter(text: str) -> str:
     return text[end + 5:].lstrip('\n')
 
 
+def keep_frontmatter(text: str) -> str | None:
+    """Return one complete leading frontmatter block, ready to prepend to a body."""
+    if not text.startswith('---\n'):
+        return None
+    end = text.find('\n---\n', 4)
+    if end == -1:
+        return None
+    return text[:end + 5].rstrip('\n') + '\n\n'
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--write',
+        action='store_true',
+        help='replace each website mirror body from docs/ while preserving its frontmatter',
+    )
+    args = parser.parse_args()
+
     drifted, missing = [], []
+    written = 0
     checked = 0
     for doc in sorted(DOCS.rglob('*.md')):
         relative = doc.relative_to(DOCS)
@@ -78,9 +98,21 @@ def main() -> int:
             missing.append(name)
             continue
         checked += 1
+        source_dir = relative.parent.as_posix()
+        if args.write:
+            mirror_text = mirror.read_text(encoding='utf-8')
+            frontmatter = keep_frontmatter(mirror_text)
+            if frontmatter is None:
+                print(f'INVALID MIRROR {name}: missing or unterminated Starlight frontmatter')
+                missing.append(name)
+                continue
+            site_body = normalise_links(doc.read_text(encoding='utf-8'), source_dir)
+            updated = frontmatter + site_body
+            if updated != mirror_text:
+                mirror.write_text(updated, encoding='utf-8')
+                written += 1
         if name in KNOWN_DRIFT:
             continue
-        source_dir = relative.parent.as_posix()
         left = normalise_links(strip_frontmatter(mirror.read_text(encoding='utf-8')), source_dir)
         right = normalise_links(doc.read_text(encoding='utf-8'), source_dir)
         if left != right:
@@ -95,6 +127,8 @@ def main() -> int:
               f'(ignore the `](page.md)` vs `](/orleans-fsharp/page/)` lines, those are expected)')
     print(f'checked {checked} doc/mirror pairs '
           f'({len(KNOWN_DRIFT)} exempt); {len(drifted)} drifted, {len(missing)} missing')
+    if args.write:
+        print(f'updated {written} website mirror(s) from docs/')
     return 1 if (drifted or missing) else 0
 
 

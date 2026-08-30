@@ -40,6 +40,9 @@ type internal FunctionalTargetEnvironment =
         State: FunctionalActivationState
         /// Wrapper for the protected Orleans deactivate-on-idle method.
         DeactivateOnIdle: unit -> unit
+        /// Wrapper for activation migration after the current turn becomes idle. An optional
+        /// target is passed through Orleans' stock placement-hint request context.
+        MigrateOnIdle: SiloAddress option -> unit
         /// Wrapper for the protected Orleans delay-deactivation method.
         DelayDeactivation: TimeSpan -> unit
         /// Register or update one durable reminder on the real Orleans reminder service.
@@ -75,6 +78,7 @@ module internal FunctionalContextFactory =
           CancellationToken = cancellationToken
           StreamSequenceToken = null
           DeactivateOnIdle = env.DeactivateOnIdle
+          MigrateOnIdle = env.MigrateOnIdle
           DelayDeactivation = env.DelayDeactivation
           ResolvePersistentState =
             fun descriptor ->

@@ -78,6 +78,7 @@ let private makeContextWithTokenAndJournal
           StreamSequenceToken = sequenceToken
           DeactivateOnIdle = fun () -> deactivated <- deactivated + 1
           DelayDeactivation = fun span -> delayed <- span
+          MigrateOnIdle = ignore
           ResolvePersistentState = resolve
           ResolveTransactionalState = fun _ -> null
           Journal = journal }
@@ -967,6 +968,7 @@ let ``the definition builder declares exactly the specified custom operations`` 
            // breaks record-field inference inside existing handler bodies.
            "handleStream"
            "initialState"
+           "migrationParticipant"
            "onActivate"
            "onBroadcast"
            "onDeactivate"
@@ -995,6 +997,7 @@ let ``the journaled definition builder declares exactly the specified custom ope
         [| "apply"
            "collectionAge"
            "customStorage"
+           "eventSchema"
            "handle"
            // Reply-only sugar over 'handle', admitted only on a readOnly operation. It takes the
            // same QueryHandler shape the ordinary builder's does: a query raises no events and
@@ -1009,6 +1012,7 @@ let ``the journaled definition builder declares exactly the specified custom ope
            "journalCodec"
            "journalStorage"
            "logProvider"
+           "migrationParticipant"
            "onActivate"
            "onBroadcast"
            "onConnectionIssue"
@@ -1020,7 +1024,8 @@ let ``the journaled definition builder declares exactly the specified custom ope
            "onTentativeStateChanged"
            "onTimer"
            "placement"
-           "snapshotPolicy" |]
+           "snapshotPolicy"
+           "stateSchema" |]
 
     test
         <@
@@ -1048,6 +1053,7 @@ let ``the invocation context declares exactly the specified public members`` () 
            "journalVersion"
            "key"
            "logger"
+           "migrateOnIdle"
            "persistentState"
            "raiseConditional"
            "raiseConditionalEvent"

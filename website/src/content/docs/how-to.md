@@ -1,128 +1,80 @@
 ---
-title: "How To: Functional Orleans Application"
-description: "Build a typed Orleans application with the current Orleans.FSharp API."
+title: "Recipes"
+description: "Task-oriented paths through the current Orleans.FSharp functional API."
 ---
 
-# How To: Build a Functional Orleans Application
+# Recipes
 
-This tutorial builds a small typed counter with the current Orleans.FSharp API.
+**Task-oriented paths through the current functional API.**
 
-## 1. Create the project
+> **Looking for the first tutorial?** Start with [Getting Started](/orleans-fsharp/getting-started/). This page
+> assumes you already know how `grainContract`, `grainFor`, and `FunctionalGrain.ref` fit
+> together and sends you directly to the task you need.
+
+## Start a new current-API project
+
+Until a template package containing the current functional scaffold is published, install the
+template from a source checkout:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates
-dotnet new orleans-fsharp -n MyDistributedApp
-cd MyDistributedApp
+git clone https://github.com/Neftedollar/orleans-fsharp.git
+dotnet new install ./orleans-fsharp/templates
+dotnet new orleans-fsharp -n MyApp
 ```
 
-The template creates an F# application and tests. You do not need to write a C# proxy interface or a source-generation bridge.
+The published `Orleans.FSharp.Templates` 4.1.0 package still scaffolds the Legacy CodeGen model.
+Do not use the package-only install command for a new functional-runtime application yet.
 
-## 2. Define the typed API
+## Choose the grain shape
 
-```fsharp
-open System.Threading.Tasks
-open Orleans.FSharp
+| Need | Start here |
+|---|---|
+| Ephemeral state and typed operations | [Contracts and handlers](/orleans-fsharp/functional-grains/#one-operation-one-argument) |
+| Durable state | [Persistence model](/orleans-fsharp/functional-grains/#persistence-model) |
+| Events as the source of truth | [Event Sourcing](/orleans-fsharp/event-sourcing/) |
+| Read-only operation | [`handleQuery`](/orleans-fsharp/functional-grains/#reply-only-handlers-handlequery) |
+| Push to a client | [Functional observers](/orleans-fsharp/functional-grains/#push-to-clients-functional-observers) |
+| A sequence returned by one call | [Server-Streaming Replies](/orleans-fsharp/streaming-replies/) |
+| Pub/sub between producers and consumers | [Streaming](/orleans-fsharp/streaming/) |
+| Cross-grain ACID work | [Transactions](/orleans-fsharp/functional-grains/#distributed-acid-transactions) |
+| Call the actor from C# | [Calling from C#](/orleans-fsharp/calling-from-csharp/) |
 
-type CounterActor = private CounterActor of unit
+## Configure the host
 
-[<NoEquality; NoComparison>]
-type CounterApi =
-    { increment: unit -> Task<int>
-      value: unit -> Task<int> }
+| Task | Guide |
+|---|---|
+| Local silo | [Getting Started](/orleans-fsharp/getting-started/#step-4-configure-the-silo) |
+| Storage, stream, reminder, or clustering provider | [Silo Configuration](/orleans-fsharp/silo-configuration/) |
+| Standalone client | [Client Configuration](/orleans-fsharp/client-configuration/) |
+| Orleans Dashboard | [Dashboard](/orleans-fsharp/dashboard/) |
+| TLS, call filters, and secret handling | [Security](/orleans-fsharp/security/) |
+| Retry, timeout, and circuit breaker | [Resilience](/orleans-fsharp/resilience/) |
 
-module CounterApi =
-    let contract =
-        grainContract<CounterActor, string, CounterApi> {
-            grainType "counter"
-            version 1
-            stringKey
-            readOnly (_.value)
-        }
+## Evolve a deployed application
 
-    let ref = FunctionalGrain.ref contract
-```
+Treat these as separate compatibility gates:
 
-The actor brand keeps unrelated contracts distinct. `grainType` is the durable wire identity, and `stringKey` defines how application keys map to Orleans grain keys.
+1. Route old and new callers with [contract versioning](/orleans-fsharp/functional-grains/#operation-rename-and-contract-version).
+2. Keep stored state readable with [versioned state and upcasters](/orleans-fsharp/serialization/#versioned-state-and-upcasters).
+3. Keep journal entries and snapshots readable with
+   [versioned events and snapshots](/orleans-fsharp/event-sourcing/#versioned-events-and-snapshots).
+4. Prove N/N+1 and rollback with separate processes; see
+   [Testing rolling updates](/orleans-fsharp/testing/#testing-rolling-updates-and-durable-schemas).
 
-## 3. Define behavior
+The [Orleans compatibility](/orleans-fsharp/compatibility/) page records the framework versions exercised by CI
+and calls out new Orleans capabilities which are not yet wrapped.
 
-```fsharp
-let counterDefinition =
-    grainFor CounterApi.contract {
-        defaultState (fun () -> 0)
+## Verify the application
 
-        handle (_.increment) (fun _ctx count () ->
-            task {
-                let next = count + 1
-                return next, next
-            })
+- Unit-test pure transition functions directly.
+- Use a real `TestingHost` activation for persistence, serialization, reminders, streams,
+  transactions, and lifecycle behavior.
+- Keep bytes written by released serializers as fixtures when durable schemas evolve.
+- Run the closest [repository example](/orleans-fsharp/examples/) before copying a provider-specific setup.
 
-        handleQuery (_.value) (fun _ctx count () ->
-            task { return count })
-    }
-```
+See [Testing](/orleans-fsharp/testing/) for complete patterns and [Examples](/orleans-fsharp/examples/) for runnable projects.
 
-Each record field has one handler. State transitions are explicit values; `handleQuery` returns a reply without replacing state.
+## Legacy recipes
 
-## 4. Configure and register the silo
-
-```fsharp
-open Microsoft.Extensions.Hosting
-open Orleans.Hosting
-open Orleans.FSharp.Runtime
-
-let config =
-    siloConfig {
-        useLocalhostClustering
-        addMemoryStorage "Default"
-    }
-
-let builder = HostApplicationBuilder()
-SiloConfig.applyToHost config builder
-
-builder.UseOrleans(fun siloBuilder ->
-    siloBuilder.AddFunctionalGrain(counterDefinition) |> ignore)
-|> ignore
-
-let host = builder.Build()
-host.Start()
-```
-
-A client-only process calls `AddFunctionalGrainClient()` on its Orleans client builder instead.
-
-## 5. Call the actor
-
-```fsharp
-open Microsoft.Extensions.DependencyInjection
-open Orleans
-
-let factory = host.Services.GetRequiredService<IGrainFactory>()
-let counter = CounterApi.ref factory "visits"
-
-let first = counter.increment().GetAwaiter().GetResult()
-let current = counter.value().GetAwaiter().GetResult()
-```
-
-The call site is the API record itself. There is no boxed command or untyped reply.
-
-## 6. Test through a real activation
-
-Register the same definition in an Orleans `TestingHost` fixture, obtain `CounterApi.ref fixture.Client "test"`, and assert replies through the public API. Keep context-free handler functions named separately when you also want fast pure unit tests.
-
-See [Testing](/orleans-fsharp/testing/) for a complete fixture.
-
-## 7. Add production capabilities
-
-- Durable state: create a `PersistentState` descriptor and attach it with `stateFrom`.
-- Event sourcing: replace `grainFor` with `journaledGrainFor` and provide a pure `apply` fold.
-- Streams and broadcasts: add `onStream` or `onBroadcast` to the definition.
-- Timers and reminders: add `onTimer` or `onReminder`.
-- Dashboard: add the package, `addDashboard`, and map the dashboard endpoint.
-
-## Next steps
-
-- [Functional Grain Runtime](/orleans-fsharp/functional-grains/)
-- [Event Sourcing](/orleans-fsharp/event-sourcing/)
-- [Dashboard](/orleans-fsharp/dashboard/)
-- [Silo Configuration](/orleans-fsharp/silo-configuration/)
-- [Legacy API](/orleans-fsharp/legacy/)
+The original `grain { }` authoring model is maintained in the separate
+[Legacy How To](/orleans-fsharp/legacy/how-to/) section.

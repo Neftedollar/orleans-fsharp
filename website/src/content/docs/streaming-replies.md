@@ -275,11 +275,11 @@ The handler returns the BCL `IAsyncEnumerable<'Item>` and nothing else, so any w
 works. `taskSeq { }` from `FSharp.Control.TaskSeq` is the natural F# tool and this library already
 depends on that package, so using it adds nothing to your closure.
 
-> **One caveat, and it is not about this runtime.** In `FSharp.Control.TaskSeq` 0.6.0, the
-> *wrapping* combinators — `TaskSeq.map`, and `taskSeq { for x in someStream do … }` — over an
-> `IAsyncEnumerable` returned by **this** runtime were measured yielding the last item twice when
-> they run under an activation's task scheduler; enumerating the same stream directly is correct.
-> So when one grain re-streams another grain's stream, pull the upstream enumerator yourself:
+> **One caveat, and it is not about this runtime.** In `FSharp.Control.TaskSeq` 1.1.1, the
+> *wrapping* forms — `TaskSeq.map`, and `taskSeq { for x in someStream do yield x }` — over an
+> `IAsyncEnumerable` returned by **this** runtime were measured yielding the last item twice under
+> an activation's task scheduler; direct enumeration is correct. So when one grain re-streams
+> another grain's stream, pull the upstream enumerator yourself:
 >
 > ```fsharp
 > handleStream (_.relay) (fun context _ (key: string) ->
@@ -290,7 +290,10 @@ depends on that package, so using it adds nothing to your closure.
 > ```
 >
 > Producing from a `taskSeq { }` over ordinary data — a list, a range, a database cursor — is not
-> affected and is what every example here does.
+> affected and is what every example here does. This repository tests the Orleans-specific case
+> against both its minimum and newest supported Orleans versions. The repository remains pinned
+> to SDK 10.0.201: TaskSeq's dynamic path under SDK 10.0.400 avoids this `taskSeq { for ... }`
+> duplication, but currently regresses stream delivery and producer-disposal propagation.
 
 ---
 

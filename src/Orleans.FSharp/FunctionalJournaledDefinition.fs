@@ -59,6 +59,10 @@ type internal JournaledDraftState<'Actor, 'Key, 'Api, 'State, 'Event> =
         Journal: JournalConfiguration option
         /// The definition-level durable payload codec override for journal views and entries.
         JournalCodec: FunctionalPersistenceCodec option
+        /// The schema version and upcasters for materialized journal state/snapshots.
+        StateSchema: FunctionalSchema<'State> option
+        /// The schema version and upcasters for journal events.
+        EventSchema: FunctionalSchema<'Event> option
         /// Resolves the typed storage used by Orleans' CustomStorage provider.
         CustomStorage: (IServiceProvider -> IFunctionalJournalStorage<'Key, 'State, 'Event>) option
         /// The per-definition snapshot override; absence inherits the silo default.
@@ -85,6 +89,8 @@ type internal JournaledDraftState<'Actor, 'Key, 'Api, 'State, 'Event> =
         OnConnectionIssueResolved: JournaledConnectionIssueHook<'Actor, 'Key, 'State> option
         /// The declared placement configuration, when 'placement' has been declared.
         Placement: PlacementConfiguration option
+        /// Activation-scoped Orleans migration-participant factories, in declaration order.
+        MigrationParticipants: FunctionalMigrationParticipantFactory<'Actor, 'Key> list
         /// Boxed handlers keyed by API-record field index.
         Handlers: Map<int, obj>
     }
@@ -114,6 +120,12 @@ type FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>
 
     /// <summary>The definition-level journal payload codec override, when configured.</summary>
     member internal _.JournalCodec = state.JournalCodec
+
+    /// <summary>The materialized-state schema and upcaster pipeline, when configured.</summary>
+    member internal _.StateSchema = state.StateSchema
+
+    /// <summary>The event schema and upcaster pipeline, when configured.</summary>
+    member internal _.EventSchema = state.EventSchema
 
     /// <summary>The typed custom-storage resolver, when declared.</summary>
     member internal _.CustomStorage = state.CustomStorage
@@ -153,6 +165,9 @@ type FunctionalJournaledGrainDefinition<'Actor, 'Key, 'Api, 'State, 'Event>
 
     /// <summary>The configured placement, when <c>placement</c> was declared.</summary>
     member internal _.Placement = state.Placement
+
+    /// <summary>Activation-scoped migration-participant factories in declaration order.</summary>
+    member internal _.MigrationParticipants = state.MigrationParticipants
 
     /// <summary>Boxed handlers keyed by API-record field index.</summary>
     member internal _.Handlers = state.Handlers
@@ -479,6 +494,8 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api>
               Apply = fold
               Journal = None
               JournalCodec = None
+              StateSchema = None
+              EventSchema = None
               CustomStorage = None
               SnapshotPolicy = None
               CollectionAge = None
@@ -492,6 +509,7 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api>
               OnConnectionIssue = None
               OnConnectionIssueResolved = None
               Placement = None
+              MigrationParticipants = []
               Handlers = Map.empty }
 
     /// <summary>
@@ -692,6 +710,58 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api>
         JournaledDefinitionDraft.withState
             { draft with
                 JournalCodec = Some codec }
+
+    /// <summary>
+    /// Version materialized journal state and snapshots, and register the typed upcasters needed
+    /// to read older durable views. Records written before this feature have schema version zero.
+    /// </summary>
+    [<CustomOperation("stateSchema")>]
+    member _.StateSchema<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            schema: FunctionalSchema<'State>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(schema, null) then
+            fail
+                DefinitionStage
+                $"'stateSchema' of grain type '{draft.Contract.GrainTypeName}' cannot be null."
+
+        if draft.StateSchema.IsSome then
+            fail
+                DefinitionStage
+                $"'stateSchema' is declared more than once for grain type '{draft.Contract.GrainTypeName}'. A repeated singleton operation is a definition error."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                StateSchema = Some schema }
+
+    /// <summary>
+    /// Version journal entries and register the typed upcasters needed to replay older events.
+    /// Records written before this feature have schema version zero.
+    /// </summary>
+    [<CustomOperation("eventSchema")>]
+    member _.EventSchema<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            schema: FunctionalSchema<'Event>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(schema, null) then
+            fail
+                DefinitionStage
+                $"'eventSchema' of grain type '{draft.Contract.GrainTypeName}' cannot be null."
+
+        if draft.EventSchema.IsSome then
+            fail
+                DefinitionStage
+                $"'eventSchema' is declared more than once for grain type '{draft.Contract.GrainTypeName}'. A repeated singleton operation is a definition error."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                EventSchema = Some schema }
 
     /// <summary>
     /// Name the storage provider the log-consistency provider writes through. Optional: without
@@ -970,6 +1040,28 @@ type FunctionalJournaledGrainDefinitionBuilder<'Actor, 'Key, 'Api>
                         draft.Contract.GrainTypeName
                         draft.Placement
                         (Strategy strategy) }
+
+    /// <summary>
+    /// Register an activation-scoped Orleans migration participant. The factory runs before
+    /// rehydration, once for each source or destination activation.
+    /// </summary>
+    /// <param name="factory">Creates a fresh participant for the activation.</param>
+    [<CustomOperation("migrationParticipant")>]
+    member _.MigrationParticipant<'State, 'Event>
+        (
+            state: FunctionalJournaledDraft<'Actor, 'Key, 'Api, 'State, 'Event>,
+            factory: FunctionalMigrationParticipantFactory<'Actor, 'Key>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(factory, null) then
+            fail
+                DefinitionStage
+                $"'migrationParticipant' of grain type '{draft.Contract.GrainTypeName}' requires a factory."
+
+        JournaledDefinitionDraft.withState
+            { draft with
+                MigrationParticipants = draft.MigrationParticipants @ [ factory ] }
 
     /// <summary>
     /// Run a hook once the journal has been replayed and before the activation serves its first

@@ -1,4 +1,4 @@
-# Functional Grain Runtime
+# Functional Runtime Reference
 
 **The current Orleans.FSharp authoring model: user-authored API records and functional definitions.**
 
@@ -416,18 +416,22 @@ grainContract<RoomActor, RoomId, RoomApiV2> {
 
 Final operation IDs must be unique, non-blank, NUL-free ordinal strings within a contract.
 
-**Contract version matching is exact by default.** Every request carries the caller's contract
-version; the target compares it against its own hosted version with `=`, not `>=`. A version
-mismatch fails the call before any handler runs, with no negotiation and no automatic fallback:
+**Contract version matching is exact by default.** A contract version must be in `1..65535`, the
+range Orleans can carry as a native grain-interface version. Every functional reference carries
+that native Orleans version, every silo publishes it in the cluster manifest, and every request
+also carries it inside the functional envelope. Orleans therefore uses the version for routing;
+the target then validates the envelope before any handler runs:
 
 ```text
 Orleans.FSharp functional transport: grain type 'chat.room' hosts contract version 2
 but received version 1.
 ```
 
-Contract version is independent of `GrainId`, storage identity, and the fixed Orleans interface
-version (which this transport family pins to `1` internally, regardless of your contract's
-`version`).
+The actor-specific Orleans interface ID remains stable across releases, while its native interface
+version changes with the contract. `GrainId` and storage identity remain unchanged, so compatible
+versions address the same logical grain and durable state. A version-qualified ID exists only in
+the local reference cache; it is replaced by the stable interface ID before the reference leaves
+the process.
 
 ### Version tolerance: `acceptsVersions` and `sinceVersion`
 
@@ -469,11 +473,23 @@ operation whose flags changed between two versions inside the accepted range sti
 the transport's admission-flags diagnostic, not a version one. Wire compatibility means the flags
 too, not only the argument and reply types.
 
-What the policy changes is **admission, and nothing else**. The wire format, the stable operation
-IDs, the admission flags, the grain identity, and the storage identity are all untouched: a v2
-call and a v3 call to the same key reach the same activation, the same state, and the same
-handler. Nothing is published to the grain manifest for it either — it is a host-side rule, so a
-silo that has gossiped the grain type sees exactly what it saw before.
+`acceptsVersions` controls **functional payload admission**. Orleans' own cluster versioning
+controls whether that call can route to the host in the first place. For a backward-compatible
+rolling deployment, configure both layers:
+
+```fsharp
+open Orleans.FSharp.Versioning
+
+let silo = siloConfig {
+    useLocalhostClustering
+    useGrainVersioning BackwardCompatible AllCompatibleVersions
+}
+```
+
+The manifest publishes the hosted contract version; the accepted range remains a host-side rule.
+Both checks must agree: Orleans must select the host, then `acceptsVersions` must admit the
+envelope. The wire format, stable operation IDs, admission flags, grain identity, and storage
+identity remain untouched, so admitted versions address the same activation and state.
 
 Two rejection diagnostics come out of this, at the same stage and in the same taxonomy as the
 exact-mode one above:
@@ -499,6 +515,20 @@ always dead, because the default policy admits the hosted version only.
 If you would rather not widen the policy at all, the original exact-version pattern still works: host **two
 contracts** (one per version, e.g. two different `grainType` strings), migrate traffic explicitly,
 then retire the old one.
+
+### Rolling-update proof and rollback
+
+The integration suite starts separate version-N and version-N+1 executables in one cluster, calls
+each native interface version while both binaries are alive, removes N+1, and verifies a version-N
+call again after rollback. This catches failures hidden by an in-process test, such as shared
+assemblies, shared static state, or a reference cache which forgot the interface version. See
+`tests/Orleans.FSharp.Integration/RollingUpdateIntegrationTests.fs` and the two
+`Orleans.FSharp.Rolling.V*` fixture projects.
+
+That test proves transport routing and rollback, not durable schema compatibility. Persistent
+state, snapshots, and events need their own version envelopes and upcasters; see
+[Serialization](serialization.md#versioned-state-and-upcasters) and
+[Event Sourcing](event-sourcing.md#versioned-events-and-snapshots).
 
 ## Persistence model
 
@@ -1261,8 +1291,8 @@ activation identity derived from the stream key, which multiplexed local activat
 One caveat: Orleans' implicit-subscription binding names a *namespace*, not a provider. If the silo
 runs a second stream provider and an item reaches a declared namespace through it, Orleans still
 routes it to this grain type; the runtime matches on `(provider, namespace)`, logs a warning, and
-leaves that item undelivered. Batch delivery (`IAsyncBatchObserver`) is not exposed -- a hook
-receives one item at a time.
+leaves that item undelivered. Implicit `onStream` delivery is item-by-item; use the separate
+`Stream.subscribeBatch` API for an explicit provider-native batch subscription.
 
 `examples/feature-tour` status-matrix row 11 demonstrates all of this end to end, including the
 `activations: 1` line proving the publish itself created the activation.
@@ -1284,7 +1314,13 @@ grainFor contract {
 `placement strategy` selects one stock Orleans placement strategy instead:
 
 ```fsharp
-type PlacementStrategy = Random | PreferLocal | ActivationCountBased | ResourceOptimized
+type PlacementStrategy =
+    | Random
+    | PreferLocal
+    | ActivationCountBased
+    | ResourceOptimized
+    | HashBased
+    | SiloRoleBased
 
 placement PreferLocal
 ```
@@ -1296,10 +1332,73 @@ corresponding Orleans attribute would (`placement-strategy`, plus `max-local-ins
 provider -- the same mechanism `examples/feature-tour`'s status-matrix row 12 demonstrates end to
 end, including the measured 8-concurrent-calls-to-4-activations signature.
 
+`HashBased` hashes the grain identity over the currently compatible silos; membership changes can
+change the selected silo for a future activation. `SiloRoleBased` delegates to Orleans' stock role
+director, which interprets the grain key text as `MembershipEntry.RoleName`. That value is not the
+silo's display name. Prefer a `stringKey` contract whose key is the intended role and verify the
+roles actually published by your deployment environment.
+
 `statelessWorker` and `placement` are mutually exclusive (in either declaration order), and
 `statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
 `collectionAge` -- durable identity and idle collection age are both meaningless for activations
 Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
+
+### Live activation migration
+
+Request a stock Orleans live migration from any functional callback:
+
+```fsharp
+handle (_.rebalance) (fun context state targetSilo ->
+    task {
+        // Explicit target: carried through Orleans' standard placement hint.
+        context.migrateOnIdle targetSilo
+        return state, ()
+    })
+```
+
+`context.migrateOnIdle()` lets the configured placement director choose. It is advisory. In
+Orleans 10.x the parameterless grain API begins deactivation before the destination is selected;
+if placement selects the current silo (or no alternative), the attempt can finish as an ordinary
+deactivation and migration participants do not run. Therefore do not rely on parameterless
+migration to preserve ephemeral state. Use the `SiloAddress` overload when a successful live move
+is required; Orleans can still reject a stale or incompatible hint. Both forms schedule the
+attempt after the current turn. The parameterless form also preserves Orleans' standard
+`RequestContext` placement hint when one is supplied by the caller.
+
+Ordinary ephemeral functional state is registered as an Orleans migration participant
+automatically. Persistent-state facets use Orleans' own participant, and journal adaptors keep
+their native migration behavior. Application-owned activation-local data can add participants at
+definition time:
+
+```fsharp
+grainFor contract {
+    defaultState (fun () -> initial)
+
+    migrationParticipant (fun activation ->
+        ActivationMigration.participant
+            (fun dehydration ->
+                ActivationMigration.addValue
+                    "orders/session/v1"
+                    (sessionFor activation.key)
+                    dehydration)
+            (fun rehydration ->
+                match ActivationMigration.tryValue<Session> "orders/session/v1" rehydration with
+                | Some session -> restoreSession activation.key session
+                | None -> ()))
+
+    // handlers...
+}
+```
+
+The factory runs once per activation during construction, before Orleans calls `OnRehydrate`, so
+the destination participant exists in time to receive the payload. It also receives the decoded
+key, complete `GrainId`, activation services, and scoped logger. `migrationParticipant` is
+repeatable and is available on both ordinary and journaled definitions.
+
+Migration payloads preserve a successful live move; they are not durable storage. They are absent
+when Orleans turns an unsuccessful parameterless attempt into ordinary deactivation. If the source
+process dies before transfer completes, only data already persisted through a storage or journal
+provider survives.
 
 ## Distributed ACID transactions
 
@@ -1325,7 +1424,7 @@ let account =
 ```
 
 `transactional` takes **Orleans' own `Orleans.TransactionOption`** — the six members are identical
-on Orleans 10.1.0 and 10.2.2, and the admission byte encodes the value directly, so there is no
+on Orleans 10.1.0 and 10.3.1, and the admission byte encodes the value directly, so there is no
 mapping to drift. Qualify the enum as shown to keep the contract unambiguous.
 
 **On the definition** — the transactional state:
@@ -1818,18 +1917,7 @@ Migration from the original authoring model is documented separately in [Legacy 
 - [Silo Configuration](silo-configuration.md) / [Client Configuration](client-configuration.md) --
   `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
   there
-- `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the complete runnable sample this guide's
-  examples are drawn from
+- `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the runnable chat-room baseline; this
+  reference adds the separately tested `tail` streaming-reply extension
 - [Event Sourcing](event-sourcing.md) -- `journaledGrainFor`, the journaled definition kind
 - [Server-Streaming Replies](streaming-replies.md) -- the `IAsyncEnumerable<'Item>` field kind
-
-## A build note for contributors: codegen and cold caches
-
-If you build this repository from a completely clean NuGet cache, run `dotnet build` (or
-`dotnet restore`) once before `dotnet test`, and before running any sample directly, on the whole
-solution. The functional-runtime package pipeline relies on Orleans' own source-generated codegen
-running as part of a normal compile; the very first compile after a clean cache can, in rare
-cases, complete without that codegen having been applied to every assembly in the same MSBuild
-invocation. A second build (or `dotnet restore` first) is unaffected. CI is not exposed to this --
-every job runs `dotnet build` before any `dotnet test` step, exactly to establish a warm,
-consistent build state first.

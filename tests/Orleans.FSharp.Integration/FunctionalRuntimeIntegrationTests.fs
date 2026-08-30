@@ -40,7 +40,7 @@ let private rawSend (client: IClusterClient) (grainType: string) (actorType: Typ
     let reference =
         client.GetGrain(
             GrainId.Create(GrainType.Create grainType, key),
-            GrainInterfaceType.Create("orleans.fsharp.functional/" + grainType)
+            FunctionalIds.referenceGrainInterfaceType grainType 1
         )
         :?> FunctionalGrainReference
 

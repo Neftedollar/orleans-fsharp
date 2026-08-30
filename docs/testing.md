@@ -54,7 +54,7 @@ type CounterApi =
 module CounterApi =
     let contract =
         grainContract<CounterActor, string, CounterApi> {
-            grainType "testing.counter"
+            grainType "counter"
             version 1
             stringKey
             readOnly (_.value)
@@ -322,6 +322,20 @@ The integration fixture registers the definition with `AddFunctionalJournaledGra
 of Orleans' log-consistency providers, then calls the typed API via `FunctionalGrain.ref`. Snapshot
 policy tests should use a custom storage adapter and assert the stored version and state, not only
 the reply.
+
+## Testing rolling updates and durable schemas
+
+Do not model an N/N+1 deployment by loading both definitions into one test assembly. The repository
+builds and starts two separate silo executables, keeps both alive in one cluster, exercises their
+native interface versions, and then removes N+1 to verify rollback. The harness is
+`RollingUpdateIntegrationTests.fs`; the binaries live in `Orleans.FSharp.Rolling.V1` and `.V2`.
+
+For persistence compatibility, keep byte fixtures written by historical serializers. The current
+suite has two layers: pre-schema envelope fixtures prove an omitted field becomes schema version
+`0`; released `v4.1.0` journal view/entry fixtures contain a real F# binary `EvolutionV0` payload
+and are decoded directly through the current typed upcaster pipeline. Fixture provenance is kept
+beside the bytes in `tests/Orleans.FSharp.Tests/Fixtures/README.md`. A test which merely creates an
+old-looking object using the new binary does not prove backward compatibility.
 
 ## Legacy tests
 

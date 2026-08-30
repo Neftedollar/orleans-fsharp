@@ -66,9 +66,8 @@ interface and the CodeGen that comes with it. See [Event Sourcing](../event-sour
 ## Deprecated: the `grain { }` cluster
 
 Everything below carries `[<Obsolete>]` (warning, not error) and is kept runnable. The replacement
-for each entry is the [functional grain runtime](../functional-grains.md#functional-grain-runtime); see
-[Functional grains](../functional-grains.md), "Migrating from the `grain { }` CE", for the rewrite
-recipe.
+for each entry is the [functional grain runtime](../functional-runtime.md); see
+[API Migration](migration.md) for the rewrite recipe.
 
 ### Types
 

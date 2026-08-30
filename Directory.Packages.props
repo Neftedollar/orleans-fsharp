@@ -31,7 +31,7 @@
     <PackageVersion Include="Microsoft.Orleans.Persistence.Redis"            Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Persistence.Memory"           Version="$(OrleansVersion)" />
     <!-- Dashboard 10.1.0 depends on vulnerable OpenTelemetry.Api 1.15.0, while
-         Dashboard 10.2.2 requires >= 1.16.0. Keep one patched version for both. -->
+         Dashboard 10.2.2 and later require >= 1.16.0. Keep one patched version for both. -->
     <PackageVersion Include="OpenTelemetry.Api"                              Version="1.16.0" />
 
     <!-- Microsoft.Extensions / ASP.NET Core
@@ -64,8 +64,8 @@
     <PackageVersion Include="FsToolkit.ErrorHandling"                       Version="5.2.0" />
     <PackageVersion Include="IcedTasks"                                     Version="0.11.9" />
     <PackageVersion Include="FSharp.SystemTextJson"                         Version="1.4.36" />
-    <!-- FSharp.Control.TaskSeq previously floated at 0.*; highest 0.x = 0.6.0 -->
-    <PackageVersion Include="FSharp.Control.TaskSeq"                        Version="0.6.0" />
+    <!-- 1.0.0 added the dynamic resumable-code path; 1.1.1 is the current stable release. -->
+    <PackageVersion Include="FSharp.Control.TaskSeq"                        Version="1.1.1" />
 
     <!-- Other libraries -->
     <PackageVersion Include="Polly"                                         Version="8.7.0" />

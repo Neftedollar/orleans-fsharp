@@ -3,7 +3,7 @@ module Orleans.FSharp.Integration.TemplateTests
 open System
 open System.Diagnostics
 open System.IO
-open System.Text
+open System.Threading.Tasks
 open Xunit
 
 /// <summary>
@@ -23,31 +23,30 @@ let private runDotnet (args: string) (workDir: string) (timeoutMs: int) : int * 
     use proc = new Process()
     proc.StartInfo <- psi
 
-    let stdoutBuilder = StringBuilder()
-    let stderrBuilder = StringBuilder()
-
-    proc.OutputDataReceived.Add(fun e ->
-        if not (isNull e.Data) then
-            stdoutBuilder.AppendLine(e.Data) |> ignore)
-
-    proc.ErrorDataReceived.Add(fun e ->
-        if not (isNull e.Data) then
-            stderrBuilder.AppendLine(e.Data) |> ignore)
-
     proc.Start() |> ignore
-    proc.BeginOutputReadLine()
-    proc.BeginErrorReadLine()
+    let stdoutTask = proc.StandardOutput.ReadToEndAsync()
+    let stderrTask = proc.StandardError.ReadToEndAsync()
 
     let finished = proc.WaitForExit(timeoutMs)
 
     if not finished then
         try
             proc.Kill(true)
+            proc.WaitForExit(30000) |> ignore
         with _ ->
             ()
 
+    let output = Task.WhenAll(stdoutTask, stderrTask)
+    let outputDrained = output.Wait(30000)
+
+    let stdout, stderr =
+        if outputDrained then
+            output.Result.[0], output.Result.[1]
+        else
+            "", "timed out draining dotnet stdout/stderr"
+
     let exitCode = if finished then proc.ExitCode else -1
-    (exitCode, stdoutBuilder.ToString(), stderrBuilder.ToString())
+    (exitCode, stdout, stderr)
 
 /// <summary>
 /// Get the absolute path to the solution root directory.

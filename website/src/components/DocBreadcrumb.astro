@@ -1,0 +1,38 @@
+---
+const {
+  entry: {
+    data: { title, template },
+  },
+} = Astro.locals.starlightRoute;
+---
+
+<span id="_top" class="top-anchor" aria-hidden="true"></span>
+
+{
+  template === 'doc' && (
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <span>Docs</span>
+      <span aria-hidden="true">/</span>
+      <span class="current">{title}</span>
+    </nav>
+  )
+}
+
+<style>
+  .top-anchor {
+    position: absolute;
+  }
+
+  .breadcrumb {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    color: var(--muted-foreground);
+    font-size: 0.875rem;
+    line-height: 1;
+  }
+
+  .current {
+    color: var(--foreground);
+  }
+</style>

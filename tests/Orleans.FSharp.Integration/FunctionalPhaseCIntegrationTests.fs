@@ -8,6 +8,7 @@ module Orleans.FSharp.Integration.FunctionalPhaseCIntegrationTests
 
 open System
 open System.Threading.Tasks
+open Orleans.Runtime
 open Orleans.FSharp
 open Orleans.FSharp.Integration.FunctionalPhaseCFixture
 open Xunit
@@ -219,6 +220,26 @@ type PhaseCVersionTests(fixture: FunctionalPhaseCFixture) =
     // ──────────────────────────────────────────────────────────────────────────
     // Item 7 — version admission
     // ──────────────────────────────────────────────────────────────────────────
+
+    [<Fact>]
+    member _.``the functional contract version is published and carried as the native Orleans interface version``() =
+        for _, manifest in fixture.LocalManifests do
+            let properties =
+                manifest.Interfaces.[FunctionalIds.grainInterfaceType PhaseCGrainTypes.Tolerant].Properties
+
+            Assert.Equal<string>("4", properties.[Orleans.Metadata.WellKnownGrainInterfaceProperties.Version])
+
+        let key = freshKey "native-version"
+
+        let addressable =
+            fixture.Client.GetGrain(
+                GrainId.Create(GrainType.Create PhaseCGrainTypes.Tolerant, key),
+                FunctionalIds.referenceGrainInterfaceType PhaseCGrainTypes.Tolerant tolerantV4.Version
+            )
+
+        let reference = Assert.IsType<FunctionalGrainReference>(addressable, exactMatch = true)
+        Assert.Equal(4, int reference.InterfaceVersion)
+        Assert.Equal(FunctionalIds.grainInterfaceType PhaseCGrainTypes.Tolerant, reference.InterfaceType)
 
     [<Fact>]
     member _.``the hosted version is admitted whatever the policy``() =

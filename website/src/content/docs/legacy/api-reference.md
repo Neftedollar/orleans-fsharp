@@ -71,9 +71,8 @@ interface and the CodeGen that comes with it. See [Event Sourcing](/orleans-fsha
 ## Deprecated: the `grain { }` cluster
 
 Everything below carries `[<Obsolete>]` (warning, not error) and is kept runnable. The replacement
-for each entry is the [functional grain runtime](/orleans-fsharp/functional-grains/#functional-grain-runtime); see
-[Functional grains](/orleans-fsharp/functional-grains/), "Migrating from the `grain { }` CE", for the rewrite
-recipe.
+for each entry is the [functional grain runtime](/orleans-fsharp/functional-runtime/); see
+[API Migration](/orleans-fsharp/legacy/migration/) for the rewrite recipe.
 
 ### Types
 

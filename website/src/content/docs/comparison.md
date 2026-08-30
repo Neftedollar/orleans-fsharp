@@ -3,6 +3,8 @@ title: "Orleans.FSharp vs Alternatives — F# Actor Frameworks Compared"
 description: Comparison of Orleans.FSharp, raw C# Microsoft Orleans, Akkling (Akka.NET), and Proto.Actor for F# distributed systems
 ---
 
+# Orleans.FSharp vs Alternatives
+
 **Choosing an actor framework for F# distributed systems?** This page compares Orleans.FSharp with the main alternatives: using Microsoft Orleans directly from C#/F#, Akkling (F# API for Akka.NET), and Proto.Actor.
 
 ## Quick comparison

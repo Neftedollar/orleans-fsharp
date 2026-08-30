@@ -10,20 +10,13 @@ open Orleans.Streams.Core
 open Orleans.FSharp.FunctionalDiagnostics
 
 /// <summary>
-/// A closed set mirroring the Orleans stock placement strategies present on both supported
-/// Orleans versions (10.1.0 and 10.2.2 -- verified by reflection: identical types and identical
-/// <c>IGrainPropertiesProviderAttribute.Populate</c> output on both). <c>Random</c> is Orleans'
-/// own default and needs no explicit configuration; it is included so an application can still
-/// name it, matching the same brief's other cases rather than special-casing it away.
+/// A closed set mirroring every public Orleans stock placement strategy intended for application
+/// grains. <c>Random</c> is Orleans' own default and needs no explicit configuration; it is
+/// included so an application can still name it.
 /// </summary>
 /// <remarks>
-/// Orleans also ships <c>HashBasedPlacement</c>, <c>SiloRoleBasedPlacement</c>, and the internal
-/// <c>ClientObserversPlacement</c> / <c>SystemTargetPlacementStrategy</c>, all present on both
-/// versions too. They are deliberately not mirrored here: hash-based and silo-role placement
-/// address separate, more specialized concerns (consistent hashing and silo-role affinity) that
-/// spec 004 item 4's design sketch does not name as a candidate, and the other two are not
-/// meant for application grains at all. No strategy here is version-gated -- every case mirrors a
-/// type present, with identical published properties, on Orleans 10.1.0 and 10.2.2 alike.
+/// Orleans also has internal placement strategies for client observers and system targets; those
+/// are runtime implementation details and are intentionally not available to application grains.
 /// </remarks>
 type PlacementStrategy =
     /// <summary>Orleans' default: activate anywhere.</summary>
@@ -34,6 +27,13 @@ type PlacementStrategy =
     | ActivationCountBased
     /// <summary>Balance placement across silos by resource usage (CPU, memory).</summary>
     | ResourceOptimized
+    /// <summary>Hash the grain identity onto the stable, sorted compatible-silo set.</summary>
+    | HashBased
+    /// <summary>
+    /// Place on an active silo whose role name equals the grain key. This is meaningful only for
+    /// key shapes whose Orleans key text is the configured silo role.
+    /// </summary>
+    | SiloRoleBased
 
 /// <summary>A definition's placement configuration: at most one of a stock strategy or
 /// stateless-worker multiplexing (mutually exclusive -- see <c>DefinitionDraft.run</c>).</summary>
@@ -176,6 +176,8 @@ type internal DefinitionDraftState<'Actor, 'Key, 'Api, 'State> =
         /// The declared placement configuration, when 'statelessWorker' or 'placement' has been
         /// declared.
         Placement: PlacementConfiguration option
+        /// Activation-scoped Orleans migration-participant factories, in declaration order.
+        MigrationParticipants: FunctionalMigrationParticipantFactory<'Actor, 'Key> list
         /// Declared lifecycle-stage hooks, keyed by their unique stage.
         LifecycleHooks: Map<LifecycleStage, LifecycleHook<'Actor, 'Key>>
         /// Boxed handlers keyed by API-record field index.
@@ -232,6 +234,9 @@ type FunctionalGrainDefinition<'Actor, 'Key, 'Api, 'State>
     /// <summary>The configured placement, when <c>statelessWorker</c> or <c>placement</c> was
     /// declared.</summary>
     member internal _.Placement = state.Placement
+
+    /// <summary>Activation-scoped migration-participant factories in declaration order.</summary>
+    member internal _.MigrationParticipants = state.MigrationParticipants
 
     /// <summary>Declared lifecycle-stage hooks, keyed by their unique stage.</summary>
     member internal _.LifecycleHooks = state.LifecycleHooks
@@ -295,6 +300,7 @@ module internal DefinitionDraft =
               Timers = []
               StreamBindings = []
               Placement = None
+              MigrationParticipants = []
               LifecycleHooks = Map.empty
               Handlers = Map.empty }
         )
@@ -1329,6 +1335,29 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                         draft.Contract.GrainTypeName
                         draft.Placement
                         (Strategy strategy) }
+
+    /// <summary>
+    /// Register an activation-scoped Orleans migration participant. The factory runs during
+    /// activation construction, before Orleans can call <c>OnRehydrate</c>; registering the same
+    /// participant from <c>onActivate</c> would be too late.
+    /// </summary>
+    /// <param name="factory">Creates a fresh participant for each source or destination activation.</param>
+    [<CustomOperation("migrationParticipant")>]
+    member _.MigrationParticipant<'State>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            factory: FunctionalMigrationParticipantFactory<'Actor, 'Key>
+        ) =
+        let draft = state.State
+
+        if obj.ReferenceEquals(factory, null) then
+            fail
+                DefinitionStage
+                $"'migrationParticipant' of grain type '{draft.Contract.GrainTypeName}' requires a factory."
+
+        DefinitionDraft.withState
+            { draft with
+                MigrationParticipants = draft.MigrationParticipants @ [ factory ] }
 
     /// <summary>
     /// Hook one Orleans grain-lifecycle stage. Each stage accepts at most one hook.

@@ -44,16 +44,20 @@ type AccountApi =
       withdraw: decimal -> Task<bool>
       balance: unit -> Task<decimal> }
 
-let accountContract =
-    grainContract<AccountActor, string, AccountApi> {
-        grainType "bank.account"
-        version 1
-        stringKey
-        readOnly (_.balance)
-    }
+[<RequireQualifiedAccess>]
+module AccountApi =
+    let contract =
+        grainContract<AccountActor, string, AccountApi> {
+            grainType "bank.account"
+            version 1
+            stringKey
+            readOnly (_.balance)
+        }
+
+    let ref = FunctionalGrain.ref contract
 
 let accountDefinition =
-    journaledGrainFor accountContract {
+    journaledGrainFor AccountApi.contract {
         initialEventState (fun key -> { balance = 0m; entries = [ $"opened:{key}" ] })
 
         apply (fun state event ->
@@ -82,9 +86,13 @@ let accountDefinition =
                     return [ Withdrawn amount ], true
             })
 
-        handle (_.balance) (fun _ state () -> task { return [], state.balance })
+        handleQuery (_.balance) (fun _ state () -> task { return state.balance })
     }
 ```
+
+For clarity, this first example assumes callers pass positive amounts. In a real money domain,
+validate the amount with a smart constructor (or return a typed `Result`) before raising an event;
+otherwise a negative deposit is indistinguishable from a withdrawal in the journal.
 
 Calling it is exactly the same as calling any other functional grain — the definition kind is
 invisible to a caller:
@@ -92,7 +100,7 @@ invisible to a caller:
 ```fsharp
 let callAccount (grainFactory: Orleans.IGrainFactory) =
     task {
-        let account = FunctionalGrain.ref accountContract grainFactory "acct-1"
+        let account = AccountApi.ref grainFactory "acct-1"
         let! afterDeposit = account.deposit 100m
         let! balance = account.balance ()
         return afterDeposit, balance
@@ -163,7 +171,7 @@ Orleans adaptor view and entries. A definition-level choice wins over
 
 ```fsharp
 let accountDefinition =
-    journaledGrainFor accountContract {
+    journaledGrainFor AccountApi.contract {
         initialEventState initialAccount
         apply applyAccount
         logProvider "LogStorage"
@@ -182,6 +190,59 @@ options themselves are not stored. Prefer `CreateFSharpJson("account-json-v1", o
 custom durable contract. When the write format changes, register the previous codec with
 `currentCodec.WithReadCodec(previousCodec)` for as long as old payloads can be replayed. See
 [Serialization](serialization.md#custom-json-options-are-a-durable-contract).
+
+### Versioned events and snapshots
+
+Journal state/snapshots and journal events have independent typed schema pipelines:
+
+```fsharp
+type AccountStateV0 = { Balance: int }
+type AccountState = { Balance: int64; Currency: string }
+
+type AccountEventV0 = DepositedV0 of int
+type AccountEvent = Deposited of int64 | CurrencyChanged of string
+
+let stateSchema =
+    FunctionalSchema.current<AccountStateV0> 0
+    |> FunctionalSchema.upcaster (fun old ->
+        { Balance = int64 old.Balance
+          Currency = "EUR" })
+
+let eventSchema =
+    FunctionalSchema.current<AccountEventV0> 0
+    |> FunctionalSchema.upcaster (fun (DepositedV0 amount) -> Deposited(int64 amount))
+
+let accountDefinition =
+    journaledGrainFor AccountApi.contract {
+        initialEventState initialAccount
+        apply applyAccount
+        logProvider "LogStorage"
+        stateSchema stateSchema
+        eventSchema eventSchema
+        // handlers...
+    }
+```
+
+Every view/snapshot stores the state schema version and every entry stores the event schema
+version. Replay decodes the historical type and walks all required upcasters before the one
+authoritative `apply` sees the event. New values are written at each pipeline's
+`CurrentVersion`. Records created before schema versioning are version `0`; serialized fixtures
+from that release are kept in the test suite.
+
+`FunctionalSchema.upcaster` advances one version and `upcasterTo n` names a later target
+explicitly. A stored future version or a missing step fails with a schema diagnostic. Upcasters
+are pure synchronous functions: keep old CLR types and the full chain deployed for as long as an
+old event or snapshot can remain in storage.
+
+This gives N+1 code forward-read compatibility; it cannot make an older N binary understand data
+already written in the N+1 schema. For a rollback-safe rollout, deploy reader support before
+raising the write version, drain old binaries, then enable the new writer. Once new-schema records
+exist, rollback only to a bridge binary which also understands that schema. Transport compatibility
+and durable schema compatibility are separate gates.
+
+The pipelines govern the runtime-owned adaptor envelopes. A custom
+`IFunctionalJournalStorage<'Key,'State,'Event>` receives current typed values and still owns its
+database schema, migrations, and retained-history format.
 
 ### Custom storage and snapshots
 
@@ -258,7 +319,7 @@ let applyAccount state event =
     | Withdrawn amount -> { state with balance = state.balance - amount }
 
 let accountDefinition =
-    journaledGrainFor accountContract {
+    journaledGrainFor AccountApi.contract {
         initialEventState initialAccount
         apply applyAccount
         logProvider "CustomStorage"
@@ -397,12 +458,26 @@ have it put the result *into the event*:
 
 ```fsharp
 // Wrong: the identifier changes on every replay.
-apply (fun state (Deposited amount) ->
-    { state with entries = state.entries @ [ $"{Guid.NewGuid()}" ] })
+let wrongApply state (Deposited amount) =
+    { state with entries = state.entries @ [ $"{Guid.NewGuid()}:{amount}" ] }
 
-// Right: the handler decides once, the event carries the decision.
+[<RequireQualifiedAccess>]
+type AuditedAccountEvent =
+    | Deposited of amount: decimal * auditId: Guid * decidedAt: DateTimeOffset
+
+// Right: the handler decides once, and the event carries that decision.
+let applyAudited state (AuditedAccountEvent.Deposited(amount, auditId, decidedAt)) =
+    { state with
+        balance = state.balance + amount
+        entries = state.entries @ [ $"{auditId}:{decidedAt:O}" ] }
+
 handle (_.deposit) (fun context state amount ->
-    task { return [ Deposited(amount, Guid.NewGuid(), context.utcNow) ], () })
+    task {
+        let event =
+            AuditedAccountEvent.Deposited(amount, Guid.NewGuid(), context.utcNow)
+
+        return [ event ], state.balance + amount
+    })
 ```
 
 ---
@@ -567,7 +642,10 @@ public interface IAccountFacade
     Task<decimal> Balance();
 }
 
-var account = FunctionalGrainInterop.For<IAccountFacade>(Contracts.Account, client, "acct-1");
+var account = FunctionalGrainInterop.For<IAccountFacade>(
+    AccountApiModule.contract,
+    client,
+    "acct-1");
 await account.Deposit(100m);
 ```
 
@@ -585,11 +663,9 @@ See [calling-from-csharp.md](calling-from-csharp.md).
   multi-cluster protocol gateway, but nothing constructs or calls it, and
   `ILogConsistencyProtocolServices` carries no message-sending member at all. A journal is
   single-cluster.
-- **No event upcasting.** An event is serialized with the definition's exact declared event type
-  through the selected journal codec. Binary union data is positional; JSON compatibility depends
-  on the stable `JsonSerializerOptions` contract described above. There is no hook that sees an old
-  event and returns a new one. Keep old event cases foldable and migrate incompatible schema
-  changes explicitly.
+- **No downcasting or automatic rollback of newly written schemas.** `eventSchema` and
+  `stateSchema` upcast older envelopes into the current types. They do not make a previous binary
+  understand a newer schema; use a reader-first bridge rollout as described above.
 - **No transactions.** See the table above.
 - **Event-history reads are provider-dependent.** `retrieveConfirmedEvents` works with
   `LogStorage`; `StateStorage` has discarded the entries, and Orleans' CustomStorage adaptor does

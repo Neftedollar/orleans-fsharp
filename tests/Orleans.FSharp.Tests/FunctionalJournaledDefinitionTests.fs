@@ -767,3 +767,21 @@ let ``handleQuery counts towards handler coverage`` () =
             |> ignore)
 
     test <@ error.Message.Contains "has no handler for API field(s) total" @>
+
+[<Fact>]
+let ``journaled definitions register activation migration participant factories before replay`` () =
+    let factory: FunctionalMigrationParticipantFactory<LedgerActor, string> =
+        fun _ -> ActivationMigration.participant ignore ignore
+
+    let definition =
+        journaledGrainFor contract {
+            initialEventState (fun (_: string) -> { total = 0m })
+            apply fold
+            logProvider "LogStorage"
+            migrationParticipant factory
+            handle (_.credit) creditHandler
+            handle (_.total) totalHandler
+        }
+
+    test <@ definition.MigrationParticipants.Length = 1 @>
+    Assert.Same(box factory, box definition.MigrationParticipants.Head)

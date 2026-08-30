@@ -7,7 +7,8 @@
 ## What you'll learn
 
 - How to publish events to streams
-- How to subscribe with callbacks or pull-based TaskSeq
+- How to subscribe item-by-item, in batches, with server-side filtering, or as pull-based TaskSeq
+- How terminal error/completion callbacks follow the selected Orleans provider
 - How to use broadcast channels for fan-out
 - How to rewind and resume stream consumption
 - Implicit stream and broadcast subscriptions (`onStream` / `onBroadcast`)
@@ -47,9 +48,18 @@ let stream = Stream.getStream<OrderEvent> streamProvider "orders" "us-east"
 
 do! Stream.publish stream (OrderPlaced { OrderId = "123"; Total = 99.99m })
 do! Stream.publish stream (OrderShipped { OrderId = "123"; TrackingNumber = "ABC" })
+
+// One provider-native publish batch. Providers may split or coalesce delivery batches.
+do! Stream.publishBatch stream pendingEvents
 ```
 
 `Stream.getStream` is a purely local operation -- it creates a reference without contacting the silo.
+
+`Stream.publishBatchFrom stream token events` supplies an explicit starting sequence token when
+the provider supports it. `Stream.complete stream` and `Stream.fail stream error` forward directly
+to Orleans' producer terminal methods. Provider behavior is deliberately preserved: Orleans
+10.3.1's persistent stream producer throws `NotImplementedException` for both terminal methods,
+while a provider which emits them reaches the consumer callbacks below.
 
 ---
 
@@ -74,6 +84,46 @@ The subscription is durable and persists beyond grain deactivation.
 sequence token — the cursor you need to checkpoint; see
 [Rewinding / Resuming](#rewinding--resuming).
 
+Use first-class terminal callbacks when error and completion are part of the consumer protocol:
+
+```fsharp
+let handlers =
+    StreamHandlers.create (fun event -> processEvent event)
+    |> StreamHandlers.withError (fun error -> recordFailure error)
+    |> StreamHandlers.withCompletion (fun () -> markComplete ())
+
+let! subscription = Stream.subscribeHandlers stream handlers
+```
+
+`StreamHandlers.withToken` constructs the same callback set with an item handler of
+`'T -> StreamSequenceToken option -> Task<unit>`.
+
+For provider-native batch delivery:
+
+```fsharp
+let batchHandlers =
+    StreamBatchHandlers.create (fun batch ->
+        batch
+        |> Array.map _.Item
+        |> processBatch)
+    |> StreamBatchHandlers.withError recordFailure
+    |> StreamBatchHandlers.withCompletion markComplete
+
+let! subscription = Stream.subscribeBatch stream batchHandlers
+```
+
+Each `StreamBatchItem<'T>` contains `Item` and an optional provider `Token`. Ordering inside a
+delivered batch is preserved; do not assume one publish batch maps to exactly one callback batch.
+
+Server-side filtering passes opaque filter data to Orleans. The named provider must have an
+`IStreamFilter` registered:
+
+```fsharp
+let! subscription = Stream.subscribeFiltered stream "tenant:42" handlers
+```
+
+The F# wrapper does not run a client-side predicate and does not reinterpret the string.
+
 ---
 
 ## Consuming as TaskSeq (Pull-based)
@@ -82,12 +132,16 @@ Convert a stream to a `TaskSeq<'T>` for pull-based consumption with backpressure
 
 ```fsharp
 open FSharp.Control
+open Orleans.FSharp.Streaming
 
-let events = Stream.asTaskSeq stream
+let consume stream =
+    task {
+        let events = Stream.asTaskSeq stream
 
-// Process events as they arrive
-for event in events do
-    processEvent event
+        // Process events as they arrive.
+        for event in events do
+            do! processEvent event
+    }
 ```
 
 Internally, `asTaskSeq` uses a bounded `Channel` with capacity 1000 and `BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind.
@@ -144,7 +198,7 @@ let! resumed =
 Two behaviours are worth knowing before you rely on this, both measured against Orleans' memory
 streams in `tests/Orleans.FSharp.Integration/StreamingIntegrationTests.fs`:
 
-- **The rewind is inclusive.** The event that produced `savedToken` is delivered again, so a
+- **A new subscription's rewind is inclusive.** The event that produced `savedToken` is delivered again, so a
   handler that resumes from its last processed event will see that event twice. Checkpoint what
   you have completed and make the handler idempotent, or save the token before processing if
   at-most-once is what you want.
@@ -170,6 +224,16 @@ do! Stream.resumeAll stream (fun event ->
         processEvent event
     })
 ```
+
+Use `resume` / `resumeFrom` for one subscription with `StreamHandlers`, `resumeBatch` /
+`resumeBatchFrom` for batch callbacks, and `resumeAllHandlers` / `resumeAllBatch` for every durable
+subscription. The corresponding new-subscription functions are `subscribeFromHandlers`,
+`subscribeFromFiltered`, and `subscribeBatchFrom`.
+
+There is one deliberate Orleans distinction: `subscribeFrom*` creates a new subscription and the
+tested memory provider includes the checkpoint event, while `resumeFrom` / `resumeBatchFrom`
+reattach a handle which already acknowledged that event and continue after it. Keep that
+new-subscription versus existing-handle distinction in migration tests for your chosen provider.
 
 ---
 
@@ -326,7 +390,8 @@ provider. If a silo runs two stream providers and an item is published to a decl
 a provider the definition does not name, Orleans still routes it to this grain type; the runtime
 matches on `(provider, namespace)`, logs a warning, and leaves the item undelivered.
 
-Batch delivery (`IAsyncBatchObserver`) is not exposed: a hook receives one item at a time.
+Implicit `onStream` batch delivery is not exposed: that definition hook receives one item at a
+time. Explicit `Stream.subscribeBatch` is the separate provider-native batch API.
 
 
 ## Stream Providers

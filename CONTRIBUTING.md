@@ -17,13 +17,17 @@ dotnet build
 
 The solution uses `TreatWarningsAsErrors`, so the build must complete with **zero warnings**.
 
+On a completely clean NuGet cache, build or restore the whole solution once before running tests
+or samples. The functional runtime relies on Orleans source generation during a normal compile;
+the explicit build also matches the cold-run order used in CI.
+
 ### Run Tests
 
 ```bash
 dotnet test
 ```
 
-All 1500+ tests must pass before submitting a pull request.
+The complete test suite must pass before submitting a pull request.
 
 ## Code Style
 
@@ -63,7 +67,7 @@ Orleans.FSharp follows idiomatic F# conventions:
 
 Not sure where to start? Here are areas where contributions are especially valuable:
 
-- **More tests** -- edge cases, error paths, concurrency scenarios. We have 800+ tests but there's always room for more.
+- **More tests** -- edge cases, error paths, concurrency scenarios.
 - **Documentation improvements** -- clearer examples, better explanations, fixing typos.
 - **Persistence provider integrations** -- additional storage providers, clustering providers, or reminder services.
 - **Samples** -- real-world example applications that demonstrate Orleans.FSharp patterns.

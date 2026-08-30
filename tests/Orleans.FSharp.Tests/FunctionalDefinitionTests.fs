@@ -1393,3 +1393,40 @@ let ``handleQuery counts towards handler coverage`` () =
             |> ignore)
 
     test <@ error.Message.Contains "no handler for API field(s) say" @>
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Activation migration
+// ──────────────────────────────────────────────────────────────────────────────
+
+[<Fact>]
+let ``migrationParticipant keeps one activation-scoped factory per declaration`` () =
+    let factory: FunctionalMigrationParticipantFactory<RoomActor, string> =
+        fun _ -> ActivationMigration.participant ignore ignore
+
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            migrationParticipant factory
+            migrationParticipant factory
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.MigrationParticipants.Length = 2 @>
+
+[<Fact>]
+let ``migrationParticipant rejects a null factory at definition time`` () =
+    let missing = Unchecked.defaultof<FunctionalMigrationParticipantFactory<RoomActor, string>>
+
+    let error =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                migrationParticipant missing
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ error.Message.Contains "'migrationParticipant'" @>
+    test <@ error.Message.Contains "requires a factory" @>

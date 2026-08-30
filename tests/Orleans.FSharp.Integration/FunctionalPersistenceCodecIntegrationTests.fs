@@ -26,8 +26,11 @@ open Orleans.FSharp
 module private CodecCapture =
     let records = ConcurrentDictionary<string, obj * string>()
     let envelopeCodecIds = ConcurrentQueue<string>()
+    let envelopeSchemaVersions = ConcurrentQueue<int>()
     let journalCodecIds = ConcurrentQueue<string>()
+    let journalSchemaVersions = ConcurrentQueue<int>()
     let journalEntryCodecIds = ConcurrentQueue<string>()
+    let journalEntrySchemaVersions = ConcurrentQueue<int>()
 
     let key stateName grainId = $"{stateName}/{grainId}"
 
@@ -38,10 +41,13 @@ module private CodecCapture =
             match value with
             | :? FunctionalPersistenceEnvelope as envelope ->
                 envelopeCodecIds.Enqueue envelope.CodecId
+                envelopeSchemaVersions.Enqueue envelope.SchemaVersion
             | :? FunctionalJournalView as view ->
                 journalCodecIds.Enqueue view.CodecId
+                journalSchemaVersions.Enqueue view.SchemaVersion
             | :? FunctionalJournalEntry as entry ->
                 journalEntryCodecIds.Enqueue entry.CodecId
+                journalEntrySchemaVersions.Enqueue entry.SchemaVersion
             | :? string -> ()
             | :? (byte[]) -> ()
             | :? IEnumerable as items when depth > 0 ->
@@ -115,8 +121,11 @@ module private CodecCapture =
     let reset () =
         records.Clear()
         envelopeCodecIds.Clear()
+        envelopeSchemaVersions.Clear()
         journalCodecIds.Clear()
+        journalSchemaVersions.Clear()
         journalEntryCodecIds.Clear()
+        journalEntrySchemaVersions.Clear()
 
 [<Sealed>]
 type private CodecCaptureStorage() =
@@ -165,7 +174,9 @@ type JsonStateApi =
       read: unit -> Task<string>
       goAway: unit -> Task<unit> }
 
-let private jsonState = PersistentState.create<string> "json-state" "CodecStore"
+let private jsonState =
+    PersistentState.create<string> "json-state" "CodecStore"
+    |> PersistentState.withSchema (FunctionalSchema.current<string> 5)
 
 let private jsonStateContract =
     grainContract<JsonStateActor, string, JsonStateApi> {
@@ -254,6 +265,8 @@ let private jsonJournalDefinition =
         apply (fun state (Added amount) -> { Total = state.Total + amount })
         logProvider "CodecJournal"
         journalStorage "CodecStore"
+        stateSchema (FunctionalSchema.current<JsonJournalState> 7)
+        eventSchema (FunctionalSchema.current<JsonJournalEvent> 9)
 
         onActivate (fun context _ ->
             Activations.bump $"journal:{context.key}"
@@ -283,6 +296,8 @@ let private jsonLogJournalDefinition =
         apply (fun state (Added amount) -> { Total = state.Total + amount })
         logProvider "CodecJournalLog"
         journalStorage "CodecStore"
+        stateSchema (FunctionalSchema.current<JsonJournalState> 7)
+        eventSchema (FunctionalSchema.current<JsonJournalEvent> 9)
 
         handle (_.add) (fun _ _ amount -> task { return [ Added amount ], () })
         handle (_.total) (fun _ state () -> task { return [], state.Total })
@@ -446,10 +461,13 @@ let ``JSON state and journal survive reactivation codec migration and corrupt vi
             migratedCluster.Dispose()
 
         Assert.Contains("fsharp-json-v1", CodecCapture.envelopeCodecIds)
+        Assert.Contains(5, CodecCapture.envelopeSchemaVersions)
         Assert.Contains(historicalJournalCodec.Id, CodecCapture.journalCodecIds)
         Assert.Contains(FunctionalPersistenceCodec.OrleansBinary.Id, CodecCapture.journalCodecIds)
+        Assert.Contains(7, CodecCapture.journalSchemaVersions)
         Assert.Contains(historicalJournalCodec.Id, CodecCapture.journalEntryCodecIds)
         Assert.Contains(FunctionalPersistenceCodec.OrleansBinary.Id, CodecCapture.journalEntryCodecIds)
+        Assert.Contains(9, CodecCapture.journalEntrySchemaVersions)
         Assert.True(CodecCapture.corruptJournalViewFor corruptKey, "journal view was not found in durable storage")
 
         // A fresh activation must refuse the corrupted durable view instead of treating it as the

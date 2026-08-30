@@ -65,7 +65,6 @@ type CounterActor = private CounterActor of unit
 [<NoEquality; NoComparison>]
 type CounterApi =
     { increment: unit -> Task<int>
-      decrement: unit -> Task<int>
       value: unit -> Task<int> }
 
 [<RequireQualifiedAccess>]
@@ -75,6 +74,7 @@ module CounterApi =
             grainType "counter"
             version 1
             stringKey
+            readOnly (_.value)
         }
 
     let ref = FunctionalGrain.ref contract
@@ -103,15 +103,7 @@ module Definition =
                         return next, next
                     })
 
-            handle
-                (_.decrement)
-                (fun _context state () ->
-                    task {
-                        let next = max 0 (state - 1)
-                        return next, next
-                    })
-
-            handle (_.value) (fun _context state () -> task { return state, state })
+            handleQuery (_.value) (fun _context state () -> task { return state })
         }
 ```
 
@@ -211,7 +203,9 @@ Maintaining an older Orleans.FSharp application? Use the isolated [Legacy Gettin
 
 | Guide | Description |
 |---|---|
-| [Functional Grain Runtime](/orleans-fsharp/functional-grains/) | The complete guide to the current authoring model |
+| [Functional Grain Runtime](/orleans-fsharp/functional-runtime/) | The short path through the current authoring model |
+| [Functional Runtime Reference](/orleans-fsharp/functional-grains/) | Complete builder operations, invariants, and edge cases |
+| [Examples](/orleans-fsharp/examples/) | Runnable projects mapped to features and use cases |
 | [Silo Configuration](/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
 | [Serialization](/orleans-fsharp/serialization/) | FSharpBinaryCodec, F# JSON, Orleans native |
 | [Streaming](/orleans-fsharp/streaming/) | Publish, subscribe, TaskSeq, broadcast |
