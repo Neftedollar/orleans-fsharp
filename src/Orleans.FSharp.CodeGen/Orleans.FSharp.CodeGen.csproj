@@ -1,10 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>C# bridge project enabling Orleans Roslyn source generators for F# grain definitions. Add this project to your silo solution to generate proxy code for all F# grains — no per-grain C# stubs needed.</Description>
+    <Description>Legacy Orleans.FSharp proxy-generation bridge retained for source compatibility and examples. Functional actors use Orleans.FSharp.Abstractions; this project is no longer packaged.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Legacy compatibility source: keep it buildable for examples and tests,
+         but do not ship a new package in the 5.x production release. -->
+    <IsPackable>false</IsPackable>
     <!-- Disable XML doc warnings for Orleans-generated serialization code -->
     <NoWarn>CS1591</NoWarn>
   </PropertyGroup>

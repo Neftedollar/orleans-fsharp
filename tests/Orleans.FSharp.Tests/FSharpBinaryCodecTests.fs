@@ -6,8 +6,10 @@ open Xunit
 open Swensen.Unquote
 open FsCheck
 open FsCheck.Xunit
+open Microsoft.Extensions.DependencyInjection
 open Orleans.FSharp
 open Orleans.FSharp.Runtime
+open Orleans.Serialization
 
 // ===========================================================================
 // Test types — clean F# types with NO Orleans attributes
@@ -46,6 +48,16 @@ type Tree =
 type Person =
     { Name: string
       Age: int }
+
+type CycleNode =
+    { Name: string
+      mutable Next: CycleNode option }
+
+type MutableAlias = { Values: int array }
+
+type AliasedEnvelope =
+    { Left: MutableAlias
+      Right: MutableAlias }
 
 /// <summary>Record with optional fields.</summary>
 type Config =
@@ -105,6 +117,11 @@ type Nested =
     { Items: Command list
       Active: bool
       Metadata: Map<string, string> }
+
+/// <summary>A shallowly immutable record containing mutable references.</summary>
+type MutableEnvelope =
+    { Bytes: byte array
+      Values: int array }
 
 // ===========================================================================
 // FSharpBinaryFormat unit tests — serialize/deserialize directly
@@ -501,6 +518,19 @@ let ``isSupportedType returns false for null type`` () =
 // FSharpBinaryCodec class tests
 // ===========================================================================
 
+let private copyWithOrleans<'T> (value: 'T) : 'T =
+    let services = ServiceCollection()
+
+    ServiceCollectionExtensions.AddSerializer(
+        services,
+        Action<ISerializerBuilder>(fun builder ->
+            FSharpBinaryCodecRegistration.addToSerializerBuilder builder |> ignore)
+    )
+    |> ignore
+
+    use provider = services.BuildServiceProvider()
+    provider.GetRequiredService<DeepCopier>().Copy(value)
+
 [<Fact>]
 let ``FSharpBinaryCodec IsSupportedType for DU`` () =
     let codec = FSharpBinaryCodec()
@@ -520,13 +550,53 @@ let ``FSharpBinaryCodec copier IsSupportedType for record`` () =
     test <@ copier.IsSupportedType(typeof<Person>) @>
 
 [<Fact>]
-let ``FSharpBinaryCodec deep copy returns same reference for immutable type`` () =
-    let codec = FSharpBinaryCodec()
-    let copier = codec :> Orleans.Serialization.Cloning.IDeepCopier
-    let value = { Name = "Test"; Age = 25 } :> obj
-    let context = Unchecked.defaultof<Orleans.Serialization.Cloning.CopyContext>
-    let result = copier.DeepCopy(value, context)
-    test <@ obj.ReferenceEquals(result, value) @>
+let ``FSharpBinaryCodec deep copy clones an FSharp record`` () =
+    let value = { Name = "Test"; Age = 25 }
+    let result = copyWithOrleans value
+    test <@ not (obj.ReferenceEquals(result, value)) @>
+    test <@ result = value @>
+
+[<Fact>]
+let ``FSharpBinaryCodec deep copy isolates mutable values nested in FSharp records`` () =
+    let original =
+        { Bytes = [| 1uy; 2uy; 3uy |]
+          Values = [| 10; 20 |] }
+
+    let copied = copyWithOrleans original
+
+    original.Bytes[0] <- 99uy
+    original.Values[0] <- 999
+
+    test <@ not (obj.ReferenceEquals(copied, original)) @>
+    test <@ not (obj.ReferenceEquals(copied.Bytes, original.Bytes)) @>
+    test <@ not (obj.ReferenceEquals(copied.Values, original.Values)) @>
+    test <@ copied.Bytes = [| 1uy; 2uy; 3uy |] @>
+    test <@ copied.Values = [| 10; 20 |] @>
+
+[<Fact>]
+let ``FSharpBinaryCodec deep copy preserves cycles`` () =
+    let original = { Name = "root"; Next = None }
+    original.Next <- Some original
+
+    let copied = copyWithOrleans original
+
+    test <@ not (obj.ReferenceEquals(copied, original)) @>
+
+    match copied.Next with
+    | Some next -> test <@ obj.ReferenceEquals(next, copied) @>
+    | None -> failwith "The copied self-cycle was lost"
+
+[<Fact>]
+let ``FSharpBinaryCodec deep copy preserves shared reference identity`` () =
+    let shared = { Values = [| 1; 2; 3 |] }
+    let original = { Left = shared; Right = shared }
+
+    let copied = copyWithOrleans original
+
+    test <@ not (obj.ReferenceEquals(copied, original)) @>
+    test <@ not (obj.ReferenceEquals(copied.Left, shared)) @>
+    test <@ obj.ReferenceEquals(copied.Left, copied.Right) @>
+    test <@ not (obj.ReferenceEquals(copied.Left.Values, shared.Values)) @>
 
 [<Fact>]
 let ``FSharpBinaryCodec type filter allows DU`` () =

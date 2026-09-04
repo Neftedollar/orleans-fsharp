@@ -290,6 +290,9 @@ depends on that package, so using it adds nothing to your closure.
 > to SDK 10.0.201: TaskSeq's dynamic path under SDK 10.0.400 avoids this `taskSeq { for ... }`
 > duplication, but currently regresses stream delivery and producer-disposal propagation.
 
+This is tracked as an upstream production boundary, separate from the 4.1-versus-5.0 package
+split, in [Release and Production Status](release-status.md#taskseq-is-an-upstream-boundary-when-wrapping-streaming-replies).
+
 ---
 
 ## What this does not give you

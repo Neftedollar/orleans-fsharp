@@ -17,8 +17,9 @@ dotnet new install ./orleans-fsharp/templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The published `Orleans.FSharp.Templates` 4.1.0 package still scaffolds the Legacy CodeGen model.
-Do not use the package-only install command for a new functional-runtime application yet.
+The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
+Legacy archive; do not use its package-only install command for a new functional-runtime
+application. See [Release and Production Status](release-status.md) for the package/doc split.
 
 ## Choose the grain shape
 
@@ -69,7 +70,5 @@ and calls out new Orleans capabilities which are not yet wrapped.
 
 See [Testing](testing.md) for complete patterns and [Examples](examples.md) for runnable projects.
 
-## Legacy recipes
-
-The original `grain { }` authoring model is maintained in the separate
-[Legacy How To](legacy/how-to.md) section.
+Migration-only material for earlier authoring models is isolated in the unsupported
+[Legacy archive](legacy/index.md).

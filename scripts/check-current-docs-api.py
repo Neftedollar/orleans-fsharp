@@ -14,6 +14,15 @@ DOC_ROOTS = (
     ROOT / 'docs',
     ROOT / 'website' / 'src' / 'content' / 'docs',
 )
+CURRENT_FILES = (
+    ROOT / 'README.md',
+    ROOT / 'templates' / 'README.md',
+    ROOT / 'src' / 'Orleans.FSharp' / 'README.md',
+    ROOT / 'src' / 'Orleans.FSharp.Abstractions' / 'README.md',
+    ROOT / 'src' / 'Orleans.FSharp.Analyzers' / 'README.md',
+    ROOT / 'src' / 'Orleans.FSharp.Runtime' / 'README.md',
+    ROOT / 'src' / 'Orleans.FSharp.Testing' / 'README.md',
+)
 
 LEGACY_EXAMPLES = re.compile(
     r'(?m)^\s*(?:let\s+[A-Za-z0-9_\']+\s*=\s*)?grain\s*\{'
@@ -49,6 +58,14 @@ def main() -> int:
                 line = text.count('\n', 0, match.start()) + 1
                 sample = match.group(0).strip().replace('\n', ' ')
                 failures.append((path.relative_to(ROOT).as_posix(), line, sample))
+
+    for path in CURRENT_FILES:
+        scanned += 1
+        text = path.read_text(encoding='utf-8')
+        for match in LEGACY_EXAMPLES.finditer(text):
+            line = text.count('\n', 0, match.start()) + 1
+            sample = match.group(0).strip().replace('\n', ' ')
+            failures.append((path.relative_to(ROOT).as_posix(), line, sample))
 
     for path, line, sample in failures:
         print(f'LEGACY API IN CURRENT DOC {path}:{line}: {sample}')

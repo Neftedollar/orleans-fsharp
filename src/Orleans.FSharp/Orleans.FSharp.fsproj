@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Idiomatic F# computation expressions and helpers for Microsoft Orleans grain development — grain {}, GrainState, GrainRef, Streaming, Reminders, Timers, Observers, Filters, Transactions, and more.</Description>
+    <Description>Functional F# actors for Microsoft Orleans — typed record contracts, grainFor and journaledGrainFor definitions, persistence, streaming, observers, versioning, and C# interop.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 

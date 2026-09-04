@@ -1,5 +1,9 @@
 # Legacy API Migration
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Move an application from the original Orleans.FSharp authoring API to the functional runtime.**
 
 > This page contains old API names on purpose. Current guides teach only `grainContract` / `grainFor` / `journaledGrainFor`.
@@ -43,10 +47,9 @@ That is a self-reference bracket, not
 a blanket suppression: nothing outside the bracketed lines is silenced, and no library project
 disables FS0044 project-wide.
 
-Old code keeps compiling and running unchanged; every example under `examples/`, the sample
-under `src/Orleans.FSharp.Sample`, `testbed/`, and the `orleans-fsharp` template carry a small
-functional-runtime twin grain beside the old one so the two authoring styles can be compared
-side by side in a real project.
+The 4.1 line retained old code with deprecation warnings. The 5.0 package set does not publish a
+new Legacy line, and the repository examples/template now use only the functional runtime. Treat
+the mapping below as a migration recipe, not as a compatibility guarantee for `main`.
 
 Before/after mapping:
 

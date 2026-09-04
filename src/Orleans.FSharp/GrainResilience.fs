@@ -1,6 +1,8 @@
 namespace Orleans.FSharp
 
 open System
+open System.Collections.Concurrent
+open System.Runtime.CompilerServices
 open System.Threading
 open System.Threading.Tasks
 open Polly
@@ -25,9 +27,9 @@ type ResilienceOptions =
         /// Maps to <c>MinimumThroughput</c> in Polly v8's rate-based circuit breaker.
         /// <para>
         /// Circuit state lives in the pipeline object, and <c>execute</c> builds a fresh pipeline
-        /// on every call — so a breaker configured here is scoped to one call and cannot trip
-        /// across calls. For a shared breaker, build the pipeline once with <c>buildPipeline</c>
-        /// (or <c>circuitBreaker</c>) and reuse the returned object.
+        /// only once per exact immutable options instance and result type. Reuse the same options
+        /// value to share breaker state across calls; create a distinct options value to isolate
+        /// unrelated call sites even when its fields are structurally equal.
         /// </para>
         /// </summary>
         CircuitBreakerThreshold: int option
@@ -72,9 +74,9 @@ module GrainResilience =
     /// therefore a deadline over the whole retry sequence, and the circuit breaker sees one
     /// outcome per pipeline execution — the retry strategy's final verdict, not each attempt.
     /// <para>
-    /// The returned pipeline holds the circuit-breaker state. Build it once and reuse it if you
-    /// want that state shared across calls; <c>execute</c> deliberately does not, see
-    /// <see cref="ResilienceOptions.CircuitBreakerThreshold"/>.
+    /// The returned pipeline always has fresh strategy state. Use it directly when explicit
+    /// lifetime ownership is useful; <c>execute</c> otherwise caches one pipeline per exact
+    /// options instance and result type.
     /// </para>
     /// </summary>
     /// <typeparam name="T">The result type returned by the grain call.</typeparam>
@@ -115,6 +117,33 @@ module GrainResilience =
 
         builder.Build()
 
+    // Options are immutable reference values, so their object identity is a useful and explicit
+    // policy boundary: reusing one value shares state, while two independently constructed but
+    // structurally equal values do not couple unrelated grains. ConditionalWeakTable keeps that
+    // cache bounded by the caller's own options lifetime; the per-result-type dictionary and
+    // Lazy make first construction thread-safe without serializing executions through a lock.
+    let private pipelines =
+        ConditionalWeakTable<ResilienceOptions, ConcurrentDictionary<Type, Lazy<obj>>>()
+
+    let private cachedPipeline<'T> (options: ResilienceOptions) : ResiliencePipeline<'T> =
+        if isNull (box options) then
+            nullArg (nameof options)
+
+        let byResultType =
+            pipelines.GetValue(options, fun _ -> ConcurrentDictionary<Type, Lazy<obj>>())
+
+        byResultType
+            .GetOrAdd(
+                typeof<'T>,
+                fun _ ->
+                    Lazy<obj>(
+                        (fun () -> buildPipeline<'T> options |> box),
+                        LazyThreadSafetyMode.ExecutionAndPublication
+                    )
+            )
+            .Value
+        |> unbox<ResiliencePipeline<'T>>
+
     /// <summary>
     /// Awaits an already-started operation under the pipeline's own cancellation token, so a
     /// deadline is enforced for the caller even when the operation cannot be cancelled.
@@ -146,8 +175,8 @@ module GrainResilience =
             ValueTask<'T>(inflight.WaitAsync(ct))
 
     /// <summary>
-    /// Builds a pipeline from options and executes the supplied grain-call function,
-    /// returning its result.
+    /// Reuses the pipeline associated with this exact options value and result type, then
+    /// executes the supplied grain-call function and returns its result.
     /// </summary>
     /// <remarks>
     /// Each attempt re-invokes <paramref name="f"/>, so <c>MaxRetryAttempts = 2</c> calls it at
@@ -155,16 +184,16 @@ module GrainResilience =
     /// caller gets a <see cref="TimeoutRejectedException"/> and the in-flight call is abandoned —
     /// abandoned, not cancelled, since <paramref name="f"/> takes no token. Use
     /// <c>executeCancellable</c> when the operation can honour one.
-    /// A fresh pipeline is built per call, so a circuit breaker configured in
-    /// <paramref name="options"/> holds no state across calls; see
-    /// <see cref="ResilienceOptions.CircuitBreakerThreshold"/>.
+    /// Pipeline construction is thread-safe and happens once while the same immutable
+    /// <paramref name="options"/> object remains alive. Reuse that value to share circuit state;
+    /// construct a separate value to give another call site an independent circuit.
     /// </remarks>
     /// <typeparam name="T">The result type.</typeparam>
     /// <param name="options">Resilience options to apply.</param>
     /// <param name="f">The grain call to protect — a function returning <c>Task&lt;T&gt;</c>.</param>
     /// <returns>A <c>Task&lt;T&gt;</c> that completes with the grain call result.</returns>
     let execute<'T> (options: ResilienceOptions) (f: unit -> Task<'T>) : Task<'T> =
-        let pipeline = buildPipeline<'T> options
+        let pipeline = cachedPipeline<'T> options
 
         pipeline
             .ExecuteAsync(fun (ct: CancellationToken) -> awaitUnderDeadline<'T> ct (f ()))
@@ -188,7 +217,7 @@ module GrainResilience =
     /// <param name="f">The grain call to protect, taking the pipeline's cancellation token.</param>
     /// <returns>A <c>Task&lt;T&gt;</c> that completes with the grain call result.</returns>
     let executeCancellable<'T> (options: ResilienceOptions) (f: CancellationToken -> Task<'T>) : Task<'T> =
-        let pipeline = buildPipeline<'T> options
+        let pipeline = cachedPipeline<'T> options
 
         pipeline
             .ExecuteAsync(fun (ct: CancellationToken) -> awaitUnderDeadline<'T> ct (f ct))

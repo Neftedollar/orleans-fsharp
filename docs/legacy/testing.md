@@ -1,8 +1,13 @@
 # Legacy Testing
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Testing patterns for the original Orleans.FSharp grain and event-sourcing APIs.**
 
-> This page is intentionally isolated from the current functional testing guide. The helpers remain available for existing applications and carry their existing deprecation signal where applicable.
+> This page records the 4.1-and-earlier helper surface and is not verified against the 5.0 package
+> set. Current testing guidance lives in [Testing](../testing.md).
 
 ## Testing Handler Logic Directly (No Silo Required)
 

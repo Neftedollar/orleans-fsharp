@@ -108,5 +108,5 @@ fsharp-analyzers --project MyGrains.fsproj --analyzers-path <path-to-Orleans.FSh
 ## See also
 
 - [Getting Started](/orleans-fsharp/getting-started/) — quick introduction to Orleans.FSharp
-- [Legacy API](/orleans-fsharp/legacy/) — maintenance documentation for earlier authoring models
+- [Legacy archive](/orleans-fsharp/legacy/) — unsupported migration reference for earlier authoring models
 - [Advanced](/orleans-fsharp/advanced/) — transactions, OpenTelemetry, shutdown, migration

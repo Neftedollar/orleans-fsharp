@@ -5,6 +5,10 @@ description: "Advanced patterns for the original CodeGen authoring path."
 
 # Legacy Advanced Patterns
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Advanced examples which depend on the original CodeGen authoring path.**
 
 > Current functional transactions are documented in [Functional Grain Runtime](/orleans-fsharp/functional-grains/#distributed-acid-transactions).

@@ -30,8 +30,9 @@ export default defineConfig({
 			editLink: {
 				baseUrl: 'https://github.com/Neftedollar/orleans-fsharp/edit/main/website/',
 			},
-			sidebar: [
+				sidebar: [
 				{ label: 'Getting Started', link: '/getting-started' },
+				{ label: 'Release & Production Status', link: '/release-status' },
 				{ label: 'Recipes', link: '/how-to' },
 				{ label: 'Examples', link: '/examples' },
 				{
@@ -73,7 +74,7 @@ export default defineConfig({
 				{ label: 'Comparison', link: '/comparison' },
 				{ label: 'FAQ', link: '/faq' },
 				{
-					label: 'Legacy API',
+					label: 'Legacy Archive (Unsupported)',
 					collapsed: true,
 					items: [
 						{ label: 'Legacy Overview', link: '/legacy' },

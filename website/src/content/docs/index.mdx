@@ -20,6 +20,13 @@ hero:
 import { Card, CardGrid, Badge, LinkCard } from '@astrojs/starlight/components';
 import FeatureCard from '../../components/FeatureCard.astro';
 
+:::caution[Preview documentation]
+The published stable line is **4.1** (latest `4.1.0`). This website tracks `main`, the **5.0
+preview/next major**, and can describe behavior not present in 4.1. Review
+[Release and Production Status](/orleans-fsharp/release-status/) before choosing packages or
+deploying from source.
+:::
+
 ## Why Orleans.FSharp
 
 Microsoft Orleans is one of the strongest virtual actor runtimes on .NET. But in raw C# style, F# teams often end up with mutable state classes, attribute noise, and repetitive infrastructure code.
@@ -82,9 +89,10 @@ let! n = api.increment ()
 
 Same two operations, same reply types — but state transitions are explicit values, the compiler checks every handler against the record's field types, and sealing the definition verifies that each operation has exactly one handler. No interface, no shim project, no proxy generation.
 
-:::note[Maintaining an existing application?]
-Documentation for earlier Orleans.FSharp authoring models is preserved in the separate
-[Legacy API section](/orleans-fsharp/legacy/). Current guides and examples use only the functional runtime.
+:::note[Legacy archive]
+Earlier authoring models are preserved only as an unsupported migration archive. There is no new
+Legacy release line, compatibility work, or security support. Current guides and examples use
+only the functional runtime.
 :::
 
 ## Features
@@ -120,7 +128,7 @@ Documentation for earlier Orleans.FSharp authoring models is preserved in the se
 | Test suite | Unit, integration, provider, rolling-update, and persisted-fixture coverage |
 | Orleans support | **10.1.0 – 10.3.1**, CI-tested at both ends of the range |
 | Feature tour | **16** Orleans capabilities demonstrated live in `examples/feature-tour` |
-| NuGet packages | **8** — core, runtime, abstractions, testing, event sourcing, codegen, analyzers, templates |
+| Next production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
 | License | **MIT** |
 | Dispatch overhead | **under 5%** versus calling the handler function directly, measured over 1,000,000 iterations |
 
@@ -134,9 +142,9 @@ cd MyApp
 dotnet build && dotnet test
 ```
 
-A working Orleans.FSharp solution with a counter grain, FsCheck property tests, and silo configuration — ready in under 2 minutes.
-The source-checkout install is temporary: the published template package 4.1.0 still creates the
-Legacy project shape.
+A working Orleans.FSharp 5.0-preview solution with a counter grain, FsCheck property tests, and
+silo configuration — ready in under 2 minutes. The published 4.1.0 template belongs to the
+unsupported archive; the source checkout is the preview template until 5.0 is published.
 
 ## Packages
 
@@ -150,14 +158,14 @@ Legacy project shape.
   <Card title="Orleans.FSharp.Abstractions">
     The fixed functional transport: request envelopes, protocol tokens, and precompiled Orleans proxies — reference it once, generate nothing.
   </Card>
-  <Card title="Orleans.FSharp.EventSourcing">
-    Compatibility package for applications covered by the separate Legacy API documentation. Current event-sourced actors use `journaledGrainFor` from the core package.
-  </Card>
   <Card title="Orleans.FSharp.Testing">
     TestHarness, WebTestHarness, MockGrainFactory, GrainArbitrary, and log capture utilities.
   </Card>
   <Card title="Orleans.FSharp.Analyzers">
     Compile-time safety checks (for example OF0001 for `async { }`) with explicit opt-out where needed.
+  </Card>
+  <Card title="Orleans.FSharp.Templates">
+    The current functional solution template. On `main` it targets the 5.0 preview package set.
   </Card>
 </CardGrid>
 
@@ -167,7 +175,7 @@ The current wrapped and composed surface includes:
 
 - **Grain lifecycle**: activate, deactivate, per-stage `onLifecycle` hooks
 - **State persistence**: Memory, Redis, Azure Blob/Table, Cosmos, DynamoDB, ADO.NET
-- **Streaming**: Memory, Event Hubs, Azure Queue, broadcast channels — plus implicit subscriptions (`onStream` / `onBroadcast`) that activate a functional grain on publish
+- **Streaming**: Memory, Event Hubs, Azure Queue, broadcast channels — plus implicit subscriptions (`onStream` / `onBroadcast`) and Orleans 10.3+ stateless-worker competing consumers for `onStream`
 - **Streaming replies**: API record fields returning `IAsyncEnumerable<'T>`, riding Orleans' own extension — `await foreach`-able from C#
 - **Reentrancy & concurrency**: `reentrant` and per-request `mayInterleave` as contract operations; `statelessWorker` as a definition operation
 - **Placement strategies**: `placement` (PreferLocal, ActivationCountBased, ResourceOptimized, Random) as a definition operation
@@ -183,6 +191,7 @@ The current wrapped and composed surface includes:
 
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
+  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Published 4.1 stable versus the main/5.0 preview, plus verified limitations." />
   <LinkCard title="Recipes" href="/orleans-fsharp/how-to/" description="Task-oriented paths for persistence, streaming, upgrades, and production hosting." />
   <LinkCard title="Examples" href="/orleans-fsharp/examples/" description="Runnable projects mapped to the features they prove." />
   <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-runtime/" description="The short path through contracts, state, delivery, placement, and transactions." />

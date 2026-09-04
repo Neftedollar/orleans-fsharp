@@ -191,4 +191,4 @@ transport.
 - [Getting Started](/orleans-fsharp/getting-started/) -- zero to working grain in 15 minutes
 - [How To](/orleans-fsharp/how-to/) -- step-by-step distributed system tutorial
 - [FAQ](/orleans-fsharp/faq/) -- common questions about Orleans.FSharp
-- [Legacy API](/orleans-fsharp/legacy/) -- maintenance documentation for earlier authoring models
+- [Legacy archive](/orleans-fsharp/legacy/) -- unsupported migration reference for earlier authoring models

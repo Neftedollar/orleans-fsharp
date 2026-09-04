@@ -118,6 +118,28 @@ let accountDefinition =
     }
 ```
 
+### Payload-size guard (5.0 preview)
+
+On `main`, every functional persistence codec rejects an encoded state value, journal event, or
+snapshot larger than **16 MiB** on both write and read. The guard applies to each payload
+individually; it is not a limit on the complete provider record, grain state, or journal.
+
+`WithMaxPayloadBytes` returns a new codec configuration, leaving the built-in singleton unchanged:
+
+```fsharp
+let largeJsonCodec =
+    FunctionalPersistenceCodec.FSharpJson
+        .WithMaxPayloadBytes(64 * 1024 * 1024)
+
+let auditState =
+    PersistentState.create<AuditState> "audit" "Default"
+    |> PersistentState.withCodec largeJsonCodec
+```
+
+The override follows the same element/grain/silo resolution order as the codec itself. Choose it
+from measured payloads and provider limits; increasing it also increases the maximum allocation
+accepted before deserialization. This API is part of the 5.0 preview on `main`, not stable 4.1.
+
 ### Provider-wide serializer versus a functional envelope
 
 These are different layers:
@@ -140,6 +162,10 @@ silo.AddMemoryGrainStorage(
         options.GrainStorageSerializer <- FSharpJsonGrainStorageSerializer())
 |> ignore
 ```
+
+`FSharpJsonGrainStorageSerializer` independently defaults to 16 MiB for the complete JSON value
+it hands to the provider. Pass a positive byte limit to its integer constructor when the outer
+provider value needs a deliberate override.
 
 The two layers may be combined. In that case the provider serializer owns the outer Orleans value,
 while the functional codec owns the exact application payload inside it. Configuring one does not
@@ -346,13 +372,9 @@ Treat persisted grain state, journal events, and custom snapshots as durable con
 
 Generalized deserialization resolves declared CLR types. Accept payloads only from trusted Orleans cluster participants, keep cluster transport authenticated, and do not expose raw serialized envelopes as a public untrusted-input endpoint.
 
-## Legacy serialization
-
-Configuration and CodeGen examples for the original authoring model are retained in [Legacy Serialization](/orleans-fsharp/legacy/serialization/).
-
 ## Next steps
 
 - [Functional Grain Runtime](/orleans-fsharp/functional-grains/)
 - [Event Sourcing](/orleans-fsharp/event-sourcing/)
 - [Silo Configuration](/orleans-fsharp/silo-configuration/)
-- [Legacy Serialization](/orleans-fsharp/legacy/serialization/)
+- [Release and Production Status](/orleans-fsharp/release-status/)

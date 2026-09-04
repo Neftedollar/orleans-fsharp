@@ -77,10 +77,11 @@ and [Dashboard](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/das
 - .NET 10+
 - `Orleans.FSharp` (transitive)
 
-## Legacy API
+## Legacy archive
 
-The package still contains runtime support for the obsolete `grain { }` model. Compatibility
-documentation is isolated under [docs/legacy](https://github.com/Neftedollar/orleans-fsharp/tree/main/docs/legacy).
+Some compatibility internals remain temporarily for migration, but the old authoring model is
+unsupported and receives no 5.x feature, compatibility, or security work. Its documentation is
+isolated under [docs/legacy](https://github.com/Neftedollar/orleans-fsharp/tree/main/docs/legacy).
 
 ## License
 

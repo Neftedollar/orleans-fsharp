@@ -1,5 +1,9 @@
 # Legacy Resilience Example
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Applying the current resilience helpers to an original-API grain handle.**
 
 > The resilience library itself is current. Only this handle example belongs to the legacy authoring model.

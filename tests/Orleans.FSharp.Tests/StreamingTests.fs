@@ -3,6 +3,7 @@ module Orleans.FSharp.Tests.StreamingTests
 open System
 open System.Collections.Generic
 open System.Reflection
+open System.Threading
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
@@ -292,6 +293,65 @@ let ``batch handlers preserve batch order and terminal callbacks`` () =
         test <@ batches.[0] |> Array.forall (fun item -> item.Token.IsNone) @>
         test <@ error = Some failure @>
         test <@ completed @>
+    }
+
+[<Fact>]
+let ``task-seq cleanup does not wait forever for SubscribeAsync`` () =
+    task {
+        let lifetime = new CancellationTokenSource()
+        let lifetimeToken = lifetime.Token
+
+        let pending =
+            TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        let unsubscribed =
+            TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        do!
+            (StreamTaskSeqCleanup.dispose lifetime pending.Task (fun subscription ->
+                unsubscribed.TrySetResult subscription |> ignore
+                Task.CompletedTask))
+                .WaitAsync(TimeSpan.FromSeconds 1.0)
+
+        Assert.True lifetimeToken.IsCancellationRequested
+        test <@ not unsubscribed.Task.IsCompleted @>
+
+        pending.TrySetResult 42 |> ignore
+        let! removed = unsubscribed.Task.WaitAsync(TimeSpan.FromSeconds 1.0)
+        test <@ removed = 42 @>
+    }
+
+[<Fact>]
+let ``task-seq cleanup observes a failed SubscribeAsync`` () =
+    task {
+        let lifetime = new CancellationTokenSource()
+        let lifetimeToken = lifetime.Token
+        let failed = Task.FromException<int>(InvalidOperationException "subscribe failed")
+
+        do!
+            StreamTaskSeqCleanup.dispose lifetime failed (fun _ ->
+                Task.FromException(InvalidOperationException "must not unsubscribe"))
+
+        Assert.True lifetimeToken.IsCancellationRequested
+    }
+
+[<Fact>]
+let ``task-seq cleanup disposes its lifetime when unsubscribe fails`` () =
+    task {
+        let lifetime = new CancellationTokenSource()
+        let lifetimeToken = lifetime.Token
+        let cause = InvalidOperationException "unsubscribe failed"
+
+        let! actual =
+            Assert.ThrowsAsync<InvalidOperationException>(
+                Func<Task>(fun () ->
+                    StreamTaskSeqCleanup.dispose lifetime (Task.FromResult 1) (fun _ ->
+                        Task.FromException cause))
+            )
+
+        test <@ obj.ReferenceEquals(actual, cause) @>
+        Assert.True lifetimeToken.IsCancellationRequested
+        Assert.Throws<ObjectDisposedException>(fun () -> lifetime.Cancel()) |> ignore
     }
 
 // ---------------------------------------------------------------------------

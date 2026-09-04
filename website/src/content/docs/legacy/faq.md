@@ -5,13 +5,16 @@ description: "Archived answers for the original Orleans.FSharp authoring API."
 
 # Legacy Frequently Asked Questions
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 > This archived FAQ describes the original Orleans.FSharp authoring surface. Current answers live in [Frequently Asked Questions](/orleans-fsharp/faq/).
 
-> **Note.** Grain authoring has two models. The `grain { }` CE shown on this page still compiles and
-> runs, but its public surface now carries `[<Obsolete>]` (warning, not error); new code should use
-> the functional grain runtime (`grainContract` / `grainFor` / `FunctionalGrain.ref` /
-> `AddFunctionalGrain`). See [functional-grains.md](/orleans-fsharp/functional-grains/). `siloConfig { }`,
-> `clientConfig { }` and `eventSourcedGrain { }` are unaffected.
+> **Historical scope.** The `grain { }` CE shown on this page describes the 4.1-and-earlier package
+> shape. It is not a supported 5.0 authoring model. New code should use the functional grain runtime
+> (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`). See
+> [functional-grains.md](/orleans-fsharp/functional-grains/).
 
 ## What is Orleans.FSharp?
 
@@ -129,24 +132,20 @@ Dispatch overhead is small and paid once per call: the repository's benchmark ho
 
 ## Is Orleans.FSharp production-ready?
 
-Yes. Orleans.FSharp has:
-
-- Unit and integration coverage, including live Orleans clusters
-- Broad Orleans 10 feature coverage (137 CE operations across 8 builders)
-- Zero `Unchecked.defaultof` in source code
-- TLS/mTLS support, call filters, request context propagation
-- Input validation on all string parameters
-- Security scanning (Gitleaks) in CI
+This archived authoring model is unsupported and should not be selected for a new production
+deployment. Evaluate the current functional API and its explicit
+[release and production boundaries](/orleans-fsharp/release-status/) instead.
 
 ## What Microsoft Orleans features are supported?
 
-All of them. Orleans.FSharp wraps the Orleans 10 feature set:
+The archived material historically covered the following areas; this list is not a current support
+guarantee:
 
 - Grain lifecycle (activate, deactivate, timers, reminders)
 - State persistence (memory, Redis, Azure, Cosmos, DynamoDB, ADO.NET)
 - Streaming (memory, Event Hubs, Azure Queue, broadcast channels)
 - Reentrancy, stateless workers, placement strategies
-- Event sourcing (`journaledGrainFor` over Orleans' log-consistency providers; the classic `eventSourcedGrain { }` CE is still shipped)
+- Event sourcing (`journaledGrainFor` over Orleans' log-consistency providers; the classic package is archive-only and is not published in the 5.0 package set)
 - Distributed ACID transactions (`transactional` + `transactionalStateFrom`)
 - Observers, call filters, request context
 - Grain directory, grain services, grain extensions
@@ -206,7 +205,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What is Orleans.FSharp?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (siloConfig {}, eventSourcedGrain {}) and the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) that let you define distributed actors using pure F# — no C# boilerplate needed. The original grain {} computation expression still works but is deprecated. It supports Orleans 10 and has unit and integration coverage."
+        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans. Current development uses the functional runtime (grainContract / grainFor / AddFunctionalGrain). This archived FAQ describes an unsupported 4.1-and-earlier authoring model which receives no new release line or security fixes."
       }
     },
     {
@@ -214,7 +213,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "How do I use Microsoft Orleans with F#?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) to define grains declaratively; the older grain {} computation expression still works but is deprecated. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.Abstractions provides the C# shim for Orleans proxy generation."
+        "text": "Use the current functional runtime (grainContract / grainFor / AddFunctionalGrain). The older authoring model on this page is an unsupported migration archive and is not a newly released 5.0 API."
       }
     },
     {
@@ -222,7 +221,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "Is Orleans.FSharp production-ready?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Orleans.FSharp has unit and integration coverage, broad Orleans 10 feature coverage, TLS/mTLS support, call filters, request context propagation, input validation, and security scanning in CI. Validate your own providers, topology, and upgrade path before production rollout."
+        "text": "The archived authoring model is unsupported and should not be selected for a new production deployment. Evaluate the current functional API and its documented production boundaries instead."
       }
     },
     {
@@ -238,7 +237,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What Microsoft Orleans features does Orleans.FSharp support?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "All of them. Orleans.FSharp wraps the Orleans 10 feature set: grain lifecycle, state persistence (memory, Redis, Azure, Cosmos, DynamoDB, ADO.NET), streaming, reentrancy, stateless workers, placement strategies, event sourcing, transactions, observers, call filters, grain directory, TLS/mTLS, health checks, OpenTelemetry, and Kubernetes clustering."
+        "text": "This archived page records areas covered by the 4.1-and-earlier material; it is not a current support guarantee. Use the current functional API reference and release-status page for verified behavior."
       }
     }
   ]

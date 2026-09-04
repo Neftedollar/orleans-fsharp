@@ -1,8 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased] — 5.0 preview (next major)
+
+This section describes the `main` branch and is not the published stable package. The latest
+published stable line is 4.1 (currently 4.1.0).
 
 ### Added
+
+- **Bounded functional persistence payloads.** Functional state values, journal events, and
+  snapshots now reject encoded payloads larger than 16 MiB on both write and read. A specific
+  immutable codec configuration can opt into a different positive limit with
+  `WithMaxPayloadBytes`; the provider-wide `FSharpJsonGrainStorageSerializer` exposes the same
+  default and an explicit constructor override. The limit is per payload, not a total grain-state
+  or journal-size quota.
+- **Stateless-worker implicit streams on Orleans 10.3+.** A functional `grainFor` definition may
+  combine `statelessWorker` with `onStream` when the loaded Orleans.Streaming runtime is 10.3.0 or
+  newer. Local workers participate as competing consumers, and a live 10.3 integration test proves
+  publish-to-activation delivery. The package floor remains 10.1.0: older or unidentifiable
+  runtimes reject the definition at sealing. `statelessWorker` plus `onBroadcast` remains rejected.
 
 - **Native Orleans routing for functional contract versions.** Contract `version` now becomes the
   published Orleans grain-interface version (range `1..65535`) while the actor-specific interface
@@ -51,6 +66,14 @@
 
 ### Fixed
 
+- **Pull-based stream consumption now owns its subscription lifetime.** `Stream.asTaskSeq` starts
+  the Orleans subscription on first enumeration, propagates cancellation, and unsubscribes when
+  the enumerator is disposed, including early loop exit. Its bounded channel remains capacity
+  1000 with wait-based backpressure.
+- **Generalized F# codec deep copies no longer share nested mutable references.** Supported values
+  are round-tripped as a complete graph, so arrays or mutable classes nested inside an F# record,
+  union, list, or option are isolated across same-silo calls just as they are across remote calls.
+
 - **Source compatibility with Orleans 10.3.x.** Hand-written functional transport codecs now
   implement Orleans' nullable `IFieldCodec<T>` contract, and acknowledged grain calls reject an
   impossible null reply explicitly. The wire layout and the Orleans 10.1.0 package floor are
@@ -87,6 +110,12 @@
   contract version, while the Chat Room keeps its existing persisted-state shape. The Dashboard
   smoke test now validates the real
   `/dashboard/DashboardCounters` response and positive functional-actor activation rows.
+
+### Removed
+
+- **No new Legacy package line.** The Legacy-only CodeGen and classic event-sourcing projects are
+  no longer packable in the 5.0 package set. Their source and archived documentation remain for
+  migration reference, but they receive no new release, compatibility work, or security fixes.
 
 ## [4.1.0] - 2026-08-21
 

@@ -1,13 +1,16 @@
 # API Reference
 
+> This reference tracks `main`, the 5.0 preview/next major. The published stable line is 4.1;
+> see [Release and Production Status](release-status.md).
+
 **Quick reference for the public modules, types, and functions in Orleans.FSharp.**
 
 Reference tables, not tutorials. Every section names the guide that carries the semantics; look
 there for what a thing *means* and here for what it is *called*.
 
 The [functional grain runtime](#functional-grain-runtime) is the current authoring model and comes
-first. Shared Orleans helpers follow it. The superseded authoring surface has its own
-[Legacy API Reference](legacy/api-reference.md).
+first. Shared Orleans helpers follow it. Unsupported migration material is isolated in the
+[Legacy archive](legacy/index.md).
 
 **Where the names in the functional tables come from.** Every custom-operation name and every
 context member below is pinned by `tests/Orleans.FSharp.Tests/FunctionalSurfaceTests.fs`, which
@@ -260,11 +263,16 @@ with `migrationParticipant`; see [Functional grains](functional-grains.md#live-a
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `JsonSerializerOptions -> FunctionalPersistenceCodec` | Compatibility overload using `fsharp-json-v1` with copied custom options |
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `string * JsonSerializerOptions -> FunctionalPersistenceCodec` | F# JSON with an application-owned stable codec id; prefer this for custom durable contracts |
 | `codec.WithReadCodec` | `FunctionalPersistenceCodec -> FunctionalPersistenceCodec` | Keep a historical JSON decoder registered while the returned codec remains the current writer; duplicate reader ids are rejected |
+| `codec.WithMaxPayloadBytes` | `int -> FunctionalPersistenceCodec` | Return an immutable codec configuration with a positive per-payload read/write limit; 5.0 preview |
 | `FunctionalPersistenceCodec.Id` | `string` | Stable durable id; built-ins use `orleans-binary-v1` / `fsharp-json-v1`, explicit custom codecs use the supplied id |
+| `FunctionalPersistenceCodec.DefaultMaxPayloadBytes` | `int` | Built-in per-payload default: 16 MiB; 5.0 preview |
+| `FunctionalPersistenceCodec.MaxPayloadBytes` | `int` | Effective per-payload limit for this codec configuration; 5.0 preview |
 | `FunctionalPersistenceOptions.DefaultStateCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional state without grain/element overrides |
 | `FunctionalPersistenceOptions.DefaultJournalCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional journals without `journalCodec` |
 | `FSharpJsonGrainStorageSerializer()` | `FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with standard options |
 | `FSharpJsonGrainStorageSerializer(options)` | `JsonSerializerOptions -> FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with copied custom options |
+| `FSharpJsonGrainStorageSerializer(maxPayloadBytes)` | `int -> FSharpJsonGrainStorageSerializer` | Standard F# JSON options with a positive provider-value limit; default is 16 MiB; 5.0 preview |
+| `FSharpJsonGrainStorageSerializer(options, maxPayloadBytes)` | `JsonSerializerOptions * int -> FSharpJsonGrainStorageSerializer` | Custom options and provider-value limit; 5.0 preview |
 
 `FSharpJsonGrainStorageSerializer` belongs to a provider's `GrainStorageSerializer` setting and
 also affects ordinary Orleans grains. It is independent of functional per-element envelopes and
@@ -525,7 +533,7 @@ Filters see a functional grain as an ordinary Orleans call -- see
 |---|---|---|
 | `configureGracefulShutdown` | `TimeSpan -> IHostBuilder -> IHostBuilder` | Set drain timeout |
 | `stopHost` | `IHost -> Task<unit>` | Stop host gracefully |
-| `onShutdown` | `(CT -> Task<unit>) -> IHostBuilder -> IHostBuilder` | Register shutdown handler |
+| `onShutdown` | `(CT -> Task<unit>) -> IHostBuilder -> IHostBuilder` | Register a shutdown handler; handlers run in registration order and receive the Generic Host shutdown-timeout token while it is still usable |
 
 #### `StateMigration`
 
@@ -567,9 +575,9 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainResilience.retry<'T>` | `int -> TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Retry N times with delay; each attempt re-invokes the call |
 | `GrainResilience.withTimeout<'T>` | `TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Deadline on one call — raises `TimeoutRejectedException` and abandons the in-flight call (does not cancel it) |
 | `GrainResilience.withTimeoutCancellable<'T>` | `TimeSpan -> (CancellationToken -> Task<'T>) -> Task<'T>` | Same deadline, handed to the operation as a token so it can stop instead of being abandoned |
-| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout. The timeout spans the whole sequence; the pipeline is rebuilt per call, so circuit state is not shared |
-| `GrainResilience.executeCancellable<'T>` | `ResilienceOptions -> (CancellationToken -> Task<'T>) -> Task<'T>` | Full options for an operation that takes the deadline's token |
-| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Build reusable Polly pipeline — the way to get shared circuit state |
+| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout. The timeout spans the whole sequence; the pipeline is cached by exact immutable options-instance identity plus result type, so reusing that instance shares circuit state |
+| `GrainResilience.executeCancellable<'T>` | `ResilienceOptions -> (CancellationToken -> Task<'T>) -> Task<'T>` | Full options for an operation that takes the deadline's token; uses the same options-identity/result-type pipeline cache as `execute` |
+| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Explicitly build a fresh Polly pipeline on every call; reuse the returned object when shared circuit state is desired |
 | `GrainResilience.circuitBreaker` | `int -> TimeSpan -> ResiliencePipeline` | Shared circuit breaker (non-generic, long-lived) |
 
 #### `GrainBatch` — concurrent fan-out
@@ -621,7 +629,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `subscribeHandlers<'T>` | `StreamRef<'T> -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe with item/error/completion callbacks |
 | `subscribeFiltered<'T>` | `StreamRef<'T> -> string -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Pass filter data to the provider's `IStreamFilter` |
 | `subscribeBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe through `IAsyncBatchObserver<'T>` |
-| `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption |
+| `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption; first pull subscribes, cancellation/early disposal unsubscribes; 5.0 lifetime behavior |
 | `subscribeFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe from token (rewind is inclusive of that event) |
 | `subscribeFromWithToken<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Rewind and keep checkpointing |
 | `subscribeFromHandlers<'T>` | `StreamRef<'T> -> StreamSequenceToken -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Rewind with item/error/completion callbacks |
@@ -715,6 +723,8 @@ A functional definition consumes a stream declaratively with `onStream` instead;
 | `ReminderProvider` | MemoryReminder, RedisReminder, CustomReminder |
 | `TlsConfig` | TlsSubject, TlsCertificate, MutualTlsSubject, MutualTlsCertificate |
 | `DashboardConfig` | DashboardDefaults, DashboardWithOptions |
+| `OrleansSiloLivenessHealthCheck` | Local-silo liveness; unhealthy only when Orleans reports `Dead` |
+| `OrleansSiloReadinessHealthCheck` | Local-silo readiness; healthy only while Orleans reports `Active` |
 
 ### Computation expressions
 
@@ -725,6 +735,18 @@ A functional definition consumes a stream declaratively with `onStream` instead;
 
 See [Silo configuration](silo-configuration.md) and [Client configuration](client-configuration.md)
 for the full keyword lists.
+
+#### `OrleansHealthChecks`
+
+| Name | Description |
+|---|---|
+| `LivenessName` / `ReadinessName` | Stable registration names |
+| `OrleansTag` | Tag shared by both Orleans checks |
+| `LivenessTag` / `ReadinessTag` | `live` and `ready` endpoint-selection tags |
+| `addSiloChecks` | `IServiceCollection -> IHealthChecksBuilder`; register both checks without the silo CE |
+
+`enableHealthChecks` delegates to this registration. Endpoint mapping remains the host's
+responsibility; select checks by tag so readiness cannot make a liveness endpoint unhealthy.
 
 #### Generalized serialization
 
@@ -871,6 +893,4 @@ let allowedInterop () =
 
 See [Analyzers guide](analyzers.md) for full documentation.
 
-## Legacy API
-
-The original authoring surface is retained in the separate [Legacy API Reference](legacy/api-reference.md).
+Earlier authoring surfaces are isolated in the unsupported [Legacy archive](legacy/index.md).

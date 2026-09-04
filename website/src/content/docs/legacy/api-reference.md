@@ -5,15 +5,20 @@ description: "Reference for the original Orleans.FSharp authoring APIs."
 
 # Legacy API Reference
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Reference for the original Orleans.FSharp authoring APIs kept for existing applications.**
 
-> This page is deliberately outside the current API reference. The APIs below remain runnable but are deprecated for new code.
+> This page records the 4.1-and-earlier surface for migration. It is not a supported or newly
+> released 5.0 API.
 
 ## Orleans.FSharp.EventSourcing
 
-The `eventSourcedGrain { }` CE and its `JournaledGrain` bridge. Not deprecated, and not the same
-thing as the `journaledGrainFor` definition builder above: this one needs a C#-declared grain
-interface and the CodeGen that comes with it. See [Event Sourcing](/orleans-fsharp/event-sourcing/).
+The historical `eventSourcedGrain { }` CE and its `JournaledGrain` bridge are not the same thing as
+the current `journaledGrainFor` definition builder. The old path needs the archived CodeGen
+package and is not published in the 5.0 package set. See [Event Sourcing](/orleans-fsharp/event-sourcing/).
 
 ### Types
 

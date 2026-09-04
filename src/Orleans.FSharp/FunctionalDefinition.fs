@@ -2,12 +2,75 @@ namespace Orleans.FSharp
 
 open System
 open System.Collections.Generic
+open System.Diagnostics
+open System.Reflection
 open System.Threading.Tasks
 open Orleans.BroadcastChannel
 open Orleans.Runtime
 open Orleans.Streams
 open Orleans.Streams.Core
 open Orleans.FSharp.FunctionalDiagnostics
+
+[<RequireQualifiedAccess>]
+module internal OrleansRuntimeCapabilities =
+
+    let private tryParseLeadingVersion (value: string) =
+        if String.IsNullOrWhiteSpace value then
+            None
+        else
+            let mutable length = 0
+
+            while length < value.Length
+                  && (Char.IsDigit value.[length] || value.[length] = '.') do
+                length <- length + 1
+
+            let candidate = value.Substring(0, length).TrimEnd '.'
+
+            match Version.TryParse candidate with
+            | true, version -> Some version
+            | false, _ -> None
+
+    let private detectedStreamingVersion =
+        lazy
+            let assembly = typeof<IStreamSubscriptionObserver>.Assembly
+
+            let productVersion =
+                try
+                    if String.IsNullOrWhiteSpace assembly.Location then
+                        None
+                    else
+                        FileVersionInfo.GetVersionInfo(assembly.Location).ProductVersion
+                        |> tryParseLeadingVersion
+                with _ ->
+                    None
+
+            let informationalVersion =
+                try
+                    match assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>() with
+                    | null -> None
+                    | attribute -> tryParseLeadingVersion attribute.InformationalVersion
+                with _ ->
+                    None
+
+            productVersion |> Option.orElse informationalVersion
+
+    /// <summary>
+    /// The loaded Orleans streaming package version, when its product metadata can be read.
+    /// Orleans deliberately keeps its CLR assembly version at 10.0.0.0 across servicing releases,
+    /// so capability checks must use product/informational metadata instead.
+    /// </summary>
+    let streamingVersion () = detectedStreamingVersion.Value
+
+    /// <summary>
+    /// Orleans 10.3 introduced implicit stream subscriptions for stateless-worker activations.
+    /// This is a runtime capability rather than a compile-time floor: Orleans.FSharp remains
+    /// usable with Orleans 10.1, while a definition which asks for this particular feature is
+    /// admitted only when the application has resolved 10.3 or newer.
+    /// </summary>
+    let supportsStatelessImplicitStreams () =
+        match streamingVersion () with
+        | Some version -> version >= Version(10, 3)
+        | None -> false
 
 /// <summary>
 /// A closed set mirroring every public Orleans stock placement strategy intended for application
@@ -554,18 +617,30 @@ module internal DefinitionDraft =
                     DefinitionStage
                     $"grain type '{grainTypeName}' combines 'statelessWorker' with 'collectionAge'. Orleans ignores the idle collection age for stateless-worker activations."
 
-            // Orleans itself refuses to bind a grain extension to a stateless worker:
-            // SiloStreamProviderRuntime.BindExtension throws "The extension
-            // Orleans.Streams.StreamConsumerExtension cannot be bound to a Stateless Worker."
-            // Implicit delivery is routed to ONE activation identity derived from the stream key,
-            // which multiplexed local activations have no way to honor, so the combination can
-            // never work and is rejected here rather than failing an activation later.
-            match state.StreamBindings |> List.tryHead with
+            // Orleans 10.3 added first-class implicit STREAM subscriptions for stateless workers:
+            // every local worker activation can join the subscription as a competing consumer.
+            // Earlier releases reject StreamConsumerExtension binding, so keep the package's
+            // 10.1 floor and gate only this definition feature on the actually loaded runtime.
+            // Broadcast channels did not gain the equivalent support and remain invalid for a
+            // stateless worker on every supported Orleans version.
+            match state.StreamBindings |> List.tryFind (fun binding -> not binding.IsStream) with
             | Some binding ->
                 fail
                     DefinitionStage
-                    $"grain type '{grainTypeName}' combines 'statelessWorker' with '{binding.OperationName}'. Orleans refuses to bind a stream or broadcast consumer extension to a stateless worker (SiloStreamProviderRuntime.BindExtension), and implicit delivery addresses one activation identity derived from the stream key, which multiplexed local activations cannot honor."
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with '{binding.OperationName}'. Orleans does not support implicit broadcast-channel subscriptions on stateless-worker activations. Use 'onStream' with Orleans 10.3 or newer for competing-consumer delivery, or use a regular grain for broadcast delivery."
             | None -> ()
+
+            match state.StreamBindings |> List.tryFind _.IsStream with
+            | Some binding when not (OrleansRuntimeCapabilities.supportsStatelessImplicitStreams ()) ->
+                let detected =
+                    OrleansRuntimeCapabilities.streamingVersion ()
+                    |> Option.map string
+                    |> Option.defaultValue "unknown"
+
+                fail
+                    DefinitionStage
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with '{binding.OperationName}', which requires Orleans 10.3.0 or newer. The loaded Orleans.Streaming version is {detected}. Upgrade the application's Orleans packages, or use a regular grain while retaining the Orleans.FSharp 10.1 compatibility floor."
+            | _ -> ()
 
             // Spec 004 item 6. A server-streaming reply is a conversation with ONE activation:
             // Orleans keeps the open enumerator in that activation's own

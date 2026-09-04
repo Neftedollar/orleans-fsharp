@@ -381,11 +381,39 @@ siloConfig {
 }
 ```
 
-Then map the health check endpoints in your ASP.NET Core pipeline:
+`enableHealthChecks` registers separate Orleans liveness and readiness checks; it does not map
+HTTP endpoints. Keep those probes separate in an ASP.NET Core host:
 
 ```fsharp
-app.MapHealthChecks("/health") |> ignore
+open System
+open Microsoft.AspNetCore.Diagnostics.HealthChecks
+open Microsoft.AspNetCore.Builder
+open Microsoft.Extensions.Diagnostics.HealthChecks
+open Orleans.FSharp.Runtime
+
+let onlyTag tag =
+    let options = HealthCheckOptions()
+    options.Predicate <-
+        Func<HealthCheckRegistration, bool>(fun registration ->
+            registration.Tags |> Seq.contains tag)
+    options
+
+app.MapHealthChecks(
+    "/health/live",
+    onlyTag OrleansHealthChecks.LivenessTag)
+|> ignore
+
+app.MapHealthChecks(
+    "/health/ready",
+    onlyTag OrleansHealthChecks.ReadinessTag)
+|> ignore
 ```
+
+Liveness stays healthy throughout normal silo startup and shutdown and becomes unhealthy only when
+Orleans reports the local silo as `Dead`. Readiness is healthy only while the silo is `Active`.
+Do not use an unfiltered endpoint as a Kubernetes liveness probe: it would also execute readiness
+and could restart a healthy process while it is joining or draining. Use
+`OrleansHealthChecks.addSiloChecks` when configuring services without the `siloConfig` builder.
 
 ---
 
@@ -658,6 +686,6 @@ let config = siloConfig {
 ## Next steps
 
 - [Client Configuration](/orleans-fsharp/client-configuration/) -- configure Orleans clients
-- [Legacy API](/orleans-fsharp/legacy/) -- maintenance documentation for earlier authoring models
+- [Legacy archive](/orleans-fsharp/legacy/) -- unsupported migration reference for earlier authoring models
 - [Streaming](/orleans-fsharp/streaming/) -- publish and subscribe to events
 - [Security](/orleans-fsharp/security/) -- TLS, mTLS, and call filters in depth

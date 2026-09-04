@@ -86,16 +86,24 @@ dotnet new install ./orleans-fsharp/templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The published template package 4.1.0 still scaffolds the Legacy model. Until the next template
-release, use the source-checkout command above, then follow [Getting Started](getting-started.md).
+The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
+Legacy archive. Use the source-checkout command above for the preview, then follow
+[Getting Started](getting-started.md). See [Release and Production Status](release-status.md) before
+choosing between released packages and `main`.
 
 ## Where is documentation for existing applications on the original API?
 
-It is retained under [Legacy API](legacy/index.md), separate from current guides.
+It is retained as an unsupported migration reference under the [Legacy archive](legacy/index.md),
+separate from current guides. There is no new Legacy release line or security support.
 
 ## Is it production-ready?
 
-The library includes unit and live Orleans integration suites, dual-version CI coverage, wire-contract validation, persistence, transactions, event sourcing, streaming, reminders, timers, and production hosting helpers. As with any distributed runtime, validate storage providers, deployment topology, observability, and upgrade behavior against your own workload.
+The library includes unit and live Orleans integration suites, dual-version CI coverage,
+wire-contract validation, persistence, transactions, event sourcing, streaming, reminders, timers,
+and production hosting helpers. Those checks do not certify every provider or workload. Review the
+verified boundaries in [Release and Production Status](release-status.md), then validate storage
+providers, deployment topology, payload sizes, observability, and upgrade behavior against your
+own workload.
 
 ## Where is the source?
 

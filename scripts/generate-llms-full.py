@@ -9,17 +9,28 @@ the two explicit exceptions.
 from __future__ import annotations
 
 import argparse
+import posixpath
+import re
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / 'docs'
 WEBSITE_DOCS = ROOT / 'website' / 'src' / 'content' / 'docs'
 OUTPUT = ROOT / 'website' / 'public' / 'llms-full.txt'
 BASE_URL = 'https://neftedollar.com/orleans-fsharp'
+BASE_PATH = '/orleans-fsharp'
+
+MARKDOWN_TARGET = re.compile(
+    r'(?P<prefix>!?\[[^\]]*\]\()'
+    r'(?P<target><[^>\n]+>|[^)\s]+)'
+    r'(?P<suffix>(?:\s+(?:"[^"]*"|\'[^\']*\'))?\))'
+)
 
 CURRENT_ORDER = [
     'getting-started.md',
+    'release-status.md',
     'how-to.md',
     'examples.md',
     'functional-runtime.md',
@@ -71,23 +82,105 @@ def source(route: str, content: str) -> str:
     return f'\n\n--- Source: {BASE_URL}{suffix}/ ---\n\n{content}'
 
 
+def route_url(route: str, *, query: str = '', fragment: str = '') -> str:
+    clean_route = route.strip('/')
+    result = f'{BASE_URL}/{clean_route}/' if clean_route else f'{BASE_URL}/'
+    if query:
+        result += f'?{query}'
+    if fragment:
+        result += f'#{fragment}'
+    return result
+
+
+def markdown_route(source_name: str, target_path: str) -> str:
+    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source_name), target_path))
+    if resolved == '..' or resolved.startswith('../'):
+        raise ValueError(f"documentation link escapes docs root: {source_name} -> {target_path}")
+    without_suffix = resolved.removesuffix('.md').removesuffix('.mdx')
+    if without_suffix == 'index':
+        return ''
+    if without_suffix.endswith('/index'):
+        return without_suffix.removesuffix('/index')
+    return without_suffix
+
+
+def canonicalize_links(content: str, *, source_name: str, route: str) -> str:
+    """Turn docs-relative Markdown links into canonical published URLs for the flat corpus."""
+
+    def replace(match: re.Match[str]) -> str:
+        wrapped = match.group('target')
+        target = wrapped[1:-1] if wrapped.startswith('<') and wrapped.endswith('>') else wrapped
+        parsed = urlsplit(target)
+
+        if parsed.scheme or parsed.netloc:
+            replacement = target
+        elif parsed.path.startswith(BASE_PATH + '/') or parsed.path == BASE_PATH:
+            suffix = parsed.path[len(BASE_PATH):]
+            replacement = f'{BASE_URL}{suffix}'
+            if parsed.query:
+                replacement += f'?{parsed.query}'
+            if parsed.fragment:
+                replacement += f'#{parsed.fragment}'
+        elif not parsed.path and parsed.fragment:
+            replacement = route_url(route, fragment=parsed.fragment)
+        elif parsed.path.endswith(('.md', '.mdx')):
+            replacement = route_url(
+                markdown_route(source_name, parsed.path),
+                query=parsed.query,
+                fragment=parsed.fragment,
+            )
+        else:
+            normalized = posixpath.normpath(
+                posixpath.join(posixpath.dirname(source_name), parsed.path)
+            )
+            while normalized.startswith('../'):
+                normalized = normalized[3:]
+
+            public_prefix = 'website/public/'
+            if normalized.startswith(public_prefix):
+                replacement = f'{BASE_URL}/{normalized[len(public_prefix):]}'
+                if parsed.query:
+                    replacement += f'?{parsed.query}'
+                if parsed.fragment:
+                    replacement += f'#{parsed.fragment}'
+            else:
+                replacement = target
+
+        if wrapped.startswith('<') and wrapped.endswith('>'):
+            replacement = f'<{replacement}>'
+        return f"{match.group('prefix')}{replacement}{match.group('suffix')}"
+
+    return MARKDOWN_TARGET.sub(replace, content)
+
+
 def generate() -> str:
     chunks = [
         '# Orleans.FSharp — Full Documentation\n\n',
         f'Canonical site: {BASE_URL}/\n',
         'Repository: https://github.com/Neftedollar/orleans-fsharp\n',
+        'Published stable: Orleans.FSharp 4.1 (latest 4.1.0). Documentation channel: main / '
+        'Orleans.FSharp 5.0 preview (next major; not published stable).\n',
         'This file contains the complete published documentation. Current functional API pages '
-        'come first. Compatibility material is isolated under the Legacy API heading near the '
-        'end.\n\n',
+        'come first. Unsupported migration material is isolated under the Legacy Archive heading '
+        'near the end.\n\n',
     ]
 
     homepage = (WEBSITE_DOCS / 'index.mdx').read_text(encoding='utf-8')
-    chunks.append(source('', without_frontmatter(homepage, remove_imports=True)))
+    chunks.append(
+        source(
+            '',
+            canonicalize_links(
+                without_frontmatter(homepage, remove_imports=True),
+                source_name='index.mdx',
+                route='',
+            ),
+        )
+    )
 
     current = {
         path.relative_to(DOCS).as_posix(): path
         for path in DOCS.rglob('*.md')
-        if path.relative_to(DOCS).parts[0] != 'legacy'
+        if path.relative_to(DOCS).parts[0] not in {'legacy', 'superpowers'}
     }
 
     ordered = [name for name in CURRENT_ORDER if name in current]
@@ -96,20 +189,49 @@ def generate() -> str:
     for name in ordered:
         path = current[name]
         route = name.removesuffix('.md')
-        chunks.append(source(route, path.read_text(encoding='utf-8')))
+        chunks.append(
+            source(
+                route,
+                canonicalize_links(
+                    path.read_text(encoding='utf-8'),
+                    source_name=name,
+                    route=route,
+                ),
+            )
+        )
 
     comparison = (WEBSITE_DOCS / 'comparison.md').read_text(encoding='utf-8')
-    chunks.append(source('comparison', without_frontmatter(comparison)))
+    chunks.append(
+        source(
+            'comparison',
+            canonicalize_links(
+                without_frontmatter(comparison),
+                source_name='comparison.md',
+                route='comparison',
+            ),
+        )
+    )
 
     chunks.append(
-        '\n\n# Legacy API — Compatibility Documentation\n\n'
-        'The following pages describe obsolete compatibility APIs. They are intentionally '
-        'separated from the current functional documentation above.\n'
+        '\n\n# Legacy Archive — Unsupported Migration Documentation\n\n'
+        'The following pages are archived and unsupported. There is no new Legacy release line, '
+        'compatibility work, or security support. They are intentionally separated from the '
+        'current functional documentation above.\n'
     )
 
     for path in sorted((DOCS / 'legacy').glob('*.md')):
         route = 'legacy' if path.stem == 'index' else f'legacy/{path.stem}'
-        chunks.append(source(route, path.read_text(encoding='utf-8')))
+        source_name = path.relative_to(DOCS).as_posix()
+        chunks.append(
+            source(
+                route,
+                canonicalize_links(
+                    path.read_text(encoding='utf-8'),
+                    source_name=source_name,
+                    route=route,
+                ),
+            )
+        )
 
     return ''.join(chunks)
 

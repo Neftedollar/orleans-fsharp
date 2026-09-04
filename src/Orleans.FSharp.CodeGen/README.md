@@ -1,12 +1,12 @@
-# Orleans.FSharp.CodeGen — Legacy compatibility package
+# Orleans.FSharp.CodeGen — Legacy source archive
 
-This package is the per-grain C# Roslyn source-generation bridge for applications that still use
-the original Orleans.FSharp authoring model. New functional grains use typed API records and the
-fixed proxies from `Orleans.FSharp.Abstractions`; they do not use this package.
+This non-packable source project is the archived per-grain C# Roslyn bridge from the original
+Orleans.FSharp authoring model. It is retained only to build migration examples and tests. New
+functional grains use typed API records and fixed proxies from `Orleans.FSharp.Abstractions`.
 
 ## Legacy API
 
-Existing applications may keep this bridge while migrating. It contains no runtime logic: a C#
+Existing applications can study or build this bridge while migrating. It contains no runtime logic: a C#
 project references the F# grain assembly, applies Orleans generation attributes, and lets
 `Microsoft.Orleans.Sdk` emit serializers and dispatchers.
 

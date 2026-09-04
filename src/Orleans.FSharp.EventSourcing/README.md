@@ -1,8 +1,9 @@
-# Orleans.FSharp.EventSourcing — Legacy compatibility package
+# Orleans.FSharp.EventSourcing — Legacy source archive
 
-This package contains the original `eventSourcedGrain { }` authoring model. It remains available
-for existing applications, but new code should use `journaledGrainFor` from `Orleans.FSharp` and
-host the resulting definition with `AddFunctionalJournaledGrain` from `Orleans.FSharp.Runtime`.
+This non-packable source project contains the original `eventSourcedGrain { }` authoring model.
+It remains only to build migration examples and tests. New code should use `journaledGrainFor`
+from `Orleans.FSharp` and host the resulting definition with `AddFunctionalJournaledGrain` from
+`Orleans.FSharp.Runtime`.
 
 The current API supports typed API records, a pure `apply` fold, Orleans LogStorage/StateStorage,
 typed `IFunctionalJournalStorage<'Key,'State,'Event>`, per-grain and global snapshot policies, and

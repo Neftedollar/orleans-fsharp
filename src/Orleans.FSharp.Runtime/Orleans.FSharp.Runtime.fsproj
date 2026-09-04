@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>F# computation expressions for configuring Orleans silos and clients — siloConfig {}, clientConfig {}, GrainDiscovery, and Serilog integration.</Description>
+    <Description>Silo and client hosting for functional Orleans.FSharp actors — registration, serialization, health checks, Dashboard, TLS, and production configuration.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
@@ -10,6 +10,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="SiloHealthChecks.fs" />
     <Compile Include="SiloConfigBuilder.fs" />
     <Compile Include="ClientConfigBuilder.fs" />
     <Compile Include="SerilogIntegration.fs" />

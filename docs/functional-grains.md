@@ -1281,12 +1281,15 @@ Rejections, all at the earliest stage that can see them:
 |---|---|
 | Blank provider or namespace | definition sealing |
 | A repeated `(provider, namespace)` pair on one transport | definition sealing |
-| `statelessWorker` combined with `onStream` / `onBroadcast` | definition sealing |
+| `statelessWorker` + `onStream` on Orleans.Streaming older than 10.3.0 | definition sealing |
+| `statelessWorker` combined with `onBroadcast` | definition sealing |
 | A provider name no registered provider answers to | silo startup |
 
-The `statelessWorker` rejection is Orleans': `SiloStreamProviderRuntime.BindExtension` throws
-"The extension ... cannot be bound to a Stateless Worker", and implicit delivery addresses one
-activation identity derived from the stream key, which multiplexed local activations cannot honor.
+Orleans 10.3 adds implicit stream subscriptions for stateless workers. On that runtime,
+`statelessWorker` plus `onStream` is accepted and local worker activations act as competing
+consumers: one available worker handles each item. The package keeps its Orleans 10.1 floor, so
+10.1/10.2 reject the definition at sealing rather than failing during activation. Broadcast
+channels did not gain matching semantics, so `statelessWorker` plus `onBroadcast` remains rejected.
 
 One caveat: Orleans' implicit-subscription binding names a *namespace*, not a provider. If the silo
 runs a second stream provider and an item reaches a declared namespace through it, Orleans still
@@ -1342,6 +1345,8 @@ roles actually published by your deployment environment.
 `statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
 `collectionAge` -- durable identity and idle collection age are both meaningless for activations
 Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
+It accepts `onStream` only with a loaded Orleans.Streaming 10.3.0+ runtime and always rejects
+`onBroadcast`; see [Release and Production Status](release-status.md#stateless-worker-implicit-streams-require-orleans-103).
 
 ### Live activation migration
 
@@ -1907,13 +1912,9 @@ None of this changes any documented public API -- it changes what a malformed or
 receives back, from an unhelpful low-level exception to a diagnostic that names the stage and the
 field.
 
-## Legacy migration
-
-Migration from the original authoring model is documented separately in [Legacy API Migration](legacy/migration.md).
-
 ## See also
 
-- [Legacy API](legacy/index.md) -- maintenance documentation for earlier authoring models
+- [Release and Production Status](release-status.md) -- stable/preview split and production boundaries
 - [Silo Configuration](silo-configuration.md) / [Client Configuration](client-configuration.md) --
   `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
   there

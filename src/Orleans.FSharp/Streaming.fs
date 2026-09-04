@@ -154,6 +154,135 @@ type internal FunctionalAsyncBatchObserver<'T>(handlers: StreamBatchHandlers<'T>
         member _.OnErrorAsync(error) = handlers.OnError error :> Task
         member _.OnCompletedAsync() = handlers.OnCompleted() :> Task
 
+[<RequireQualifiedAccess>]
+module internal StreamTaskSeqCleanup =
+
+    let private cleanupLater
+        (subscriptionTask: Task<'Subscription>)
+        (unsubscribe: 'Subscription -> Task)
+        =
+        task {
+            try
+                let! subscription = subscriptionTask
+                do! unsubscribe subscription
+            with
+            | _ ->
+                // DisposeAsync has already returned, so late provider failures cannot be
+                // propagated to its caller. Observing them here prevents an unobserved fault.
+                ()
+        }
+
+    let dispose
+        (lifetime: CancellationTokenSource)
+        (subscriptionTask: Task<'Subscription>)
+        (unsubscribe: 'Subscription -> Task)
+        : Task =
+        task {
+            try
+                lifetime.Cancel()
+
+                if not (isNull subscriptionTask) then
+                    if subscriptionTask.IsCompleted then
+                        try
+                            let! subscription = subscriptionTask
+                            do! unsubscribe subscription
+                        with
+                        | _ when subscriptionTask.IsCanceled || subscriptionTask.IsFaulted -> ()
+                    else
+                        // SubscribeAsync has no cancellation-token overload. Do not let a
+                        // provider which never completes it hang enumerator disposal forever;
+                        // if it eventually succeeds, remove that late subscription then.
+                        cleanupLater subscriptionTask unsubscribe |> ignore
+            finally
+                lifetime.Dispose()
+        }
+
+[<Sealed>]
+type private StreamTaskSeqEnumerator<'T>(stream: StreamRef<'T>, cancellationToken: CancellationToken) =
+    let channelOptions =
+        BoundedChannelOptions(1000, FullMode = BoundedChannelFullMode.Wait)
+
+    let channel = Channel.CreateBounded<'T>(channelOptions)
+    let lifetime = CancellationTokenSource.CreateLinkedTokenSource cancellationToken
+    let lifetimeToken = lifetime.Token
+    let mutable subscriptionTask: Task<StreamSubscriptionHandle<'T>> = null
+    let mutable current = Unchecked.defaultof<'T>
+    let mutable disposed = 0
+
+    let ensureSubscribed () =
+        if isNull subscriptionTask then
+            let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
+
+            let onNext =
+                Func<'T, StreamSequenceToken, Task>(fun item _token ->
+                    task {
+                        try
+                            do! channel.Writer.WriteAsync(item, lifetimeToken).AsTask()
+                        with
+                        | :? OperationCanceledException when lifetimeToken.IsCancellationRequested -> ()
+                        | :? ChannelClosedException -> ()
+                    })
+
+            let onError =
+                Func<Exception, Task>(fun error ->
+                    channel.Writer.TryComplete(error) |> ignore
+                    Task.CompletedTask)
+
+            let onCompleted =
+                Func<Task>(fun () ->
+                    channel.Writer.TryComplete() |> ignore
+                    Task.CompletedTask)
+
+            subscriptionTask <- asyncStream.SubscribeAsync(onNext, onError, onCompleted)
+
+        subscriptionTask
+
+    let moveNext () =
+        task {
+            if Volatile.Read(&disposed) <> 0 then
+                return false
+            else
+                let! _ = ensureSubscribed ()
+                let reader = channel.Reader
+                let mutable waiting = true
+                let mutable moved = false
+
+                while waiting do
+                    let! available = reader.WaitToReadAsync(lifetimeToken).AsTask()
+
+                    if not available then
+                        waiting <- false
+                    else
+                        match reader.TryRead() with
+                        | true, item ->
+                            current <- item
+                            moved <- true
+                            waiting <- false
+                        | false, _ -> ()
+
+                return moved
+        }
+
+    let dispose () =
+        task {
+            if Interlocked.Exchange(&disposed, 1) = 0 then
+                channel.Writer.TryComplete() |> ignore
+                do!
+                    StreamTaskSeqCleanup.dispose lifetime subscriptionTask (fun subscription ->
+                        subscription.UnsubscribeAsync())
+        }
+
+    interface IAsyncEnumerator<'T> with
+        member _.Current = current
+        member _.MoveNextAsync() = ValueTask<bool>(moveNext ())
+        member _.DisposeAsync() = ValueTask(dispose ())
+
+[<Sealed>]
+type private StreamTaskSeqEnumerable<'T>(stream: StreamRef<'T>) =
+    interface IAsyncEnumerable<'T> with
+        member _.GetAsyncEnumerator(cancellationToken) =
+            new StreamTaskSeqEnumerator<'T>(stream, cancellationToken) :> IAsyncEnumerator<'T>
+
 /// <summary>
 /// Functions for creating, publishing to, subscribing to, and consuming Orleans streams
 /// using idiomatic F# and TaskSeq for pull-based consumption.
@@ -326,50 +455,10 @@ module Stream =
     /// <param name="stream">The stream reference to consume.</param>
     /// <typeparam name="'T">The type of events on the stream.</typeparam>
     /// <returns>A TaskSeq that yields events from the stream. The sequence completes when
-    /// the channel is completed by the stream's OnCompleted callback.</returns>
+    /// the channel is completed by the stream's OnCompleted callback. Disposing the enumerator
+    /// unsubscribes the underlying Orleans subscription, including when consumption stops early.</returns>
     let asTaskSeq<'T> (stream: StreamRef<'T>) : TaskSeq<'T> =
-        let channelOptions =
-            BoundedChannelOptions(1000, FullMode = BoundedChannelFullMode.Wait)
-
-        let channel = Channel.CreateBounded<'T>(channelOptions)
-
-        let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
-
-        let onNext =
-            Func<'T, StreamSequenceToken, Task>(fun item _token ->
-                task {
-                    do! channel.Writer.WriteAsync(item)
-                })
-
-        let onError =
-            Func<Exception, Task>(fun ex ->
-                channel.Writer.Complete(ex)
-                Task.CompletedTask)
-
-        let onCompleted =
-            Func<Task>(fun () ->
-                channel.Writer.Complete()
-                Task.CompletedTask)
-
-        // The subscription starts eagerly but is AWAITED on the first pull: enumeration cannot
-        // observe an event before the subscription is live anyway, and a subscription failure
-        // must surface to the consumer -- the previous fire-and-forget left it on an unobserved
-        // task, so a caller could pull forever from a stream it was never subscribed to.
-        let subscriptionTask =
-            asyncStream.SubscribeAsync(onNext, onError, onCompleted)
-
-        taskSeq {
-            let! _subscription = subscriptionTask
-            let reader = channel.Reader
-
-            while! reader.WaitToReadAsync() do
-                let mutable hasMore = true
-
-                while hasMore do
-                    match reader.TryRead() with
-                    | true, item -> yield item
-                    | false, _ -> hasMore <- false
-        }
+        new StreamTaskSeqEnumerable<'T>(stream) :> IAsyncEnumerable<'T>
 
     /// <summary>
     /// Subscribes to a stream starting from a specific sequence token (rewind/resume).

@@ -79,10 +79,10 @@ logger.LogInformation("Processed {Count}", 3)
 let entries = LogCapture.captureLogs factory
 ```
 
-## Legacy API
+## Legacy archive
 
-`getFSharpGrain*` and `GrainMock.withFSharpGrain*` exist only for the obsolete universal
-`grain { }` model. Their examples live in
+Compatibility helpers for the old authoring model remain temporarily for migration, but are
+unsupported. Their archived examples live in
 [Legacy Testing](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/legacy/testing.md).
 
 ## Dependencies

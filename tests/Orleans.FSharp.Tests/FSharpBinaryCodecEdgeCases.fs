@@ -360,6 +360,17 @@ let private prefixedOf (typeName: string) (declaredLength: int) (body: byte[]) :
         bw.Write(declaredLength)
         bw.Write(body))
 
+/// <summary>Write BinaryWriter's unsigned 7-bit string-length prefix without a string body.</summary>
+let private declaredTypeNameOf (byteCount: int) : byte[] =
+    bodyOf (fun bw ->
+        let mutable remaining = uint32 byteCount
+
+        while remaining >= 0x80u do
+            bw.Write(byte (remaining ||| 0x80u))
+            remaining <- remaining >>> 7
+
+        bw.Write(byte remaining))
+
 let private rejects (action: unit -> unit) =
     Assert.Throws<InvalidOperationException>(action)
 
@@ -602,6 +613,26 @@ let ``an over-long wire type name is rejected`` () : unit =
     let error = rejects (fun () -> FSharpBinaryFormat.deserializeWithType (prefixedOf name 0 [||]) null |> ignore)
 
     test <@ error.Message.Contains "exceeds the 4096-character limit" @>
+
+[<Fact>]
+let ``a huge declared type-name length is rejected before its body is read`` () : unit =
+    // The payload contains only a 32 MiB DECLARATION and no string body. BinaryReader.ReadString
+    // would try to materialize that declaration before the old post-read character check ran.
+    let error =
+        rejects (fun () ->
+            FSharpBinaryFormat.deserializeWithType (declaredTypeNameOf (32 * 1024 * 1024)) null
+            |> ignore)
+
+    test <@ error.Message.Contains "pre-allocation safety limit" @>
+    test <@ error.Message.Contains "33554432-byte type name" @>
+
+[<Fact>]
+let ``a negative declared type-name length is rejected`` () : unit =
+    let error =
+        rejects (fun () ->
+            FSharpBinaryFormat.deserializeWithType (declaredTypeNameOf -1) null |> ignore)
+
+    test <@ error.Message.Contains "negative type-name byte count" @>
 
 [<Fact>]
 let ``a stream of rejected type names grows no cache`` () : unit =

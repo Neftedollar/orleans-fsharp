@@ -99,21 +99,48 @@ type internal FunctionalGrainTarget<'Actor>
                 )
 
 /// <summary>
-/// The activation target of a definition which declares <c>onStream</c> or <c>onBroadcast</c>
-/// hooks. It adds exactly the two interfaces Orleans probes the grain instance for when it
-/// installs a stream or broadcast consumer extension.
+/// The activation target of a definition which declares <c>onStream</c> hooks and no
+/// <c>onBroadcast</c> hook. It adds exactly the interface Orleans probes when it installs a
+/// stream consumer extension.
 /// </summary>
 /// <remarks>
-/// The two interfaces are on a separate type, used only when the definition declares at least one
-/// implicit subscription, deliberately. <c>StreamConsumerGrainContextAction</c> eagerly binds a
-/// <c>StreamConsumerExtension</c> to every activation whose instance implements
-/// <c>IStreamSubscriptionObserver</c>, and <c>SiloStreamProviderRuntime.BindExtension</c> throws
-/// for a stateless worker — so implementing the interface unconditionally would fail the
-/// activation of every stateless-worker functional grain on a silo with streaming configured.
+/// Orleans 10.3 permits this interface on stateless-worker activations and treats their local
+/// activations as competing consumers. Keeping the broadcast interface off this exact type is
+/// load-bearing: broadcast channels do not support stateless-worker activation semantics.
 /// </remarks>
 /// <typeparam name="TActor">The actor brand of the hosted definition.</typeparam>
 [<Sealed>]
-type internal FunctionalStreamingGrainTarget<'Actor>
+type internal FunctionalStreamGrainTarget<'Actor>
+    (env: FunctionalTargetEnvironment, grainContext: IGrainContext, grainRuntime: IGrainRuntime) =
+    inherit FunctionalGrainTarget<'Actor>(env, grainContext, grainRuntime)
+
+    interface IStreamSubscriptionObserver with
+        /// <inheritdoc/>
+        member _.OnSubscribed(handleFactory: IStreamSubscriptionHandleFactory) =
+            FunctionalStreams.onStreamSubscribed env handleFactory
+
+/// <summary>
+/// The activation target of a definition which declares <c>onBroadcast</c> hooks and no
+/// <c>onStream</c> hook.
+/// </summary>
+/// <typeparam name="TActor">The actor brand of the hosted definition.</typeparam>
+[<Sealed>]
+type internal FunctionalBroadcastGrainTarget<'Actor>
+    (env: FunctionalTargetEnvironment, grainContext: IGrainContext, grainRuntime: IGrainRuntime) =
+    inherit FunctionalGrainTarget<'Actor>(env, grainContext, grainRuntime)
+
+    interface IOnBroadcastChannelSubscribed with
+        /// <inheritdoc/>
+        member _.OnSubscribed(subscription: IBroadcastChannelSubscription) =
+            FunctionalStreams.onChannelSubscribed env subscription
+
+/// <summary>
+/// The activation target of a regular grain definition which declares both <c>onStream</c> and
+/// <c>onBroadcast</c> hooks.
+/// </summary>
+/// <typeparam name="TActor">The actor brand of the hosted definition.</typeparam>
+[<Sealed>]
+type internal FunctionalStreamAndBroadcastGrainTarget<'Actor>
     (env: FunctionalTargetEnvironment, grainContext: IGrainContext, grainRuntime: IGrainRuntime) =
     inherit FunctionalGrainTarget<'Actor>(env, grainContext, grainRuntime)
 
@@ -147,7 +174,7 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
         /// depending on whether the definition declares an implicit subscription.
         /// </summary>
         /// <param name="grainContext">The Orleans-supplied context for the activation being created.</param>
-        /// <returns>The boxed functional grain target (<c>FunctionalGrainTarget&lt;'Actor&gt;</c> or <c>FunctionalStreamingGrainTarget&lt;'Actor&gt;</c>).</returns>
+        /// <returns>The boxed functional grain target carrying exactly the stream and/or broadcast observer interfaces declared by the definition.</returns>
         /// <exception cref="System.InvalidOperationException">The definition declares a transactional facet but Orleans' ambient grain context does not match <paramref name="grainContext"/>, or the constructed target did not receive it.</exception>
         member _.CreateInstance(grainContext: IGrainContext) : obj =
             let services = grainContext.ActivationServices
@@ -342,14 +369,22 @@ type internal FunctionalGrainActivator<'Actor>(definition: FunctionalHostedDefin
                 host.BindContextFactory(fun scope -> FunctionalContextFactory.core env CancellationToken.None scope)
             | None -> ()
 
-            // A definition with no implicit subscription gets the plain target, so Orleans never
-            // probes it as a stream or broadcast consumer -- see FunctionalStreamingGrainTarget's
-            // remarks for why that separation is load-bearing rather than cosmetic.
+            // Give Orleans exactly the observer interfaces this definition declares. This is
+            // particularly important for Orleans 10.3 stateless workers: stream observers are
+            // supported as competing consumers, while broadcast observers are still forbidden.
+            let hasStream = definition.StreamBindings |> Array.exists _.IsStream
+            let hasBroadcast = definition.StreamBindings |> Array.exists (fun binding -> not binding.IsStream)
+
             let target: FunctionalGrainTarget<'Actor> =
-                if definition.StreamBindings.Length = 0 then
+                match hasStream, hasBroadcast with
+                | false, false ->
                     new FunctionalGrainTarget<'Actor>(env, grainContext, grainRuntime)
-                else
-                    new FunctionalStreamingGrainTarget<'Actor>(env, grainContext, grainRuntime)
+                | true, false ->
+                    new FunctionalStreamGrainTarget<'Actor>(env, grainContext, grainRuntime)
+                | false, true ->
+                    new FunctionalBroadcastGrainTarget<'Actor>(env, grainContext, grainRuntime)
+                | true, true ->
+                    new FunctionalStreamAndBroadcastGrainTarget<'Actor>(env, grainContext, grainRuntime)
 
             deactivate <- fun () -> target.DeactivateNow()
             migrate <-

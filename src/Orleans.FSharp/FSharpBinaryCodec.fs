@@ -970,6 +970,50 @@ module internal FSharpBinaryFormat =
     [<Literal>]
     let private MaxTypeNameLength = 4096
 
+    let private strictUtf8 = Text.UTF8Encoding(false, true)
+
+    /// <summary>
+    /// Reads BinaryWriter's 7-bit byte length before allocating the string. BinaryReader's
+    /// <c>ReadString</c> materializes the declared byte count first, so checking the resulting
+    /// character count afterwards does not bound allocation for a hostile payload.
+    /// </summary>
+    let private readBoundedTypeName (reader: BinaryReader) =
+        let byteCount =
+            try
+                reader.Read7BitEncodedInt()
+            with
+            | :? FormatException as error ->
+                invalidOp $"FSharpBinaryCodec: the payload has an invalid type-name length prefix: {error.Message}"
+            | :? EndOfStreamException ->
+                invalidOp "FSharpBinaryCodec: the payload ends inside the type-name length prefix."
+
+        let maxByteCount = strictUtf8.GetMaxByteCount MaxTypeNameLength
+
+        if byteCount < 0 then
+            invalidOp $"FSharpBinaryCodec: the payload declares a negative type-name byte count ({byteCount})."
+
+        if byteCount > maxByteCount then
+            invalidOp
+                $"FSharpBinaryCodec: the payload declares a {byteCount}-byte type name, which exceeds the {maxByteCount}-byte pre-allocation safety limit for a {MaxTypeNameLength}-character type name."
+
+        let bytes = reader.ReadBytes byteCount
+
+        if bytes.Length <> byteCount then
+            invalidOp
+                $"FSharpBinaryCodec: the payload declares a {byteCount}-byte type name, but only {bytes.Length} byte(s) remain."
+
+        let typeName =
+            try
+                strictUtf8.GetString bytes
+            with :? Text.DecoderFallbackException as error ->
+                invalidOp $"FSharpBinaryCodec: the payload type name is not valid UTF-8: {error.Message}"
+
+        if typeName.Length > MaxTypeNameLength then
+            invalidOp
+                $"FSharpBinaryCodec: the payload declares a {typeName.Length}-character type name, which exceeds the {MaxTypeNameLength}-character limit."
+
+        typeName
+
     /// <summary>
     /// Every assembly simple name an assembly-qualified type name mentions, the outer type's
     /// own qualifier and those of its generic arguments alike.
@@ -1223,7 +1267,7 @@ module internal FSharpBinaryFormat =
     let deserializeWithType (data: byte array) (hintType: Type) : obj =
         use ms = new MemoryStream(data)
         use br = new BinaryReader(ms, Text.Encoding.UTF8, true)
-        let typeName = br.ReadString()
+        let typeName = readBoundedTypeName br
         let valueLen = readLength br $"the payload of type '{typeName}'"
         let valueBytes = br.ReadBytes(valueLen)
 
@@ -1264,6 +1308,98 @@ module internal FSharpBinaryFormat =
 
         deserialize valueBytes actualType
 
+/// <summary>Graph-aware copying for values owned by the generalized F# copier.</summary>
+[<RequireQualifiedAccess>]
+module private FSharpGraphCopy =
+
+    let private memberwiseClone =
+        typeof<obj>.GetMethod(
+            "MemberwiseClone",
+            Reflection.BindingFlags.Instance ||| Reflection.BindingFlags.NonPublic
+        )
+
+    let private fields = ConcurrentDictionary<Type, Reflection.FieldInfo array>()
+
+    let private instanceFields (valueType: Type) =
+        fields.GetOrAdd(
+            valueType,
+            fun root ->
+                let rec collect (current: Type) (accumulator: Reflection.FieldInfo list) =
+                    if isNull current then
+                        accumulator
+                    else
+                        let declared =
+                            current.GetFields(
+                                Reflection.BindingFlags.Instance
+                                ||| Reflection.BindingFlags.Public
+                                ||| Reflection.BindingFlags.NonPublic
+                                ||| Reflection.BindingFlags.DeclaredOnly
+                            )
+                            |> Array.toList
+
+                        collect current.BaseType (List.append declared accumulator)
+
+                collect root [] |> List.toArray
+        )
+
+    let private copyArray (input: Array) (context: CopyContext) : obj =
+        let arrayType = input.GetType()
+        let elementType = arrayType.GetElementType()
+        let lengths = Array.init input.Rank input.GetLength
+        let lowerBounds = Array.init input.Rank input.GetLowerBound
+        let copied = Array.CreateInstance(elementType, lengths, lowerBounds)
+        context.RecordCopy(input, copied)
+
+        let indices = Array.zeroCreate input.Rank
+
+        let rec copyDimension dimension =
+            if dimension = input.Rank then
+                let longIndices = indices |> Array.map int64
+                let value = input.GetValue(longIndices)
+                copied.SetValue(context.DeepCopy(value), longIndices)
+            else
+                for index in input.GetLowerBound(dimension) .. input.GetUpperBound(dimension) do
+                    indices[dimension] <- index
+                    copyDimension (dimension + 1)
+
+        copyDimension 0
+        copied
+
+    let private copyObject (input: obj) (context: CopyContext) : obj =
+        let valueType = input.GetType()
+        let copied = memberwiseClone.Invoke(input, null)
+
+        if not valueType.IsValueType then
+            // Record before descending so self-cycles and repeated references resolve to this
+            // exact copy instead of recursing or manufacturing a second object.
+            context.RecordCopy(input, copied)
+
+        for field in instanceFields valueType do
+            let fieldValue = field.GetValue(input)
+            field.SetValue(copied, context.DeepCopy(fieldValue))
+
+        copied
+
+    let copy (input: obj) (context: CopyContext) : obj =
+        ArgumentNullException.ThrowIfNull(context)
+
+        if isNull input then
+            null
+        else
+            let inputType = input.GetType()
+
+            if inputType.IsValueType then
+                copyObject input context
+            else
+                let mutable existing: obj = null
+
+                if context.TryGetCopy(input, &existing) then
+                    existing
+                else
+                    match input with
+                    | :? Array as array -> copyArray array context
+                    | _ -> copyObject input context
+
 /// <summary>
 /// Orleans generalized codec that serializes F# types and POCO classes in binary format
 /// without requiring [GenerateSerializer] or [Id] attributes.
@@ -1303,23 +1439,11 @@ type FSharpBinaryCodec() =
             FSharpBinaryFormat.isSupportedType ``type``
 
     interface IDeepCopier with
-        member _.DeepCopy(input: obj, _context: CopyContext) : obj =
-            if isNull input then null
-            else
-                let t = input.GetType()
-                // F# unions, records, options, lists, maps, and DU case types are all
-                // structurally immutable — return as-is without cloning.
-                if t.IsClass
-                   && not (FSharpType.IsUnion(t, true))
-                   && not (FSharpType.IsRecord(t, true))
-                   && not (FSharpBinaryFormat.isUnionCaseType t)
-                   && not (t.IsGenericType
-                           && (t.GetGenericTypeDefinition() = typedefof<option<_>>
-                               || t.GetGenericTypeDefinition() = typedefof<list<_>>)) then
-                    // POCO — deep copy via round-trip serialization
-                    FSharpBinaryFormat.deserialize (FSharpBinaryFormat.serialize input t) t
-                else
-                    input // immutable F# types — return as-is
+        member _.DeepCopy(input: obj, context: CopyContext) : obj =
+            // An F# record/union/list is only shallowly immutable: it can contain arrays,
+            // mutable classes, or other mutable reference values. CopyContext preserves both
+            // isolation and graph identity, including duplicate references and cycles.
+            FSharpGraphCopy.copy input context
 
     interface ITypeFilter with
         member _.IsTypeAllowed(``type``: Type) : Nullable<bool> =

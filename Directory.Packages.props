@@ -72,8 +72,9 @@
     <!-- Serilog.Extensions.Logging previously floated at 10.*; only 10.x in cache = 10.0.0 -->
     <PackageVersion Include="Serilog.Extensions.Logging"                    Version="10.0.0" />
     <PackageVersion Include="Serilog.Sinks.Console"                        Version="6.1.1" />
-    <!-- Scriban previously floated at 5.*; highest 5.x in cache = 5.12.1 -->
-    <PackageVersion Include="Scriban"                                       Version="5.12.1" />
+    <!-- 7.2.6 is the current stable release and contains the fixes for the
+         template-parser advisories affecting the older 5.x/6.x/early 7.x line. -->
+    <PackageVersion Include="Scriban"                                       Version="7.2.6" />
     <PackageVersion Include="TypeShape"                                     Version="10.0.0" />
     <PackageVersion Include="StackExchange.Redis"                           Version="2.13.17" />
 

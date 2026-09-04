@@ -11,7 +11,9 @@ open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
 open Orleans
+open Orleans.BroadcastChannel
 open Orleans.Runtime
+open Orleans.Streams.Core
 open Orleans.FSharp
 
 type RoomActor = private RoomActor of unit
@@ -615,36 +617,45 @@ let ``onStream and onBroadcast reject a blank provider or namespace`` () =
     test <@ missingHook.Message.Contains "requires a hook" @>
 
 /// <remarks>
-/// Orleans' own <c>SiloStreamProviderRuntime.BindExtension</c> throws "The extension ... cannot
-/// be bound to a Stateless Worker", so a stateless worker can never host a consumer extension —
-/// and implicit delivery addresses one activation identity derived from the stream key, which
-/// multiplexed local activations cannot honor. Rejected at sealing in both declaration orders,
-/// and mutation-checked against a non-stateless-worker placement, which combines freely.
+/// Orleans 10.3 added implicit stream subscriptions to stateless workers. The package keeps its
+/// Orleans 10.1 floor, so admission follows the actually loaded Orleans.Streaming capability in
+/// both declaration orders instead of raising the dependency floor for every consumer.
 /// </remarks>
 [<Fact>]
-let ``statelessWorker rejects onStream and onBroadcast in either order`` () =
-    let streamAfter =
-        throws (fun () ->
-            grainFor contract {
-                defaultState (fun () -> { count = 0 })
-                statelessWorker 4
-                onStream "Streams" "chat.messages" streamHook
-                handle (_.join) joinHandler
-                handle (_.say) sayHandler
-            }
-            |> ignore)
+let ``statelessWorker onStream admission follows the loaded Orleans capability`` () =
+    let after () =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            statelessWorker 4
+            onStream "Streams" "chat.messages" streamHook
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
 
-    let streamBefore =
-        throws (fun () ->
-            grainFor contract {
-                defaultState (fun () -> { count = 0 })
-                onStream "Streams" "chat.messages" streamHook
-                statelessWorker 4
-                handle (_.join) joinHandler
-                handle (_.say) sayHandler
-            }
-            |> ignore)
+    let before () =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            onStream "Streams" "chat.messages" streamHook
+            statelessWorker 4
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
 
+    if OrleansRuntimeCapabilities.supportsStatelessImplicitStreams () then
+        test <@ (after ()).StreamBindings.Length = 1 @>
+        test <@ (before ()).StreamBindings.Length = 1 @>
+    else
+        let afterError = throws (fun () -> after () |> ignore)
+        let beforeError = throws (fun () -> before () |> ignore)
+        test <@ afterError.Message.Contains "requires Orleans 10.3.0 or newer" @>
+        test <@ beforeError.Message.Contains "requires Orleans 10.3.0 or newer" @>
+
+/// <remarks>
+/// Broadcast channels did not gain Orleans 10.3's stateless-worker competing-consumer support.
+/// This remains rejected independently of the order and of stream support.
+/// </remarks>
+[<Fact>]
+let ``statelessWorker rejects onBroadcast while regular placement accepts subscriptions`` () =
     let broadcastAfter =
         throws (fun () ->
             grainFor contract {
@@ -665,10 +676,25 @@ let ``statelessWorker rejects onStream and onBroadcast in either order`` () =
             handle (_.say) sayHandler
         }
 
-    test <@ streamAfter.Message.Contains "'statelessWorker' with 'onStream'" @>
-    test <@ streamBefore.Message.Contains "'statelessWorker' with 'onStream'" @>
     test <@ broadcastAfter.Message.Contains "'statelessWorker' with 'onBroadcast'" @>
+    test <@ broadcastAfter.Message.Contains "does not support implicit broadcast-channel subscriptions" @>
     test <@ placementCombinesFreely.StreamBindings.Length = 1 @>
+
+[<Fact>]
+let ``implicit-subscription targets expose only the observer interfaces they need`` () =
+    let carries (interfaceType: Type) (targetType: Type) =
+        targetType.GetInterfaces() |> Array.contains interfaceType
+
+    let stream = typedefof<FunctionalStreamGrainTarget<_>>
+    let broadcast = typedefof<FunctionalBroadcastGrainTarget<_>>
+    let both = typedefof<FunctionalStreamAndBroadcastGrainTarget<_>>
+
+    test <@ carries typeof<IStreamSubscriptionObserver> stream @>
+    test <@ not (carries typeof<IOnBroadcastChannelSubscribed> stream) @>
+    test <@ not (carries typeof<IStreamSubscriptionObserver> broadcast) @>
+    test <@ carries typeof<IOnBroadcastChannelSubscribed> broadcast @>
+    test <@ carries typeof<IStreamSubscriptionObserver> both @>
+    test <@ carries typeof<IOnBroadcastChannelSubscribed> both @>
 
 /// <remarks>
 /// Mutation control for every rejection above: a definition with no implicit subscription at all

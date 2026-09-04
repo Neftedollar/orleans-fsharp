@@ -1,8 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Declarative event sourcing for Orleans grains in F# — eventSourcedGrain {} CE with apply/handle and a JournaledGrain bridge.</Description>
+    <Description>Legacy Orleans.FSharp event-sourcing compatibility source. New applications use journaledGrainFor from Orleans.FSharp; this project is no longer packaged.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Legacy compatibility source: keep it buildable for examples and tests,
+         but do not ship a new package in the 5.x production release. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

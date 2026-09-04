@@ -83,8 +83,8 @@ type ResilienceOptions =
         RetryDelay: TimeSpan
 
         /// Open the circuit after this many consecutive failures. None = disabled.
-        /// Circuit state lives in the pipeline object and `execute` builds a fresh one per
-        /// call — see "Circuit state is per pipeline object" below.
+        /// `execute` caches circuit state by the identity of this exact immutable options
+        /// instance plus result type — see "Circuit state and pipeline identity" below.
         CircuitBreakerThreshold: int option
 
         /// How long the circuit stays open before attempting a probe call. None falls back
@@ -231,12 +231,15 @@ let myOpts =
 let! result = GrainResilience.execute<string> myOpts (fun () -> grain.HandleMessage cmd)
 ```
 
-Every attempt re-invokes `f`, so `MaxRetryAttempts = 2` calls it at most three times.
+Every attempt re-invokes `f`, so `MaxRetryAttempts = 2` calls it at most three times. `execute`
+caches its pipeline by the object identity of the exact immutable `ResilienceOptions` value and by
+`'T`: reusing `myOpts` for the same result type reuses the pipeline and shares circuit state.
 
 ### `GrainResilience.executeCancellable`
 
 `execute` for an operation that takes the deadline's token — the full-options counterpart of
-`withTimeoutCancellable`.
+`withTimeoutCancellable`. It uses the same options-instance/result-type pipeline cache as
+`execute`.
 
 ```fsharp
 val executeCancellable<'T>
@@ -253,7 +256,9 @@ let! result =
 
 ### `GrainResilience.buildPipeline`
 
-Creates a reusable `ResiliencePipeline<'T>` from options. Useful when you want to share a pipeline across many calls.
+Creates a fresh `ResiliencePipeline<'T>` from options on every call. This is the explicit pipeline
+construction API: retain and reuse the returned object when calls should share circuit state, or
+call `buildPipeline` again when they should be isolated.
 
 ```fsharp
 val buildPipeline<'T> : options : ResilienceOptions -> ResiliencePipeline<'T>
@@ -324,15 +329,31 @@ This means:
   strategy's final verdict, not each attempt.
 - A single Polly `TimeoutRejectedException` or `BrokenCircuitException` bypasses the retry.
 
-### Circuit state is per pipeline object
+### Circuit state and pipeline identity
 
-`execute` builds a fresh pipeline on every call. Circuit-breaker state lives *in* the pipeline
-object, so a breaker configured through `ResilienceOptions` starts cold each time: five failing
-`execute` calls with `CircuitBreakerThreshold = Some 2` all raise the underlying exception and the
-circuit never opens. `MaxRetryAttempts` does not change that either — the breaker sees the retry
-strategy's single final outcome, not each attempt.
+Circuit-breaker state lives *in* a pipeline. `execute` and `executeCancellable` cache that pipeline
+by two keys: the object identity of the exact immutable `ResilienceOptions` instance, and the result
+type `'T`. Reusing one options binding with the same result type therefore shares circuit state
+across calls. Independently constructed options records remain isolated even when all their fields
+are structurally equal; changing the result type also selects a separate pipeline.
 
-For a breaker that actually trips, keep one pipeline and reuse it:
+This makes the sharing boundary explicit:
+
+```fsharp
+// Reuse this exact immutable instance: execute<int> calls share one circuit.
+let sharedOptions =
+    { GrainResilience.defaultOptions with
+        MaxRetryAttempts = 0
+        CircuitBreakerThreshold = Some 5
+        CircuitBreakerDuration = Some(TimeSpan.FromSeconds 30) }
+
+let callShared f = GrainResilience.execute<int> sharedOptions f
+
+// A distinct record instance, even with equal fields, owns an isolated circuit.
+let isolatedOptions = { sharedOptions with MaxRetryAttempts = sharedOptions.MaxRetryAttempts }
+```
+
+For direct control, build one pipeline and reuse it:
 
 ```fsharp
 // Service-scoped: one object, one circuit
@@ -346,8 +367,10 @@ member _.Query(cmd) =
     pipeline.ExecuteAsync(fun _ -> ValueTask<_>(grain.HandleMessage cmd)).AsTask()
 ```
 
-or use `GrainResilience.circuitBreaker`, which exists for exactly this and is non-generic.
-Both are pinned by tests: `execute` does not share circuit state, a reused `buildPipeline` does.
+`buildPipeline` itself always returns a fresh pipeline; only reuse of the returned object shares its
+state. Alternatively, use `GrainResilience.circuitBreaker`, which is a standalone non-generic
+pipeline. Tests pin all three boundaries: reused options identity shares under `execute`, a separate
+options instance isolates, and each `buildPipeline` call is fresh.
 
 ---
 

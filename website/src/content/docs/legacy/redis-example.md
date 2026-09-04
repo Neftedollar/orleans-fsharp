@@ -5,12 +5,15 @@ description: "Shopping cart example using the deprecated grain authoring model."
 
 # Legacy: Redis Example — Shopping Cart Service
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **End-to-end guide — Redis storage, clustering, and reminders for a real-world shopping cart.**
 
 > **Note.** This walkthrough is written against the `grain { }` CE, `AddFSharpGrain` and the
-> `FSharpGrain.ref`/`send`/`post`/`ask` handle module, which now carry `[<Obsolete>]` (warning, not
-> error) -- the example still compiles and runs exactly as described. The Redis storage and
-> clustering configuration is unaffected. For the current grain authoring model see
+> `FSharpGrain.ref`/`send`/`post`/`ask` handle module from the 4.1-and-earlier package shape. The
+> archived project is not verified against 5.0. For the current grain authoring model see
 > [functional-grains.md](/orleans-fsharp/functional-grains/).
 
 ## What you'll build

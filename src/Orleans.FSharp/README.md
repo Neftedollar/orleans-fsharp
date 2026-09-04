@@ -78,14 +78,13 @@ and [API reference](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs
 | `Orleans.FSharp.Abstractions` | Pre-generated transport proxies, pulled in transitively |
 | `Orleans.FSharp.Testing` | TestingHost, web-host, FsCheck, and log-capture helpers |
 | `Orleans.FSharp.Analyzers` | F# analyzer that reports `async { }` where `task { }` is expected |
-| `Orleans.FSharp.CodeGen` | Legacy per-grain C# CodeGen bridge |
-| `Orleans.FSharp.EventSourcing` | Legacy `eventSourcedGrain { }` compatibility package |
 
-## Legacy API
+## Legacy archive
 
-The original `grain { }`, `FSharpGrain.*`, and `AddFSharpGrain` authoring model is obsolete but
-remains supported for existing applications. Its examples and migration mapping live only in the
-[Legacy documentation](https://github.com/Neftedollar/orleans-fsharp/tree/main/docs/legacy).
+The original authoring model is unsupported and is not part of the 5.x release line. Its
+source-only compatibility projects, examples, and migration mapping remain in the repository's
+[Legacy archive](https://github.com/Neftedollar/orleans-fsharp/tree/main/docs/legacy) to help
+existing applications migrate.
 
 ## License
 

@@ -444,11 +444,9 @@ let ``circuitBreaker opens after threshold failures`` () =
     }
 
 [<Fact>]
-let ``execute builds a fresh pipeline per call so circuit state is not shared`` () =
+let ``execute shares circuit state when the same immutable options value is reused`` () =
     task {
-        // Not a wish, a measurement: `execute` calls buildPipeline on every invocation, so the
-        // breaker configured in ResilienceOptions starts cold each time and the circuit never
-        // opens across calls. Documented in resilience.md; this test is what keeps the docs true.
+        // Object identity is the policy boundary: this exact value is reused for every call.
         let opts =
             { GrainResilience.defaultOptions with
                 MaxRetryAttempts = 0
@@ -471,8 +469,51 @@ let ``execute builds a fresh pipeline per call so circuit state is not shared`` 
                 observed.Add(unwrapAggregate ex)
 
         test <@ observed.Count = 5 @>
-        test <@ observed |> Seq.forall (fun ex -> ex :? InvalidOperationException) @>
-        test <@ observed |> Seq.forall (fun ex -> not (ex :? BrokenCircuitException)) @>
+        test <@ observed |> Seq.exists (fun ex -> ex :? BrokenCircuitException) @>
+    }
+
+[<Fact>]
+let ``structurally equal options values keep unrelated circuit state isolated`` () =
+    task {
+        let first =
+            { GrainResilience.defaultOptions with
+                MaxRetryAttempts = 0
+                CircuitBreakerThreshold = Some 2
+                CircuitBreakerDuration = Some(TimeSpan.FromSeconds(30.0)) }
+
+        let second =
+            { GrainResilience.defaultOptions with
+                MaxRetryAttempts = 0
+                CircuitBreakerThreshold = Some 2
+                CircuitBreakerDuration = Some(TimeSpan.FromSeconds(30.0)) }
+
+        test <@ first = second @>
+        test <@ not (Object.ReferenceEquals(first, second)) @>
+
+        let boom () =
+            task {
+                raise (InvalidOperationException("boom"))
+                return 0
+            }
+
+        for _ in 1..2 do
+            try
+                let! _ = GrainResilience.execute first boom
+                ()
+            with _ ->
+                ()
+
+        let! isolatedFailure =
+            task {
+                try
+                    let! _ = GrainResilience.execute second boom
+                    return null :> exn
+                with ex ->
+                    return unwrapAggregate ex
+            }
+
+        test <@ isolatedFailure :? InvalidOperationException @>
+        test <@ not (isolatedFailure :? BrokenCircuitException) @>
     }
 
 [<Fact>]

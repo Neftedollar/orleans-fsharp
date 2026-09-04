@@ -7,6 +7,9 @@ description: "Supported Orleans versions, the 10.3.1 compatibility target, and n
 
 **Supported version policy, verified runtimes, and relevant changes in new Orleans releases.**
 
+This page describes framework compatibility for `main`, the Orleans.FSharp 5.0 preview/next major.
+The published stable Orleans.FSharp line is 4.1; see [Release and Production Status](/orleans-fsharp/release-status/).
+
 ## Version policy
 
 Orleans.FSharp declares Orleans **10.1.0 as its minimum**, not as an exact pin. NuGet can resolve
@@ -65,6 +68,7 @@ These additions fall into three different categories:
 |---|---|
 | Core runtime reliability and routing changes | Inherited when the application resolves Orleans 10.3.x |
 | Storage and stream providers configured through Orleans hosting APIs | Usable alongside functional grains through the native `ISiloBuilder`/host configuration; dedicated F# helpers are optional convenience work |
+| Stateless-worker implicit stream consumers | Integrated on `main`: `statelessWorker` + `onStream` seals only with loaded Orleans.Streaming 10.3.0+ and has a live competing-consumer integration test; `onBroadcast` remains rejected |
 | `Microsoft.Orleans.Journaling`, `DurableGrain`, and Durable Jobs | Deliberately deferred and not represented as supported Orleans.FSharp APIs yet |
 
 The last category is highlighted here for discovery only. It is not a promise that the current

@@ -342,13 +342,9 @@ and are decoded directly through the current typed upcaster pipeline. Fixture pr
 beside the bytes in `tests/Orleans.FSharp.Tests/Fixtures/README.md`. A test which merely creates an
 old-looking object using the new binary does not prove backward compatibility.
 
-## Legacy tests
-
-Tests for the original APIs are retained in [Legacy Testing](/orleans-fsharp/legacy/testing/).
-
 ## Next steps
 
 - [Functional Grain Runtime](/orleans-fsharp/functional-grains/) -- the current authoring model
-- [Legacy API](/orleans-fsharp/legacy/) -- maintenance tests for earlier authoring models
+- [Release and Production Status](/orleans-fsharp/release-status/) -- what the repository checks do and do not prove
 - [Event Sourcing](/orleans-fsharp/event-sourcing/) -- testing event-sourced grains
 - [Advanced](/orleans-fsharp/advanced/) -- transactions, serialization, and more

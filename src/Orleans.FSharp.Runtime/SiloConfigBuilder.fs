@@ -285,7 +285,7 @@ type SiloConfig =
         GrainServiceTypes: Type list
         /// <summary>Startup tasks to run when the silo starts. Each task receives IServiceProvider and CancellationToken.</summary>
         StartupTasks: (IServiceProvider -> CancellationToken -> Tasks.Task) list
-        /// <summary>Whether to register Orleans health checks with the DI container.</summary>
+        /// <summary>Whether to register local Orleans silo readiness and liveness checks.</summary>
         EnableHealthChecks: bool
         /// <summary>TLS/mTLS configuration for securing silo communication, or None if not configured.</summary>
         TlsConfig: TlsConfig option
@@ -616,6 +616,11 @@ module SiloConfig =
             |> ignore
         | None -> ()
 
+        // Register on the shared ISiloBuilder path so direct silo builders, TestCluster, and
+        // HostApplicationBuilder all receive the same checks.
+        if config.EnableHealthChecks then
+            OrleansHealthChecks.addSiloChecks siloBuilder.Services |> ignore
+
         // Apply startup tasks
         config.StartupTasks
         |> List.iter (fun startupTask ->
@@ -643,10 +648,6 @@ module SiloConfig =
             builder.Services.AddLogging(fun loggingBuilder ->
                 loggingBuilder.AddSerilog() |> ignore)
             |> ignore
-
-        // Apply health checks
-        if config.EnableHealthChecks then
-            builder.Services.AddHealthChecks() |> ignore
 
         // Apply custom services
         config.CustomServices
@@ -1070,8 +1071,9 @@ type SiloConfigBuilder() =
         }
 
     /// <summary>
-    /// Enables health checks for the silo by registering IHealthChecksBuilder with the DI container.
-    /// Map the health check endpoints in your ASP.NET Core pipeline to expose them.
+    /// Enables local Orleans silo readiness and liveness health checks.
+    /// The checks are tagged <c>ready</c> and <c>live</c>; map and filter health-check endpoints in
+    /// the containing ASP.NET Core host to expose them. Application dependencies are not checked.
     /// </summary>
     /// <param name="config">The current silo configuration being built.</param>
     /// <returns>The updated silo configuration with health checks enabled.</returns>

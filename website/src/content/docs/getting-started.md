@@ -7,7 +7,12 @@ description: "Zero to working grain in 15 minutes."
 
 **Zero to working grain in 15 minutes.**
 
-> **Current API.** This guide uses `grainContract` / `grainFor`, typed API records, and `FunctionalGrain.ref`. Legacy authoring models are documented separately under [Legacy API](/orleans-fsharp/legacy/).
+> **Current API.** This guide uses `grainContract` / `grainFor`, typed API records, and
+> `FunctionalGrain.ref`. Earlier authoring models are isolated in the unsupported
+> [Legacy archive](/orleans-fsharp/legacy/).
+
+> **Version scope.** This guide tracks `main`, the 5.0 preview/next major. The published stable
+> packages are 4.1 (latest `4.1.0`); see [Release and Production Status](/orleans-fsharp/release-status/).
 
 ## What you'll learn
 
@@ -23,9 +28,9 @@ description: "Zero to working grain in 15 minutes."
 
 ## Step 1: Create the project
 
-The template in this repository already uses the current functional API. The currently published
-NuGet template `4.1.0` still creates the Legacy CodeGen-based API, so until the next template
-release install the current template from a source checkout:
+The template in this repository tracks the 5.0 preview and uses the current functional API. The
+published 4.1.0 template belongs to the unsupported archive, so install the preview template from
+a source checkout:
 
 ```bash
 git clone https://github.com/Neftedollar/orleans-fsharp.git
@@ -195,15 +200,12 @@ dotnet run --project MyCounter.Silo
 dotnet test
 ```
 
-## Legacy API
-
-Maintaining an older Orleans.FSharp application? Use the isolated [Legacy Getting Started](/orleans-fsharp/legacy/getting-started/) guide.
-
 ## What's next
 
 | Guide | Description |
 |---|---|
 | [Functional Grain Runtime](/orleans-fsharp/functional-runtime/) | The short path through the current authoring model |
+| [Release and Production Status](/orleans-fsharp/release-status/) | Stable 4.1 versus main/5.0 preview and production boundaries |
 | [Functional Runtime Reference](/orleans-fsharp/functional-grains/) | Complete builder operations, invariants, and edge cases |
 | [Examples](/orleans-fsharp/examples/) | Runnable projects mapped to features and use cases |
 | [Silo Configuration](/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
@@ -213,3 +215,6 @@ Maintaining an older Orleans.FSharp application? Use the isolated [Legacy Gettin
 | [Dashboard](/orleans-fsharp/dashboard/) | Run Orleans Dashboard and inspect functional actor activations |
 | [Testing](/orleans-fsharp/testing/) | TestingHost integration tests, pure handlers, FsCheck, and log capture |
 | [API Reference](/orleans-fsharp/api-reference/) | All public modules and functions |
+
+Maintaining an existing application on an earlier authoring model? The unsupported material is
+isolated in the [Legacy archive](/orleans-fsharp/legacy/).

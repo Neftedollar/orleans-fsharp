@@ -678,10 +678,6 @@ See [calling-from-csharp.md](calling-from-csharp.md).
 
 ---
 
-## Legacy model
-
-The original event-sourcing API is retained in [Legacy Event Sourcing](legacy/event-sourcing.md).
-
 ## Bringing your own provider
 
 A log-consistency provider is an `ILogViewAdaptorFactory` registered as a **keyed** service under

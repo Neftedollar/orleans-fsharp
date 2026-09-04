@@ -18,6 +18,10 @@ Two classes of dead link, both observed live in this repository:
    So: resolve every non-anchor relative href against the emitting page's own
    directory and require the target to exist in dist.
 
+3. Canonical and Markdown links published in llms.txt / llms-full.txt. The full
+   corpus is assembled from files in different directories, so an unnormalized
+   relative link has no stable base and is always a dead link for consumers.
+
 Inline <script>/<style> bodies are stripped first -- the theme's own JS contains
 template literals like href="${n}" that are not links.
 """
@@ -30,6 +34,11 @@ from urllib.parse import unquote, urljoin, urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / 'website' / 'dist'
 BASE = '/orleans-fsharp'
+SITE_ORIGIN = 'https://neftedollar.com'
+LLMS_FILES = (
+    ROOT / 'website' / 'public' / 'llms.txt',
+    ROOT / 'website' / 'public' / 'llms-full.txt',
+)
 
 SCRIPTISH = re.compile(r'<(script|style)\b[^>]*>.*?</\1>', re.S | re.I)
 HREF = re.compile(r'href="([^"]+)"')
@@ -38,6 +47,8 @@ NAMED_ANCHOR = re.compile(r'<a\b[^>]*\bname="([^"]+)"', re.I)
 H1 = re.compile(r'<h1\b', re.I)
 META_REFRESH = re.compile(r'<meta\b[^>]*http-equiv="refresh"', re.I)
 EXTERNAL = re.compile(r'^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|//)')
+LLMS_MARKDOWN_TARGET = re.compile(r'!?\[[^\]]*\]\((<[^>\n]+>|[^)\s]+)')
+LLMS_INTERNAL_URL = re.compile(r'https://neftedollar\.com/orleans-fsharp[^\s<>"`\])]*')
 
 
 def emitted_file(rel: str) -> Path | None:
@@ -62,6 +73,54 @@ def fragments(page: Path, cache: dict[Path, set[str]]) -> set[str]:
             for value in (*ID.findall(text), *NAMED_ANCHOR.findall(text))
         }
     return cache[page]
+
+
+def check_llms_links(
+    broken: dict[str, set[str]],
+    fragment_cache: dict[Path, set[str]],
+) -> int:
+    checked = 0
+
+    for corpus in LLMS_FILES:
+        source = corpus.relative_to(ROOT).as_posix()
+        if not corpus.is_file():
+            broken.setdefault(f'{source} is missing', set()).add(source)
+            continue
+
+        text = corpus.read_text(encoding='utf-8', errors='replace')
+        targets = {url.rstrip('.,;:') for url in LLMS_INTERNAL_URL.findall(text)}
+
+        for wrapped in LLMS_MARKDOWN_TARGET.findall(text):
+            target = wrapped[1:-1] if wrapped.startswith('<') and wrapped.endswith('>') else wrapped
+            parsed = urlsplit(target)
+            if not parsed.scheme and not parsed.netloc:
+                broken.setdefault(f'{target} (relative link in flat LLM corpus)', set()).add(source)
+            elif target.startswith(f'{SITE_ORIGIN}{BASE}'):
+                targets.add(target)
+
+        for target in sorted(targets):
+            parsed = urlsplit(target)
+            resolved = parsed.path
+            fragment = unquote(parsed.fragment)
+            checked += 1
+
+            if not resolved.startswith(BASE + '/') and resolved != BASE:
+                broken.setdefault(f'{target} (outside base {BASE})', set()).add(source)
+                continue
+
+            target_file = emitted_file(resolved[len(BASE):])
+            if target_file is None:
+                broken.setdefault(target, set()).add(source)
+                continue
+
+            if (
+                fragment
+                and target_file.suffix == '.html'
+                and fragment not in fragments(target_file, fragment_cache)
+            ):
+                broken.setdefault(f'{target} (missing fragment #{fragment})', set()).add(source)
+
+    return checked
 
 
 def main() -> int:
@@ -113,11 +172,14 @@ def main() -> int:
                 label = f'{href} (missing fragment #{fragment})'
                 broken.setdefault(label, set()).add(page.relative_to(DIST).as_posix())
 
+    checked_llms_links = check_llms_links(broken, fragment_cache)
+
     for target in sorted(broken):
         print(f'BROKEN {target} <- {sorted(broken[target])}')
     for page, count in sorted(bad_h1.items()):
         print(f'BAD H1 COUNT {page}: expected 1, found {count}')
     print(f'checked {len(pages)} built pages, {checked_links} internal link(s); '
+          f'{checked_llms_links} LLM corpus URL(s); '
           f'{len(broken)} broken internal page/fragment target(s), '
           f'{len(bad_h1)} page(s) without exactly one H1')
     if broken:

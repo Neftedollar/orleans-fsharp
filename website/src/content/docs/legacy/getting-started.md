@@ -5,17 +5,21 @@ description: "Maintenance guide for the original Orleans.FSharp grain authoring 
 
 # Legacy Getting Started
 
-**Maintenance guide for the original Orleans.FSharp grain authoring model.**
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
-> This page is intentionally isolated from the current functional API documentation. It covers the deprecated API kept for existing applications; new applications should start with [Getting Started](/orleans-fsharp/getting-started/).
+**Migration archive for the original Orleans.FSharp grain authoring model.**
+
+> This page is intentionally isolated from the current functional API documentation. New
+> applications should start with [Getting Started](/orleans-fsharp/getting-started/).
 
 ## Define and run a classic grain
 
-Everything below this heading is the original `grain { }` CE and universal `FSharpGrain.ref`/`send`/
-`ask` pattern from earlier Orleans.FSharp releases. It still compiles and runs exactly as described;
-its public surface now carries `[<Obsolete>]` (warning, not error). New code should use the
-functional runtime above -- see [functional-grains.md](/orleans-fsharp/functional-grains/) for the complete
-before/after mapping.
+Everything below this heading records the original `grain { }` CE and universal
+`FSharpGrain.ref`/`send`/`ask` pattern from 4.1-and-earlier releases. It is frozen as migration
+reference and is not verified against the 5.0 package set. New code should use the functional
+runtime -- see [functional-grains.md](/orleans-fsharp/functional-grains/).
 
 ### Define state and commands
 

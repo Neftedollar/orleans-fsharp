@@ -26,10 +26,10 @@ Orleans.FSharp.Runtime (silo hosting)
 Application
 ```
 
-## Legacy API
+## Legacy archive
 
-The assembly also retains the three `IFSharpGrain*` transport interfaces used by the obsolete
-universal `grain { }` model. Their public F# handles and calls are documented only in the
+The assembly temporarily retains old transport interfaces so existing applications can migrate.
+They are unsupported and documented only in the
 [Legacy API reference](https://github.com/Neftedollar/orleans-fsharp/blob/main/docs/legacy/api-reference.md).
 
 ## License

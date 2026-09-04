@@ -9,8 +9,11 @@ on:
   # No schedule. Pushes and pull requests already cover our own changes; the
   # nightly build existed only to catch toolchain and transitive-package drift
   # and produced ~365 runs a year that nobody read. Run the full integration
-  # on demand from the Actions tab when a dependency bump needs verifying.
+  # on every supported event, including pull requests and release tags.
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-and-test:
@@ -92,10 +95,21 @@ jobs:
           set -o pipefail
           dotnet build examples/dashboard/Dashboard.fsproj --nologo ${{ matrix.arg }}
           dotnet run --project examples/dashboard/Dashboard.fsproj --no-build ${{ matrix.arg }} -- --verify-silo | tee dashboard.out
-          rg -q "dashboard.counter/visits" dashboard.out
-          rg -q -x "DASHBOARD_API_OK endpoint=/dashboard/DashboardCounters collection=simpleGrainStats" dashboard.out
-          rg -q "^DASHBOARD_API_ACTIVATION actor=CounterActor ActivationCount=[1-9][0-9]* grainType=Orleans\.FSharp\.FunctionalGrainMarker<.*CounterActor>$" dashboard.out
-          rg -q "^DASHBOARD_API_ACTIVATION actor=CartActor ActivationCount=[1-9][0-9]* grainType=Orleans\.FSharp\.FunctionalGrainMarker<.*CartActor>$" dashboard.out
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          output = Path("dashboard.out").read_text()
+          required = [
+              r"dashboard\.counter/visits",
+              r"^DASHBOARD_API_OK endpoint=/dashboard/DashboardCounters collection=simpleGrainStats$",
+              r"^DASHBOARD_API_ACTIVATION actor=CounterActor ActivationCount=[1-9][0-9]* grainType=Orleans\.FSharp\.FunctionalGrainMarker<.*CounterActor>$",
+              r"^DASHBOARD_API_ACTIVATION actor=CartActor ActivationCount=[1-9][0-9]* grainType=Orleans\.FSharp\.FunctionalGrainMarker<.*CartActor>$",
+          ]
+          missing = [pattern for pattern in required if re.search(pattern, output, re.MULTILINE) is None]
+          if missing:
+              raise SystemExit("Dashboard smoke output missed:\n" + "\n".join(missing))
+          PY
 
   redis-durability:
     name: Redis Durability (Orleans ${{ matrix.label }})
@@ -211,12 +225,9 @@ jobs:
           --verbosity normal
 
   full-integration:
+    name: Full Integration
     runs-on: ubuntu-latest
     needs: build-and-test
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
-      contains(github.event.head_commit.message, '[full-ci]')
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -291,11 +302,154 @@ jobs:
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.201'
-      - name: Check for vulnerable packages
-        run: dotnet list package --vulnerable --include-transitive | grep -q "Critical\|High" && exit 1 || exit 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Restore the complete solution graph
+        run: dotnet restore Orleans.FSharp.slnx
+      - name: Audit all .NET dependencies
+        run: |
+          dotnet package list \
+            --project Orleans.FSharp.slnx \
+            --no-restore \
+            --vulnerable \
+            --include-transitive \
+            --format json \
+            --output-version 1 > "$RUNNER_TEMP/dotnet-audit.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path(os.environ["RUNNER_TEMP"]) / "dotnet-audit.json"
+          report = json.loads(report_path.read_text())
+          if report.get("version") != 1:
+              raise SystemExit("Unexpected or missing dotnet package-list JSON version")
+
+          sources = report.get("sources")
+          if not isinstance(sources, list) or not sources:
+              raise SystemExit("Dependency audit did not report an advisory source")
+
+          projects = report.get("projects")
+          if not isinstance(projects, list) or not projects:
+              raise SystemExit("Dependency audit returned no projects")
+
+          project_paths = [str(project.get("path", "")).replace("\\", "/") for project in projects]
+          if not any(path.endswith("src/Orleans.FSharp.Generator/Orleans.FSharp.Generator.fsproj") for path in project_paths):
+              raise SystemExit("Dependency audit did not include Orleans.FSharp.Generator")
+
+          findings = []
+          for project in projects:
+              for framework in project.get("frameworks", []):
+                  for collection in ("topLevelPackages", "transitivePackages"):
+                      for package in framework.get(collection, []) or []:
+                          for vulnerability in package.get("vulnerabilities", []) or []:
+                              findings.append(
+                                  f"{project.get('path')}: {package.get('id')} {package.get('resolvedVersion')} "
+                                  f"{vulnerability.get('severity')} {vulnerability.get('advisoryurl')}"
+                              )
+
+          if findings:
+              raise SystemExit("Vulnerable .NET packages found:\n" + "\n".join(findings))
+          print(f"Audited {len(projects)} .NET projects; no known vulnerabilities found.")
+          PY
+      - name: Audit website dependencies
+        working-directory: website
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=low
+
+  template-smoke:
+    name: Pack Once / Template Smoke
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
+        with:
+          dotnet-version: '10.0.201'
+      - name: Determine the exact release-candidate version
+        id: candidate
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v5.* ]]; then
+            candidate="${GITHUB_REF_NAME#v}"
+          else
+            candidate="5.0.0-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          fi
+          echo "version=$candidate" >> "$GITHUB_OUTPUT"
+          echo "Release candidate: $candidate"
+      - name: Stage the template with exact candidate references
+        run: >
+          python3 scripts/stage-release-template.py
+          --source templates
+          --output "$GITHUB_WORKSPACE/.release-templates"
+          --version "${{ steps.candidate.outputs.version }}"
+      - name: Pack the production package set once
+        run: |
+          dotnet restore Orleans.FSharp.slnx
+          dotnet restore "$GITHUB_WORKSPACE/.release-templates/Orleans.FSharp.Templates.csproj"
+          dotnet build src/Orleans.FSharp.CodeGen/Orleans.FSharp.CodeGen.csproj --configuration Release --no-restore
+          dotnet build src/Orleans.FSharp.EventSourcing/Orleans.FSharp.EventSourcing.fsproj --configuration Release --no-restore
+          for project in \
+            src/Orleans.FSharp.Abstractions/Orleans.FSharp.Abstractions.csproj \
+            src/Orleans.FSharp.Analyzers/Orleans.FSharp.Analyzers.fsproj \
+            src/Orleans.FSharp.Runtime/Orleans.FSharp.Runtime.fsproj \
+            src/Orleans.FSharp.Testing/Orleans.FSharp.Testing.fsproj \
+            src/Orleans.FSharp/Orleans.FSharp.fsproj \
+            "$GITHUB_WORKSPACE/.release-templates/Orleans.FSharp.Templates.csproj"
+          do
+            dotnet pack "$project" \
+              --configuration Release \
+              --output "$RUNNER_TEMP/nupkgs" \
+              --property:MinVerVersionOverride="${{ steps.candidate.outputs.version }}" \
+              --no-restore \
+              --verbosity normal \
+              -m:1
+          done
+      - name: Verify and fingerprint the exact package allowlist
+        run: >
+          python3 scripts/check-release-packages.py
+          --directory "$RUNNER_TEMP/nupkgs"
+          --version "${{ steps.candidate.outputs.version }}"
+          --write-manifest "$RUNNER_TEMP/nupkgs/package-manifest.json"
+      - name: Install, instantiate, restore, build, and test the packaged template
+        run: |
+          dotnet new --debug:custom-hive "$RUNNER_TEMP/template-hive" \
+            install "$RUNNER_TEMP/nupkgs/Orleans.FSharp.Templates.${{ steps.candidate.outputs.version }}.nupkg"
+          dotnet new --debug:custom-hive "$RUNNER_TEMP/template-hive" \
+            orleans-fsharp --name TemplateSmoke --output "$RUNNER_TEMP/template-smoke"
+          dotnet restore "$RUNNER_TEMP/template-smoke/TemplateSmoke.sln" \
+            --source "$RUNNER_TEMP/nupkgs" \
+            --source https://api.nuget.org/v3/index.json
+          dotnet build "$RUNNER_TEMP/template-smoke/TemplateSmoke.sln" \
+            --configuration Release \
+            --no-restore \
+            --verbosity normal
+          dotnet test "$RUNNER_TEMP/template-smoke/tests/TemplateSmoke.Tests/TemplateSmoke.Tests.fsproj" \
+            --configuration Release \
+            --no-build \
+            --no-restore \
+            --verbosity normal
+      - name: Upload the verified release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidate
+          path: ${{ runner.temp }}/nupkgs
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
   sast:
-    name: Static Analysis (Semgrep)
+    # Semgrep has no F# parser. This job covers the repository's C#, JavaScript and workflow
+    # surface; F# safety is enforced separately by warnings-as-errors, analyzers, codec
+    # adversarial tests and the full test matrix.
+    name: Static Analysis (Semgrep, non-F#)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -305,29 +459,65 @@ jobs:
             p/owasp-top-ten
             p/cwe-top-25
 
-  publish:
-    needs: build-and-test
+  release-gate:
+    name: Release Gate
     runs-on: ubuntu-latest
-    # Triggered only by pushing a v* tag (e.g. `git tag v2.0.1 && git push origin v2.0.1`).
+    if: always()
+    needs:
+      - build-and-test
+      - redis-durability
+      - examples
+      - quick-integration
+      - full-integration
+      - docs-deprecation-signal
+      - secrets-scan
+      - dependency-scan
+      - sast
+      - template-smoke
+    steps:
+      - name: Require every mandatory check
+        run: |
+          test "${{ needs['build-and-test'].result }}" = success
+          test "${{ needs['redis-durability'].result }}" = success
+          test "${{ needs.examples.result }}" = success
+          test "${{ needs['quick-integration'].result }}" = success
+          test "${{ needs['full-integration'].result }}" = success
+          test "${{ needs['docs-deprecation-signal'].result }}" = success
+          test "${{ needs['secrets-scan'].result }}" = success
+          test "${{ needs['dependency-scan'].result }}" = success
+          test "${{ needs.sast.result }}" = success
+          test "${{ needs['template-smoke'].result }}" = success
+
+  publish:
+    needs: release-gate
+    runs-on: ubuntu-latest
+    # The next production line is 5.x; older tags must never publish packages whose
+    # templates correctly require Orleans.FSharp 5.*.
     # MinVer reads the tag to derive the package version. Plain pushes to main never
     # publish, which prevents republishing the same version on every merge.
-    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v5.') && github.event_name == 'push'
     environment: nuget
     permissions:
       id-token: write
       contents: read
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: Download the package bytes which passed the release gate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          # MinVer needs full git history (all tags + commit graph) to compute the version.
-          fetch-depth: 0
+          name: release-candidate
+          path: nupkgs
+      - name: Verify the downloaded candidate and its manifest
+        shell: bash
+        run: |
+          candidate="${GITHUB_REF_NAME#v}"
+          python3 scripts/check-release-packages.py \
+            --directory nupkgs \
+            --version "$candidate" \
+            --check-manifest nupkgs/package-manifest.json
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.201'
-      - run: dotnet build --configuration Release --verbosity normal
-      # The project graph contains packable projects which also build the shared code generator.
-      # Serial MSBuild avoids a parallel Pack target deadlock observed before any nuspec output.
-      - run: dotnet pack --configuration Release --output ./nupkgs --verbosity normal -m:1
 
       - name: NuGet login (trusted publisher)
         id: nuget-login
@@ -336,11 +526,31 @@ jobs:
           user: Neftedollar
 
       - name: Push to NuGet.org
+        shell: bash
         run: |
-          for pkg in nupkgs/*.nupkg; do
+          candidate="${GITHUB_REF_NAME#v}"
+          for package_id in \
+            Orleans.FSharp.Abstractions \
+            Orleans.FSharp.Analyzers \
+            Orleans.FSharp \
+            Orleans.FSharp.Runtime \
+            Orleans.FSharp.Testing \
+            Orleans.FSharp.Templates
+          do
+            pkg="nupkgs/${package_id}.${candidate}.nupkg"
             echo "Publishing $pkg..."
             dotnet nuget push "$pkg" \
               --source https://api.nuget.org/v3/index.json \
               --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+              --no-symbols \
               --skip-duplicate
+
+            symbols="nupkgs/${package_id}.${candidate}.snupkg"
+            if [[ -f "$symbols" ]]; then
+              echo "Publishing $symbols..."
+              dotnet nuget push "$symbols" \
+                --source https://api.nuget.org/v3/index.json \
+                --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+                --skip-duplicate
+            fi
           done

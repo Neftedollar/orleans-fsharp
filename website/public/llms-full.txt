@@ -2,13 +2,21 @@
 
 Canonical site: https://neftedollar.com/orleans-fsharp/
 Repository: https://github.com/Neftedollar/orleans-fsharp
-This file contains the complete published documentation. Current functional API pages come first. Compatibility material is isolated under the Legacy API heading near the end.
+Published stable: Orleans.FSharp 4.1 (latest 4.1.0). Documentation channel: main / Orleans.FSharp 5.0 preview (next major; not published stable).
+This file contains the complete published documentation. Current functional API pages come first. Unsupported migration material is isolated under the Legacy Archive heading near the end.
 
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/ ---
 
 
+
+:::caution[Preview documentation]
+The published stable line is **4.1** (latest `4.1.0`). This website tracks `main`, the **5.0
+preview/next major**, and can describe behavior not present in 4.1. Review
+[Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) before choosing packages or
+deploying from source.
+:::
 
 ## Why Orleans.FSharp
 
@@ -72,9 +80,10 @@ let! n = api.increment ()
 
 Same two operations, same reply types — but state transitions are explicit values, the compiler checks every handler against the record's field types, and sealing the definition verifies that each operation has exactly one handler. No interface, no shim project, no proxy generation.
 
-:::note[Maintaining an existing application?]
-Documentation for earlier Orleans.FSharp authoring models is preserved in the separate
-[Legacy API section](/orleans-fsharp/legacy/). Current guides and examples use only the functional runtime.
+:::note[Legacy archive]
+Earlier authoring models are preserved only as an unsupported migration archive. There is no new
+Legacy release line, compatibility work, or security support. Current guides and examples use
+only the functional runtime.
 :::
 
 ## Features
@@ -110,7 +119,7 @@ Documentation for earlier Orleans.FSharp authoring models is preserved in the se
 | Test suite | Unit, integration, provider, rolling-update, and persisted-fixture coverage |
 | Orleans support | **10.1.0 – 10.3.1**, CI-tested at both ends of the range |
 | Feature tour | **16** Orleans capabilities demonstrated live in `examples/feature-tour` |
-| NuGet packages | **8** — core, runtime, abstractions, testing, event sourcing, codegen, analyzers, templates |
+| Next production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
 | License | **MIT** |
 | Dispatch overhead | **under 5%** versus calling the handler function directly, measured over 1,000,000 iterations |
 
@@ -124,9 +133,9 @@ cd MyApp
 dotnet build && dotnet test
 ```
 
-A working Orleans.FSharp solution with a counter grain, FsCheck property tests, and silo configuration — ready in under 2 minutes.
-The source-checkout install is temporary: the published template package 4.1.0 still creates the
-Legacy project shape.
+A working Orleans.FSharp 5.0-preview solution with a counter grain, FsCheck property tests, and
+silo configuration — ready in under 2 minutes. The published 4.1.0 template belongs to the
+unsupported archive; the source checkout is the preview template until 5.0 is published.
 
 ## Packages
 
@@ -140,14 +149,14 @@ Legacy project shape.
   <Card title="Orleans.FSharp.Abstractions">
     The fixed functional transport: request envelopes, protocol tokens, and precompiled Orleans proxies — reference it once, generate nothing.
   </Card>
-  <Card title="Orleans.FSharp.EventSourcing">
-    Compatibility package for applications covered by the separate Legacy API documentation. Current event-sourced actors use `journaledGrainFor` from the core package.
-  </Card>
   <Card title="Orleans.FSharp.Testing">
     TestHarness, WebTestHarness, MockGrainFactory, GrainArbitrary, and log capture utilities.
   </Card>
   <Card title="Orleans.FSharp.Analyzers">
     Compile-time safety checks (for example OF0001 for `async { }`) with explicit opt-out where needed.
+  </Card>
+  <Card title="Orleans.FSharp.Templates">
+    The current functional solution template. On `main` it targets the 5.0 preview package set.
   </Card>
 </CardGrid>
 
@@ -157,7 +166,7 @@ The current wrapped and composed surface includes:
 
 - **Grain lifecycle**: activate, deactivate, per-stage `onLifecycle` hooks
 - **State persistence**: Memory, Redis, Azure Blob/Table, Cosmos, DynamoDB, ADO.NET
-- **Streaming**: Memory, Event Hubs, Azure Queue, broadcast channels — plus implicit subscriptions (`onStream` / `onBroadcast`) that activate a functional grain on publish
+- **Streaming**: Memory, Event Hubs, Azure Queue, broadcast channels — plus implicit subscriptions (`onStream` / `onBroadcast`) and Orleans 10.3+ stateless-worker competing consumers for `onStream`
 - **Streaming replies**: API record fields returning `IAsyncEnumerable<'T>`, riding Orleans' own extension — `await foreach`-able from C#
 - **Reentrancy & concurrency**: `reentrant` and per-request `mayInterleave` as contract operations; `statelessWorker` as a definition operation
 - **Placement strategies**: `placement` (PreferLocal, ActivationCountBased, ResourceOptimized, Random) as a definition operation
@@ -173,6 +182,7 @@ The current wrapped and composed surface includes:
 
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
+  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Published 4.1 stable versus the main/5.0 preview, plus verified limitations." />
   <LinkCard title="Recipes" href="/orleans-fsharp/how-to/" description="Task-oriented paths for persistence, streaming, upgrades, and production hosting." />
   <LinkCard title="Examples" href="/orleans-fsharp/examples/" description="Runnable projects mapped to the features they prove." />
   <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-runtime/" description="The short path through contracts, state, delivery, placement, and transactions." />
@@ -192,7 +202,12 @@ The current wrapped and composed surface includes:
 
 **Zero to working grain in 15 minutes.**
 
-> **Current API.** This guide uses `grainContract` / `grainFor`, typed API records, and `FunctionalGrain.ref`. Legacy authoring models are documented separately under [Legacy API](legacy/index.md).
+> **Current API.** This guide uses `grainContract` / `grainFor`, typed API records, and
+> `FunctionalGrain.ref`. Earlier authoring models are isolated in the unsupported
+> [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/).
+
+> **Version scope.** This guide tracks `main`, the 5.0 preview/next major. The published stable
+> packages are 4.1 (latest `4.1.0`); see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
 
 ## What you'll learn
 
@@ -208,9 +223,9 @@ The current wrapped and composed surface includes:
 
 ## Step 1: Create the project
 
-The template in this repository already uses the current functional API. The currently published
-NuGet template `4.1.0` still creates the Legacy CodeGen-based API, so until the next template
-release install the current template from a source checkout:
+The template in this repository tracks the 5.0 preview and uses the current functional API. The
+published 4.1.0 template belongs to the unsupported archive, so install the preview template from
+a source checkout:
 
 ```bash
 git clone https://github.com/Neftedollar/orleans-fsharp.git
@@ -294,7 +309,7 @@ module Definition =
 
 This counter's state is ephemeral (no `stateFrom`) -- it lives only as long as the activation does.
 For durable state, attach `addMemoryStorage "provider-name"` on the silo plus `stateFrom` on the
-definition; see the persistence model in [functional-grains.md](functional-grains.md).
+definition; see the persistence model in [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ## Step 4: Configure the silo
 
@@ -369,7 +384,7 @@ no intermediate handle type and no boxed reply to unwrap.
 A functional definition keeps your handler as an ordinary function value. A handler that ignores
 `context` is therefore directly callable in a unit test. A handler that reads `context` (services,
 persistent state, grain factory) needs a real activation, since `FunctionalGrainContext`'s
-constructor is internal. See [Testing](testing.md) for both patterns, including the full
+constructor is internal. See [Testing](https://neftedollar.com/orleans-fsharp/testing/) for both patterns, including the full
 TestingHost-backed integration-test recipe.
 
 ## Step 8: Run it
@@ -380,24 +395,107 @@ dotnet run --project MyCounter.Silo
 dotnet test
 ```
 
-## Legacy API
-
-Maintaining an older Orleans.FSharp application? Use the isolated [Legacy Getting Started](legacy/getting-started.md) guide.
-
 ## What's next
 
 | Guide | Description |
 |---|---|
-| [Functional Grain Runtime](functional-runtime.md) | The short path through the current authoring model |
-| [Functional Runtime Reference](functional-grains.md) | Complete builder operations, invariants, and edge cases |
-| [Examples](examples.md) | Runnable projects mapped to features and use cases |
-| [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
-| [Serialization](serialization.md) | FSharpBinaryCodec, F# JSON, Orleans native |
-| [Streaming](streaming.md) | Publish, subscribe, TaskSeq, broadcast |
-| [Event Sourcing](event-sourcing.md) | `journaledGrainFor { }` — state as the fold of an event journal, including snapshots |
-| [Dashboard](dashboard.md) | Run Orleans Dashboard and inspect functional actor activations |
-| [Testing](testing.md) | TestingHost integration tests, pure handlers, FsCheck, and log capture |
-| [API Reference](api-reference.md) | All public modules and functions |
+| [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-runtime/) | The short path through the current authoring model |
+| [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) | Stable 4.1 versus main/5.0 preview and production boundaries |
+| [Functional Runtime Reference](https://neftedollar.com/orleans-fsharp/functional-grains/) | Complete builder operations, invariants, and edge cases |
+| [Examples](https://neftedollar.com/orleans-fsharp/examples/) | Runnable projects mapped to features and use cases |
+| [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
+| [Serialization](https://neftedollar.com/orleans-fsharp/serialization/) | FSharpBinaryCodec, F# JSON, Orleans native |
+| [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) | Publish, subscribe, TaskSeq, broadcast |
+| [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) | `journaledGrainFor { }` — state as the fold of an event journal, including snapshots |
+| [Dashboard](https://neftedollar.com/orleans-fsharp/dashboard/) | Run Orleans Dashboard and inspect functional actor activations |
+| [Testing](https://neftedollar.com/orleans-fsharp/testing/) | TestingHost integration tests, pure handlers, FsCheck, and log capture |
+| [API Reference](https://neftedollar.com/orleans-fsharp/api-reference/) | All public modules and functions |
+
+Maintaining an existing application on an earlier authoring model? The unsupported material is
+isolated in the [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/).
+
+
+--- Source: https://neftedollar.com/orleans-fsharp/release-status/ ---
+
+# Release and Production Status
+
+This page separates the published package line from the documentation built from `main`.
+
+## Release channels
+
+| Channel | Status | Use it for |
+|---|---|---|
+| Orleans.FSharp 4.1 (latest `4.1.0`) | Published stable | Production evaluation and applications which need a released package |
+| `main` / Orleans.FSharp 5.0 preview | Next major, not published stable | Evaluating and contributing to the next release from source |
+| Legacy authoring models | Archived and unsupported | Migration reference for existing applications only |
+
+The current README, `docs/`, website, and `[Unreleased]` changelog section track `main`, so they may
+describe 5.0-preview behavior that 4.1 packages do not contain. For the exact stable surface, read
+the documentation at the `v4.1.0` tag. Do not infer that an item under `[Unreleased]` has shipped.
+
+The Legacy archive receives no new Legacy release line, features, compatibility work, or security
+fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
+records, and `FunctionalGrain.ref`.
+
+## Production boundaries on `main`
+
+### TaskSeq is an upstream boundary when wrapping streaming replies
+
+Direct enumeration of a functional streaming reply is the supported path. With
+`FSharp.Control.TaskSeq` 1.1.1 on the repository's verified static resumable-code path, wrapping a
+runtime-returned `IAsyncEnumerable` with `TaskSeq.map` or
+`taskSeq { for item in upstream do yield item }` was measured duplicating the final item. TaskSeq
+over ordinary producers such as lists, ranges, and database cursors is not affected.
+
+When one grain relays another grain's streaming reply, return a direct delegating
+`IAsyncEnumerable`/enumerator instead of using those wrapping forms. The exact pattern and the SDK
+boundary are documented under [Authoring a producer](https://neftedollar.com/orleans-fsharp/streaming-replies/#authoring-a-producer).
+
+`Stream.asTaskSeq` is a separate Orleans pub/sub adapter. On `main` it creates the subscription on
+first enumeration and disposes that subscription when enumeration ends, including early exit.
+
+### Functional persistence payloads are bounded per codec
+
+The 5.0 preview rejects any one encoded functional state value, journal event, or snapshot larger
+than **16 MiB**, before writing and before decoding. This is a per-payload guard, not a quota for a
+whole grain, storage record, journal, or provider.
+
+Use an immutable per-codec override only after validating the storage provider and memory budget:
+
+```fsharp
+let largeJsonCodec =
+    FunctionalPersistenceCodec.FSharpJson
+        .WithMaxPayloadBytes(64 * 1024 * 1024)
+```
+
+The normal resolution order is unchanged: persistent-state element, grain definition, then silo
+default; journal definition, then silo default. The provider-wide
+`FSharpJsonGrainStorageSerializer` has its own 16 MiB default and constructor override because it
+controls the complete provider value rather than a functional envelope payload. These limits are
+present on `main`; they are not part of the published 4.1 package.
+
+### Stateless-worker implicit streams require Orleans 10.3+
+
+On `main`, a `grainFor` definition can combine `statelessWorker` with `onStream` when the loaded
+`Orleans.Streaming` runtime is 10.3.0 or newer. Orleans treats the local worker activations as
+competing consumers, so one stream item is handled by one available worker; do not assume that all
+local activations receive a copy.
+
+The Orleans.FSharp package floor remains 10.1.0. On Orleans 10.1/10.2, or when the streaming
+package version cannot be established, definition sealing rejects this combination with a version
+diagnostic instead of failing later during activation. `statelessWorker` plus `onBroadcast`
+remains unsupported on every supported Orleans version because broadcast channels did not gain
+equivalent stateless-worker semantics.
+
+This capability is part of the 5.0 preview and has a live Orleans 10.3 integration test. It is not
+part of the published 4.1 package.
+
+## What the repository checks do not prove
+
+Passing unit, integration, rolling-update, website, and link checks does not certify every
+third-party provider, deployment topology, persisted application schema, or workload size. Before
+production, test the selected providers, payload distribution, failure recovery, observability,
+and N/N+1 rollback path with representative data.
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/how-to/ ---
@@ -406,7 +504,7 @@ Maintaining an older Orleans.FSharp application? Use the isolated [Legacy Gettin
 
 **Task-oriented paths through the current functional API.**
 
-> **Looking for the first tutorial?** Start with [Getting Started](getting-started.md). This page
+> **Looking for the first tutorial?** Start with [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/). This page
 > assumes you already know how `grainContract`, `grainFor`, and `FunctionalGrain.ref` fit
 > together and sends you directly to the task you need.
 
@@ -421,46 +519,47 @@ dotnet new install ./orleans-fsharp/templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The published `Orleans.FSharp.Templates` 4.1.0 package still scaffolds the Legacy CodeGen model.
-Do not use the package-only install command for a new functional-runtime application yet.
+The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
+Legacy archive; do not use its package-only install command for a new functional-runtime
+application. See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for the package/doc split.
 
 ## Choose the grain shape
 
 | Need | Start here |
 |---|---|
-| Ephemeral state and typed operations | [Contracts and handlers](functional-grains.md#one-operation-one-argument) |
-| Durable state | [Persistence model](functional-grains.md#persistence-model) |
-| Events as the source of truth | [Event Sourcing](event-sourcing.md) |
-| Read-only operation | [`handleQuery`](functional-grains.md#reply-only-handlers-handlequery) |
-| Push to a client | [Functional observers](functional-grains.md#push-to-clients-functional-observers) |
-| A sequence returned by one call | [Server-Streaming Replies](streaming-replies.md) |
-| Pub/sub between producers and consumers | [Streaming](streaming.md) |
-| Cross-grain ACID work | [Transactions](functional-grains.md#distributed-acid-transactions) |
-| Call the actor from C# | [Calling from C#](calling-from-csharp.md) |
+| Ephemeral state and typed operations | [Contracts and handlers](https://neftedollar.com/orleans-fsharp/functional-grains/#one-operation-one-argument) |
+| Durable state | [Persistence model](https://neftedollar.com/orleans-fsharp/functional-grains/#persistence-model) |
+| Events as the source of truth | [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) |
+| Read-only operation | [`handleQuery`](https://neftedollar.com/orleans-fsharp/functional-grains/#reply-only-handlers-handlequery) |
+| Push to a client | [Functional observers](https://neftedollar.com/orleans-fsharp/functional-grains/#push-to-clients-functional-observers) |
+| A sequence returned by one call | [Server-Streaming Replies](https://neftedollar.com/orleans-fsharp/streaming-replies/) |
+| Pub/sub between producers and consumers | [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) |
+| Cross-grain ACID work | [Transactions](https://neftedollar.com/orleans-fsharp/functional-grains/#distributed-acid-transactions) |
+| Call the actor from C# | [Calling from C#](https://neftedollar.com/orleans-fsharp/calling-from-csharp/) |
 
 ## Configure the host
 
 | Task | Guide |
 |---|---|
-| Local silo | [Getting Started](getting-started.md#step-4-configure-the-silo) |
-| Storage, stream, reminder, or clustering provider | [Silo Configuration](silo-configuration.md) |
-| Standalone client | [Client Configuration](client-configuration.md) |
-| Orleans Dashboard | [Dashboard](dashboard.md) |
-| TLS, call filters, and secret handling | [Security](security.md) |
-| Retry, timeout, and circuit breaker | [Resilience](resilience.md) |
+| Local silo | [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/#step-4-configure-the-silo) |
+| Storage, stream, reminder, or clustering provider | [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) |
+| Standalone client | [Client Configuration](https://neftedollar.com/orleans-fsharp/client-configuration/) |
+| Orleans Dashboard | [Dashboard](https://neftedollar.com/orleans-fsharp/dashboard/) |
+| TLS, call filters, and secret handling | [Security](https://neftedollar.com/orleans-fsharp/security/) |
+| Retry, timeout, and circuit breaker | [Resilience](https://neftedollar.com/orleans-fsharp/resilience/) |
 
 ## Evolve a deployed application
 
 Treat these as separate compatibility gates:
 
-1. Route old and new callers with [contract versioning](functional-grains.md#operation-rename-and-contract-version).
-2. Keep stored state readable with [versioned state and upcasters](serialization.md#versioned-state-and-upcasters).
+1. Route old and new callers with [contract versioning](https://neftedollar.com/orleans-fsharp/functional-grains/#operation-rename-and-contract-version).
+2. Keep stored state readable with [versioned state and upcasters](https://neftedollar.com/orleans-fsharp/serialization/#versioned-state-and-upcasters).
 3. Keep journal entries and snapshots readable with
-   [versioned events and snapshots](event-sourcing.md#versioned-events-and-snapshots).
+   [versioned events and snapshots](https://neftedollar.com/orleans-fsharp/event-sourcing/#versioned-events-and-snapshots).
 4. Prove N/N+1 and rollback with separate processes; see
-   [Testing rolling updates](testing.md#testing-rolling-updates-and-durable-schemas).
+   [Testing rolling updates](https://neftedollar.com/orleans-fsharp/testing/#testing-rolling-updates-and-durable-schemas).
 
-The [Orleans compatibility](compatibility.md) page records the framework versions exercised by CI
+The [Orleans compatibility](https://neftedollar.com/orleans-fsharp/compatibility/) page records the framework versions exercised by CI
 and calls out new Orleans capabilities which are not yet wrapped.
 
 ## Verify the application
@@ -469,14 +568,12 @@ and calls out new Orleans capabilities which are not yet wrapped.
 - Use a real `TestingHost` activation for persistence, serialization, reminders, streams,
   transactions, and lifecycle behavior.
 - Keep bytes written by released serializers as fixtures when durable schemas evolve.
-- Run the closest [repository example](examples.md) before copying a provider-specific setup.
+- Run the closest [repository example](https://neftedollar.com/orleans-fsharp/examples/) before copying a provider-specific setup.
 
-See [Testing](testing.md) for complete patterns and [Examples](examples.md) for runnable projects.
+See [Testing](https://neftedollar.com/orleans-fsharp/testing/) for complete patterns and [Examples](https://neftedollar.com/orleans-fsharp/examples/) for runnable projects.
 
-## Legacy recipes
-
-The original `grain { }` authoring model is maintained in the separate
-[Legacy How To](legacy/how-to.md) section.
+Migration-only material for earlier authoring models is isolated in the unsupported
+[Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/examples/ ---
@@ -527,8 +624,7 @@ dotnet run --project examples/chat-room/src/Silo
 ```
 
 For the complete functional surface and known limitations, use the
-[Functional Runtime Reference](functional-grains.md) and [Orleans compatibility](compatibility.md).
-
+[Functional Runtime Reference](https://neftedollar.com/orleans-fsharp/functional-grains/) and [Orleans compatibility](https://neftedollar.com/orleans-fsharp/compatibility/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/functional-runtime/ ---
@@ -538,7 +634,7 @@ For the complete functional surface and known limitations, use the
 **The short path through the current Orleans.FSharp authoring model.**
 
 Use this page for the mental model, then follow one focused guide. The exhaustive surface remains
-in [Functional Runtime Reference](functional-grains.md).
+in [Functional Runtime Reference](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ## The four pieces
 
@@ -591,16 +687,16 @@ At the call site, `CounterApi.ref factory "orders"` returns the record itself. C
 
 | Concern | Focused guide |
 |---|---|
-| Actor identity, keys, operation shapes, and versions | [Contracts and Keys](functional-grains/contracts.md) |
-| Ephemeral state, persistence, lifecycle, timers, and reminders | [State and Lifecycle](functional-grains/state-and-lifecycle.md) |
-| Handler semantics, observers, streams, and streaming replies | [Calls and Delivery](functional-grains/delivery-and-streaming.md) |
-| Stateless workers, placement, migration, and transactions | [Placement and Transactions](functional-grains/placement-and-transactions.md) |
-| Events as the durable source of truth | [Event Sourcing](event-sourcing.md) |
-| Every builder operation and edge case | [Complete Reference](functional-grains.md) |
+| Actor identity, keys, operation shapes, and versions | [Contracts and Keys](https://neftedollar.com/orleans-fsharp/functional-grains/contracts/) |
+| Ephemeral state, persistence, lifecycle, timers, and reminders | [State and Lifecycle](https://neftedollar.com/orleans-fsharp/functional-grains/state-and-lifecycle/) |
+| Handler semantics, observers, streams, and streaming replies | [Calls and Delivery](https://neftedollar.com/orleans-fsharp/functional-grains/delivery-and-streaming/) |
+| Stateless workers, placement, migration, and transactions | [Placement and Transactions](https://neftedollar.com/orleans-fsharp/functional-grains/placement-and-transactions/) |
+| Events as the durable source of truth | [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) |
+| Every builder operation and edge case | [Complete Reference](https://neftedollar.com/orleans-fsharp/functional-grains/) |
 
 ## Which example is canonical?
 
-[Getting Started](getting-started.md) and [Testing](testing.md) share the Counter above.
+[Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) and [Testing](https://neftedollar.com/orleans-fsharp/testing/) share the Counter above.
 [Chat Room](https://github.com/Neftedollar/orleans-fsharp/tree/main/examples/chat-room) is the
 canonical multi-feature application and includes a C# caller.
 [Feature Tour](https://github.com/Neftedollar/orleans-fsharp/tree/main/examples/feature-tour)
@@ -613,8 +709,7 @@ log-consistency providers, activation migration, and Dashboard remain Orleans fa
 Orleans.FSharp supplies a typed F# authoring and transport layer; it does not replace the runtime.
 
 For current framework versions and additions which are not wrapped yet, see
-[Orleans Compatibility](compatibility.md).
-
+[Orleans Compatibility](https://neftedollar.com/orleans-fsharp/compatibility/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/functional-grains/contracts/ ---
@@ -698,11 +793,10 @@ processes. Contract compatibility does not prove stored state or event compatibi
 
 ## Details
 
-- [Actor brands and short form](../functional-grains.md#why-the-actor-brand)
-- [Key-codec identity rules](../functional-grains.md#key-codec-identity-rules)
-- [Operation rename and contract version](../functional-grains.md#operation-rename-and-contract-version)
-- [Calling the same contract from C#](../calling-from-csharp.md)
-
+- [Actor brands and short form](https://neftedollar.com/orleans-fsharp/functional-grains/#why-the-actor-brand)
+- [Key-codec identity rules](https://neftedollar.com/orleans-fsharp/functional-grains/#key-codec-identity-rules)
+- [Operation rename and contract version](https://neftedollar.com/orleans-fsharp/functional-grains/#operation-rename-and-contract-version)
+- [Calling the same contract from C#](https://neftedollar.com/orleans-fsharp/calling-from-csharp/)
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/functional-grains/state-and-lifecycle/ ---
@@ -756,7 +850,7 @@ Codec precedence is element, then grain, then silo default. A codec chooses the 
 format. A `FunctionalSchema` chooses how historical versions become the current type. They solve
 different problems.
 
-See [Serialization](../serialization.md) before changing a format in a deployed application.
+See [Serialization](https://neftedollar.com/orleans-fsharp/serialization/) before changing a format in a deployed application.
 Changing direct binary state to an envelope can require an explicit migration even when both
 formats deserialize the same F# type.
 
@@ -781,11 +875,11 @@ migration.
 
 ## Details
 
-- [Persistence model](../functional-grains.md#persistence-model)
-- [Lifecycle hooks](../functional-grains.md#activation-ordering-and-lifecycle-hooks)
-- [Timers, reminders, and collection age](../functional-grains.md#timers-reminders-and-collection-age)
-- [Versioned state and upcasters](../serialization.md#versioned-state-and-upcasters)
-- [Journal state and snapshots](../event-sourcing.md)
+- [Persistence model](https://neftedollar.com/orleans-fsharp/functional-grains/#persistence-model)
+- [Lifecycle hooks](https://neftedollar.com/orleans-fsharp/functional-grains/#activation-ordering-and-lifecycle-hooks)
+- [Timers, reminders, and collection age](https://neftedollar.com/orleans-fsharp/functional-grains/#timers-reminders-and-collection-age)
+- [Versioned state and upcasters](https://neftedollar.com/orleans-fsharp/serialization/#versioned-state-and-upcasters)
+- [Journal state and snapshots](https://neftedollar.com/orleans-fsharp/event-sourcing/)
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/functional-grains/delivery-and-streaming/ ---
@@ -844,12 +938,11 @@ They compose, but they are not interchangeable durability guarantees.
 
 ## Details
 
-- [Delivery semantics and reentrancy](../functional-grains.md#delivery-semantics)
-- [Functional observers](../functional-grains.md#push-to-clients-functional-observers)
-- [Implicit subscriptions](../functional-grains.md#implicit-subscriptions-onstream-and-onbroadcast)
-- [Orleans streams](../streaming.md)
-- [Server-Streaming Replies](../streaming-replies.md)
-
+- [Delivery semantics and reentrancy](https://neftedollar.com/orleans-fsharp/functional-grains/#delivery-semantics)
+- [Functional observers](https://neftedollar.com/orleans-fsharp/functional-grains/#push-to-clients-functional-observers)
+- [Implicit subscriptions](https://neftedollar.com/orleans-fsharp/functional-grains/#implicit-subscriptions-onstream-and-onbroadcast)
+- [Orleans streams](https://neftedollar.com/orleans-fsharp/streaming/)
+- [Server-Streaming Replies](https://neftedollar.com/orleans-fsharp/streaming-replies/)
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/functional-grains/placement-and-transactions/ ---
@@ -903,11 +996,10 @@ database, stream publication, HTTP call, or journal provider.
 
 ## Details
 
-- [Placement and stateless workers](../functional-grains.md#placement-statelessworker-and-placement)
-- [Live activation migration](../functional-grains.md#live-activation-migration)
-- [Distributed ACID transactions](../functional-grains.md#distributed-acid-transactions)
-- [Testing](../testing.md)
-
+- [Placement and stateless workers](https://neftedollar.com/orleans-fsharp/functional-grains/#placement-statelessworker-and-placement)
+- [Live activation migration](https://neftedollar.com/orleans-fsharp/functional-grains/#live-activation-migration)
+- [Distributed ACID transactions](https://neftedollar.com/orleans-fsharp/functional-grains/#distributed-acid-transactions)
+- [Testing](https://neftedollar.com/orleans-fsharp/testing/)
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/functional-grains/ ---
@@ -1019,7 +1111,7 @@ Server-side, a `grainFor` definition attaches handlers and persistent state to t
 `AddFunctionalGrain` / `AddFunctionalGrainClient` register it on the silo / client builders. See
 `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` for the runnable chat-room baseline (contract,
 definition, registration, and a driven call sequence). The `tail` streaming extension is defined
-on this page and covered end to end in [Server-Streaming Replies](streaming-replies.md).
+on this page and covered end to end in [Server-Streaming Replies](https://neftedollar.com/orleans-fsharp/streaming-replies/).
 
 ## One operation, one argument
 
@@ -1079,13 +1171,13 @@ It rides Orleans' own async-enumerable grain extension, so an open enumeration n
 ordinary call to the same activation, disposing the enumerator cancels the producer, and an
 abandoned enumerator is collected by Orleans. A streaming handler is state-neutral, and none of the
 four admission policies compose with it. The full rules are in
-[Server-Streaming Replies](streaming-replies.md).
+[Server-Streaming Replies](https://neftedollar.com/orleans-fsharp/streaming-replies/).
 
 ### Reply-only handlers: `handleQuery`
 
 An operation declared `readOnly` is **state-neutral**: the runtime discards whatever replacement
 state its handler returned, and that handler's persistent-state facades reject the setter (see
-[Delivery semantics](#delivery-semantics)). Writing a state out of such a handler is therefore dead
+[Delivery semantics](https://neftedollar.com/orleans-fsharp/functional-grains/#delivery-semantics)). Writing a state out of such a handler is therefore dead
 weight that still has to be read as if it meant something. `handleQuery` binds the honest shape --
 the reply alone:
 
@@ -1174,7 +1266,7 @@ configuration error.
 
 What the brand is **not**: it plays no part in wire or storage identity. `GrainId` is built from the
 explicit `grainType` string and the encoded key alone (see
-[Key-codec identity rules](#key-codec-identity-rules) below) -- renaming the brand type, like
+[Key-codec identity rules](https://neftedollar.com/orleans-fsharp/functional-grains/#key-codec-identity-rules) below) -- renaming the brand type, like
 renaming the module or the API record type, changes nothing about routing or stored state.
 
 ### The short form: the API record as its own brand
@@ -1209,13 +1301,13 @@ A **separate** brand type is load-bearing in exactly two situations:
   marker CLR type, and the silo registry rejects a second definition per brand -- so the record
   would have to be duplicated just to tell them apart.
 - **Replacing the record type while keeping the grain's identity.** Under
-  [version tolerance](#version-tolerance-acceptsversions-and-sinceversion), a newer client may declare a *new* record type with a
+  [version tolerance](https://neftedollar.com/orleans-fsharp/functional-grains/#version-tolerance-acceptsversions-and-sinceversion), a newer client may declare a *new* record type with a
   wire-compatible shape. The brand participates in the closed transport-interface identity, so a
   stable brand lets the record type change underneath it; with the record as the brand, changing
   the record moves that identity too.
 
 One interaction to know: with a derived `grainType` (see
-[Optional grainType](#optional-graintype-when-the-derived-default-is-safe) below), the default
+[Optional grainType](https://neftedollar.com/orleans-fsharp/functional-grains/#optional-graintype-when-the-derived-default-is-safe) below), the default
 grain type becomes the *record's* simple name, and renaming the record then changes wire and
 storage identity -- the same trade-off as renaming a phantom brand under a derived name, with the
 same fix: declare `grainType` explicitly.
@@ -1237,7 +1329,7 @@ activation, and for persistent state, a different durable record):
   values for the same domain key.
 
 **Does not change identity** (when `grainType` is explicit -- see
-[Optional grainType](#optional-graintype-when-the-derived-default-is-safe) below for the derived
+[Optional grainType](https://neftedollar.com/orleans-fsharp/functional-grains/#optional-graintype-when-the-derived-default-is-safe) below for the derived
 case, where renaming the brand *does* change identity):
 
 - renaming the F# module, the API record type, or the actor-brand type (`RoomActor` above) --
@@ -1272,7 +1364,7 @@ The brand must be a simple, non-generic, non-nested CLR type for that to work:
 
 Either case fails contract construction with a diagnostic demanding an explicit `grainType`.
 
-The trade-off is [Why the actor brand](#why-the-actor-brand)'s "renaming costs nothing" guarantee,
+The trade-off is [Why the actor brand](https://neftedollar.com/orleans-fsharp/functional-grains/#why-the-actor-brand)'s "renaming costs nothing" guarantee,
 inverted. That guarantee holds because the explicit `grainType` string, not the brand's CLR name,
 carries identity. With a **derived** grain type there is no such string -- the brand's simple name
 *is* the grain type -- so renaming the brand silently renames `grainType` too, moving routing and,
@@ -1441,8 +1533,8 @@ assemblies, shared static state, or a reference cache which forgot the interface
 
 That test proves transport routing and rollback, not durable schema compatibility. Persistent
 state, snapshots, and events need their own version envelopes and upcasters; see
-[Serialization](serialization.md#versioned-state-and-upcasters) and
-[Event Sourcing](event-sourcing.md#versioned-events-and-snapshots).
+[Serialization](https://neftedollar.com/orleans-fsharp/serialization/#versioned-state-and-upcasters) and
+[Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/#versioned-events-and-snapshots).
 
 ## Persistence model
 
@@ -1468,7 +1560,7 @@ Every write is a handler calling `WriteStateAsync()` (or `ReadStateAsync()` / `C
 on the facet `context.persistentState descriptor` returns -- exactly as in the chat-room `join` and
 `say` handlers above. Returning a new `state` from a handler publishes it **in memory** for the rest
 of the activation; it does **not** imply a storage write -- the same rule the
-[Delivery semantics](#delivery-semantics) section below states from the caller's side: a successful
+[Delivery semantics](https://neftedollar.com/orleans-fsharp/functional-grains/#delivery-semantics) section below states from the caller's side: a successful
 call means the handler ran, not that anything was persisted.
 
 ### Selecting a durable codec
@@ -1504,7 +1596,7 @@ Do not switch an existing state name between the direct binary schema and the JS
 place. Both directions require a migration or a new `stateName`; selecting another codec alone
 cannot change the provider-facing stored type. Provider-wide `FSharpJsonGrainStorageSerializer`
 configuration is a separate layer and affects every grain using that provider. See
-[Serialization](serialization.md#durable-persistence-codecs) for silo defaults, custom JSON
+[Serialization](https://neftedollar.com/orleans-fsharp/serialization/#durable-persistence-codecs) for silo defaults, custom JSON
 options, and the distinction between these two layers.
 
 ### After `ClearStateAsync`, re-initialize the state yourself
@@ -1513,7 +1605,7 @@ This one bites, and it is stock Orleans behaviour rather than anything the funct
 `ClearStateAsync()` deletes the stored record **and** re-seeds the holder's in-memory `State` with a
 *fresh uninitialized instance* of the stored type — the same
 `RuntimeHelpers.GetUninitializedObject` call described in
-[What a stored type may be](#what-a-stored-type-may-be) below. For an F# record that means every
+[What a stored type may be](https://neftedollar.com/orleans-fsharp/functional-grains/#what-a-stored-type-may-be) below. For an F# record that means every
 reference field comes back **`null`**, and `null` is not a value of an F# `list`, `map`, `set`,
 record or union:
 
@@ -1750,7 +1842,7 @@ let registry = context.services.GetRequiredService<IReminderRegistry>()
 ```
 
 (the reminder-retirement example
-[below](#reminder-rename-and-removal-the-explicit-unregister-migration) does exactly this).
+[below](https://neftedollar.com/orleans-fsharp/functional-grains/#reminder-rename-and-removal-the-explicit-unregister-migration) does exactly this).
 `context.grainFactory` binds further grain references from inside a handler; `context.grainId` and
 `context.key` expose the activation's identity; `context.logger` is a logger already scoped to the
 activation.
@@ -1799,7 +1891,7 @@ subscription (`Stream.subscribe`), and the same `GetRequiredKeyedService` shape 
   is logged and traced on the target side, but is **never returned to that caller**; the caller
   already completed;
 - that a retry, reload, or rollback occurred on failure -- there are none, by design (see
-  [Immutable-state guidance](#immutable-state-guidance-deep-mutation-is-unguarded-by-design)
+  [Immutable-state guidance](https://neftedollar.com/orleans-fsharp/functional-grains/#immutable-state-guidance-deep-mutation-is-unguarded-by-design)
   below).
 
 ### Reentrancy: `reentrant` and `mayInterleave`
@@ -1938,7 +2030,7 @@ construction -- an observer never returns data. There is no key operation either
 addressed by the reference inside its handle, not by a domain key.
 
 The **derived** `observerType` carries the same restriction a derived
-[`grainType`](#optional-graintype-when-the-derived-default-is-safe) does: the brand must be a
+[`grainType`](https://neftedollar.com/orleans-fsharp/functional-grains/#optional-graintype-when-the-derived-default-is-safe) does: the brand must be a
 simple, non-generic, non-nested CLR type. A brand declared inside an F# `module` rather than a
 `namespace` is nested, and contract construction refuses to derive a name from it -- declare
 `observerType` explicitly there.
@@ -2108,7 +2200,7 @@ sealing time. A definition may declare at most one `collectionAge`, `stateFrom`,
 Declared reminders are reconciled once per successful activation, in declaration order: an **added**
 reminder or a **changed** due-time/period updates the durable registration automatically on the next
 activation. Renaming or removing one is different and needs an explicit migration step -- see
-[below](#reminder-rename-and-removal-the-explicit-unregister-migration).
+[below](https://neftedollar.com/orleans-fsharp/functional-grains/#reminder-rename-and-removal-the-explicit-unregister-migration).
 
 `collectionAge age` sets the Orleans idle-deactivation threshold for this definition's activations:
 
@@ -2195,12 +2287,15 @@ Rejections, all at the earliest stage that can see them:
 |---|---|
 | Blank provider or namespace | definition sealing |
 | A repeated `(provider, namespace)` pair on one transport | definition sealing |
-| `statelessWorker` combined with `onStream` / `onBroadcast` | definition sealing |
+| `statelessWorker` + `onStream` on Orleans.Streaming older than 10.3.0 | definition sealing |
+| `statelessWorker` combined with `onBroadcast` | definition sealing |
 | A provider name no registered provider answers to | silo startup |
 
-The `statelessWorker` rejection is Orleans': `SiloStreamProviderRuntime.BindExtension` throws
-"The extension ... cannot be bound to a Stateless Worker", and implicit delivery addresses one
-activation identity derived from the stream key, which multiplexed local activations cannot honor.
+Orleans 10.3 adds implicit stream subscriptions for stateless workers. On that runtime,
+`statelessWorker` plus `onStream` is accepted and local worker activations act as competing
+consumers: one available worker handles each item. The package keeps its Orleans 10.1 floor, so
+10.1/10.2 reject the definition at sealing rather than failing during activation. Broadcast
+channels did not gain matching semantics, so `statelessWorker` plus `onBroadcast` remains rejected.
 
 One caveat: Orleans' implicit-subscription binding names a *namespace*, not a provider. If the silo
 runs a second stream provider and an item reaches a declared namespace through it, Orleans still
@@ -2256,6 +2351,8 @@ roles actually published by your deployment environment.
 `statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
 `collectionAge` -- durable identity and idle collection age are both meaningless for activations
 Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
+It accepts `onStream` only with a loaded Orleans.Streaming 10.3.0+ runtime and always rejects
+`onBroadcast`; see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/#stateless-worker-implicit-streams-require-orleans-103).
 
 ### Live activation migration
 
@@ -2570,7 +2667,7 @@ The context exposes the supported journal lifecycle operations (confirmed/tentat
 explicit submit/confirm/refresh, provider-dependent retrieval, clear, and statistics), plus the
 state-change and connection notification hooks. The detailed C# `JournaledGrain` mapping and its
 unsupported areas are in the
-[event-sourcing guide](event-sourcing.md).
+[event-sourcing guide](https://neftedollar.com/orleans-fsharp/event-sourcing/).
 
 `apply` is `'State -> 'Event -> 'State` and must be pure: it runs when an event is raised **and
 again on every later activation that replays the journal**, so a fold that read the clock or
@@ -2580,7 +2677,7 @@ The definition kind is invisible to callers, to the C# facade, and to every cont
 operation. What it changes on the definition side — which `grainFor` operations carry over,
 which are refused and why, what each built-in provider actually stores, and how typed
 CustomStorage snapshots are controlled — is in
-**[event-sourcing.md](event-sourcing.md)**.
+**[event-sourcing.md](https://neftedollar.com/orleans-fsharp/event-sourcing/)**.
 
 ## Reminder rename and removal: the explicit unregister migration
 
@@ -2821,20 +2918,16 @@ None of this changes any documented public API -- it changes what a malformed or
 receives back, from an unhelpful low-level exception to a diagnostic that names the stage and the
 field.
 
-## Legacy migration
-
-Migration from the original authoring model is documented separately in [Legacy API Migration](legacy/migration.md).
-
 ## See also
 
-- [Legacy API](legacy/index.md) -- maintenance documentation for earlier authoring models
-- [Silo Configuration](silo-configuration.md) / [Client Configuration](client-configuration.md) --
+- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) -- stable/preview split and production boundaries
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) / [Client Configuration](https://neftedollar.com/orleans-fsharp/client-configuration/) --
   `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
   there
 - `src/Orleans.FSharp.Sample/ChatRoomFunctional.fs` -- the runnable chat-room baseline; this
   reference adds the separately tested `tail` streaming-reply extension
-- [Event Sourcing](event-sourcing.md) -- `journaledGrainFor`, the journaled definition kind
-- [Server-Streaming Replies](streaming-replies.md) -- the `IAsyncEnumerable<'Item>` field kind
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) -- `journaledGrainFor`, the journaled definition kind
+- [Server-Streaming Replies](https://neftedollar.com/orleans-fsharp/streaming-replies/) -- the `IAsyncEnumerable<'Item>` field kind
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/serialization/ ---
@@ -2954,6 +3047,28 @@ let accountDefinition =
     }
 ```
 
+### Payload-size guard (5.0 preview)
+
+On `main`, every functional persistence codec rejects an encoded state value, journal event, or
+snapshot larger than **16 MiB** on both write and read. The guard applies to each payload
+individually; it is not a limit on the complete provider record, grain state, or journal.
+
+`WithMaxPayloadBytes` returns a new codec configuration, leaving the built-in singleton unchanged:
+
+```fsharp
+let largeJsonCodec =
+    FunctionalPersistenceCodec.FSharpJson
+        .WithMaxPayloadBytes(64 * 1024 * 1024)
+
+let auditState =
+    PersistentState.create<AuditState> "audit" "Default"
+    |> PersistentState.withCodec largeJsonCodec
+```
+
+The override follows the same element/grain/silo resolution order as the codec itself. Choose it
+from measured payloads and provider limits; increasing it also increases the maximum allocation
+accepted before deserialization. This API is part of the 5.0 preview on `main`, not stable 4.1.
+
 ### Provider-wide serializer versus a functional envelope
 
 These are different layers:
@@ -2976,6 +3091,10 @@ silo.AddMemoryGrainStorage(
         options.GrainStorageSerializer <- FSharpJsonGrainStorageSerializer())
 |> ignore
 ```
+
+`FSharpJsonGrainStorageSerializer` independently defaults to 16 MiB for the complete JSON value
+it hands to the provider. Pass a positive byte limit to its integer constructor when the outer
+provider value needs a deliberate override.
 
 The two layers may be combined. In that case the provider serializer owns the outer Orleans value,
 while the functional codec owns the exact application payload inside it. Configuring one does not
@@ -3034,7 +3153,7 @@ type itself. F# JSON already uses a codec-tagged envelope. Therefore:
 
 Functional journal views and entries also carry `CodecId` and independent state/event
 `SchemaVersion` values. Configure their pipelines with `stateSchema` and `eventSchema`; see
-[Event Sourcing](event-sourcing.md#versioned-events-and-snapshots). Records with an empty codec id
+[Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/#versioned-events-and-snapshots). Records with an empty codec id
 remain readable as `OrleansBinary`, and pre-versioning envelopes are schema version `0`.
 
 ### Custom JSON options are a durable contract
@@ -3182,16 +3301,12 @@ Treat persisted grain state, journal events, and custom snapshots as durable con
 
 Generalized deserialization resolves declared CLR types. Accept payloads only from trusted Orleans cluster participants, keep cluster transport authenticated, and do not expose raw serialized envelopes as a public untrusted-input endpoint.
 
-## Legacy serialization
-
-Configuration and CodeGen examples for the original authoring model are retained in [Legacy Serialization](legacy/serialization.md).
-
 ## Next steps
 
-- [Functional Grain Runtime](functional-grains.md)
-- [Event Sourcing](event-sourcing.md)
-- [Silo Configuration](silo-configuration.md)
-- [Legacy Serialization](legacy/serialization.md)
+- [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/)
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/)
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/)
+- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/)
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/streaming/ ---
@@ -3200,7 +3315,7 @@ Configuration and CodeGen examples for the original authoring model are retained
 
 **Guide to Orleans streaming with F#-idiomatic APIs.**
 
-> **Current API.** This guide uses functional definitions for subscriptions. Examples for the original authoring model are retained in [Legacy Streaming](legacy/streaming.md).
+> **Current API.** This guide uses functional definitions for subscriptions. Examples for the original authoring model are retained in [Legacy Streaming](https://neftedollar.com/orleans-fsharp/legacy/streaming/).
 
 ## What you'll learn
 
@@ -3280,7 +3395,7 @@ The subscription is durable and persists beyond grain deactivation.
 
 `Stream.subscribeWithToken` is the same subscribe with a handler that also receives each event's
 sequence token — the cursor you need to checkpoint; see
-[Rewinding / Resuming](#rewinding--resuming).
+[Rewinding / Resuming](https://neftedollar.com/orleans-fsharp/streaming/#rewinding--resuming).
 
 Use first-class terminal callbacks when error and completion are part of the consumer protocol:
 
@@ -3342,7 +3457,11 @@ let consume stream =
     }
 ```
 
-Internally, `asTaskSeq` uses a bounded `Channel` with capacity 1000 and `BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind.
+Internally, `asTaskSeq` uses a bounded `Channel` with capacity 1000 and
+`BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind. On `main`/5.0
+preview the first pull creates and awaits the Orleans subscription; cancellation, normal
+completion, and early enumerator disposal unsubscribe it. A subscription failure therefore
+surfaces to the consumer instead of leaving a sequence waiting forever.
 
 ---
 
@@ -3378,7 +3497,7 @@ let! subscription =
 ```
 
 The token is `Some` on a rewindable provider and `None` on one that supplies no cursor — the same
-reading as `context.streamSequenceToken` on the [functional grain runtime](functional-grains.md).
+reading as `context.streamSequenceToken` on the [functional grain runtime](https://neftedollar.com/orleans-fsharp/functional-grains/).
 Save it *after* the event is processed: the token belongs to the event you just handled.
 
 To resume and keep checkpointing, use `subscribeFromWithToken`, which is `subscribeFrom` with the
@@ -3475,7 +3594,7 @@ do! BroadcastChannel.publish channel "System maintenance at midnight"
 ### Consuming
 
 A broadcast consumer is a functional definition operation — see
-[implicit subscriptions](#implicit-subscriptions) below.
+[implicit subscriptions](https://neftedollar.com/orleans-fsharp/streaming/#implicit-subscriptions) below.
 
 ---
 
@@ -3541,7 +3660,8 @@ it cannot drift.
 |---|---|
 | Provider and namespace must be non-blank | definition sealing |
 | One hook per `(provider, namespace)` pair, per transport | definition sealing |
-| `statelessWorker` cannot be combined with `onStream` / `onBroadcast` | definition sealing |
+| `statelessWorker` + `onStream` requires loaded Orleans.Streaming 10.3.0+ | definition sealing |
+| `statelessWorker` cannot be combined with `onBroadcast` | definition sealing |
 | The named provider must be registered on the silo | silo startup validation |
 
 **Delivery semantics** follow the `onTimer` rules exactly:
@@ -3591,6 +3711,18 @@ matches on `(provider, namespace)`, logs a warning, and leaves the item undelive
 Implicit `onStream` batch delivery is not exposed: that definition hook receives one item at a
 time. Explicit `Stream.subscribeBatch` is the separate provider-native batch API.
 
+### Stateless-worker implicit streams (5.0 preview)
+
+With Orleans.Streaming 10.3.0 or newer, `statelessWorker` may be combined with `onStream`.
+Orleans treats local worker activations as competing consumers: one item is handled by one
+available worker, not broadcast to every activation. The package floor remains Orleans 10.1.0,
+so on 10.1/10.2 (or when product-version metadata cannot be read) definition sealing rejects the
+combination with a diagnostic naming the detected version.
+
+`statelessWorker` plus `onBroadcast` remains unsupported on every supported Orleans version.
+Broadcast channels did not gain equivalent stateless-worker semantics. See
+[Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/#stateless-worker-implicit-streams-require-orleans-103).
+
 
 ## Stream Providers
 
@@ -3625,15 +3757,14 @@ Apply these to the `ISiloBuilder` directly or via `addCustomStorage` in the silo
 
 ## Complete functional examples
 
-- [Functional Grain Runtime](functional-grains.md#implicit-subscriptions-onstream-and-onbroadcast)
+- [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/#implicit-subscriptions-onstream-and-onbroadcast)
 - [Feature tour source](https://github.com/Neftedollar/orleans-fsharp/tree/main/examples/feature-tour)
-- [Legacy Streaming](legacy/streaming.md)
 
 ## Next steps
 
-- [Legacy API](legacy/index.md) -- maintenance documentation for earlier authoring models
-- [Silo Configuration](silo-configuration.md) -- configure stream providers
-- [Event Sourcing](event-sourcing.md) -- CQRS pattern with event streams
+- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) -- stable/preview split and production boundaries
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) -- configure stream providers
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) -- CQRS pattern with event streams
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/event-sourcing/ ---
@@ -3657,7 +3788,7 @@ Apply these to the `ISiloBuilder` directly or via `addCustomStorage` in the silo
 ## Overview
 
 A journaled definition is a second definition kind over the same contract layer as
-[`grainFor`](functional-grains.md). Three things change, and nothing else:
+[`grainFor`](https://neftedollar.com/orleans-fsharp/functional-grains/). Three things change, and nothing else:
 
 | | `grainFor` | `journaledGrainFor` |
 |---|---|---|
@@ -3829,7 +3960,7 @@ The one-argument `CreateFSharpJson(options)` compatibility overload uses `fsharp
 options themselves are not stored. Prefer `CreateFSharpJson("account-json-v1", options)` for a
 custom durable contract. When the write format changes, register the previous codec with
 `currentCodec.WithReadCodec(previousCodec)` for as long as old payloads can be replayed. See
-[Serialization](serialization.md#custom-json-options-are-a-durable-contract).
+[Serialization](https://neftedollar.com/orleans-fsharp/serialization/#custom-json-options-are-a-durable-contract).
 
 ### Versioned events and snapshots
 
@@ -4289,7 +4420,7 @@ var account = FunctionalGrainInterop.For<IAccountFacade>(
 await account.Deposit(100m);
 ```
 
-See [calling-from-csharp.md](calling-from-csharp.md).
+See [calling-from-csharp.md](https://neftedollar.com/orleans-fsharp/calling-from-csharp/).
 
 ---
 
@@ -4318,10 +4449,6 @@ See [calling-from-csharp.md](calling-from-csharp.md).
 
 ---
 
-## Legacy model
-
-The original event-sourcing API is retained in [Legacy Event Sourcing](legacy/event-sourcing.md).
-
 ## Bringing your own provider
 
 A log-consistency provider is an `ILogViewAdaptorFactory` registered as a **keyed** service under
@@ -4343,10 +4470,10 @@ Orleans**. A provider registered entirely by hand therefore has to ride along wi
 
 ## Next steps
 
-- [Functional Grains](functional-grains.md) -- the `grainContract` / `grainFor` model this builds on
-- [Calling from C#](calling-from-csharp.md) -- the facade over a journaled contract
-- [Testing](testing.md) -- property testing of folds and handlers
-- [Advanced](advanced.md) -- transactions, state migration, and more
+- [Functional Grains](https://neftedollar.com/orleans-fsharp/functional-grains/) -- the `grainContract` / `grainFor` model this builds on
+- [Calling from C#](https://neftedollar.com/orleans-fsharp/calling-from-csharp/) -- the facade over a journaled contract
+- [Testing](https://neftedollar.com/orleans-fsharp/testing/) -- property testing of folds and handlers
+- [Advanced](https://neftedollar.com/orleans-fsharp/advanced/) -- transactions, state migration, and more
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/streaming-replies/ ---
@@ -4643,6 +4770,9 @@ depends on that package, so using it adds nothing to your closure.
 > to SDK 10.0.201: TaskSeq's dynamic path under SDK 10.0.400 avoids this `taskSeq { for ... }`
 > duplication, but currently regresses stream delivery and producer-disposal propagation.
 
+This is tracked as an upstream production boundary, separate from the 4.1-versus-5.0 package
+split, in [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/#taskseq-is-an-upstream-boundary-when-wrapping-streaming-replies).
+
 ---
 
 ## What this does not give you
@@ -4652,7 +4782,7 @@ depends on that package, so using it adds nothing to your closure.
 - **A durable or replayable stream.** An enumeration is a conversation with one activation. If the
   activation is deactivated or the silo is lost, the enumeration ends; there is no cursor to resume
   from and no at-least-once delivery. For durable fan-out use
-  [Orleans streams](streaming.md) or implicit subscriptions.
+  [Orleans streams](https://neftedollar.com/orleans-fsharp/streaming/) or implicit subscriptions.
 - **Backpressure you control.** The caller pulls, which is backpressure — but the window is
   Orleans' (one in-flight `MoveNext`, up to `MaxBatchSize` items), not a credit scheme of yours.
 - **Application call filters over the items.** `IIncomingGrainCallFilter` /
@@ -4667,10 +4797,10 @@ depends on that package, so using it adds nothing to your closure.
 
 ## See also
 
-- [Functional Grain Runtime](functional-grains.md) — the `grainContract` / `grainFor` model
-- [Streaming](streaming.md) — Orleans streams, for durable fan-out
-- [Calling from C#](calling-from-csharp.md) — `await foreach` over a facade member
-- [Event Sourcing](event-sourcing.md) — journaled definitions, which also accept `handleStream`
+- [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) — the `grainContract` / `grainFor` model
+- [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) — Orleans streams, for durable fan-out
+- [Calling from C#](https://neftedollar.com/orleans-fsharp/calling-from-csharp/) — `await foreach` over a facade member
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) — journaled definitions, which also accept `handleStream`
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/silo-configuration/ ---
@@ -5040,7 +5170,7 @@ siloConfig {
 ```
 
 Map the dashboard endpoints in your ASP.NET Core pipeline with `MapOrleansDashboard()`.
-See [Orleans Dashboard](dashboard.md) for the runnable functional-actor example, exact UI names, and production authorization guidance.
+See [Orleans Dashboard](https://neftedollar.com/orleans-fsharp/dashboard/) for the runnable functional-actor example, exact UI names, and production authorization guidance.
 
 ---
 
@@ -5053,11 +5183,39 @@ siloConfig {
 }
 ```
 
-Then map the health check endpoints in your ASP.NET Core pipeline:
+`enableHealthChecks` registers separate Orleans liveness and readiness checks; it does not map
+HTTP endpoints. Keep those probes separate in an ASP.NET Core host:
 
 ```fsharp
-app.MapHealthChecks("/health") |> ignore
+open System
+open Microsoft.AspNetCore.Diagnostics.HealthChecks
+open Microsoft.AspNetCore.Builder
+open Microsoft.Extensions.Diagnostics.HealthChecks
+open Orleans.FSharp.Runtime
+
+let onlyTag tag =
+    let options = HealthCheckOptions()
+    options.Predicate <-
+        Func<HealthCheckRegistration, bool>(fun registration ->
+            registration.Tags |> Seq.contains tag)
+    options
+
+app.MapHealthChecks(
+    "/health/live",
+    onlyTag OrleansHealthChecks.LivenessTag)
+|> ignore
+
+app.MapHealthChecks(
+    "/health/ready",
+    onlyTag OrleansHealthChecks.ReadinessTag)
+|> ignore
 ```
+
+Liveness stays healthy throughout normal silo startup and shutdown and becomes unhealthy only when
+Orleans reports the local silo as `Dead`. Readiness is healthy only while the silo is `Active`.
+Do not use an unfiltered endpoint as a Kubernetes liveness probe: it would also execute readiness
+and could restart a healthy process while it is joining or draining. Use
+`OrleansHealthChecks.addSiloChecks` when configuring services without the `siloConfig` builder.
 
 ---
 
@@ -5256,7 +5414,7 @@ siloConfig {
 ```
 
 Use `useFSharpJsonSerialization` when JSON should be the primary generalized codec. See
-[Serialization](serialization.md) for the exact selection order.
+[Serialization](https://neftedollar.com/orleans-fsharp/serialization/) for the exact selection order.
 
 ---
 
@@ -5329,10 +5487,10 @@ let config = siloConfig {
 
 ## Next steps
 
-- [Client Configuration](client-configuration.md) -- configure Orleans clients
-- [Legacy API](legacy/index.md) -- maintenance documentation for earlier authoring models
-- [Streaming](streaming.md) -- publish and subscribe to events
-- [Security](security.md) -- TLS, mTLS, and call filters in depth
+- [Client Configuration](https://neftedollar.com/orleans-fsharp/client-configuration/) -- configure Orleans clients
+- [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/) -- unsupported migration reference for earlier authoring models
+- [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) -- publish and subscribe to events
+- [Security](https://neftedollar.com/orleans-fsharp/security/) -- TLS, mTLS, and call filters in depth
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/client-configuration/ ---
@@ -5498,7 +5656,7 @@ clientConfig {
 ```
 
 The client and silo must select the same policy. Use `useFSharpJsonSerialization` when JSON should
-be the primary generalized codec. See [Serialization](serialization.md).
+be the primary generalized codec. See [Serialization](https://neftedollar.com/orleans-fsharp/serialization/).
 
 ---
 
@@ -5535,7 +5693,7 @@ let api = CounterApi.ref client "my-counter"
 
 The call is idempotent, and it fails at configuration time with a diagnostic naming
 `IGrainReferenceActivatorProvider` if it runs before Orleans has installed its own reference
-activators. See [Functional Grain Runtime](functional-grains.md).
+activators. See [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ---
 
@@ -5591,9 +5749,9 @@ let result = counter.increment().GetAwaiter().GetResult()
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md) -- configure the silo that this client connects to
-- [Streaming](streaming.md) -- publish and subscribe to streams from the client
-- [Security](security.md) -- TLS and mTLS in depth
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) -- configure the silo that this client connects to
+- [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) -- publish and subscribe to streams from the client
+- [Security](https://neftedollar.com/orleans-fsharp/security/) -- TLS and mTLS in depth
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/dashboard/ ---
@@ -5657,7 +5815,7 @@ Open `/dashboard/` after the host starts. The package must be present before Orl
 
 The runnable example was exercised against the Dashboard Grains page. This is the exact current display:
 
-![Orleans Dashboard showing functional F# CounterActor and CartActor activations](../website/public/dashboard-functional-actors.png)
+![Orleans Dashboard showing functional F# CounterActor and CartActor activations](https://neftedollar.com/orleans-fsharp/dashboard-functional-actors.png)
 
 | Application actor brand | Dashboard activation type | Dashboard category |
 |---|---|---|
@@ -5702,9 +5860,9 @@ For package status and platform-specific details, see the [official Orleans Dash
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md)
-- [Functional Grain Runtime](functional-grains.md)
-- [Security](security.md)
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/)
+- [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/)
+- [Security](https://neftedollar.com/orleans-fsharp/security/)
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/testing/ ---
@@ -5713,7 +5871,7 @@ For package status and platform-specific details, see the [official Orleans Dash
 
 **Guide to testing Orleans.FSharp grains.**
 
-> **Current API.** This guide covers `grainContract`, `grainFor`, and `journaledGrainFor`. Tests for earlier authoring models live under [Legacy Testing](legacy/testing.md).
+> **Current API.** This guide covers `grainContract`, `grainFor`, and `journaledGrainFor`. Tests for earlier authoring models live under [Legacy Testing](https://neftedollar.com/orleans-fsharp/legacy/testing/).
 
 ## What you'll learn
 
@@ -5743,7 +5901,7 @@ A handler that does not inspect `FunctionalGrainContext` remains an ordinary fun
 called directly. Full activation behavior uses a lightweight `TestingHost` cluster, driven through
 `FunctionalGrain.ref` exactly as production code would, because application code cannot fabricate
 the runtime-owned context. `counterDefinition` and `CounterApi` below are the same
-`grainContract` / `grainFor` pair shown in [Getting Started](getting-started.md):
+`grainContract` / `grainFor` pair shown in [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/):
 
 ```fsharp
 open System
@@ -6048,16 +6206,12 @@ and are decoded directly through the current typed upcaster pipeline. Fixture pr
 beside the bytes in `tests/Orleans.FSharp.Tests/Fixtures/README.md`. A test which merely creates an
 old-looking object using the new binary does not prove backward compatibility.
 
-## Legacy tests
-
-Tests for the original APIs are retained in [Legacy Testing](legacy/testing.md).
-
 ## Next steps
 
-- [Functional Grain Runtime](functional-grains.md) -- the current authoring model
-- [Legacy API](legacy/index.md) -- maintenance tests for earlier authoring models
-- [Event Sourcing](event-sourcing.md) -- testing event-sourced grains
-- [Advanced](advanced.md) -- transactions, serialization, and more
+- [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) -- the current authoring model
+- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) -- what the repository checks do and do not prove
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) -- testing event-sourced grains
+- [Advanced](https://neftedollar.com/orleans-fsharp/advanced/) -- transactions, serialization, and more
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/security/ ---
@@ -6225,10 +6379,10 @@ let auditFilter =
 | `FilterContext.interfaceType ctx` | `Type` | The grain interface type |
 | `FilterContext.grainInstance ctx` | `obj option` | The grain instance if available |
 
-A filter sees a [functional grain](functional-grains.md) call as an ordinary Orleans call, but
+A filter sees a [functional grain](https://neftedollar.com/orleans-fsharp/functional-grains/) call as an ordinary Orleans call, but
 `FilterContext.methodName` reports the transport's own method rather than your operation. To
 authorize per operation there, match argument 0 against `IFunctionalRequestMetadata` — see
-[Functional Grain Runtime](functional-grains.md), "Call filters over a functional grain".
+[Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/), "Call filters over a functional grain".
 
 ---
 
@@ -6512,9 +6666,9 @@ let config = siloConfig {
 
 ## Next steps
 
-- [Silo Configuration](silo-configuration.md) -- TLS and filter configuration
-- [Advanced](advanced.md) -- transactions and more security patterns
-- [API Reference](api-reference.md) -- all public security-related APIs
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) -- TLS and filter configuration
+- [Advanced](https://neftedollar.com/orleans-fsharp/advanced/) -- transactions and more security patterns
+- [API Reference](https://neftedollar.com/orleans-fsharp/api-reference/) -- all public security-related APIs
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/resilience/ ---
@@ -6523,7 +6677,7 @@ let config = siloConfig {
 
 **Retry, circuit-breaker, and timeout strategies for Orleans grain calls, powered by Polly v8.**
 
-> **Current API.** The examples wrap ordinary functional API-record calls. The original handle example is retained in [Legacy Resilience](legacy/resilience.md).
+> **Current API.** The examples wrap ordinary functional API-record calls. The original handle example is retained in [Legacy Resilience](https://neftedollar.com/orleans-fsharp/legacy/resilience/).
 
 ## What you'll learn
 
@@ -6599,8 +6753,8 @@ type ResilienceOptions =
         RetryDelay: TimeSpan
 
         /// Open the circuit after this many consecutive failures. None = disabled.
-        /// Circuit state lives in the pipeline object and `execute` builds a fresh one per
-        /// call — see "Circuit state is per pipeline object" below.
+        /// `execute` caches circuit state by the identity of this exact immutable options
+        /// instance plus result type — see "Circuit state and pipeline identity" below.
         CircuitBreakerThreshold: int option
 
         /// How long the circuit stays open before attempting a probe call. None falls back
@@ -6691,7 +6845,7 @@ below: the deadline's token is handed to the operation, so it can stop rather th
 Beyond that, the other real deadlines available are Orleans' own —
 `SiloMessagingOptions.ResponseTimeout` / `ClientMessagingOptions.ResponseTimeout` (30 seconds by
 default), and `FunctionalGrainRef.callCancellable` from the
-[functional grain runtime](functional-grains.md), whose token reaches the handler through
+[functional grain runtime](https://neftedollar.com/orleans-fsharp/functional-grains/), whose token reaches the handler through
 `context.cancellationToken`.
 
 ### `GrainResilience.withTimeoutCancellable`
@@ -6747,12 +6901,15 @@ let myOpts =
 let! result = GrainResilience.execute<string> myOpts (fun () -> grain.HandleMessage cmd)
 ```
 
-Every attempt re-invokes `f`, so `MaxRetryAttempts = 2` calls it at most three times.
+Every attempt re-invokes `f`, so `MaxRetryAttempts = 2` calls it at most three times. `execute`
+caches its pipeline by the object identity of the exact immutable `ResilienceOptions` value and by
+`'T`: reusing `myOpts` for the same result type reuses the pipeline and shares circuit state.
 
 ### `GrainResilience.executeCancellable`
 
 `execute` for an operation that takes the deadline's token — the full-options counterpart of
-`withTimeoutCancellable`.
+`withTimeoutCancellable`. It uses the same options-instance/result-type pipeline cache as
+`execute`.
 
 ```fsharp
 val executeCancellable<'T>
@@ -6769,7 +6926,9 @@ let! result =
 
 ### `GrainResilience.buildPipeline`
 
-Creates a reusable `ResiliencePipeline<'T>` from options. Useful when you want to share a pipeline across many calls.
+Creates a fresh `ResiliencePipeline<'T>` from options on every call. This is the explicit pipeline
+construction API: retain and reuse the returned object when calls should share circuit state, or
+call `buildPipeline` again when they should be isolated.
 
 ```fsharp
 val buildPipeline<'T> : options : ResilienceOptions -> ResiliencePipeline<'T>
@@ -6826,7 +6985,7 @@ This means:
   attempt and every delay between them. One attempt that hangs therefore consumes the entire
   budget and the retries never happen — that is the deliberate trade of a total deadline, and it
   is the guarantee the caller can actually reason about (see
-  [What the deadline does and does not do](#what-the-deadline-does-and-does-not-do)).
+  [What the deadline does and does not do](https://neftedollar.com/orleans-fsharp/resilience/#what-the-deadline-does-and-does-not-do)).
 - For a *per-attempt* deadline, nest the two: `retry` on the outside, `withTimeout` inside the
   function it retries.
 
@@ -6840,15 +6999,31 @@ This means:
   strategy's final verdict, not each attempt.
 - A single Polly `TimeoutRejectedException` or `BrokenCircuitException` bypasses the retry.
 
-### Circuit state is per pipeline object
+### Circuit state and pipeline identity
 
-`execute` builds a fresh pipeline on every call. Circuit-breaker state lives *in* the pipeline
-object, so a breaker configured through `ResilienceOptions` starts cold each time: five failing
-`execute` calls with `CircuitBreakerThreshold = Some 2` all raise the underlying exception and the
-circuit never opens. `MaxRetryAttempts` does not change that either — the breaker sees the retry
-strategy's single final outcome, not each attempt.
+Circuit-breaker state lives *in* a pipeline. `execute` and `executeCancellable` cache that pipeline
+by two keys: the object identity of the exact immutable `ResilienceOptions` instance, and the result
+type `'T`. Reusing one options binding with the same result type therefore shares circuit state
+across calls. Independently constructed options records remain isolated even when all their fields
+are structurally equal; changing the result type also selects a separate pipeline.
 
-For a breaker that actually trips, keep one pipeline and reuse it:
+This makes the sharing boundary explicit:
+
+```fsharp
+// Reuse this exact immutable instance: execute<int> calls share one circuit.
+let sharedOptions =
+    { GrainResilience.defaultOptions with
+        MaxRetryAttempts = 0
+        CircuitBreakerThreshold = Some 5
+        CircuitBreakerDuration = Some(TimeSpan.FromSeconds 30) }
+
+let callShared f = GrainResilience.execute<int> sharedOptions f
+
+// A distinct record instance, even with equal fields, owns an isolated circuit.
+let isolatedOptions = { sharedOptions with MaxRetryAttempts = sharedOptions.MaxRetryAttempts }
+```
+
+For direct control, build one pipeline and reuse it:
 
 ```fsharp
 // Service-scoped: one object, one circuit
@@ -6862,8 +7037,10 @@ member _.Query(cmd) =
     pipeline.ExecuteAsync(fun _ -> ValueTask<_>(grain.HandleMessage cmd)).AsTask()
 ```
 
-or use `GrainResilience.circuitBreaker`, which exists for exactly this and is non-generic.
-Both are pinned by tests: `execute` does not share circuit state, a reused `buildPipeline` does.
+`buildPipeline` itself always returns a fresh pipeline; only reuse of the returned object shares its
+state. Alternatively, use `GrainResilience.circuitBreaker`, which is a standalone non-generic
+pipeline. Tests pin all three boundaries: reused options identity shares under `execute`, a separate
+options instance isolates, and each `buildPipeline` call is fresh.
 
 ---
 
@@ -6892,7 +7069,7 @@ let! result = GrainResilience.execute<Result> bounded (fun () -> flakyGrain.Hand
 
 After two seconds the caller gets `TimeoutRejectedException` whatever the sequence is doing —
 mid-attempt or mid-delay. What it does **not** do is stop the attempt that was in flight; see
-[What the deadline does and does not do](#what-the-deadline-does-and-does-not-do).
+[What the deadline does and does not do](https://neftedollar.com/orleans-fsharp/resilience/#what-the-deadline-does-and-does-not-do).
 
 ### Protect a shared downstream resource
 
@@ -6983,7 +7160,7 @@ For integration tests with a real `TestCluster`, use a grain that tracks its own
 
 **Transactions, grain directory, OpenTelemetry, shutdown, state migration, and serialization.**
 
-> **Current API.** This page complements the functional runtime guide. Historical CodeGen patterns are retained in [Legacy Advanced Patterns](legacy/advanced.md).
+> **Current API.** This page complements the functional runtime guide. Historical CodeGen patterns are retained in [Legacy Advanced Patterns](https://neftedollar.com/orleans-fsharp/legacy/advanced/).
 
 ## What you'll learn
 
@@ -6998,7 +7175,7 @@ For integration tests with a real `TestCluster`, use a grain that tracks its own
 
 ## Transactions
 
-Use `transactionalStateFrom` on the definition and mark participating operations with `transactional` on the contract. The complete semantics and examples live in [Distributed ACID transactions](functional-grains.md#distributed-acid-transactions).
+Use `transactionalStateFrom` on the definition and mark participating operations with `transactional` on the contract. The complete semantics and examples live in [Distributed ACID transactions](https://neftedollar.com/orleans-fsharp/functional-grains/#distributed-acid-transactions).
 
 ```fsharp
 open System.Threading.Tasks
@@ -7133,7 +7310,12 @@ let registerShutdownHandler (hostBuilder: IHostBuilder) =
         hostBuilder
 ```
 
-Multiple shutdown handlers can be registered; they run in registration order.
+Multiple shutdown handlers can be registered; they run in registration order. Each handler receives
+the usable cancellation token supplied by Generic Host for its configured shutdown timeout. The
+token is not pre-cancelled when the handler starts; it is cancelled if the shutdown timeout expires,
+so pass it to bounded async cleanup work. Ordinary handler failures are collected so later handlers
+still run, then reported together after the sequence. Timeout cancellation stops the sequence
+immediately.
 
 ---
 
@@ -7296,7 +7478,7 @@ let rename (context: FunctionalGrainContext<ProfileActor, string>) newName =
 Declare an `observerContract`, host a typed handler record with `FunctionalObserver.create`, and
 pass the resulting handle as an ordinary operation argument. The grain holds live handles in an
 ephemeral `FunctionalObserverManager` and pushes with `Notify`. See
-[Functional observers](functional-grains.md#push-to-clients-functional-observers) for the complete,
+[Functional observers](https://neftedollar.com/orleans-fsharp/functional-grains/#push-to-clients-functional-observers) for the complete,
 self-contained example and lifetime rules.
 
 ---
@@ -7444,7 +7626,7 @@ Functional definitions declare durable reminders with `onReminder` and activatio
 with `onTimer`. Both callbacks receive `FunctionalGrainContext` and return replacement state
 (or events on a journaled definition). Renaming or removing a reminder requires an explicit
 unregister migration because the durable registration outlives the old definition; see
-[Reminder rename and removal](functional-grains.md#reminder-rename-and-removal-the-explicit-unregister-migration).
+[Reminder rename and removal](https://neftedollar.com/orleans-fsharp/functional-grains/#reminder-rename-and-removal-the-explicit-unregister-migration).
 
 ---
 
@@ -7623,9 +7805,9 @@ assembly dependency on the Kubernetes hosting package.
 
 ## Next steps
 
-- [Legacy API](legacy/index.md) -- maintenance documentation for earlier authoring models
-- [Silo Configuration](silo-configuration.md) -- configure providers for these features
-- [API Reference](api-reference.md) -- complete list of all public types and functions
+- [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/) -- unsupported migration reference for earlier authoring models
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) -- configure providers for these features
+- [API Reference](https://neftedollar.com/orleans-fsharp/api-reference/) -- complete list of all public types and functions
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/analyzers/ ---
@@ -7728,15 +7910,15 @@ fsharp-analyzers --project MyGrains.fsproj --analyzers-path <path-to-Orleans.FSh
 
 | Code | Severity | Description |
 |------|----------|-------------|
-| [OF0001](#of0001) | Warning | `async { }` should be `task { }` |
+| [OF0001](https://neftedollar.com/orleans-fsharp/analyzers/#of0001) | Warning | `async { }` should be `task { }` |
 
 ---
 
 ## See also
 
-- [Getting Started](getting-started.md) — quick introduction to Orleans.FSharp
-- [Legacy API](legacy/index.md) — maintenance documentation for earlier authoring models
-- [Advanced](advanced.md) — transactions, OpenTelemetry, shutdown, migration
+- [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) — quick introduction to Orleans.FSharp
+- [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/) — unsupported migration reference for earlier authoring models
+- [Advanced](https://neftedollar.com/orleans-fsharp/advanced/) — transactions, OpenTelemetry, shutdown, migration
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/calling-from-csharp/ ---
@@ -8034,7 +8216,7 @@ await foreach (var entry in feed.Tail(20))
 
 `await foreach` disposes the enumerator when the loop ends or is broken out of, and that disposal
 travels to the target: it cancels the producer and runs its `finally` blocks. See
-[Server-Streaming Replies](streaming-replies.md).
+[Server-Streaming Replies](https://neftedollar.com/orleans-fsharp/streaming-replies/).
 
 A `Task<IAsyncEnumerable<TItem>>` return is rejected, and so is `IAsyncEnumerable<TItem>` on a
 member bound to a non-streaming operation — the diagnostic names the operation and the shape it
@@ -8150,9 +8332,9 @@ naming, because every feature they touch is decided on the target side from that
   journaled grain names no journal concept at all and behaves identically. Depositing through a
   facade raises and confirms events exactly as an F# call does
   (`tests/Orleans.FSharp.Integration/FunctionalPhaseEIntegrationTests.fs`, "the C# facade over a
-  journaled contract is transport-transparent"). See [Event Sourcing](event-sourcing.md).
+  journaled contract is transport-transparent"). See [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/).
 
-See [Functional Grain Runtime](functional-grains.md), "Reentrancy", "Version tolerance", and
+See [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/), "Reentrancy", "Version tolerance", and
 "Distributed ACID transactions", for what those decisions are.
 
 ---
@@ -8167,11 +8349,11 @@ handler side is still an F# record. An observer facade is a possible future addi
 
 ## Related
 
-- [Functional Grain Runtime](functional-grains.md) — the contract and definition this facade binds
-- [Event Sourcing](event-sourcing.md) — a facade over a journaled contract
-- [Serialization](serialization.md) — which F# types cross the wire and how
-- [Server-Streaming Replies](streaming-replies.md) — `await foreach` over a facade member
-- [Streaming](streaming.md) — observers, streams, and broadcast channels
+- [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) — the contract and definition this facade binds
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) — a facade over a journaled contract
+- [Serialization](https://neftedollar.com/orleans-fsharp/serialization/) — which F# types cross the wire and how
+- [Server-Streaming Replies](https://neftedollar.com/orleans-fsharp/streaming-replies/) — `await foreach` over a facade member
+- [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) — observers, streams, and broadcast channels
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/compatibility/ ---
@@ -8179,6 +8361,9 @@ handler side is still an F# record. An observer facade is a possible future addi
 # Orleans Compatibility
 
 **Supported version policy, verified runtimes, and relevant changes in new Orleans releases.**
+
+This page describes framework compatibility for `main`, the Orleans.FSharp 5.0 preview/next major.
+The published stable Orleans.FSharp line is 4.1; see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
 
 ## Version policy
 
@@ -8238,6 +8423,7 @@ These additions fall into three different categories:
 |---|---|
 | Core runtime reliability and routing changes | Inherited when the application resolves Orleans 10.3.x |
 | Storage and stream providers configured through Orleans hosting APIs | Usable alongside functional grains through the native `ISiloBuilder`/host configuration; dedicated F# helpers are optional convenience work |
+| Stateless-worker implicit stream consumers | Integrated on `main`: `statelessWorker` + `onStream` seals only with loaded Orleans.Streaming 10.3.0+ and has a live competing-consumer integration test; `onBroadcast` remains rejected |
 | `Microsoft.Orleans.Journaling`, `DurableGrain`, and Durable Jobs | Deliberately deferred and not represented as supported Orleans.FSharp APIs yet |
 
 The last category is highlighted here for discovery only. It is not a promise that the current
@@ -8253,22 +8439,25 @@ stream tests, the functional sample, and the Dashboard smoke test against the se
 This verifies the Orleans.FSharp surface exercised by those suites. It does **not** certify every
 third-party storage, clustering, or stream provider, nor does it prove that application-specific
 persisted data can be rolled back without an explicit schema migration strategy. For that, follow
-[Testing](testing.md), [Serialization](serialization.md), and
-[State and Lifecycle](functional-grains/state-and-lifecycle.md).
+[Testing](https://neftedollar.com/orleans-fsharp/testing/), [Serialization](https://neftedollar.com/orleans-fsharp/serialization/), and
+[State and Lifecycle](https://neftedollar.com/orleans-fsharp/functional-grains/state-and-lifecycle/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/api-reference/ ---
 
 # API Reference
 
+> This reference tracks `main`, the 5.0 preview/next major. The published stable line is 4.1;
+> see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
+
 **Quick reference for the public modules, types, and functions in Orleans.FSharp.**
 
 Reference tables, not tutorials. Every section names the guide that carries the semantics; look
 there for what a thing *means* and here for what it is *called*.
 
-The [functional grain runtime](#functional-grain-runtime) is the current authoring model and comes
-first. Shared Orleans helpers follow it. The superseded authoring surface has its own
-[Legacy API Reference](legacy/api-reference.md).
+The [functional grain runtime](https://neftedollar.com/orleans-fsharp/api-reference/#functional-grain-runtime) is the current authoring model and comes
+first. Shared Orleans helpers follow it. Unsupported migration material is isolated in the
+[Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/).
 
 **Where the names in the functional tables come from.** Every custom-operation name and every
 context member below is pinned by `tests/Orleans.FSharp.Tests/FunctionalSurfaceTests.fs`, which
@@ -8281,16 +8470,16 @@ and not there, or there and not here, is a bug in one of the two.
 
 **The current grain authoring model.** A user-authored API record instead of a C# CodeGen
 interface, a contract that declares the wire and delivery policy, and a definition that binds
-handlers to it. See [Functional Grain Runtime](functional-grains.md) for the full guide.
+handlers to it. See [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) for the full guide.
 
 ### Entry points
 
 | Entry point | Signature | Description |
 |---|---|---|
 | `grainContract<'Actor, 'Key, 'Api>` | `GrainContractBuilder<'Actor,'Key,'Api>` — a value, not a function | Opens the contract CE |
-| `contract<'Key, 'Api>` | `GrainContractBuilder<'Api,'Key,'Api>` — a value, not a function | Short form: the API record is its own actor brand ([details](functional-grains.md#the-short-form-the-api-record-as-its-own-brand)) |
+| `contract<'Key, 'Api>` | `GrainContractBuilder<'Api,'Key,'Api>` — a value, not a function | Short form: the API record is its own actor brand ([details](https://neftedollar.com/orleans-fsharp/functional-grains/#the-short-form-the-api-record-as-its-own-brand)) |
 | `grainFor contract` | `GrainContract<...> -> FunctionalGrainDefinitionBuilder<...>` | Opens the definition CE |
-| `journaledGrainFor contract` | `GrainContract<...> -> FunctionalJournaledGrainDefinitionBuilder<...>` | Opens the journaled definition CE ([Event Sourcing](event-sourcing.md)) |
+| `journaledGrainFor contract` | `GrainContract<...> -> FunctionalJournaledGrainDefinitionBuilder<...>` | Opens the journaled definition CE ([Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/)) |
 | `observerContract<'Brand, 'Api>` | `ObserverContractBuilder<'Brand,'Api>` — a value, not a function | Opens the observer contract CE |
 | `FunctionalGrain.ref` | `contract -> IGrainFactory -> 'Key -> 'Api` | Binds a typed API record |
 | `FunctionalGrain.rawRef` | `contract -> IGrainFactory -> 'Key -> FunctionalGrainRef<'Actor,'Key,'Api>` | Binds the typed wrapper |
@@ -8305,14 +8494,14 @@ so each contract expression opens on its own builder instance (pinned by
 builder"). The other four rows are ordinary functions and take their argument as usual.
 
 `FunctionalGrain` is a static class, so `ref`/`rawRef` generalize only where F# lets a static-class
-application generalize -- see [Functional grains](functional-grains.md), "The `FunctionalGrain`
+application generalize -- see [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "The `FunctionalGrain`
 static-class inference rule".
 
 ### Contract builder — `grainContract<'Actor, 'Key, 'Api> { }`
 
 | Keyword | Signature | Description |
 |---|---|---|
-| `grainType` | `string` | The wire `GrainType` string -- routing and storage identity. Optional; see [Functional grains](functional-grains.md), "Optional grainType" |
+| `grainType` | `string` | The wire `GrainType` string -- routing and storage identity. Optional; see [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "Optional grainType" |
 | `version` | `int` | Native Orleans interface version plus functional envelope version (`1..65535`); matched exactly unless `acceptsVersions` widens payload admission. Defaults to `1` |
 | `stringKey` / `guidKey` / `int64Key` | — | Native key codec: the domain key type *is* the Orleans key type |
 | `stringKeyMapped` / `guidKeyMapped` / `int64KeyMapped` | `('Key -> K)` `(K -> 'Key)` | Mapped key codec over a domain key type |
@@ -8321,7 +8510,7 @@ static-class inference rule".
 | `readOnly` | `selector` | The handler's returned state is discarded; interleaves with other read-only calls |
 | `oneWay` | `selector` | The caller's `Task` completes once the message enters the local send path |
 | `alwaysInterleave` | `selector` | Interleaves regardless of `readOnly`/`oneWay`; also state-neutral. Rejected at sealing when the contract declares `reentrant` or `mayInterleave` |
-| `transactional` | `Orleans.TransactionOption -> selector` | Orleans transaction policy for one operation ([Functional grains](functional-grains.md), "Distributed ACID transactions"). Orleans' own enum, **not** this library's `Orleans.FSharp.Transactions.TransactionOption` DU |
+| `transactional` | `Orleans.TransactionOption -> selector` | Orleans transaction policy for one operation ([Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "Distributed ACID transactions"). Orleans' own enum, **not** this library's `Orleans.FSharp.Transactions.TransactionOption` DU |
 | `operationId` | `string -> selector` | Override an operation's wire ID, decoupling it from the F# field name. A second overload takes a `StreamSelector` |
 | `sinceVersion` | `int -> selector` | The version an operation was introduced at; an admitted older call is refused for it by name. A second overload takes a `StreamSelector` |
 | `reentrant` | — | Whole-grain reentrancy -- every request may enter a busy activation. Does **not** make whole-state replacement concurrency-safe |
@@ -8333,7 +8522,7 @@ streaming field; the four admission policies are refused at sealing.
 
 Every API field takes exactly one F# argument. Prefer a named record for multi-input domain data
 (`typing: Typing -> Task<unit>`); tuples remain valid when positional data is intentional. A field
-spelled curried fails contract construction. See [Functional grains](functional-grains.md),
+spelled curried fails contract construction. See [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/),
 "One operation, one argument".
 
 ### Definition builder — `grainFor contract { }`
@@ -8344,7 +8533,7 @@ spelled curried fails contract construction. See [Functional grains](functional-
 | `initialState` | `'Key -> 'State` | Key-aware ephemeral state factory |
 | `handle` | `selector` + `Handler<'Actor,'Key,'State,'Arg,'Reply>` | Attach a handler to one API operation |
 | `handleQuery` | `selector` + `QueryHandler<'Actor,'Key,'State,'Arg,'Reply>` | Attach a reply-only handler; the operation must be declared `readOnly` |
-| `handleStream` | `streamSelector` + `StreamHandler<'Actor,'Key,'State,'Arg,'Item>` | Attach a handler to one server-streaming operation ([Streaming replies](streaming-replies.md)) |
+| `handleStream` | `streamSelector` + `StreamHandler<'Actor,'Key,'State,'Arg,'Item>` | Attach a handler to one server-streaming operation ([Streaming replies](https://neftedollar.com/orleans-fsharp/streaming-replies/)) |
 | `stateFrom` | `PersistentStateRef<'State>` | Attach the primary persistent-state holder |
 | `usePersistentState` | `PersistentStateRef<'S>` + `('Key -> 'S)` | Attach an additional named persistent-state facet (repeatable) |
 | `persistenceCodec` | `FunctionalPersistenceCodec` | Grain-level durable codec for attached persistent states; an element-level `PersistentState.withCodec` wins |
@@ -8366,7 +8555,7 @@ spelled curried fails contract construction. See [Functional grains](functional-
 A journal-aware version of the operations above: request, timer, reminder, stream, and broadcast
 handlers return events instead of replacement state. A journal still cannot be a transaction
 participant or be shared by the many activations of a stateless worker. See
-[Event Sourcing](event-sourcing.md).
+[Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/).
 
 | Keyword | Handler signature | Description |
 |---|---|---|
@@ -8482,12 +8671,12 @@ all refuse with a definition-stage diagnostic on an ordinary `grainFor` definiti
 | `PersistentState.withSchema` | `FunctionalSchema<'State> -> PersistentStateRef<'State> -> PersistentStateRef<'State>` | Copy a descriptor with a versioned envelope and typed upcaster pipeline |
 
 The descriptor's `(stateName, providerName, storedType)` triple is its logical identity, and it is
-durable identity -- see [Functional grains](functional-grains.md), "Persistence model".
+durable identity -- see [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "Persistence model".
 
 Codec resolution is `withCodec` > `persistenceCodec` > silo `DefaultStateCodec`. The default
 `OrleansBinary` path preserves the existing direct state schema for supported types; F# JSON uses a
 functional envelope, so changing an existing state name in either direction requires migration.
-See [Serialization](serialization.md#durable-persistence-codecs).
+See [Serialization](https://neftedollar.com/orleans-fsharp/serialization/#durable-persistence-codecs).
 
 ### Durable schema evolution
 
@@ -8499,7 +8688,7 @@ See [Serialization](serialization.md#durable-persistence-codecs).
 
 Schemas are per persistent-state element (`PersistentState.withSchema`) or independently per
 journal state/event (`stateSchema` / `eventSchema`). See
-[Serialization](serialization.md#versioned-state-and-upcasters).
+[Serialization](https://neftedollar.com/orleans-fsharp/serialization/#versioned-state-and-upcasters).
 
 ### Activation migration helpers
 
@@ -8510,7 +8699,7 @@ journal state/event (`stateSchema` / `eventSchema`). See
 | `ActivationMigration.tryValue<'T>` | `string -> IRehydrationContext -> 'T option` | Read one typed migration value |
 
 Ordinary ephemeral functional state participates automatically. Custom participants are declared
-with `migrationParticipant`; see [Functional grains](functional-grains.md#live-activation-migration).
+with `migrationParticipant`; see [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/#live-activation-migration).
 
 ### Functional persistence codecs
 
@@ -8521,11 +8710,16 @@ with `migrationParticipant`; see [Functional grains](functional-grains.md#live-a
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `JsonSerializerOptions -> FunctionalPersistenceCodec` | Compatibility overload using `fsharp-json-v1` with copied custom options |
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `string * JsonSerializerOptions -> FunctionalPersistenceCodec` | F# JSON with an application-owned stable codec id; prefer this for custom durable contracts |
 | `codec.WithReadCodec` | `FunctionalPersistenceCodec -> FunctionalPersistenceCodec` | Keep a historical JSON decoder registered while the returned codec remains the current writer; duplicate reader ids are rejected |
+| `codec.WithMaxPayloadBytes` | `int -> FunctionalPersistenceCodec` | Return an immutable codec configuration with a positive per-payload read/write limit; 5.0 preview |
 | `FunctionalPersistenceCodec.Id` | `string` | Stable durable id; built-ins use `orleans-binary-v1` / `fsharp-json-v1`, explicit custom codecs use the supplied id |
+| `FunctionalPersistenceCodec.DefaultMaxPayloadBytes` | `int` | Built-in per-payload default: 16 MiB; 5.0 preview |
+| `FunctionalPersistenceCodec.MaxPayloadBytes` | `int` | Effective per-payload limit for this codec configuration; 5.0 preview |
 | `FunctionalPersistenceOptions.DefaultStateCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional state without grain/element overrides |
 | `FunctionalPersistenceOptions.DefaultJournalCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional journals without `journalCodec` |
 | `FSharpJsonGrainStorageSerializer()` | `FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with standard options |
 | `FSharpJsonGrainStorageSerializer(options)` | `JsonSerializerOptions -> FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with copied custom options |
+| `FSharpJsonGrainStorageSerializer(maxPayloadBytes)` | `int -> FSharpJsonGrainStorageSerializer` | Standard F# JSON options with a positive provider-value limit; default is 16 MiB; 5.0 preview |
+| `FSharpJsonGrainStorageSerializer(options, maxPayloadBytes)` | `JsonSerializerOptions * int -> FSharpJsonGrainStorageSerializer` | Custom options and provider-value limit; 5.0 preview |
 
 `FSharpJsonGrainStorageSerializer` belongs to a provider's `GrainStorageSerializer` setting and
 also affects ordinary Orleans grains. It is independent of functional per-element envelopes and
@@ -8554,7 +8748,7 @@ state's reader-writer lock and rejects re-entering the same state from inside a 
 
 A streaming field is `'Arg -> IAsyncEnumerable<'Item>`, not `'Arg -> Task<...>`; that is what makes
 it a second field kind rather than an ordinary operation. See
-[Streaming replies](streaming-replies.md).
+[Streaming replies](https://neftedollar.com/orleans-fsharp/streaming-replies/).
 
 ### Orleans streams
 
@@ -8562,12 +8756,12 @@ These are push-provider streams from `Orleans.FSharp.Streaming`, distinct from a
 method returning `IAsyncEnumerable<'T>`.
 
 The canonical, complete function catalog is under `Orleans.FSharp.Streaming` below. See
-[Streaming](streaming.md) for provider semantics and worked examples.
+[Streaming](https://neftedollar.com/orleans-fsharp/streaming/) for provider semantics and worked examples.
 
 ### Observers
 
 A handler record whose every field is `'Msg -> Task<unit>`. Push to a client-hosted observer with
-no application code generation; see [Functional grains](functional-grains.md), "Push to clients:
+no application code generation; see [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "Push to clients:
 functional observers".
 
 #### `observerContract<'Brand, 'Api> { }`
@@ -8679,7 +8873,7 @@ direct paths.
 Snapshot resolution is deterministic: `context.snapshotNow()` for the successful callback wins;
 otherwise the definition's `snapshotPolicy` wins; `Inherit` or no definition policy uses
 `FunctionalJournalSnapshotOptions.Policy`; the silo default is `Disabled`. These policies apply
-only to definitions with `customStorage`. See [Event Sourcing](event-sourcing.md#custom-storage-and-snapshots).
+only to definitions with `customStorage`. See [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/#custom-storage-and-snapshots).
 
 `ManualSnapshotMaxConflictRetries` applies to a zero-event manual snapshot requested through
 `context.snapshotNow()`. The default `3` permits the initial compare-and-swap attempt plus three
@@ -8700,7 +8894,7 @@ attempt, and exhausting the limit fails the call without writing the snapshot.
 
 Both silo registrations install the client transport too, and both are idempotent per definition
 value. A standalone F# host also has to make Orleans see the assemblies it reaches only through F#
--- see [Functional grains](functional-grains.md), "Running a silo from a standalone F# process".
+-- see [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "Running a silo from a standalone F# process".
 
 ### Scripting
 
@@ -8719,7 +8913,7 @@ value. A standalone F# host also has to make Orleans see the assemblies it reach
 | `FunctionalOperationAttribute` | `.ctor(string)`, `OperationId` | Map a facade method to a wire operation ID that differs from its name |
 
 The facade names no definition kind: an ordinary and a journaled definition are indistinguishable
-across the boundary. See [Calling from C#](calling-from-csharp.md).
+across the boundary. See [Calling from C#](https://neftedollar.com/orleans-fsharp/calling-from-csharp/).
 
 ---
 
@@ -8749,7 +8943,7 @@ Shared Orleans helpers which compose with functional definitions and hosting cod
 | `outgoingWithAround` | `before -> after -> IOutgoingGrainCallFilter` | Before/after outgoing filter |
 
 Filters see a functional grain as an ordinary Orleans call -- see
-[Functional grains](functional-grains.md), "Call filters over a functional grain".
+[Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "Call filters over a functional grain".
 
 #### `FilterContext`
 
@@ -8786,7 +8980,7 @@ Filters see a functional grain as an ordinary Orleans call -- see
 |---|---|---|
 | `configureGracefulShutdown` | `TimeSpan -> IHostBuilder -> IHostBuilder` | Set drain timeout |
 | `stopHost` | `IHost -> Task<unit>` | Stop host gracefully |
-| `onShutdown` | `(CT -> Task<unit>) -> IHostBuilder -> IHostBuilder` | Register shutdown handler |
+| `onShutdown` | `(CT -> Task<unit>) -> IHostBuilder -> IHostBuilder` | Register a shutdown handler; handlers run in registration order and receive the Generic Host shutdown-timeout token while it is still usable |
 
 #### `StateMigration`
 
@@ -8816,7 +9010,7 @@ Filters see a functional grain as an ordinary Orleans call -- see
 
 #### `GrainResilience` — Polly v8 resilience wrappers
 
-Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](resilience.md).
+Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resilience guide](https://neftedollar.com/orleans-fsharp/resilience/).
 
 | Type | Description |
 |---|---|
@@ -8828,9 +9022,9 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainResilience.retry<'T>` | `int -> TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Retry N times with delay; each attempt re-invokes the call |
 | `GrainResilience.withTimeout<'T>` | `TimeSpan -> (unit -> Task<'T>) -> Task<'T>` | Deadline on one call — raises `TimeoutRejectedException` and abandons the in-flight call (does not cancel it) |
 | `GrainResilience.withTimeoutCancellable<'T>` | `TimeSpan -> (CancellationToken -> Task<'T>) -> Task<'T>` | Same deadline, handed to the operation as a token so it can stop instead of being abandoned |
-| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout. The timeout spans the whole sequence; the pipeline is rebuilt per call, so circuit state is not shared |
-| `GrainResilience.executeCancellable<'T>` | `ResilienceOptions -> (CancellationToken -> Task<'T>) -> Task<'T>` | Full options for an operation that takes the deadline's token |
-| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Build reusable Polly pipeline — the way to get shared circuit state |
+| `GrainResilience.execute<'T>` | `ResilienceOptions -> (unit -> Task<'T>) -> Task<'T>` | Full options: retry + circuit breaker + timeout. The timeout spans the whole sequence; the pipeline is cached by exact immutable options-instance identity plus result type, so reusing that instance shares circuit state |
+| `GrainResilience.executeCancellable<'T>` | `ResilienceOptions -> (CancellationToken -> Task<'T>) -> Task<'T>` | Full options for an operation that takes the deadline's token; uses the same options-identity/result-type pipeline cache as `execute` |
+| `GrainResilience.buildPipeline<'T>` | `ResilienceOptions -> ResiliencePipeline<'T>` | Explicitly build a fresh Polly pipeline on every call; reuse the returned object when shared circuit state is desired |
 | `GrainResilience.circuitBreaker` | `int -> TimeSpan -> ResiliencePipeline` | Shared circuit breaker (non-generic, long-lived) |
 
 #### `GrainBatch` — concurrent fan-out
@@ -8882,7 +9076,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `subscribeHandlers<'T>` | `StreamRef<'T> -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe with item/error/completion callbacks |
 | `subscribeFiltered<'T>` | `StreamRef<'T> -> string -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Pass filter data to the provider's `IStreamFilter` |
 | `subscribeBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe through `IAsyncBatchObserver<'T>` |
-| `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption |
+| `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption; first pull subscribes, cancellation/early disposal unsubscribes; 5.0 lifetime behavior |
 | `subscribeFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe from token (rewind is inclusive of that event) |
 | `subscribeFromWithToken<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Rewind and keep checkpointing |
 | `subscribeFromHandlers<'T>` | `StreamRef<'T> -> StreamSequenceToken -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Rewind with item/error/completion callbacks |
@@ -8904,7 +9098,7 @@ replace terminal callbacks immutably. `StreamBatchHandlers` exposes the correspo
 `withError`, and `withCompletion` functions.
 
 A functional definition consumes a stream declaratively with `onStream` instead; see
-[Streaming](streaming.md) and [Functional grains](functional-grains.md), "Implicit subscriptions".
+[Streaming](https://neftedollar.com/orleans-fsharp/streaming/) and [Functional grains](https://neftedollar.com/orleans-fsharp/functional-grains/), "Implicit subscriptions".
 
 ---
 
@@ -8976,6 +9170,8 @@ A functional definition consumes a stream declaratively with `onStream` instead;
 | `ReminderProvider` | MemoryReminder, RedisReminder, CustomReminder |
 | `TlsConfig` | TlsSubject, TlsCertificate, MutualTlsSubject, MutualTlsCertificate |
 | `DashboardConfig` | DashboardDefaults, DashboardWithOptions |
+| `OrleansSiloLivenessHealthCheck` | Local-silo liveness; unhealthy only when Orleans reports `Dead` |
+| `OrleansSiloReadinessHealthCheck` | Local-silo readiness; healthy only while Orleans reports `Active` |
 
 ### Computation expressions
 
@@ -8984,8 +9180,20 @@ A functional definition consumes a stream declaratively with `onStream` instead;
 | `siloConfig { }` | `SiloConfigBuilder` | Configure an Orleans silo |
 | `clientConfig { }` | `ClientConfigBuilder` | Configure an Orleans client |
 
-See [Silo configuration](silo-configuration.md) and [Client configuration](client-configuration.md)
+See [Silo configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) and [Client configuration](https://neftedollar.com/orleans-fsharp/client-configuration/)
 for the full keyword lists.
+
+#### `OrleansHealthChecks`
+
+| Name | Description |
+|---|---|
+| `LivenessName` / `ReadinessName` | Stable registration names |
+| `OrleansTag` | Tag shared by both Orleans checks |
+| `LivenessTag` / `ReadinessTag` | `live` and `ready` endpoint-selection tags |
+| `addSiloChecks` | `IServiceCollection -> IHealthChecksBuilder`; register both checks without the silo CE |
+
+`enableHealthChecks` delegates to this registration. Endpoint mapping remains the host's
+responsibility; select checks by tag so readiness cannot make a liveness endpoint unhealthy.
 
 #### Generalized serialization
 
@@ -9000,7 +9208,7 @@ for the full keyword lists.
 | `useFSharpSerialization` | `FSharpSerialization ->` silo/client CE operation | Select an explicit composed policy |
 
 Only one policy can be selected per builder. Unsupported-type selection happens before writing; it
-does not retry with JSON after a serialization exception. See [Serialization](serialization.md#explicit-generalized-serializers).
+does not retry with JSON after a serialization exception. See [Serialization](https://neftedollar.com/orleans-fsharp/serialization/#explicit-generalized-serializers).
 
 #### `SiloConfig`
 
@@ -9091,7 +9299,7 @@ Both `applyTo*` entry points force the manifest pre-load a standalone F# host ne
 | `captureLogs` | `CapturingLoggerFactory -> CapturedLogEntry list` | Get all entries |
 
 A functional definition is tested against a real `TestCluster` rather than a mock factory -- see
-[Testing](testing.md).
+[Testing](https://neftedollar.com/orleans-fsharp/testing/).
 
 ---
 
@@ -9130,11 +9338,9 @@ let allowedInterop () =
     async { return 0 }  // ✅ suppressed
 ```
 
-See [Analyzers guide](analyzers.md) for full documentation.
+See [Analyzers guide](https://neftedollar.com/orleans-fsharp/analyzers/) for full documentation.
 
-## Legacy API
-
-The original authoring surface is retained in the separate [Legacy API Reference](legacy/api-reference.md).
+Earlier authoring surfaces are isolated in the unsupported [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/faq/ ---
@@ -9178,7 +9384,7 @@ The returned value has the exact API-record type.
 
 ## Which Orleans versions are supported?
 
-The current package range starts at Orleans 10.1.0 and is tested against both 10.1.0 and 10.3.1. A NuGet lower bound means older 10.0.x versions are not selected. See [Orleans Compatibility](compatibility.md) for release-specific notes.
+The current package range starts at Orleans 10.1.0 and is tested against both 10.1.0 and 10.3.1. A NuGet lower bound means older 10.0.x versions are not selected. See [Orleans Compatibility](https://neftedollar.com/orleans-fsharp/compatibility/) for release-specific notes.
 
 ## Does event sourcing support snapshots?
 
@@ -9217,7 +9423,7 @@ methods and can consume streaming replies with `await foreach`.
 
 ## How do F# actors appear in Orleans Dashboard?
 
-The Dashboard activation table displays the functional manifest type, for example `FunctionalGrainMarker<MyApp+CounterActor>`. The actor brand is visible; API-record fields are transported through the shared functional dispatch operation. See [Dashboard](dashboard.md) for a runnable example and the exact current display.
+The Dashboard activation table displays the functional manifest type, for example `FunctionalGrainMarker<MyApp+CounterActor>`. The actor brand is visible; API-record fields are transported through the shared functional dispatch operation. See [Dashboard](https://neftedollar.com/orleans-fsharp/dashboard/) for a runnable example and the exact current display.
 
 ## How do I start a project?
 
@@ -9227,431 +9433,28 @@ dotnet new install ./orleans-fsharp/templates
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The published template package 4.1.0 still scaffolds the Legacy model. Until the next template
-release, use the source-checkout command above, then follow [Getting Started](getting-started.md).
+The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
+Legacy archive. Use the source-checkout command above for the preview, then follow
+[Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/). See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) before
+choosing between released packages and `main`.
 
 ## Where is documentation for existing applications on the original API?
 
-It is retained under [Legacy API](legacy/index.md), separate from current guides.
+It is retained as an unsupported migration reference under the [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/),
+separate from current guides. There is no new Legacy release line or security support.
 
 ## Is it production-ready?
 
-The library includes unit and live Orleans integration suites, dual-version CI coverage, wire-contract validation, persistence, transactions, event sourcing, streaming, reminders, timers, and production hosting helpers. As with any distributed runtime, validate storage providers, deployment topology, observability, and upgrade behavior against your own workload.
+The library includes unit and live Orleans integration suites, dual-version CI coverage,
+wire-contract validation, persistence, transactions, event sourcing, streaming, reminders, timers,
+and production hosting helpers. Those checks do not certify every provider or workload. Review the
+verified boundaries in [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/), then validate storage
+providers, deployment topology, payload sizes, observability, and upgrade behavior against your
+own workload.
 
 ## Where is the source?
 
 [github.com/Neftedollar/orleans-fsharp](https://github.com/Neftedollar/orleans-fsharp)
-
-
---- Source: https://neftedollar.com/orleans-fsharp/superpowers/plans/2026-06-28-orleans-fsharp-revival/ ---
-
-# Orleans.FSharp Revival Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
-**Goal:** Restore Orleans.FSharp to a green build on Orleans 10.2.1, assert the version, remove dead/redundant public API, replace the non-functional attribute family with mechanisms that actually work in the universal-grain model (true `[OneWay]` + message-type `[MayInterleave]`), and surface key new Orleans 10.1/10.2 capabilities — shipped as a single breaking major (v3).
-
-**Architecture:** The library exposes F# grains through a **universal-grain pattern**: every `grain {}` definition is dispatched through one of three shared concrete classes (`FSharpGrainImpl`/`FSharpGrainGuidImpl`/`FSharpGrainIntImpl`) implementing a single-method interface `IFSharpGrain.HandleMessage(object)`. Because the class and method are shared across all grains, per-grain class attributes (`[Reentrant]`, `[StatelessWorker]`, placement) and per-method attributes (`[OneWay]`, `[ReadOnly]`, `[AlwaysInterleave]`) cannot be applied per grain — confirmed dead in both the universal path and the (separate, attribute-blind) `Orleans.FSharp.Generator` CodeGen path. The two Orleans concerns that *do* map onto this model are (a) **`[OneWay]`** as a second dedicated interface method routed by a call-site `post`/`notify`, and (b) **`[MayInterleave(predicate)]`** as a single class-level predicate that inspects the incoming message's runtime type against a registry. Everything else in the attribute family is removed.
-
-**Tech Stack:** F# (net10.0), Microsoft Orleans 10.2.1, FSharp.Analyzers.SDK (FCS AST), xUnit + FsCheck (tests), Central Package Management.
-
-## Global Constraints
-
-- **.NET / F#:** target `net10.0`; SDK in use is `dotnet 10.0.201`.
-- **Orleans version (single source of truth):** pin `10.2.1` via Central Package Management. Replace all floating `Version="10.*"` references. No previews.
-- **Breaking changes allowed:** last published tag is `v2.0.0-alpha.1` (pre-stable). This effort ships as **major v3.0.0**. Hard-remove dead API — no `[<Obsolete>]` transition cycle required.
-- **Green gate:** every task ends with `dotnet build Orleans.FSharp.slnx -c Debug` succeeding AND the relevant tests passing. NEVER trust a piped exit code — read the literal `Build succeeded` / `Build FAILED` line, or use `set -o pipefail`.
-- **Tool discipline:** use `fslangmcp` for all semantic F# queries (`set_project` on `Orleans.FSharp.slnx`, `fcs_project_symbol_uses`, `find`, `fcs_project_outline`, `workspace_diagnostics`); use `rg`/`Read` only for `.fsproj`/`.cs`/`.md`. The loaded solution does NOT include `examples/`, `templates/`, `testbed/` — sweep those with `rg` before deleting any public symbol.
-- **Keep, do not cut (verified load-bearing):** core `grain {}` handlers, `GrainRef`, `GrainState`, `Reminders`, `Timers`, `Observers`, `Filters`, `RequestCtx`, `BroadcastChannel`, `Streaming`, `Transactions`, `FSharpGrainRef`, `Serialization`/`FSharpSerialization`/`FSharpBinaryCodec` (registration entry points), `Prelude.TaskHelpers`, `Prelude.FSharpJson`, `Versioning` (wired into `SiloConfigBuilder`), `GrainResilience` (Polly, integration-tested), `Scripting.startOnPorts`/`getGrain`/`shutdown`.
-
----
-
-## Phase 0 — Green baseline
-
-### Task 0.1: Fix `Orleans.FSharp.Analyzers` FCS AST bit-rot
-
-The analyzer pattern-matches the F# syntax tree; the resolved FCS version added trailing `trivia` fields to three union cases, so three patterns have the wrong arity. The build currently FAILS only on this project.
-
-**Files:**
-- Modify: `src/Orleans.FSharp.Analyzers/AsyncUsageAnalyzer.fs` (lines ~96, ~207, ~227)
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces: a green solution build (every later task depends on this).
-
-- [ ] **Step 1: Reproduce the failure**
-
-Run: `dotnet build src/Orleans.FSharp.Analyzers/Orleans.FSharp.Analyzers.fsproj -c Debug 2>&1 | rg -n "error|Build (succeeded|FAILED)"`
-Expected: `Build FAILED` with `FS0001` at `AsyncUsageAnalyzer.fs(96,..)`, `FS0727` at `(207,..)` and `(227,..)` (union case missing `trivia`).
-
-- [ ] **Step 2: Confirm the exact current arities with FCS**
-
-Use fslangmcp `fcs_validate_snippet` (or `textDocument_completion` on the case) to confirm the field counts of `SynExpr.LetOrUse`, `SynMemberDefn.LetBindings`, `SynModuleDecl.Let` for the resolved FsAutoComplete/FCS. Do not guess — the compiler error names the missing field (`trivia: SynExprLetOrUseTrivia` / `SynMemberDefnLetBindingsTrivia` / `SynModuleDeclLetTrivia`).
-
-- [ ] **Step 3: Fix the three patterns**
-
-`AsyncUsageAnalyzer.fs:96` — `SynExpr.LetOrUse` is 6-field `(isRecursive, isUse, bindings, body, range, trivia)`; the current 8-field pattern is wrong:
-```fsharp
-            | SynExpr.LetOrUse(_, _, bindings, body, _, _) ->
-                for b in bindings do walkBinding b
-                walkExpr suppress body
-```
-`AsyncUsageAnalyzer.fs:207` — add the trailing `trivia` field:
-```fsharp
-            | SynMemberDefn.LetBindings(bindings, _, _, _, _) ->
-                for b in bindings do walkBinding b
-```
-`AsyncUsageAnalyzer.fs:227` — add the trailing `trivia` field:
-```fsharp
-            | SynModuleDecl.Let(_, bindings, _, _) ->
-                for b in bindings do walkBinding b
-```
-Update the stale `// In FCS 43.xx ...` comments above each to match.
-
-- [ ] **Step 4: Verify the project builds**
-
-Run: `dotnet build src/Orleans.FSharp.Analyzers/Orleans.FSharp.Analyzers.fsproj -c Debug 2>&1 | rg -n "error|Build (succeeded|FAILED)"`
-Expected: `Build succeeded`, 0 errors. If a pattern still mismatches, the error names the exact missing/extra field — adjust the `_` count.
-
-- [ ] **Step 5: Verify the whole solution is green and run the suite**
-
-Run: `dotnet build Orleans.FSharp.slnx -c Debug 2>&1 | rg -n "error|Build (succeeded|FAILED)"`
-Then: `dotnet test tests/Orleans.FSharp.Tests/Orleans.FSharp.Tests.fsproj -c Debug 2>&1 | tail -20`
-Expected: solution `Build succeeded`; record the baseline test pass/fail counts (this is the regression baseline for every later task).
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/Orleans.FSharp.Analyzers/AsyncUsageAnalyzer.fs
-git commit -m "fix(analyzers): update FCS syntax-tree patterns for trivia fields"
-```
-
----
-
-## Phase 1 — Assert the Orleans version
-
-### Task 1.1: Central Package Management pinned to 10.2.1
-
-**Files:**
-- Create: `Directory.Packages.props`
-- Modify: every `.fsproj`/`.csproj` under `src/`, `tests/`, `examples/`, `templates/`, `testbed/` that has `<PackageReference ... Version="10.*">` — drop the `Version` attribute.
-- Modify: `Directory.Build.props` (if it carries any Orleans version)
-
-**Interfaces:**
-- Consumes: green build from Task 0.1.
-- Produces: a single `<OrleansVersion>10.2.1</OrleansVersion>` knob; `packages.lock.json` files.
-
-- [ ] **Step 1: Enumerate every Orleans PackageReference**
-
-Run: `rg -n 'Microsoft\.Orleans[^"]*"\s+Version="10\.\*"' --glob '*.fsproj' --glob '*.csproj'`
-Record the full list of packages + the files that reference them.
-
-- [ ] **Step 2: Create `Directory.Packages.props`**
-
-```xml
-<Project>
-  <PropertyGroup>
-    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
-    <OrleansVersion>10.2.1</OrleansVersion>
-  </PropertyGroup>
-  <ItemGroup>
-    <!-- one PackageVersion line per distinct Microsoft.Orleans.* package found in Step 1 -->
-    <PackageVersion Include="Microsoft.Orleans.Core.Abstractions" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Core" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Runtime" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Server" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Reminders" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Streaming" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.BroadcastChannel" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Transactions" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.EventSourcing" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.TestingHost" Version="$(OrleansVersion)" />
-    <PackageVersion Include="Microsoft.Orleans.Clustering.Redis" Version="$(OrleansVersion)" />
-    <!-- ALSO add a PackageVersion for every NON-Orleans PackageReference in the repo
-         (FSharp.Core, xUnit, FsCheck, Polly, FSharp.Analyzers.SDK, etc.) — CPM requires
-         a central version for EVERY referenced package. Enumerate with:
-         rg -n 'PackageReference Include' --glob '*.fsproj' --glob '*.csproj' -o | sort -u -->
-  </ItemGroup>
-</Project>
-```
-
-- [ ] **Step 3: Strip per-project versions**
-
-In each `.fsproj`/`.csproj`, change `<PackageReference Include="X" Version="..." />` to `<PackageReference Include="X" />`. Keep `PrivateAssets`/`IncludeAssets` attributes intact.
-
-- [ ] **Step 4: Restore with a lock file and build**
-
-```bash
-dotnet restore Orleans.FSharp.slnx --use-lock-file
-dotnet build Orleans.FSharp.slnx -c Debug 2>&1 | rg -n "error|warn(ing)? NU|Build (succeeded|FAILED)"
-```
-Expected: `Build succeeded`; no `NU1008` (CPM) / `NU1604` (missing version) warnings. Confirm `packages.lock.json` files were created.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add Directory.Packages.props **/*.fsproj **/*.csproj **/packages.lock.json Directory.Build.props
-git commit -m "build: adopt Central Package Management, pin Orleans to 10.2.1"
-```
-
-### Task 1.2: Update version/parity documentation
-
-**Files:**
-- Modify: `README.md` (badge on line ~12: `Orleans-10.0.1` → `Orleans-10.2.1`)
-- Modify: `CHANGELOG.md` (new top entry)
-- Modify: any other parity claim — find with `rg -n "10\.0\.1" --glob '*.md' -g '!website/**'`
-
-- [ ] **Step 1: Find every 10.0.1 reference**
-
-Run: `rg -n "10\.0\.1" README.md QUICK-REFERENCE.md docs/ -g '*.md'`
-
-- [ ] **Step 2: Bump the README badge and any parity prose to 10.2.1**
-
-- [ ] **Step 3: Add a CHANGELOG entry** under a new `## [3.0.0] - unreleased` heading summarising: Orleans parity bumped to 10.2.1; build fixed; removed dead attribute/parity API (list); added true OneWay + message-type MayInterleave; new helpers. (Fill in concretely as later phases land — update this entry at the end.)
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add README.md CHANGELOG.md QUICK-REFERENCE.md docs/
-git commit -m "docs: bump Orleans parity to 10.2.1"
-```
-
----
-
-## Phase 2 — Remove dead & redundant public API (breaking, v3)
-
-> For every removal: (1) delete the definition, (2) delete or update its dedicated test file, (3) `rg` the non-solution dirs (`examples/`, `templates/`, `testbed/`) and docs for references and fix them, (4) build + test green, (5) commit. Use `fcs_project_symbol_uses`/`find` to confirm zero remaining solution references BEFORE deleting.
-
-### Task 2.1: Remove the dead per-grain/per-method attribute family
-
-**Files:**
-- Modify: `src/Orleans.FSharp/GrainBuilder.fs` — remove CE custom operations `reentrant`, `interleave`, `statelessWorker`, `maxActivations`, `readOnly` and their members; remove the corresponding `GrainDefinition` fields `IsReentrant`, `InterleavedMethods`, `IsStatelessWorker`, `MaxLocalWorkers`, `ReadOnlyMethods` from the record, the `Yield` initialiser, and the `Run` validation referencing `IsStatelessWorker`. Leave `oneWay`/`OneWayMethods` and `mayInterleave`/`MayInterleavePredicate` for Phase 3 (they get real implementations).
-- Modify: `tests/Orleans.FSharp.Tests/ReentrancyTests.fs`, `tests/Orleans.FSharp.Tests/ApiParityTests.fs` — delete the assertions covering the removed keywords/fields.
-- Update: `GrainBuilderInstance` doc comment listing CE ops.
-
-- [ ] **Step 1: Map references** — `fcs_project_symbol_uses` for each removed field/op; `rg` `examples/ templates/ testbed/` for the CE keywords.
-- [ ] **Step 2: Remove the CE ops + record fields + Yield/Run usages.**
-- [ ] **Step 3: Delete the now-dead test cases** (`ReentrancyTests.fs` reentrant/statelessWorker/maxActivations/interleave/readOnly cases).
-- [ ] **Step 4: Build + test green** — `dotnet build Orleans.FSharp.slnx -c Debug` then run `Orleans.FSharp.Tests`.
-- [ ] **Step 5: Commit** — `git commit -m "feat!: remove non-functional per-grain attribute CE keywords"`
-
-### Task 2.2: Remove dead class-level knobs from the grain CE
-
-**Files:**
-- Modify: `src/Orleans.FSharp/GrainBuilder.fs` — remove CE ops `preferLocalPlacement`, `randomPlacement`, `hashBasedPlacement`, `activationCountPlacement`, `resourceOptimizedPlacement`, `siloRolePlacement`, `customPlacement`, `grainType`, `deactivationTimeout`, `implicitStreamSubscription`; remove the `PlacementStrategy` DU type and the `GrainDefinition` fields `PlacementStrategy`, `GrainTypeName`, `DeactivationTimeout`, `ImplicitSubscriptions`.
-- Modify: tests referencing these (find via `fcs_project_symbol_uses` on `PlacementStrategy`, `ImplicitSubscriptions`, etc.).
-- Modify: docs that document these CE ops (`docs/api-reference.md`, `silo-configuration.md`, `advanced.md`, `grain-definition.md`) — remove rows and the false "maps in C# CodeGen" claims.
-
-- [ ] **Step 1: Map references** (solution via fslangmcp + non-solution via rg + docs).
-- [ ] **Step 2: Remove ops, `PlacementStrategy` type, and the four record fields** (Yield initialiser too).
-- [ ] **Step 3: Delete/----update affected tests and docs.**
-- [ ] **Step 4: Build + test green.**
-- [ ] **Step 5: Commit** — `git commit -m "feat!: remove non-functional placement/grainType/deactivation/implicit-subscription CE keywords"`
-
-### Task 2.3: Remove dead members and thin pass-through modules
-
-**Files:**
-- Delete: `src/Orleans.FSharp/GrainExtensions.fs` (`GrainExtension.getExtension` = `grain.AsReference()`, zero refs), `src/Orleans.FSharp/Telemetry.fs` (all members test-only), `src/Orleans.FSharp/GrainServices.fs` (`addGrainService` thin, test-only), `src/Orleans.FSharp/BehaviorPattern.fs` (whole module, test-only, no doc page).
-- Modify: `src/Orleans.FSharp/Scripting.fs` — remove `quickStart` and `getGrainByString` (both zero refs); keep `startOnPorts`, `getGrain`, `shutdown`.
-- Modify: `src/Orleans.FSharp/Prelude.fs` — remove `FsToolkitReexport` module (zero refs).
-- Modify: `src/Orleans.FSharp/Orleans.FSharp.fsproj` — remove the `<Compile>` entries for the deleted files.
-- Delete: `tests/Orleans.FSharp.Tests/TelemetryTests.fs`, `GrainServiceTests.fs`, `BehaviorPatternTests.fs`, and any `GrainExtension`/`FsToolkitReexport` test; trim `ScriptingTests` cases for the removed functions.
-- Modify: docs referencing these modules.
-
-- [ ] **Step 1:** For EACH symbol, `fcs_project_symbol_uses` to confirm only-test references; `rg examples/ templates/ testbed/`.
-- [ ] **Step 2:** Delete the files + remove `<Compile>` lines from the `.fsproj` (order matters in F# — verify remaining order still compiles).
-- [ ] **Step 3:** Remove `Scripting.quickStart`/`getGrainByString` and `Prelude.FsToolkitReexport`.
-- [ ] **Step 4:** Delete the dead test files; fix `ScriptingTests`.
-- [ ] **Step 5:** Build + test green.
-- [ ] **Step 6: Commit** — `git commit -m "feat!: remove dead thin-wrapper modules (Telemetry, GrainServices, GrainExtensions, BehaviorPattern) and dead members"`
-
-### Task 2.4: Internalise leaked plumbing
-
-**Files:**
-- Modify: `src/Orleans.FSharp/Prelude.fs` — verify `OrleansTypes`, `ImmutableTypes` have no external consumers; if internal-only, add `[<AutoOpen>]`-compatible `internal` or move under an internal module. KEEP `TaskHelpers`, `FSharpJson`, `ImmutableTypes.immutable`/`unwrapImmutable` if used (check first — `immutable` IS documented/used).
-- Modify: `src/Orleans.FSharp/FSharpBinaryCodec.fs` — make `FSharpBinaryFormat` module and `TypeCodec` record `internal` if only the codec itself uses them (verify via `fcs_project_symbol_uses`); keep `FSharpBinaryCodec` class + `FSharpBinaryCodecRegistration` public.
-
-- [ ] **Step 1:** `fcs_project_symbol_uses` for `OrleansTypes`, `ImmutableTypes`, `immutable`, `unwrapImmutable`, `FSharpBinaryFormat`, `TypeCodec` — classify each prod/test/none. Do NOT internalise anything with product/test consumers that need it public.
-- [ ] **Step 2:** Add `internal` accessibility to the confirmed-internal items only.
-- [ ] **Step 3:** Build + test green (an over-eager `internal` will surface as a compile error in tests — back it out).
-- [ ] **Step 4: Commit** — `git commit -m "refactor!: internalise codec/prelude implementation detail"`
-
----
-
-## Phase 3 — Replace dead attribute intent with working mechanisms
-
-### Task 3.1: True `[OneWay]` via a dedicated interface method
-
-`[OneWay]` cannot annotate the single `HandleMessage` (it would make every call fire-and-forget). Add a second, dedicated one-way method to each universal interface and route `post`/`notify` through it. True one-way: caller returns once the message is sent, no response is marshalled, grain-side exceptions are not propagated.
-
-**Files:**
-- Modify: `src/Orleans.FSharp.Abstractions/IFSharpGrainInterfaces.cs` — add `[OneWay] Task HandleMessageOneWay(object message);` to `IFSharpGrain`, `IFSharpGrainWithGuidKey`, `IFSharpGrainWithIntKey`; implement in `FSharpGrainImpl`, `FSharpGrainGuidImpl`, `FSharpGrainIntImpl`.
-- Modify: `src/Orleans.FSharp/FSharpGrainRef.fs` — repoint `post`/`postGuid`/`postInt` at the new method; add `notify` as the documented one-way name (alias) if desired.
-- Test: `tests/Orleans.FSharp.Tests/UniversalGrainHandlerTests.fs` (or a new `OneWayTests.fs`) — integration test via `TestHarness` that a `post` returns before the handler completes and that state still mutates.
-
-**Interfaces:**
-- Produces: `IFSharpGrain.HandleMessageOneWay : object -> Task`; `FSharpGrain.post : 'Command -> FSharpGrainHandle<'State,'Command> -> Task` (true one-way).
-
-- [ ] **Step 1: Write the failing test**
-
-```fsharp
-[<Fact>]
-let ``post is fire-and-forget and still mutates grain state`` () = task {
-    use! harness = TestHarness.start ()           // existing helper; adjust to actual API
-    let h = FSharpGrain.ref<CounterState, CounterMsg> harness.GrainFactory "c1"
-    do! FSharpGrain.post Increment h              // one-way; returns without a result
-    // allow the one-way message to drain, then observe via a two-way call
-    let! st = FSharpGrain.send Get h
-    test <@ st.Count >= 1 @>
-}
-```
-
-- [ ] **Step 2: Run it — expect FAIL** (`HandleMessageOneWay` not defined / `post` still two-way).
-Run: `dotnet test tests/Orleans.FSharp.Tests/Orleans.FSharp.Tests.fsproj --filter "fire-and-forget" 2>&1 | tail -15`
-
-- [ ] **Step 3: Add the interface method + impl (C#)**
-
-```csharp
-// in each interface:
-using Orleans.Concurrency;
-[OneWay] Task HandleMessageOneWay(object message);
-
-// in each *Impl class:
-public async Task HandleMessageOneWay(object message)
-{
-    _currentState ??= _handler.GetDefaultState(message.GetType());
-    var dispatch = await _handler.Handle(_currentState, message, ServiceProvider, GrainFactory, this);
-    _currentState = dispatch.NewState;
-}
-```
-
-- [ ] **Step 4: Repoint `post` (F#)**
-
-```fsharp
-let post<'State, 'Command> (cmd: 'Command) (handle: FSharpGrainHandle<'State, 'Command>) : Task =
-    handle.Grain.HandleMessageOneWay(box cmd)
-```
-Update the `post` docstring (remove the "not a true one-way" caveat — it now is). Mirror for `postGuid`/`postInt`.
-
-- [ ] **Step 5: Run the test — expect PASS**; then full solution build + `Orleans.FSharp.Tests`.
-- [ ] **Step 6: Commit** — `git commit -m "feat!: real OneWay support via dedicated [OneWay] interface method"`
-
-### Task 3.2: Message-type `[MayInterleave]` on the universal grain
-
-`[MayInterleave]` is the one class-level reentrancy lever that fits: a single static predicate on the shared grain class that inspects the incoming message's runtime type against a per-message-type registry built by the `grain {}` CE.
-
-**Files:**
-- Modify: `src/Orleans.FSharp.Abstractions/IFSharpGrainInterfaces.cs` — add `[MayInterleave(nameof(MayInterleavePredicate))]` to the three `*Impl` classes; add the static predicate that reads the invocation's first argument type and queries the registry; extend `IUniversalGrainHandler` with `bool MayInterleave(Type messageType)`.
-- Modify: `src/Orleans.FSharp.Runtime/Library.fs` (the `UniversalGrainHandlerRegistry` impl) — implement `MayInterleave` against a registered `HashSet<Type>`; add a registration entry point.
-- Modify: `src/Orleans.FSharp/GrainBuilder.fs` — give the kept `mayInterleave`/`interleaveOn` CE op a real meaning: record interleavable **message types** (not method-name strings). Replace `MayInterleavePredicate: string option` with `InterleaveMessageTypes: Set<Type>` (or keep a typed op `interleaveMessage<'Msg>`). Remove the `[<Obsolete>]`.
-- Modify: registration glue (`AddFSharpGrain`) to push the grain's interleavable types into the registry.
-- Test: new `tests/Orleans.FSharp.Tests/MayInterleaveTests.fs` — register a message type as interleavable; assert the predicate returns true for it and false for others.
-
-**Interfaces:**
-- Consumes: `IUniversalGrainHandler` (Task 0 baseline), the registration path from `Orleans.FSharp.Runtime`.
-- Produces: `IUniversalGrainHandler.MayInterleave : Type -> bool`; `FSharpGrainImpl.MayInterleavePredicate : IInvokable -> bool` (static); a CE op to mark interleavable message types.
-
-- [ ] **Step 1: Write the failing unit test** for the registry predicate:
-
-```fsharp
-[<Fact>]
-let ``registered message type may interleave; others may not`` () =
-    let reg = UniversalGrainHandlerRegistry()           // adjust to actual ctor
-    reg.RegisterInterleavable(typeof<ReadQuery>)
-    test <@ reg.MayInterleave(typeof<ReadQuery>) = true @>
-    test <@ reg.MayInterleave(typeof<WriteCmd>) = false @>
-```
-
-- [ ] **Step 2: Run — expect FAIL** (`MayInterleave`/`RegisterInterleavable` not defined).
-- [ ] **Step 3: Implement the registry method + the static predicate**
-
-```csharp
-// IUniversalGrainHandler:
-bool MayInterleave(Type messageType);
-
-// on each *Impl (requires: using Orleans.Concurrency; using Orleans.Serialization.Invocation;)
-[MayInterleave(nameof(MayInterleavePredicate))]
-public sealed class FSharpGrainImpl : Grain, IFSharpGrain { ... }
-
-public static bool MayInterleavePredicate(IInvokable req) =>
-    req.GetArgumentCount() > 0
-    && req.GetArgument(0) is { } msg
-    && _staticHandler is not null
-    && _staticHandler.MayInterleave(msg.GetType());
-```
-Wire a static handler reference (set once from DI at silo start) so the static predicate can reach the registry. Confirm the exact `IInvokable` API (`GetArgument`/`GetArgumentCount`) against Orleans 10.2.1 reference assemblies before finalising.
-
-- [ ] **Step 4: Add the CE op** (`interleaveMessage<'Msg>` recording `typeof<'Msg>` into `InterleaveMessageTypes`) and the registration push into the registry.
-- [ ] **Step 5: Run unit test — PASS**; add/await an integration test proving two interleavable calls actually overlap (optional if flaky — gate behind a deterministic signal).
-- [ ] **Step 6: Build + test green; commit** — `git commit -m "feat!: message-type MayInterleave on the universal grain"`
-
----
-
-## Phase 4 — New Orleans 10.1/10.2 helpers
-
-### Task 4.1: `StreamProviders.addRedisStreams`
-
-Redis Streams provider landed in 10.1.0. Follow the existing reflection-invoke pattern used by `addEventHubStreams`/`addAzureQueueStreams` so the optional `Microsoft.Orleans.Streaming.Redis` package stays off the hard dependency list.
-
-**Files:**
-- Modify: `src/Orleans.FSharp/StreamProviders.fs` — add `addRedisStreams` mirroring the existing helpers' private `invokeExtensionMethod` approach.
-- Test: `tests/Orleans.FSharp.Tests/PersistentStreamTests.fs` or `StreamProvidersTests.fs` — assert the helper resolves and configures without throwing (shape test, matching the existing provider-helper tests).
-
-- [ ] **Step 1:** Read the two existing helpers + their test to copy the exact reflection pattern and assertion style.
-- [ ] **Step 2: Write the failing test** mirroring the existing `addEventHubStreams` test.
-- [ ] **Step 3: Implement `addRedisStreams`** (provider name param + Redis connection config), package hint `Microsoft.Orleans.Streaming.Redis`.
-- [ ] **Step 4: Build + test green; commit** — `git commit -m "feat: add Redis Streams provider helper"`
-
-### Task 4.2: `ClearLogAsync` bridge for event-sourced grains
-
-10.1.0 added `ClearLogAsync` on `JournaledGrain`/`ICustomStorageInterface`.
-
-**Files:**
-- Modify: `src/Orleans.FSharp.EventSourcing/EventSourcedGrainDiscovery.fs` (and the `IEventStore`/handle abstraction in `FSharpGrainRef.fs`'s `FSharpEventSourcedGrain` module) — expose `clearLog` / `InternalClearLog` delegating to the JournaledGrain's `ClearLogAsync`.
-- Test: event-sourcing test asserting `clearLog` resets the confirmed log/version.
-
-- [ ] **Step 1:** Read `EventSourcedGrainDiscovery.fs` + the `FSharpEventSourcedGrainImpl` (in `IFSharpGrainInterfaces.cs`) to find the bridge seam.
-- [ ] **Step 2: Failing test** for `clearLog`.
-- [ ] **Step 3: Implement the bridge.**
-- [ ] **Step 4: Build + test green; commit** — `git commit -m "feat: surface ClearLogAsync for event-sourced grains"`
-
-### Task 4.3 (optional): Stream / BroadcastChannel allowed-predicate filter helper
-
-10.1.0 added allowed-predicate filtering for streams and broadcast channels.
-
-**Files:**
-- Modify: `src/Orleans.FSharp/Streaming.fs`, `src/Orleans.FSharp/BroadcastChannel.fs` — add a config helper to register the predicate filter.
-- Test: shape test for the new helper.
-
-- [ ] Standard TDD cycle (failing test → implement → green → commit `feat: add stream/broadcast allowed-predicate filter helper`).
-
----
-
-## Phase 5 — Finalise
-
-### Task 5.1: Docs, CHANGELOG, version, full regression
-
-**Files:**
-- Modify: `Directory.Build.props` — bump package `<Version>`/`<VersionPrefix>` to `3.0.0`.
-- Modify: `CHANGELOG.md` — finalise the `[3.0.0]` entry with the concrete removed/added API list.
-- Modify: `docs/` + `README.md` + `QUICK-REFERENCE.md` — remove all references to removed API; document `post` (true one-way), `interleaveMessage`, `addRedisStreams`, `clearLog`.
-- Modify: `templates/orleans-fsharp/**` — bump the template's `Orleans.FSharp`/`Orleans.FSharp.Runtime` package versions (`2.*` → `3.*`).
-
-- [ ] **Step 1:** `rg` the whole repo (excluding `docs/superpowers/`) for every removed symbol name; fix all stragglers.
-- [ ] **Step 2:** Bump version to 3.0.0; finalise CHANGELOG.
-- [ ] **Step 3: Full green gate** — `dotnet build Orleans.FSharp.slnx -c Debug` (read `Build succeeded`) + `dotnet test Orleans.FSharp.slnx` (all test projects) + `dotnet pack -c Release` smoke (packages produce without error).
-- [ ] **Step 4: Commit** — `git commit -m "chore(release): Orleans.FSharp 3.0.0 — 10.2.1 parity, API cleanup, OneWay/MayInterleave"`
-
----
-
-## Self-Review (run after drafting; fix inline)
-
-1. **Spec coverage** — build-fix (P0), version assertion (P1), redundant-API removal incl. attribute family + class-knobs + dead members + thin modules + internalisation (P2), OneWay + MayInterleave replacements (P3), new 10.1/10.2 helpers (P4), docs/version/regression (P5). All four user-locked decisions (remove-now-v3, full scope 1+2, remove class-knobs) are represented.
-2. **Open verification points (resolve during execution, do not guess):** exact FCS union-case arities (Task 0.1 Step 2); exact `IInvokable` API for the MayInterleave predicate (Task 3.2 Step 3); exact Redis streams extension-method name/assembly (Task 4.1); whether `OrleansTypes`/`ImmutableTypes`/`TypeCodec` are truly internal-only (Task 2.4 Step 1).
-3. **Type consistency** — `HandleMessageOneWay`, `MayInterleave(Type)`, `interleaveMessage<'Msg>`, `InterleaveMessageTypes` used consistently across P3 tasks.
-4. **Risk** — published package: this is a deliberate major v3 (user-approved). Keep `StreamProviders`/`Kubernetes`/`GrainDirectory` (provider seams; StreamProviders is extended in P4); they were NOT in the removal list. Removal of the EventHub/AzureQueue stream helpers is NOT planned — only additions there.
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/comparison/ ---
@@ -9828,7 +9631,7 @@ transport.
   function directly, over 1,000,000 iterations.
 - **Network latency**: dominates all real-world scenarios (microseconds to milliseconds).
 - **C# facade callers** additionally pay `DispatchProxy`'s per-call boxing — see
-  [Calling from C#](/orleans-fsharp/calling-from-csharp/).
+  [Calling from C#](https://neftedollar.com/orleans-fsharp/calling-from-csharp/).
 
 ## Recommendation summary
 
@@ -9842,24 +9645,28 @@ transport.
 
 ## Next steps
 
-- [Getting Started](/orleans-fsharp/getting-started/) -- zero to working grain in 15 minutes
-- [How To](/orleans-fsharp/how-to/) -- step-by-step distributed system tutorial
-- [FAQ](/orleans-fsharp/faq/) -- common questions about Orleans.FSharp
-- [Legacy API](/orleans-fsharp/legacy/) -- maintenance documentation for earlier authoring models
+- [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) -- zero to working grain in 15 minutes
+- [How To](https://neftedollar.com/orleans-fsharp/how-to/) -- step-by-step distributed system tutorial
+- [FAQ](https://neftedollar.com/orleans-fsharp/faq/) -- common questions about Orleans.FSharp
+- [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/) -- unsupported migration reference for earlier authoring models
 
 
-# Legacy API — Compatibility Documentation
+# Legacy Archive — Unsupported Migration Documentation
 
-The following pages describe obsolete compatibility APIs. They are intentionally separated from the current functional documentation above.
+The following pages are archived and unsupported. There is no new Legacy release line, compatibility work, or security support. They are intentionally separated from the current functional documentation above.
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/advanced/ ---
 
 # Legacy Advanced Patterns
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Advanced examples which depend on the original CodeGen authoring path.**
 
-> Current functional transactions are documented in [Functional Grain Runtime](../functional-grains.md#distributed-acid-transactions).
+> Current functional transactions are documented in [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/#distributed-acid-transactions).
 
 ## Higher-Level Transactional Grains
 
@@ -10075,22 +9882,27 @@ let ``Withdraw throws when balance is insufficient`` () =
 
 ## Other legacy APIs
 
-The complete original grain, timer, reminder, scripting-handle, and registration surfaces are indexed in [Legacy API Reference](api-reference.md) and [Legacy Grain Definition](grain-definition.md).
+The complete original grain, timer, reminder, scripting-handle, and registration surfaces are indexed in [Legacy API Reference](https://neftedollar.com/orleans-fsharp/legacy/api-reference/) and [Legacy Grain Definition](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/api-reference/ ---
 
 # Legacy API Reference
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Reference for the original Orleans.FSharp authoring APIs kept for existing applications.**
 
-> This page is deliberately outside the current API reference. The APIs below remain runnable but are deprecated for new code.
+> This page records the 4.1-and-earlier surface for migration. It is not a supported or newly
+> released 5.0 API.
 
 ## Orleans.FSharp.EventSourcing
 
-The `eventSourcedGrain { }` CE and its `JournaledGrain` bridge. Not deprecated, and not the same
-thing as the `journaledGrainFor` definition builder above: this one needs a C#-declared grain
-interface and the CodeGen that comes with it. See [Event Sourcing](../event-sourcing.md).
+The historical `eventSourcedGrain { }` CE and its `JournaledGrain` bridge are not the same thing as
+the current `journaledGrainFor` definition builder. The old path needs the archived CodeGen
+package and is not published in the 5.0 package set. See [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/).
 
 ### Types
 
@@ -10148,8 +9960,8 @@ interface and the CodeGen that comes with it. See [Event Sourcing](../event-sour
 ## Deprecated: the `grain { }` cluster
 
 Everything below carries `[<Obsolete>]` (warning, not error) and is kept runnable. The replacement
-for each entry is the [functional grain runtime](../functional-runtime.md); see
-[API Migration](migration.md) for the rewrite recipe.
+for each entry is the [functional grain runtime](https://neftedollar.com/orleans-fsharp/functional-runtime/); see
+[API Migration](https://neftedollar.com/orleans-fsharp/legacy/migration/) for the rewrite recipe.
 
 ### Types
 
@@ -10198,10 +10010,10 @@ for each entry is the [functional grain runtime](../functional-runtime.md); see
 Each `handle*` keyword also has a `*WithServices` form (`handleWithServices`,
 `handleStateWithServices`, `handleTypedWithServices`, and their `Cancellable` variants) taking an
 `IServiceProvider` instead of a `GrainContext`. See
-[legacy Grain Definition guide](grain-definition.md) for the full keyword list. Per-grain Orleans
+[legacy Grain Definition guide](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/) for the full keyword list. Per-grain Orleans
 attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
 `[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
-On the [functional grain runtime](../functional-grains.md) they are ordinary contract and definition
+On the [functional grain runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) they are ordinary contract and definition
 operations instead — `reentrant`, `statelessWorker`, `placement`, `oneWay`, `readOnly`, and
 `onStream` / `onBroadcast` for implicit subscriptions.
 
@@ -10332,18 +10144,22 @@ These settings apply to Legacy C# CodeGen grain interfaces. Current functional c
 
 # Legacy Event Sourcing
 
-**Maintenance guide for the original `eventSourcedGrain { }` model.**
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
-> This page is intentionally isolated from the current `journaledGrainFor` documentation. The classic API is still shipped for existing applications.
+**Migration archive for the original `eventSourcedGrain { }` model.**
+
+> This page is intentionally isolated from the current `journaledGrainFor` documentation. The
+> classic package was part of the 4.1-and-earlier release shape and is not published in the 5.0
+> package set.
 
 ## Classic event-sourced grain
 
-> **Superseded, not deprecated.** The `eventSourcedGrain { }` computation expression and
-> `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class,
-> and they need C# CodeGen for the grain interface. New code should use `journaledGrainFor` from
-> the functional grain runtime (above, and [functional-grains.md](../functional-grains.md)). Nothing
-> in `Orleans.FSharp.EventSourcing` carries `[<Obsolete>]`, so this path compiles without a
-> warning; it is still shipped and is not being removed.
+> The historical `eventSourcedGrain { }` computation expression and
+> `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class.
+> They need the archived CodeGen package for the grain interface. New code must use
+> `journaledGrainFor` from the functional runtime; no new classic package release is produced.
 
 The classic model splits a grain into `apply` (a pure fold), `handle` (a command handler
 returning events), and `defaultState`, and the `Orleans.FSharp.CodeGen` package generates a C#
@@ -10472,26 +10288,29 @@ placeholder `Orleans.FSharp.EventSourcing.Marten` package — whose helpers only
 Orleans' own `LogStorage` provider — has been removed. An adapter for any store is a separate
 package registering a named `ILogViewAdaptorFactory`, which both the classic and the journaled
 model then name with no further work — see
-["Bringing your own provider"](../event-sourcing.md#bringing-your-own-provider).
+["Bringing your own provider"](https://neftedollar.com/orleans-fsharp/event-sourcing/#bringing-your-own-provider).
 
 ---
 
 ## Current replacement
 
-For new code, use [Event Sourcing with journaledGrainFor](../event-sourcing.md).
+For new code, use [Event Sourcing with journaledGrainFor](https://neftedollar.com/orleans-fsharp/event-sourcing/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/faq/ ---
 
 # Legacy Frequently Asked Questions
 
-> This archived FAQ describes the original Orleans.FSharp authoring surface. Current answers live in [Frequently Asked Questions](../faq.md).
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
-> **Note.** Grain authoring has two models. The `grain { }` CE shown on this page still compiles and
-> runs, but its public surface now carries `[<Obsolete>]` (warning, not error); new code should use
-> the functional grain runtime (`grainContract` / `grainFor` / `FunctionalGrain.ref` /
-> `AddFunctionalGrain`). See [functional-grains.md](../functional-grains.md). `siloConfig { }`,
-> `clientConfig { }` and `eventSourcedGrain { }` are unaffected.
+> This archived FAQ describes the original Orleans.FSharp authoring surface. Current answers live in [Frequently Asked Questions](https://neftedollar.com/orleans-fsharp/faq/).
+
+> **Historical scope.** The `grain { }` CE shown on this page describes the 4.1-and-earlier package
+> shape. It is not a supported 5.0 authoring model. New code should use the functional grain runtime
+> (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`). See
+> [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ## What is Orleans.FSharp?
 
@@ -10542,7 +10361,7 @@ let counter =
     }
 ```
 
-See the [Getting Started](../getting-started.md) guide for a full walkthrough.
+See the [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) guide for a full walkthrough.
 
 **Functional-runtime equivalent** (the current authoring model — same increment/decrement/value domain, a typed API record instead of a boxed message):
 
@@ -10581,7 +10400,7 @@ let counterDefinition =
 
 Register with `siloBuilder.AddFunctionalGrain(counterDefinition)`, then call it as
 `let api = CounterApi.ref factory "my-counter" in api.increment ()` — no boxed reply, no separate
-handle type. See [Getting Started](../getting-started.md) for the complete functional-first walkthrough.
+handle type. See [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) for the complete functional-first walkthrough.
 
 ## How does Orleans.FSharp compare to using Microsoft Orleans from C#?
 
@@ -10609,31 +10428,27 @@ Dispatch overhead is small and paid once per call: the repository's benchmark ho
 
 ## Is Orleans.FSharp production-ready?
 
-Yes. Orleans.FSharp has:
-
-- Unit and integration coverage, including live Orleans clusters
-- Broad Orleans 10 feature coverage (137 CE operations across 8 builders)
-- Zero `Unchecked.defaultof` in source code
-- TLS/mTLS support, call filters, request context propagation
-- Input validation on all string parameters
-- Security scanning (Gitleaks) in CI
+This archived authoring model is unsupported and should not be selected for a new production
+deployment. Evaluate the current functional API and its explicit
+[release and production boundaries](https://neftedollar.com/orleans-fsharp/release-status/) instead.
 
 ## What Microsoft Orleans features are supported?
 
-All of them. Orleans.FSharp wraps the Orleans 10 feature set:
+The archived material historically covered the following areas; this list is not a current support
+guarantee:
 
 - Grain lifecycle (activate, deactivate, timers, reminders)
 - State persistence (memory, Redis, Azure, Cosmos, DynamoDB, ADO.NET)
 - Streaming (memory, Event Hubs, Azure Queue, broadcast channels)
 - Reentrancy, stateless workers, placement strategies
-- Event sourcing (`journaledGrainFor` over Orleans' log-consistency providers; the classic `eventSourcedGrain { }` CE is still shipped)
+- Event sourcing (`journaledGrainFor` over Orleans' log-consistency providers; the classic package is archive-only and is not published in the 5.0 package set)
 - Distributed ACID transactions (`transactional` + `transactionalStateFrom`)
 - Observers, call filters, request context
 - Grain directory, grain services, grain extensions
 - TLS/mTLS, health checks, OpenTelemetry
 - Kubernetes clustering, interface versioning
 
-See the [API Reference](../api-reference.md) for the complete list of modules and functions.
+See the [API Reference](https://neftedollar.com/orleans-fsharp/api-reference/) for the complete list of modules and functions.
 
 ## How do I get started?
 
@@ -10644,7 +10459,7 @@ cd MyApp
 dotnet build && dotnet test && dotnet run --project src/MyApp.Silo
 ```
 
-This creates a complete solution with a counter grain, tests, and silo — ready in under 2 minutes. See the full [Getting Started](../getting-started.md) tutorial.
+This creates a complete solution with a counter grain, tests, and silo — ready in under 2 minutes. See the full [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) tutorial.
 
 ## What is the difference between Orleans.FSharp and Akkling?
 
@@ -10686,7 +10501,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What is Orleans.FSharp?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans, the virtual actor framework by Microsoft. It provides computation expressions (siloConfig {}, eventSourcedGrain {}) and the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) that let you define distributed actors using pure F# — no C# boilerplate needed. The original grain {} computation expression still works but is deprecated. It supports Orleans 10 and has unit and integration coverage."
+        "text": "Orleans.FSharp is an idiomatic F# API layer for Microsoft Orleans. Current development uses the functional runtime (grainContract / grainFor / AddFunctionalGrain). This archived FAQ describes an unsupported 4.1-and-earlier authoring model which receives no new release line or security fixes."
       }
     },
     {
@@ -10694,7 +10509,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "How do I use Microsoft Orleans with F#?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Install Orleans.FSharp via NuGet (dotnet add package Orleans.FSharp) and use the functional grain runtime (grainContract / grainFor / AddFunctionalGrain) to define grains declaratively; the older grain {} computation expression still works but is deprecated. Orleans.FSharp.Runtime provides siloConfig {} for silo setup, and Orleans.FSharp.Abstractions provides the C# shim for Orleans proxy generation."
+        "text": "Use the current functional runtime (grainContract / grainFor / AddFunctionalGrain). The older authoring model on this page is an unsupported migration archive and is not a newly released 5.0 API."
       }
     },
     {
@@ -10702,7 +10517,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "Is Orleans.FSharp production-ready?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Orleans.FSharp has unit and integration coverage, broad Orleans 10 feature coverage, TLS/mTLS support, call filters, request context propagation, input validation, and security scanning in CI. Validate your own providers, topology, and upgrade path before production rollout."
+        "text": "The archived authoring model is unsupported and should not be selected for a new production deployment. Evaluate the current functional API and its documented production boundaries instead."
       }
     },
     {
@@ -10718,7 +10533,7 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
       "name": "What Microsoft Orleans features does Orleans.FSharp support?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "All of them. Orleans.FSharp wraps the Orleans 10 feature set: grain lifecycle, state persistence (memory, Redis, Azure, Cosmos, DynamoDB, ADO.NET), streaming, reentrancy, stateless workers, placement strategies, event sourcing, transactions, observers, call filters, grain directory, TLS/mTLS, health checks, OpenTelemetry, and Kubernetes clustering."
+        "text": "This archived page records areas covered by the 4.1-and-earlier material; it is not a current support guarantee. Use the current functional API reference and release-status page for verified behavior."
       }
     }
   ]
@@ -10730,17 +10545,21 @@ Orleans.FSharp is open source under the MIT license: [github.com/Neftedollar/orl
 
 # Legacy Getting Started
 
-**Maintenance guide for the original Orleans.FSharp grain authoring model.**
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
-> This page is intentionally isolated from the current functional API documentation. It covers the deprecated API kept for existing applications; new applications should start with [Getting Started](../getting-started.md).
+**Migration archive for the original Orleans.FSharp grain authoring model.**
+
+> This page is intentionally isolated from the current functional API documentation. New
+> applications should start with [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/).
 
 ## Define and run a classic grain
 
-Everything below this heading is the original `grain { }` CE and universal `FSharpGrain.ref`/`send`/
-`ask` pattern from earlier Orleans.FSharp releases. It still compiles and runs exactly as described;
-its public surface now carries `[<Obsolete>]` (warning, not error). New code should use the
-functional runtime above -- see [functional-grains.md](../functional-grains.md) for the complete
-before/after mapping.
+Everything below this heading records the original `grain { }` CE and universal
+`FSharpGrain.ref`/`send`/`ask` pattern from 4.1-and-earlier releases. It is frozen as migration
+reference and is not verified against the 5.0 package set. New code should use the functional
+runtime -- see [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ### Define state and commands
 
@@ -10951,13 +10770,17 @@ dotnet test
 
 ## Related legacy documentation
 
-- [Grain Definition](grain-definition.md)
-- [Redis Example](redis-example.md)
+- [Grain Definition](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/)
+- [Redis Example](https://neftedollar.com/orleans-fsharp/legacy/redis-example/)
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/grain-definition/ ---
 
 # Legacy: Grain Definition
+
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
 **Complete guide to the `grain { }` computation expression.**
 
@@ -10965,7 +10788,7 @@ dotnet test
 > the old `GrainContext`, `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, `Reminder`,
 > and the `FSharpGrain.*` handle module -- now carries `[<Obsolete>]` (warning, not error). It keeps
 > compiling and running; new code should use the functional grain runtime described in
-> [functional-grains.md](../functional-grains.md), which also carries the before/after mapping table.
+> [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/), which also carries the before/after mapping table.
 
 ## What you'll learn
 
@@ -11429,7 +11252,7 @@ any of these four stages — `Activate` and `Last` included — always runs *bef
 operation) does. The library test suite pins this by subscribing directly at the raw stage number,
 not assumed from the stage names — see `tests/Orleans.FSharp.Integration/FunctionalPlacementIntegrationTests.fs`
 and, for the functional runtime's own `onLifecycle` operation with the closed
-`First`/`SetupState`/`Activate`/`Last` set, [Lifecycle-stage hooks](../functional-grains.md#lifecycle-stage-hooks-onlifecycle)
+`First`/`SetupState`/`Activate`/`Last` set, [Lifecycle-stage hooks](https://neftedollar.com/orleans-fsharp/functional-grains/#lifecycle-stage-hooks-onlifecycle)
 in the functional grain runtime guide.
 
 ```fsharp
@@ -11536,7 +11359,7 @@ covered. Repeated registrations of the same type are de-duplicated.
 ## Per-grain Orleans attributes (C# CodeGen path)
 
 > This whole section is about the deprecated `grain { }` model. On the
-> [functional grain runtime](../functional-grains.md) each of these concepts is a first-class
+> [functional grain runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) each of these concepts is a first-class
 > `grainContract` / `grainFor` operation — `readOnly`, `oneWay`, `alwaysInterleave`, `reentrant`,
 > `mayInterleave`, `acceptsVersions` / `sinceVersion`, `grainType`, `collectionAge`,
 > `statelessWorker`, `placement`, and `onStream` / `onBroadcast` for implicit stream and
@@ -11546,7 +11369,7 @@ Reentrancy beyond `interleaveMessage` (whole-grain `[Reentrant]` and predicate
 `[MayInterleave]`), stateless workers, placement strategies, one-way and read-only methods,
 implicit stream subscriptions, and custom grain-type names are **not** `grain { }` CE
 keywords. All of them are first-class contract operations on the [functional grain
-runtime](../functional-grains.md). The universal grain pattern shares a single `FSharpGrainImpl` class and
+runtime](https://neftedollar.com/orleans-fsharp/functional-grains/). The universal grain pattern shares a single `FSharpGrainImpl` class and
 one handler method, so per-grain class-level or per-method attributes cannot be expressed there.
 
 To use them, define the grain through the per-grain `Orleans.FSharp.CodeGen` path: each grain
@@ -11639,27 +11462,32 @@ let chatRoom =
 
 ## Next steps
 
-- [Silo Configuration](../silo-configuration.md) -- configure storage, clustering, and streaming for your grains
-- [Streaming](../streaming.md) -- publish and subscribe to events
-- [Testing](../testing.md) -- test your grain definitions with FsCheck and TestHarness
-- [Advanced](../advanced.md) -- transactions, grain directory, OpenTelemetry, shutdown, state migration
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) -- configure storage, clustering, and streaming for your grains
+- [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) -- publish and subscribe to events
+- [Testing](https://neftedollar.com/orleans-fsharp/testing/) -- test your grain definitions with FsCheck and TestHarness
+- [Advanced](https://neftedollar.com/orleans-fsharp/advanced/) -- transactions, grain directory, OpenTelemetry, shutdown, state migration
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/how-to/ ---
 
 # Legacy How To
 
-> This archived tutorial uses the original Orleans.FSharp authoring API. It remains available for maintaining existing applications; new applications should use the current [How To](../how-to.md).
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
+> This archived tutorial records the original Orleans.FSharp authoring API for migration. New
+> applications should use the current [How To](https://neftedollar.com/orleans-fsharp/how-to/).
 
 **Build a distributed system with F# and Microsoft Orleans in under 15 minutes.**
 
-Orleans.FSharp provides idiomatic F# computation expressions for Microsoft Orleans, the virtual actor framework. This guide walks you through the entire process — from installing the .NET SDK to running a production-ready silo with grains, state persistence, and property-based tests.
+This historical guide walks through the former computation-expression model. It is migration
+reference, not a production-readiness claim.
 
-> **Note.** This tutorial is written against the `grain { }` CE, which now carries `[<Obsolete>]`
-> (warning, not error) -- every step still works exactly as written. For the current grain authoring
-> model (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) see
-> [functional-grains.md](../functional-grains.md); the silo, persistence and testing steps are the same
-> under both models.
+> **Historical scope.** This tutorial targets the 4.1-and-earlier package shape. It is not tested
+> against the 5.0 package set. For the current grain authoring model (`grainContract` / `grainFor` /
+> `FunctionalGrain.ref` / `AddFunctionalGrain`) see
+> [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ## Prerequisites
 
@@ -11838,7 +11666,7 @@ let! balance = account.deposit 100m
 let! result = account.withdraw 40m
 ```
 
-See [functional-grains.md](../functional-grains.md) for the complete guide, including
+See [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/) for the complete guide, including
 persistence, timers, reminders, and multi-provider writes.
 
 ## Step 5: Configure the silo
@@ -11919,9 +11747,10 @@ let stream = Stream.getStream<AccountEvent> provider "Accounts" (string context.
 do! Stream.publish stream (Deposited amount)
 ```
 
-## Step 9: Deploy to production
+## Historical production checklist
 
-Orleans.FSharp supports all Microsoft Orleans production features:
+The archived example referenced these provider areas; availability and support must be re-evaluated
+against the current functional API:
 
 - **Clustering**: Redis, Azure Table Storage, Consul, ZooKeeper, Kubernetes
 - **State persistence**: Redis, Azure Blob, Cosmos DB, DynamoDB, ADO.NET (SQL Server, PostgreSQL)
@@ -11929,15 +11758,16 @@ Orleans.FSharp supports all Microsoft Orleans production features:
 - **Security**: TLS/mTLS, call filters, request context propagation
 - **Observability**: OpenTelemetry, health checks, Orleans Dashboard
 
-See the [Silo Configuration](../silo-configuration.md) and [Security](../security.md) guides for production setup.
+See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/),
+[Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/), and [Security](https://neftedollar.com/orleans-fsharp/security/) for current guidance.
 
 ## Next steps
 
-- [Functional Grain Runtime](../functional-grains.md) -- the current authoring model, full guide
-- [Legacy: Grain Definition](grain-definition.md) -- all 27 keywords in the `grain {}` CE (deprecated model, kept for reference)
-- [Event Sourcing](../event-sourcing.md) -- `journaledGrainFor { }`, a grain whose state is the fold of an event journal
-- [Testing](../testing.md) -- TestHarness, GrainMock, and property tests
-- [API Reference](../api-reference.md) -- complete module and function reference
+- [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) -- the current authoring model, full guide
+- [Legacy: Grain Definition](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/) -- all 27 keywords in the `grain {}` CE (deprecated model, kept for reference)
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) -- `journaledGrainFor { }`, a grain whose state is the fold of an event journal
+- [Testing](https://neftedollar.com/orleans-fsharp/testing/) -- TestHarness, GrainMock, and property tests
+- [API Reference](https://neftedollar.com/orleans-fsharp/api-reference/) -- complete module and function reference
 
 <script type="application/ld+json">
 {
@@ -12014,35 +11844,43 @@ See the [Silo Configuration](../silo-configuration.md) and [Security](../securit
 
 # Legacy API
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 This section preserves documentation for Orleans.FSharp applications built on the original authoring APIs. Those APIs remain shipped for compatibility, but current guides teach only the functional runtime.
 
 ## Start here
 
-- [Legacy Getting Started](getting-started.md) — create and run an application on the original model
-- [Legacy How To](how-to.md) — the archived end-to-end tutorial
-- [Grain Definition](grain-definition.md) — complete original grain-definition reference
-- [Legacy API Reference](api-reference.md) — original types, builders, registration, and handle modules
-- [API Migration](migration.md) — move an existing application to the functional runtime
+- [Legacy Getting Started](https://neftedollar.com/orleans-fsharp/legacy/getting-started/) — create and run an application on the original model
+- [Legacy How To](https://neftedollar.com/orleans-fsharp/legacy/how-to/) — the archived end-to-end tutorial
+- [Grain Definition](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/) — complete original grain-definition reference
+- [Legacy API Reference](https://neftedollar.com/orleans-fsharp/legacy/api-reference/) — original types, builders, registration, and handle modules
+- [API Migration](https://neftedollar.com/orleans-fsharp/legacy/migration/) — move an existing application to the functional runtime
 
 ## Topic guides
 
-- [Event Sourcing](event-sourcing.md)
-- [Serialization](serialization.md)
-- [Streaming Examples](streaming.md)
-- [Testing](testing.md)
-- [Advanced Patterns](advanced.md)
-- [Resilience Example](resilience.md)
-- [Redis Example](redis-example.md)
-- [Frequently Asked Questions](faq.md)
+- [Event Sourcing](https://neftedollar.com/orleans-fsharp/legacy/event-sourcing/)
+- [Serialization](https://neftedollar.com/orleans-fsharp/legacy/serialization/)
+- [Streaming Examples](https://neftedollar.com/orleans-fsharp/legacy/streaming/)
+- [Testing](https://neftedollar.com/orleans-fsharp/legacy/testing/)
+- [Advanced Patterns](https://neftedollar.com/orleans-fsharp/legacy/advanced/)
+- [Resilience Example](https://neftedollar.com/orleans-fsharp/legacy/resilience/)
+- [Redis Example](https://neftedollar.com/orleans-fsharp/legacy/redis-example/)
+- [Frequently Asked Questions](https://neftedollar.com/orleans-fsharp/legacy/faq/)
 
 ## Current documentation
 
-For new development, begin with [Getting Started](../getting-started.md), [Functional Grain Runtime](../functional-grains.md), and [Event Sourcing](../event-sourcing.md).
+For new development, begin with [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/), [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-grains/), and [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/migration/ ---
 
 # Legacy API Migration
+
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
 **Move an application from the original Orleans.FSharp authoring API to the functional runtime.**
 
@@ -12074,7 +11912,7 @@ Two members of the cluster are deliberately left unattributed, both recorded wit
 invisible where it matters), and `UniversalGrainHandlerRegistry`, the silo-side dispatcher wired
 by the already-obsolete `AddFSharpGrain` — a consumer only reaches it after being warned at that
 entry point. The prose that hands a reader a recipe naming it directly is
-[testing.md](testing.md), "Testing the Universal Grain Pattern" (in this repository and in its
+[testing.md](https://neftedollar.com/orleans-fsharp/legacy/testing/), "Testing the Universal Grain Pattern" (in this repository and in its
 published mirror under `website/src/content/docs/`, which is what the docs site ships), plus the
 "Understanding the Universal Grain Pattern" section of `DEVGUIDE.md`; each of those three now sits
 under a deprecation banner. `CHANGELOG.md` also names it, in the historical release entry that
@@ -12087,10 +11925,9 @@ That is a self-reference bracket, not
 a blanket suppression: nothing outside the bracketed lines is silenced, and no library project
 disables FS0044 project-wide.
 
-Old code keeps compiling and running unchanged; every example under `examples/`, the sample
-under `src/Orleans.FSharp.Sample`, `testbed/`, and the `orleans-fsharp` template carry a small
-functional-runtime twin grain beside the old one so the two authoring styles can be compared
-side by side in a real project.
+The 4.1 line retained old code with deprecation warnings. The 5.0 package set does not publish a
+new Legacy line, and the repository examples/template now use only the functional runtime. Treat
+the mapping below as a migration recipe, not as a compatibility guarantee for `main`.
 
 Before/after mapping:
 
@@ -12114,7 +11951,7 @@ Before/after mapping:
 `grain { }`'s `onLifecycleStage` operation let a grain hook an *arbitrary* `GrainLifecycleStage`
 (`First`/`SetupState`/`Activate`/`Last`/any other int) with a `CancellationToken -> Task<unit>`
 callback. `grainFor { }` has `onLifecycle` for the closed set of
-documented Orleans stages -- see [Lifecycle-stage hooks](../functional-grains.md#lifecycle-stage-hooks-onlifecycle)
+documented Orleans stages -- see [Lifecycle-stage hooks](https://neftedollar.com/orleans-fsharp/functional-grains/#lifecycle-stage-hooks-onlifecycle)
 above for why the hook carries no state at any stage, and for the verified activation ordering. A grain that genuinely needs an *undocumented* numbered stage
 (outside `First`/`SetupState`/`Activate`/`Last`) still has no functional-runtime equivalent and
 must stay on the `grain { }` CE, or hook the stage on a class grain directly via
@@ -12151,7 +11988,7 @@ observer interface in F# (`examples/chat-room`, `IChatObserver` in `ChatTypes.fs
 classic path at all under either authoring model.
 
 **Functional observers remove that constraint** — see
-[Push to clients: functional observers](../functional-grains.md#push-to-clients-functional-observers). The one
+[Push to clients: functional observers](https://neftedollar.com/orleans-fsharp/functional-grains/#push-to-clients-functional-observers). The one
 C#-declared interface lives inside `Orleans.FSharp.Abstractions`, every application observer of
 every brand rides on it, and an observer becomes an ordinary F# handler record. `examples/chat-room`
 pushes live through it. Use the classic path when you already have a C#-declared observer
@@ -12202,13 +12039,16 @@ carries `[<Obsolete>]`.
 
 # Legacy: Redis Example — Shopping Cart Service
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **End-to-end guide — Redis storage, clustering, and reminders for a real-world shopping cart.**
 
 > **Note.** This walkthrough is written against the `grain { }` CE, `AddFSharpGrain` and the
-> `FSharpGrain.ref`/`send`/`post`/`ask` handle module, which now carry `[<Obsolete>]` (warning, not
-> error) -- the example still compiles and runs exactly as described. The Redis storage and
-> clustering configuration is unaffected. For the current grain authoring model see
-> [functional-grains.md](../functional-grains.md).
+> `FSharpGrain.ref`/`send`/`post`/`ask` handle module from the 4.1-and-earlier package shape. The
+> archived project is not verified against 5.0. For the current grain authoring model see
+> [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ## What you'll build
 
@@ -12553,15 +12393,19 @@ let cartGrain = grain {
 
 ## Next steps
 
-- [Silo Configuration](../silo-configuration.md) — complete `siloConfig { }` CE reference
-- [Client Configuration](../client-configuration.md) — complete `clientConfig { }` CE reference
-- [Advanced](../advanced.md) — transactions, OpenTelemetry, graceful shutdown, state migration
-- [Security](../security.md) — TLS, mTLS, filters, secrets management
+- [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) — complete `siloConfig { }` CE reference
+- [Client Configuration](https://neftedollar.com/orleans-fsharp/client-configuration/) — complete `clientConfig { }` CE reference
+- [Advanced](https://neftedollar.com/orleans-fsharp/advanced/) — transactions, OpenTelemetry, graceful shutdown, state migration
+- [Security](https://neftedollar.com/orleans-fsharp/security/) — TLS, mTLS, filters, secrets management
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/resilience/ ---
 
 # Legacy Resilience Example
+
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
 **Applying the current resilience helpers to an original-API grain handle.**
 
@@ -12578,12 +12422,16 @@ let! price =
 
 ---
 
-For functional API records, pass the record-field call directly to `GrainResilience.execute`; see [Grain Resilience](../resilience.md).
+For functional API records, pass the record-field call directly to `GrainResilience.execute`; see [Grain Resilience](https://neftedollar.com/orleans-fsharp/resilience/).
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/serialization/ ---
 
 # Legacy Serialization
+
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
 This archived page preserves serialization and CodeGen guidance for the original Orleans.FSharp
 authoring model. Serializer changes which affect persisted data require an explicit migration.
@@ -12591,7 +12439,7 @@ authoring model. Serializer changes which affect persisted data require an expli
 > **Note.** `AddFSharpGrain`, the `grain { }` CE and `GrainDefinition<_,_>` referenced below now
 > carry `[<Obsolete>]` (warning, not error). Codec registration works the same way under the
 > functional grain runtime -- `AddFunctionalGrain` also registers `FSharpBinaryCodec` -- see
-> [functional-grains.md](../functional-grains.md).
+> [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/).
 
 ## Quick Comparison
 
@@ -12809,7 +12657,7 @@ let config = siloConfig {
 | Add record field | **Fails** (FSharp.SystemTextJson strict) | **Fails** (ordinal-based) | **Fails** (ordinal-based) |
 | Rename DU case | Fails (name-based) | Works (ordinal-based) | Works (ordinal-based) |
 
-For schema migrations across versions, use the [StateMigration](../advanced.md) module.
+For schema migrations across versions, use the [StateMigration](https://neftedollar.com/orleans-fsharp/advanced/) module.
 
 ## Performance
 
@@ -12825,15 +12673,19 @@ All modes are fast enough for real-world Orleans usage. Grain call network laten
 
 ## Next Steps
 
-- [Getting Started](../getting-started.md) — build your first grain
-- [Legacy: Grain Definition](grain-definition.md) — all 27 deprecated `grain { }` CE keywords
-- [Advanced](../advanced.md) — state migration for schema evolution
-- [Testing](../testing.md) — FsCheck property tests for serialization roundtrips
+- [Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) — build your first grain
+- [Legacy: Grain Definition](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/) — all 27 deprecated `grain { }` CE keywords
+- [Advanced](https://neftedollar.com/orleans-fsharp/advanced/) — state migration for schema evolution
+- [Testing](https://neftedollar.com/orleans-fsharp/testing/) — FsCheck property tests for serialization roundtrips
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/streaming/ ---
 
 # Legacy Streaming Examples
+
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
 **Streaming examples for the original Orleans.FSharp grain authoring model.**
 
@@ -12894,16 +12746,21 @@ for event in events do
 
 ## Current guide
 
-See [Streaming](../streaming.md) for functional `onStream` and `onBroadcast` subscriptions.
+See [Streaming](https://neftedollar.com/orleans-fsharp/streaming/) for functional `onStream` and `onBroadcast` subscriptions.
 
 
 --- Source: https://neftedollar.com/orleans-fsharp/legacy/testing/ ---
 
 # Legacy Testing
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Testing patterns for the original Orleans.FSharp grain and event-sourcing APIs.**
 
-> This page is intentionally isolated from the current functional testing guide. The helpers remain available for existing applications and carry their existing deprecation signal where applicable.
+> This page records the 4.1-and-earlier helper surface and is not verified against the 5.0 package
+> set. Current testing guidance lives in [Testing](https://neftedollar.com/orleans-fsharp/testing/).
 
 ## Testing Handler Logic Directly (No Silo Required)
 
@@ -12963,7 +12820,7 @@ let ``increment increases count (functional)`` () =
 A handler that *does* read `context` (services, persistent state, grain factory, request context)
 cannot be unit-tested this way: `FunctionalGrainContext`'s constructor is `internal`, so nothing
 outside the library can fabricate one. That handler needs a real activation -- see
-[Testing a Functional Grain](../testing.md#testing-a-functional-grain).
+[Testing a Functional Grain](https://neftedollar.com/orleans-fsharp/testing/#testing-a-functional-grain).
 
 ---
 
@@ -13112,7 +12969,7 @@ updates the internal state.
 verified against its public surface, which stops at `create` / `withGrain` / `withFSharpGrain*`. A
 functional grain's handlers can only run inside a real activation, so the supported unit-testing
 path is either calling a context-free handler function directly, or a `TestingHost` cluster; see
-[Testing a Functional Grain](../testing.md#testing-a-functional-grain).
+[Testing a Functional Grain](https://neftedollar.com/orleans-fsharp/testing/#testing-a-functional-grain).
 
 ---
 
@@ -13163,9 +13020,9 @@ let ``replaying events produces the same state as fold`` () =
 
 > **Functional equivalent.** Everything in this section is `GrainDefinition`'s handler-extraction
 > surface, which the functional runtime does not have (and does not need -- see
-> [Testing Handler Logic Directly](#testing-handler-logic-directly-no-silo-required) above for why).
+> [Testing Handler Logic Directly](https://neftedollar.com/orleans-fsharp/legacy/testing/#testing-handler-logic-directly-no-silo-required) above for why).
 > The nearest functional-runtime analogue for a context-free handler is calling your own function
-> directly; for a context-touching one, see [Testing a Functional Grain](../testing.md#testing-a-functional-grain).
+> directly; for a context-touching one, see [Testing a Functional Grain](https://neftedollar.com/orleans-fsharp/testing/#testing-a-functional-grain).
 
 All 12 CE handler variants can be tested without a silo by extracting the handler function from a
 `GrainDefinition` and calling it directly. Three dispatch helpers cover all variants:
@@ -13408,8 +13265,8 @@ module ScoreProperties =
 This suite's cross-variant equivalence check is specific to the classic CE's dispatch-helper family
 (`getHandler` vs. `getCancellableContextHandler`), which the functional runtime does not have; its
 unit test, property test, and TestingHost integration test are covered individually above under
-[Testing a Functional Grain](../testing.md#testing-a-functional-grain).
+[Testing a Functional Grain](https://neftedollar.com/orleans-fsharp/testing/#testing-a-functional-grain).
 
 ## Current testing guide
 
-For `grainContract`, `grainFor`, and `journaledGrainFor`, see [Testing](../testing.md).
+For `grainContract`, `grainFor`, and `journaledGrainFor`, see [Testing](https://neftedollar.com/orleans-fsharp/testing/).

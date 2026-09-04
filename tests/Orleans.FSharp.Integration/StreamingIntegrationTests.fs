@@ -133,6 +133,10 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
                 received |> Seq.filter (fun i -> i > 0) |> Seq.distinct |> Seq.sort |> List.ofSeq
 
             test <@ items = [ 1..eventCount ] @>
+
+            let asyncStream = streamProvider.GetStream<int>(streamRef.StreamId)
+            let! remainingSubscriptions = asyncStream.GetAllSubscriptionHandles()
+            test <@ remainingSubscriptions.Count = 0 @>
         }
 
     // -----------------------------------------------------------------------

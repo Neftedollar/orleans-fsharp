@@ -33,6 +33,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / 'docs'
 SITE = ROOT / 'website' / 'src' / 'content' / 'docs'
+SECURITY_CANONICAL = ROOT / 'SECURITY.md'
+SECURITY_MIRROR = ROOT / '.github' / 'SECURITY.md'
 IGNORED_DOC_TREES = {'superpowers'}  # local, gitignored planning artifacts; never published
 
 # Pre-existing content divergence, each pair carrying real differences beyond frontmatter.
@@ -86,6 +88,7 @@ def main() -> int:
     args = parser.parse_args()
 
     drifted, missing = [], []
+    policy_failures = []
     written = 0
     checked = 0
     for doc in sorted(DOCS.rglob('*.md')):
@@ -118,6 +121,31 @@ def main() -> int:
         if left != right:
             drifted.append(name)
 
+        if relative.parts[0] == 'legacy':
+            status = doc.read_text(encoding='utf-8').lower()
+            status = re.sub(r'(?m)^>\s?', '', status)
+            required = (
+                ('archived and unsupported', r'archived\s+and\s+unsupported'),
+                ('no new Legacy release line', r'no\s+new\s+legacy\s+release\s+line'),
+                ('security fixes', r'security\s+fixes'),
+            )
+            absent = [label for label, pattern in required if re.search(pattern, status) is None]
+            if absent:
+                policy_failures.append(
+                    f'LEGACY STATUS {name}: missing {", ".join(repr(value) for value in absent)}'
+                )
+
+    canonical_security = SECURITY_CANONICAL.read_text(encoding='utf-8')
+    mirrored_security = SECURITY_MIRROR.read_text(encoding='utf-8')
+    if args.write and canonical_security != mirrored_security:
+        SECURITY_MIRROR.write_text(canonical_security, encoding='utf-8')
+        mirrored_security = canonical_security
+        print('updated .github/SECURITY.md from canonical SECURITY.md')
+    if canonical_security != mirrored_security:
+        policy_failures.append(
+            'SECURITY MIRROR: .github/SECURITY.md differs from canonical SECURITY.md'
+        )
+
     for name in missing:
         print(f'MISSING MIRROR {name}: docs/{name} has no website/src/content/docs/{name}, '
               f'so the published site never shows it')
@@ -125,11 +153,14 @@ def main() -> int:
         print(f'DRIFT {name}: docs/{name} and its published mirror differ beyond frontmatter '
               f'and link form — `diff docs/{name} <(tail -n +6 website/src/content/docs/{name})` '
               f'(ignore the `](page.md)` vs `](/orleans-fsharp/page/)` lines, those are expected)')
+    for failure in policy_failures:
+        print(failure)
     print(f'checked {checked} doc/mirror pairs '
-          f'({len(KNOWN_DRIFT)} exempt); {len(drifted)} drifted, {len(missing)} missing')
+          f'({len(KNOWN_DRIFT)} exempt); {len(drifted)} drifted, {len(missing)} missing, '
+          f'{len(policy_failures)} policy failure(s)')
     if args.write:
         print(f'updated {written} website mirror(s) from docs/')
-    return 1 if (drifted or missing) else 0
+    return 1 if (drifted or missing or policy_failures) else 0
 
 
 if __name__ == '__main__':

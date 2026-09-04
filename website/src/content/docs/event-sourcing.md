@@ -683,10 +683,6 @@ See [calling-from-csharp.md](/orleans-fsharp/calling-from-csharp/).
 
 ---
 
-## Legacy model
-
-The original event-sourcing API is retained in [Legacy Event Sourcing](/orleans-fsharp/legacy/event-sourcing/).
-
 ## Bringing your own provider
 
 A log-consistency provider is an `ILogViewAdaptorFactory` registered as a **keyed** service under

@@ -5,7 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Orleans.FSharp" Version="4.*" />
+    <PackageReference Include="Orleans.FSharp" Version="5.*" />
   </ItemGroup>
 
 </Project>

@@ -1,16 +1,21 @@
 # Legacy How To
 
-> This archived tutorial uses the original Orleans.FSharp authoring API. It remains available for maintaining existing applications; new applications should use the current [How To](../how-to.md).
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
+> This archived tutorial records the original Orleans.FSharp authoring API for migration. New
+> applications should use the current [How To](../how-to.md).
 
 **Build a distributed system with F# and Microsoft Orleans in under 15 minutes.**
 
-Orleans.FSharp provides idiomatic F# computation expressions for Microsoft Orleans, the virtual actor framework. This guide walks you through the entire process — from installing the .NET SDK to running a production-ready silo with grains, state persistence, and property-based tests.
+This historical guide walks through the former computation-expression model. It is migration
+reference, not a production-readiness claim.
 
-> **Note.** This tutorial is written against the `grain { }` CE, which now carries `[<Obsolete>]`
-> (warning, not error) -- every step still works exactly as written. For the current grain authoring
-> model (`grainContract` / `grainFor` / `FunctionalGrain.ref` / `AddFunctionalGrain`) see
-> [functional-grains.md](../functional-grains.md); the silo, persistence and testing steps are the same
-> under both models.
+> **Historical scope.** This tutorial targets the 4.1-and-earlier package shape. It is not tested
+> against the 5.0 package set. For the current grain authoring model (`grainContract` / `grainFor` /
+> `FunctionalGrain.ref` / `AddFunctionalGrain`) see
+> [functional-grains.md](../functional-grains.md).
 
 ## Prerequisites
 
@@ -270,9 +275,10 @@ let stream = Stream.getStream<AccountEvent> provider "Accounts" (string context.
 do! Stream.publish stream (Deposited amount)
 ```
 
-## Step 9: Deploy to production
+## Historical production checklist
 
-Orleans.FSharp supports all Microsoft Orleans production features:
+The archived example referenced these provider areas; availability and support must be re-evaluated
+against the current functional API:
 
 - **Clustering**: Redis, Azure Table Storage, Consul, ZooKeeper, Kubernetes
 - **State persistence**: Redis, Azure Blob, Cosmos DB, DynamoDB, ADO.NET (SQL Server, PostgreSQL)
@@ -280,7 +286,8 @@ Orleans.FSharp supports all Microsoft Orleans production features:
 - **Security**: TLS/mTLS, call filters, request context propagation
 - **Observability**: OpenTelemetry, health checks, Orleans Dashboard
 
-See the [Silo Configuration](../silo-configuration.md) and [Security](../security.md) guides for production setup.
+See [Release and Production Status](../release-status.md),
+[Silo Configuration](../silo-configuration.md), and [Security](../security.md) for current guidance.
 
 ## Next steps
 

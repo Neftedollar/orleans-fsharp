@@ -28,12 +28,51 @@ let rec private flatten (error: exn) : exn list =
 let private oneSecond = TimeSpan.FromSeconds 1.0
 let private deliveryTimeout = TimeSpan.FromSeconds 30.0
 
+/// <summary>
+/// Runs only on the newest Orleans matrix leg. The floor leg still proves that the same
+/// definition is rejected at sealing instead of failing later during activation.
+/// </summary>
+type RequiresOrleansStatelessStreamsAttribute() =
+    inherit FactAttribute()
+
+    do
+        if not (OrleansRuntimeCapabilities.supportsStatelessImplicitStreams ()) then
+            base.Skip <- "Orleans 10.3.0 or newer is required for stateless-worker stream subscriptions."
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Single silo
 // ──────────────────────────────────────────────────────────────────────────────
 
 [<Collection("FunctionalStreamSingleSilo")>]
 type SingleSiloTests(fixture: FunctionalStreamSingleSiloFixture) =
+
+    [<RequiresOrleansStatelessStreams>]
+    member _.``Orleans 10.3 delivers an implicit stream to a stateless functional worker``() =
+        task {
+            let key = freshKey "stateless-stream"
+            let probe = $"{StreamNames.StatelessWorkerItems}|{key}"
+            let item = freshKey "payload"
+
+            do! fixture.Publish(StreamNames.Provider, StreamNames.StatelessWorkerItems, key, item)
+
+            do!
+                fixture.WaitFor(
+                    "the stateless-worker competing consumer to receive the item",
+                    deliveryTimeout,
+                    fun () -> StreamProbe.count probe = 1
+                )
+
+            let delivery =
+                StreamProbe.statelessWorkerDeliveries
+                |> Seq.find (fun value -> value.StartsWith($"{key}|", StringComparison.Ordinal))
+
+            let fields = delivery.Split '|'
+            let validActivationId, _ = Guid.TryParse fields.[1]
+            test <@ fields.Length = 3 @>
+            test <@ fields.[0] = key @>
+            test <@ validActivationId @>
+            test <@ fields.[2] = item @>
+        }
 
     /// <remarks>
     /// The Step-0 gate: nothing here calls the grain first. Publishing the item is the ONLY

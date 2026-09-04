@@ -68,6 +68,9 @@ let private solutionRoot =
 let private templatePath =
     Path.Combine(solutionRoot, "templates", "orleans-fsharp")
 
+let private withTemplateHive (hiveDir: string) (args: string) =
+    $"new --debug:custom-hive \"{hiveDir}\" {args}"
+
 /// <summary>
 /// Patch the generated project to use local ProjectReferences instead of NuGet PackageReferences.
 /// This allows the template to build without publishing to NuGet first.
@@ -84,9 +87,11 @@ let private patchProjectReferences (projectDir: string) (projectName: string) : 
 
         let patched =
             content.Replace(
-                """<PackageReference Include="Orleans.FSharp" Version="4.*" />""",
+                """<PackageReference Include="Orleans.FSharp" Version="5.*" />""",
                 $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp", "Orleans.FSharp.fsproj")}" />"""
             )
+
+        Assert.True(content <> patched, "Grains template PackageReference was not replaced")
 
         File.WriteAllText(grainsProj, patched)
 
@@ -100,13 +105,15 @@ let private patchProjectReferences (projectDir: string) (projectName: string) : 
         let patched =
             content
                 .Replace(
-                    """<PackageReference Include="Orleans.FSharp" Version="4.*" />""",
+                    """<PackageReference Include="Orleans.FSharp" Version="5.*" />""",
                     $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp", "Orleans.FSharp.fsproj")}" />"""
                 )
                 .Replace(
-                    """<PackageReference Include="Orleans.FSharp.Runtime" Version="4.*" />""",
+                    """<PackageReference Include="Orleans.FSharp.Runtime" Version="5.*" />""",
                     $"""<ProjectReference Include="{Path.Combine(srcRoot, "Orleans.FSharp.Runtime", "Orleans.FSharp.Runtime.fsproj")}" />"""
                 )
+
+        Assert.True(content <> patched, "Silo template PackageReferences were not replaced")
 
         File.WriteAllText(siloProj, patched)
 
@@ -169,13 +176,12 @@ let private cleanupTempDir (dir: string) : unit =
 [<Fact>]
 let ``template installs and generates project that builds with zero warnings`` () =
     let tempDir = createTempDir ()
+    let hiveDir = Path.Combine(tempDir, "template-hive")
 
     try
-        // Uninstall any previous version (ignore errors)
-        runDotnet $"new uninstall \"{templatePath}\"" tempDir 30000 |> ignore
-
-        // Install template from local path
-        let exitCode, stdout, stderr = runDotnet $"new install \"{templatePath}\"" tempDir 60000
+        // A per-test hive prevents parallel template tests from uninstalling each other's template.
+        let exitCode, stdout, stderr =
+            runDotnet (withTemplateHive hiveDir $"install \"{templatePath}\"") tempDir 60000
 
         Assert.True(
             (exitCode = 0),
@@ -184,7 +190,8 @@ let ``template installs and generates project that builds with zero warnings`` (
 
         // Generate a project
         let projectDir = Path.Combine(tempDir, "TestApp")
-        let exitCode, stdout, stderr = runDotnet "new orleans-fsharp -n TestApp" tempDir 60000
+        let exitCode, stdout, stderr =
+            runDotnet (withTemplateHive hiveDir "orleans-fsharp -n TestApp") tempDir 60000
 
         Assert.True(
             (exitCode = 0),
@@ -213,23 +220,25 @@ let ``template installs and generates project that builds with zero warnings`` (
             $"Build failed (exit code {exitCode}). stdout: {stdout} stderr: {stderr}"
         )
     finally
-        // Cleanup
-        runDotnet $"new uninstall \"{templatePath}\"" tempDir 30000 |> ignore
         cleanupTempDir tempDir
 
 [<Fact>]
 let ``template generated tests all pass`` () =
     let tempDir = createTempDir ()
+    let hiveDir = Path.Combine(tempDir, "template-hive")
 
     try
         // Install template
-        runDotnet $"new uninstall \"{templatePath}\"" tempDir 30000 |> ignore
-        let exitCode, _, _ = runDotnet $"new install \"{templatePath}\"" tempDir 60000
+        let exitCode, _, _ =
+            runDotnet (withTemplateHive hiveDir $"install \"{templatePath}\"") tempDir 60000
+
         Assert.True((exitCode = 0), "Template install failed")
 
         // Generate project
         let projectDir = Path.Combine(tempDir, "TestApp2")
-        let exitCode, _, _ = runDotnet "new orleans-fsharp -n TestApp2" tempDir 60000
+        let exitCode, _, _ =
+            runDotnet (withTemplateHive hiveDir "orleans-fsharp -n TestApp2") tempDir 60000
+
         Assert.True((exitCode = 0), "Project generation failed")
 
         assertCurrentFunctionalTemplate projectDir "TestApp2"
@@ -248,17 +257,18 @@ let ``template generated tests all pass`` () =
         // Verify tests passed
         Assert.Contains("Passed!", stdout)
     finally
-        runDotnet $"new uninstall \"{templatePath}\"" tempDir 30000 |> ignore
         cleanupTempDir tempDir
 
 [<Fact>]
 let ``template into existing non-empty dir preserves original files`` () =
     let tempDir = createTempDir ()
+    let hiveDir = Path.Combine(tempDir, "template-hive")
 
     try
         // Install template
-        runDotnet $"new uninstall \"{templatePath}\"" tempDir 30000 |> ignore
-        let exitCode, _, _ = runDotnet $"new install \"{templatePath}\"" tempDir 60000
+        let exitCode, _, _ =
+            runDotnet (withTemplateHive hiveDir $"install \"{templatePath}\"") tempDir 60000
+
         Assert.True((exitCode = 0), "Template install failed")
 
         // Create a non-empty directory
@@ -267,8 +277,15 @@ let ``template into existing non-empty dir preserves original files`` () =
         File.WriteAllText(Path.Combine(existingDir, "existing-file.txt"), "this file exists")
 
         // Generate project into existing non-empty dir
-        let _exitCode, _stdout, _stderr =
-            runDotnet "new orleans-fsharp -n ExistingProject" tempDir 60000
+        let exitCode, stdout, stderr =
+            runDotnet (withTemplateHive hiveDir "orleans-fsharp -n ExistingProject") tempDir 60000
+
+        Assert.True(
+            (exitCode = 0),
+            $"Project generation failed (exit code {exitCode}). stdout: {stdout} stderr: {stderr}"
+        )
+
+        assertCurrentFunctionalTemplate existingDir "ExistingProject"
 
         // The original file should still exist after template generation
         let originalFileExists =
@@ -276,5 +293,4 @@ let ``template into existing non-empty dir preserves original files`` () =
 
         Assert.True(originalFileExists, "Original file should still exist after template generation")
     finally
-        runDotnet $"new uninstall \"{templatePath}\"" tempDir 30000 |> ignore
         cleanupTempDir tempDir

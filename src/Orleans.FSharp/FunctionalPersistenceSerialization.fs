@@ -1,6 +1,7 @@
 namespace Orleans.FSharp
 
 open System
+open System.IO
 open System.Text.Json
 open Orleans.Storage
 
@@ -33,15 +34,20 @@ type FunctionalPersistenceCodec private
         id: string,
         kind: FunctionalPersistenceCodecKind,
         jsonOptions: JsonSerializerOptions,
-        jsonReaders: Map<string, JsonSerializerOptions>
+        jsonReaders: Map<string, JsonSerializerOptions>,
+        maxPayloadBytes: int
     ) =
+
+    [<Literal>]
+    static let defaultMaxPayloadBytes = 16 * 1024 * 1024
 
     static let orleansBinary =
         FunctionalPersistenceCodec(
             FunctionalPersistenceCodecIds.OrleansBinary,
             FunctionalPersistenceCodecKind.OrleansBinary,
             null,
-            Map.empty
+            Map.empty,
+            defaultMaxPayloadBytes
         )
 
     static let fsharpJson =
@@ -51,11 +57,18 @@ type FunctionalPersistenceCodec private
             FunctionalPersistenceCodecIds.FSharpJson,
             FunctionalPersistenceCodecKind.FSharpJson,
             options,
-            Map.ofList [ FunctionalPersistenceCodecIds.FSharpJson, options ]
+            Map.ofList [ FunctionalPersistenceCodecIds.FSharpJson, options ],
+            defaultMaxPayloadBytes
         )
 
     /// <summary>A stable identifier stored beside encoded payloads.</summary>
     member _.Id = id
+
+    /// <summary>Default maximum encoded size for one functional state, event, or snapshot payload.</summary>
+    static member DefaultMaxPayloadBytes = defaultMaxPayloadBytes
+
+    /// <summary>The maximum encoded size accepted or produced by this codec.</summary>
+    member _.MaxPayloadBytes = maxPayloadBytes
 
     /// <summary>The existing Orleans exact-type binary payload codec.</summary>
     static member OrleansBinary = orleansBinary
@@ -95,8 +108,24 @@ type FunctionalPersistenceCodec private
             codecId,
             FunctionalPersistenceCodecKind.FSharpJson,
             cloned,
-            Map.ofList [ codecId, cloned ]
+            Map.ofList [ codecId, cloned ],
+            defaultMaxPayloadBytes
         )
+
+    /// <summary>Return this codec configuration with a different per-payload size limit.</summary>
+    /// <param name="value">Maximum encoded bytes for one state value, event, or snapshot.</param>
+    member _.WithMaxPayloadBytes(value: int) =
+        if value <= 0 then
+            invalidArg (nameof value) "A functional persistence payload limit must be positive."
+
+        let writeOptions =
+            if isNull jsonOptions then null else JsonSerializerOptions(jsonOptions)
+
+        let readers =
+            jsonReaders
+            |> Map.map (fun _ options -> JsonSerializerOptions(options))
+
+        FunctionalPersistenceCodec(id, kind, writeOptions, readers, value)
 
     /// <summary>Retain a historical JSON decoder while this codec remains the write codec.</summary>
     /// <remarks>
@@ -141,7 +170,7 @@ type FunctionalPersistenceCodec private
                                   ->
                     current.Add(codecId, JsonSerializerOptions(options)))
 
-        FunctionalPersistenceCodec(id, kind, writeOptions, readers)
+        FunctionalPersistenceCodec(id, kind, writeOptions, readers, maxPayloadBytes)
 
     member internal _.Kind = kind
 
@@ -176,7 +205,10 @@ type FunctionalPersistenceOptions() =
 /// additionally select JSON per attached state through <c>PersistentState.withCodec</c>.
 /// </remarks>
 [<Sealed>]
-type FSharpJsonGrainStorageSerializer(options: JsonSerializerOptions) =
+type FSharpJsonGrainStorageSerializer(options: JsonSerializerOptions, maxPayloadBytes: int) =
+
+    [<Literal>]
+    static let defaultMaxPayloadBytes = 16 * 1024 * 1024
 
     let options =
         if isNull options then
@@ -184,18 +216,54 @@ type FSharpJsonGrainStorageSerializer(options: JsonSerializerOptions) =
 
         JsonSerializerOptions(options)
 
+    do
+        if maxPayloadBytes <= 0 then
+            invalidArg (nameof maxPayloadBytes) "A grain-storage payload limit must be positive."
+
+    /// <summary>Default maximum JSON payload size: 16 MiB.</summary>
+    static member DefaultMaxPayloadBytes = defaultMaxPayloadBytes
+
+    /// <summary>The maximum JSON payload size accepted or produced by this serializer.</summary>
+    member _.MaxPayloadBytes = maxPayloadBytes
+
+    /// <summary>Use custom JSON options and the default 16 MiB payload limit.</summary>
+    new(options: JsonSerializerOptions) =
+        FSharpJsonGrainStorageSerializer(options, defaultMaxPayloadBytes)
+
     /// <summary>Use the library's standard FSharp.SystemTextJson options.</summary>
-    new() = FSharpJsonGrainStorageSerializer(FSharpJson.serializerOptions)
+    new() = FSharpJsonGrainStorageSerializer(FSharpJson.serializerOptions, defaultMaxPayloadBytes)
+
+    /// <summary>Use the library's standard F# JSON options and a custom payload limit.</summary>
+    new(maxPayloadBytes: int) =
+        FSharpJsonGrainStorageSerializer(FSharpJson.serializerOptions, maxPayloadBytes)
 
     interface IGrainStorageSerializer with
         member _.Serialize<'T>(input: 'T) : BinaryData =
-            BinaryData(JsonSerializer.SerializeToUtf8Bytes<'T>(input, options))
+            let payload = JsonSerializer.SerializeToUtf8Bytes<'T>(input, options)
+
+            if payload.Length > maxPayloadBytes then
+                raise (
+                    InvalidDataException(
+                        $"F# JSON grain-storage payload for '{typeof<'T>.FullName}' is {payload.Length} bytes, exceeding the configured limit of {maxPayloadBytes} bytes."
+                    )
+                )
+
+            BinaryData(payload)
 
         member _.Deserialize<'T>(input: BinaryData) : 'T =
             if isNull input then
                 nullArg (nameof input)
 
-            JsonSerializer.Deserialize<'T>(input.ToArray(), options)
+            let payload = input.ToMemory()
+
+            if payload.Length > maxPayloadBytes then
+                raise (
+                    InvalidDataException(
+                        $"F# JSON grain-storage payload for '{typeof<'T>.FullName}' is {payload.Length} bytes, exceeding the configured limit of {maxPayloadBytes} bytes."
+                    )
+                )
+
+            JsonSerializer.Deserialize<'T>(payload.Span, options)
 
 /// <summary>Exact-type encoding shared by functional state envelopes and journal payloads.</summary>
 [<RequireQualifiedAccess>]
@@ -215,6 +283,14 @@ module internal FunctionalPersistenceEncoding =
 
         codec
 
+    let private ensurePayloadSize operation (codec: FunctionalPersistenceCodec) payloadLength =
+        if payloadLength > codec.MaxPayloadBytes then
+            raise (
+                InvalidDataException(
+                    $"Functional persistence codec '{codec.Id}' {operation} a payload of {payloadLength} bytes, exceeding its configured limit of {codec.MaxPayloadBytes} bytes."
+                )
+            )
+
     let encode<'T>
         (selected: FunctionalPersistenceCodec)
         (orleansCodec: IFunctionalPayloadCodec)
@@ -222,10 +298,14 @@ module internal FunctionalPersistenceEncoding =
         : byte[] =
         let selected = ensure (nameof selected) selected
 
-        match selected.Kind with
-        | FunctionalPersistenceCodecKind.OrleansBinary -> orleansCodec.Serialize<'T> value
-        | FunctionalPersistenceCodecKind.FSharpJson ->
-            JsonSerializer.SerializeToUtf8Bytes(box value, typeof<'T>, selected.JsonOptions)
+        let payload =
+            match selected.Kind with
+            | FunctionalPersistenceCodecKind.OrleansBinary -> orleansCodec.Serialize<'T> value
+            | FunctionalPersistenceCodecKind.FSharpJson ->
+                JsonSerializer.SerializeToUtf8Bytes(box value, typeof<'T>, selected.JsonOptions)
+
+        ensurePayloadSize "produced" selected payload.Length
+        payload
 
     let decode<'T>
         (selected: FunctionalPersistenceCodec)
@@ -237,6 +317,8 @@ module internal FunctionalPersistenceEncoding =
 
         if isNull payload then
             invalidArg (nameof payload) "A functional durable payload cannot be null."
+
+        ensurePayloadSize "received" selected payload.Length
 
         // CodecId did not exist before the JSON codec feature. Such journal cells and entries are
         // the old Orleans binary form and remain readable after an upgrade.

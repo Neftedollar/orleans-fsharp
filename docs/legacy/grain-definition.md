@@ -1,5 +1,9 @@
 # Legacy: Grain Definition
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Complete guide to the `grain { }` computation expression.**
 
 > **Deprecated authoring model.** Everything on this page -- the `grain { }` CE, `GrainDefinition`,

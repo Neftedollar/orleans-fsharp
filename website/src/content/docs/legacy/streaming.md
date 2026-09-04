@@ -5,6 +5,10 @@ description: "Streaming examples for the original grain authoring model."
 
 # Legacy Streaming Examples
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 **Streaming examples for the original Orleans.FSharp grain authoring model.**
 
 > The streaming modules remain current. This page only isolates the old grain-definition examples which previously appeared in the current guide.

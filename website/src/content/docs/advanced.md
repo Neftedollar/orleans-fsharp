@@ -157,7 +157,12 @@ let registerShutdownHandler (hostBuilder: IHostBuilder) =
         hostBuilder
 ```
 
-Multiple shutdown handlers can be registered; they run in registration order.
+Multiple shutdown handlers can be registered; they run in registration order. Each handler receives
+the usable cancellation token supplied by Generic Host for its configured shutdown timeout. The
+token is not pre-cancelled when the handler starts; it is cancelled if the shutdown timeout expires,
+so pass it to bounded async cleanup work. Ordinary handler failures are collected so later handlers
+still run, then reported together after the sequence. Timeout cancellation stops the sequence
+immediately.
 
 ---
 
@@ -647,6 +652,6 @@ assembly dependency on the Kubernetes hosting package.
 
 ## Next steps
 
-- [Legacy API](/orleans-fsharp/legacy/) -- maintenance documentation for earlier authoring models
+- [Legacy archive](/orleans-fsharp/legacy/) -- unsupported migration reference for earlier authoring models
 - [Silo Configuration](/orleans-fsharp/silo-configuration/) -- configure providers for these features
 - [API Reference](/orleans-fsharp/api-reference/) -- complete list of all public types and functions

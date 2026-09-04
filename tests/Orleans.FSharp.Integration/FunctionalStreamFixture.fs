@@ -55,6 +55,12 @@ module StreamNames =
     [<Literal>]
     let Numbers = "implicit.numbers"
 
+    /// <summary>
+    /// Orleans 10.3's stateless-worker competing-consumer stream namespace.
+    /// </summary>
+    [<Literal>]
+    let StatelessWorkerItems = "implicit.stateless.items"
+
     /// <summary>A namespace no definition declares.</summary>
     [<Literal>]
     let Unsubscribed = "implicit.unsubscribed"
@@ -102,6 +108,9 @@ module StreamGrainTypes =
     let JournalSink = "functional.journalstreamsink"
 
     [<Literal>]
+    let StatelessStreamWorker = "functional.statelessstreamworker"
+
+    [<Literal>]
     let PrimarySiloName = "Primary"
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -144,10 +153,18 @@ module StreamProbe =
     /// <summary>The silo each delivery ran on, keyed by "namespace|grainKey".</summary>
     let silos = ConcurrentDictionary<string, string>()
 
+    /// <summary>
+    /// Stateless-worker deliveries as <c>grainKey|activationId|item</c>. The activation id is
+    /// state initialized once per local worker, so this also proves delivery entered a real
+    /// stateless activation rather than a regular-grain fallback.
+    /// </summary>
+    let statelessWorkerDeliveries = ConcurrentQueue<string>()
+
     let reset () =
         deliveries.Clear()
         attempts.Clear()
         silos.Clear()
+        statelessWorkerDeliveries.Clear()
 
     let record (key: string) = deliveries.Enqueue key
 
@@ -187,9 +204,13 @@ type SinkApi =
 /// every stateless-worker functional grain on a streaming silo would fail to activate.
 /// </summary>
 type WorkerActor = private WorkerActor of unit
+type StatelessStreamWorkerActor = private StatelessStreamWorkerActor of unit
 
 [<NoEquality; NoComparison>]
 type WorkerApi = { work: unit -> Task<string> }
+
+[<NoEquality; NoComparison>]
+type StatelessStreamWorkerApi = { activation: unit -> Task<string> }
 
 /// <summary>
 /// An <c>int64Key</c> definition. Its Orleans grain key is Orleans' own HEXADECIMAL integer-key
@@ -345,12 +366,44 @@ let workerContract =
         stringKey
     }
 
+let statelessStreamWorkerContract =
+    grainContract<StatelessStreamWorkerActor, string, StatelessStreamWorkerApi> {
+        grainType StreamGrainTypes.StatelessStreamWorker
+        version 1
+        stringKey
+    }
+
 let workerDefinition =
     grainFor workerContract {
         defaultState (fun () -> Guid.NewGuid().ToString "N")
         statelessWorker 2
         handle (_.work) (fun _ state () -> task { return state, state })
     }
+
+/// <summary>
+/// Present only when the loaded Orleans runtime exposes 10.3's stateless-worker stream support.
+/// Keeping this conditional lets the same library and test assembly continue to run against the
+/// supported 10.1 floor, where sealing this definition must fail early.
+/// </summary>
+let statelessStreamWorkerDefinition =
+    if OrleansRuntimeCapabilities.supportsStatelessImplicitStreams () then
+        Some(
+            grainFor statelessStreamWorkerContract {
+                defaultState (fun () -> Guid.NewGuid().ToString "N")
+                statelessWorker 4
+
+                onStream StreamNames.Provider StreamNames.StatelessWorkerItems (fun context activationId (item: string) ->
+                    task {
+                        StreamProbe.record $"{StreamNames.StatelessWorkerItems}|{context.key}"
+                        StreamProbe.statelessWorkerDeliveries.Enqueue $"{context.key}|{activationId}|{item}"
+                        return activationId
+                    })
+
+                handle (_.activation) (fun _ activationId () -> task { return activationId, activationId })
+            }
+        )
+    else
+        None
 
 /// <summary>
 /// A definition whose delivery hook throws until <c>StreamProbe.poison</c>'s budget is spent,
@@ -427,6 +480,7 @@ let journalSinkDefinition =
 let sinkRef = FunctionalGrain.ref sinkContract
 let poisonRef = FunctionalGrain.ref poisonContract
 let workerRef = FunctionalGrain.ref workerContract
+let statelessStreamWorkerRef = FunctionalGrain.ref statelessStreamWorkerContract
 let counterRef = FunctionalGrain.ref counterContract
 let journalSinkRef = FunctionalGrain.ref journalSinkContract
 
@@ -472,6 +526,11 @@ type FunctionalStreamSiloConfigurator() =
             siloBuilder.AddFunctionalGrain sinkDefinition |> ignore
             siloBuilder.AddFunctionalGrain poisonDefinition |> ignore
             siloBuilder.AddFunctionalGrain workerDefinition |> ignore
+
+            match statelessStreamWorkerDefinition with
+            | Some definition -> siloBuilder.AddFunctionalGrain definition |> ignore
+            | None -> ()
+
             siloBuilder.AddFunctionalGrain counterDefinition |> ignore
             siloBuilder.AddFunctionalJournaledGrain journalSinkDefinition |> ignore
 

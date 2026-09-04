@@ -112,6 +112,24 @@ let ``provider-wide serializer clones custom JSON options`` () =
     test <@ restored = payload @>
 
 [<Fact>]
+let ``provider-wide serializer rejects oversized writes and reads before JSON parsing`` () =
+    let serializer = FSharpJsonGrainStorageSerializer(32)
+    let storageSerializer = serializer :> IGrainStorageSerializer
+
+    let writeFailure =
+        Assert.Throws<InvalidDataException>(fun () -> storageSerializer.Serialize payload |> ignore)
+
+    let oversizedStoredValue = BinaryData(Array.zeroCreate<byte> 33)
+
+    let readFailure =
+        Assert.Throws<InvalidDataException>(fun () ->
+            storageSerializer.Deserialize<JsonPayload> oversizedStoredValue |> ignore)
+
+    test <@ serializer.MaxPayloadBytes = 32 @>
+    test <@ writeFailure.Message.Contains "configured limit of 32 bytes" @>
+    test <@ readFailure.Message.Contains "configured limit of 32 bytes" @>
+
+[<Fact>]
 let ``functional codec identifiers and defaults are stable`` () =
     let options = FunctionalPersistenceOptions()
 
@@ -119,6 +137,40 @@ let ``functional codec identifiers and defaults are stable`` () =
     test <@ FunctionalPersistenceCodec.FSharpJson.Id = "fsharp-json-v1" @>
     test <@ options.DefaultStateCodec.Id = "orleans-binary-v1" @>
     test <@ options.DefaultJournalCodec.Id = "orleans-binary-v1" @>
+    test <@ FunctionalPersistenceCodec.DefaultMaxPayloadBytes = 16 * 1024 * 1024 @>
+
+[<Fact>]
+let ``functional persistence payload limit is immutable and enforced per codec`` () =
+    let services, binary = binaryCodec ()
+    use services = services
+
+    let limited = FunctionalPersistenceCodec.FSharpJson.WithMaxPayloadBytes 32
+
+    let writeFailure =
+        Assert.Throws<InvalidDataException>(fun () ->
+            FunctionalPersistenceEncoding.encode limited binary payload |> ignore)
+
+    let readFailure =
+        Assert.Throws<InvalidDataException>(fun () ->
+            FunctionalPersistenceEncoding.decode<JsonPayload>
+                limited
+                binary
+                FunctionalPersistenceEncoding.FSharpJsonId
+                (Array.zeroCreate<byte> 33)
+            |> ignore)
+
+    test <@ limited.MaxPayloadBytes = 32 @>
+    test <@ FunctionalPersistenceCodec.FSharpJson.MaxPayloadBytes = 16 * 1024 * 1024 @>
+    test <@ writeFailure.Message.Contains "configured limit of 32 bytes" @>
+    test <@ readFailure.Message.Contains "configured limit of 32 bytes" @>
+
+[<Fact>]
+let ``functional persistence payload limit must be positive`` () =
+    let failure =
+        Assert.Throws<ArgumentException>(fun () ->
+            FunctionalPersistenceCodec.FSharpJson.WithMaxPayloadBytes 0 |> ignore)
+
+    test <@ failure.ParamName = "value" @>
 
 [<Fact>]
 let ``functional FSharp JSON encoding round-trips without using the Orleans payload codec`` () =

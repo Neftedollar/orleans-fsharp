@@ -5,18 +5,22 @@ description: "Maintenance guide for the original eventSourcedGrain model."
 
 # Legacy Event Sourcing
 
-**Maintenance guide for the original `eventSourcedGrain { }` model.**
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
 
-> This page is intentionally isolated from the current `journaledGrainFor` documentation. The classic API is still shipped for existing applications.
+**Migration archive for the original `eventSourcedGrain { }` model.**
+
+> This page is intentionally isolated from the current `journaledGrainFor` documentation. The
+> classic package was part of the 4.1-and-earlier release shape and is not published in the 5.0
+> package set.
 
 ## Classic event-sourced grain
 
-> **Superseded, not deprecated.** The `eventSourcedGrain { }` computation expression and
-> `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class,
-> and they need C# CodeGen for the grain interface. New code should use `journaledGrainFor` from
-> the functional grain runtime (above, and [functional-grains.md](/orleans-fsharp/functional-grains/)). Nothing
-> in `Orleans.FSharp.EventSourcing` carries `[<Obsolete>]`, so this path compiles without a
-> warning; it is still shipped and is not being removed.
+> The historical `eventSourcedGrain { }` computation expression and
+> `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class.
+> They need the archived CodeGen package for the grain interface. New code must use
+> `journaledGrainFor` from the functional runtime; no new classic package release is produced.
 
 The classic model splits a grain into `apply` (a pure fold), `handle` (a command handler
 returning events), and `defaultState`, and the `Orleans.FSharp.CodeGen` package generates a C#

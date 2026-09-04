@@ -105,6 +105,105 @@ let ``onShutdown returns builder for chaining`` () =
 
     test <@ not (isNull (box result)) @>
 
+[<Fact>]
+let ``onShutdown receives a usable token when graceful shutdown starts`` () =
+    task {
+        let tokenWasAlreadyCancelled = TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        use host =
+            HostBuilder()
+            |> Shutdown.configureGracefulShutdown (TimeSpan.FromSeconds 5.0)
+            |> Shutdown.onShutdown (fun token ->
+                tokenWasAlreadyCancelled.TrySetResult token.IsCancellationRequested |> ignore
+                Task.FromResult())
+            |> _.Build()
+
+        do! host.StartAsync()
+        do! host.StopAsync()
+
+        let! wasCancelled = tokenWasAlreadyCancelled.Task
+        test <@ not wasCancelled @>
+    }
+
+[<Fact>]
+let ``multiple onShutdown handlers run in registration order`` () =
+    task {
+        let observed = ResizeArray<int>()
+
+        use host =
+            HostBuilder()
+            |> Shutdown.onShutdown (fun _ ->
+                observed.Add 1
+                Task.FromResult())
+            |> Shutdown.onShutdown (fun _ ->
+                observed.Add 2
+                Task.FromResult())
+            |> _.Build()
+
+        do! host.StartAsync()
+        do! host.StopAsync()
+
+        test <@ observed |> Seq.toList = [ 1; 2 ] @>
+    }
+
+[<Fact>]
+let ``a failing onShutdown handler does not prevent later handlers`` () =
+    task {
+        let observed = ResizeArray<int>()
+
+        use host =
+            HostBuilder()
+            |> Shutdown.onShutdown (fun _ ->
+                observed.Add 1
+                Task.FromException<unit>(InvalidOperationException("first failed")))
+            |> Shutdown.onShutdown (fun _ ->
+                observed.Add 2
+                Task.FromResult())
+            |> _.Build()
+
+        do! host.StartAsync()
+
+        let! error =
+            Assert.ThrowsAnyAsync<Exception>(Func<Task>(fun () -> host.StopAsync()))
+
+        let messages =
+            match error with
+            | :? AggregateException as aggregate ->
+                aggregate.Flatten().InnerExceptions |> Seq.map _.Message |> Seq.toList
+            | other -> [ other.Message ]
+
+        test <@ observed |> Seq.toList = [ 1; 2 ] @>
+        test <@ messages |> List.exists (fun message -> message.Contains "first failed") @>
+    }
+
+[<Fact>]
+let ``shutdown timeout bounds a handler which ignores cancellation`` () =
+    task {
+        let handlerRelease =
+            TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        use host =
+            HostBuilder()
+            |> Shutdown.configureGracefulShutdown (TimeSpan.FromMilliseconds 100.0)
+            |> Shutdown.onShutdown (fun _ignoredToken -> handlerRelease.Task)
+            |> _.Build()
+
+        do! host.StartAsync()
+
+        try
+            let stopTask = host.StopAsync()
+
+            let! _ =
+                Assert.ThrowsAnyAsync<OperationCanceledException>(
+                    Func<Task>(fun () -> stopTask.WaitAsync(TimeSpan.FromSeconds 2.0))
+                )
+
+            test <@ not handlerRelease.Task.IsCompleted @>
+        finally
+            // Let the detached callback finish so the test does not leave background work behind.
+            handlerRelease.TrySetResult() |> ignore
+    }
+
 // ---------------------------------------------------------------------------
 // Shutdown module exists in assembly
 // ---------------------------------------------------------------------------

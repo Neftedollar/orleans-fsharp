@@ -5,6 +5,10 @@ description: "Serialization and CodeGen guidance for the original authoring mode
 
 # Legacy Serialization
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 This archived page preserves serialization and CodeGen guidance for the original Orleans.FSharp
 authoring model. Serializer changes which affect persisted data require an explicit migration.
 

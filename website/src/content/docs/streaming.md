@@ -149,7 +149,11 @@ let consume stream =
     }
 ```
 
-Internally, `asTaskSeq` uses a bounded `Channel` with capacity 1000 and `BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind.
+Internally, `asTaskSeq` uses a bounded `Channel` with capacity 1000 and
+`BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind. On `main`/5.0
+preview the first pull creates and awaits the Orleans subscription; cancellation, normal
+completion, and early enumerator disposal unsubscribe it. A subscription failure therefore
+surfaces to the consumer instead of leaving a sequence waiting forever.
 
 ---
 
@@ -348,7 +352,8 @@ it cannot drift.
 |---|---|
 | Provider and namespace must be non-blank | definition sealing |
 | One hook per `(provider, namespace)` pair, per transport | definition sealing |
-| `statelessWorker` cannot be combined with `onStream` / `onBroadcast` | definition sealing |
+| `statelessWorker` + `onStream` requires loaded Orleans.Streaming 10.3.0+ | definition sealing |
+| `statelessWorker` cannot be combined with `onBroadcast` | definition sealing |
 | The named provider must be registered on the silo | silo startup validation |
 
 **Delivery semantics** follow the `onTimer` rules exactly:
@@ -398,6 +403,18 @@ matches on `(provider, namespace)`, logs a warning, and leaves the item undelive
 Implicit `onStream` batch delivery is not exposed: that definition hook receives one item at a
 time. Explicit `Stream.subscribeBatch` is the separate provider-native batch API.
 
+### Stateless-worker implicit streams (5.0 preview)
+
+With Orleans.Streaming 10.3.0 or newer, `statelessWorker` may be combined with `onStream`.
+Orleans treats local worker activations as competing consumers: one item is handled by one
+available worker, not broadcast to every activation. The package floor remains Orleans 10.1.0,
+so on 10.1/10.2 (or when product-version metadata cannot be read) definition sealing rejects the
+combination with a diagnostic naming the detected version.
+
+`statelessWorker` plus `onBroadcast` remains unsupported on every supported Orleans version.
+Broadcast channels did not gain equivalent stateless-worker semantics. See
+[Release and Production Status](/orleans-fsharp/release-status/#stateless-worker-implicit-streams-require-orleans-103).
+
 
 ## Stream Providers
 
@@ -434,10 +451,9 @@ Apply these to the `ISiloBuilder` directly or via `addCustomStorage` in the silo
 
 - [Functional Grain Runtime](/orleans-fsharp/functional-grains/#implicit-subscriptions-onstream-and-onbroadcast)
 - [Feature tour source](https://github.com/Neftedollar/orleans-fsharp/tree/main/examples/feature-tour)
-- [Legacy Streaming](/orleans-fsharp/legacy/streaming/)
 
 ## Next steps
 
-- [Legacy API](/orleans-fsharp/legacy/) -- maintenance documentation for earlier authoring models
+- [Release and Production Status](/orleans-fsharp/release-status/) -- stable/preview split and production boundaries
 - [Silo Configuration](/orleans-fsharp/silo-configuration/) -- configure stream providers
 - [Event Sourcing](/orleans-fsharp/event-sourcing/) -- CQRS pattern with event streams

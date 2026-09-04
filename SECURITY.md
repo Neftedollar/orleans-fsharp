@@ -18,7 +18,14 @@ We will acknowledge your report within 48 hours and provide a fix timeline.
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 0.8.x   | Yes       |
-| < 0.8   | No        |
+Security support applies to the current functional API only.
+
+| Version / branch | Supported | Notes |
+|---|---|---|
+| `4.1.x` | Yes | Latest published stable line |
+| `main` / 5.0 preview | Yes | Next major under development; not a stable package |
+| `4.0.x` and older | No | Upgrade to the latest 4.1 patch or a later supported release |
+| Legacy authoring models | No | Archived; no new Legacy release line or security fixes |
+
+`SECURITY.md` at the repository root is canonical. `.github/SECURITY.md` is an exact mirror for
+GitHub discovery and must be updated in the same change.

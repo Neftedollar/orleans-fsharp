@@ -5,6 +5,10 @@ description: "Maintenance documentation for the original Orleans.FSharp authorin
 
 # Legacy API
 
+> **Archived and unsupported.** This material is retained only to help migrate existing
+> applications. There is no new Legacy release line, feature or compatibility work, or security
+> fixes. New development must use the current functional API.
+
 This section preserves documentation for Orleans.FSharp applications built on the original authoring APIs. Those APIs remain shipped for compatibility, but current guides teach only the functional runtime.
 
 ## Start here
