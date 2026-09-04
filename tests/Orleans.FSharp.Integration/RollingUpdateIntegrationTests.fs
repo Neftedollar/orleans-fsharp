@@ -132,15 +132,18 @@ module private RollingSiloProcess =
 
 let private rollingBinary projectName =
     let baseDirectory = new DirectoryInfo(AppContext.BaseDirectory)
+    let targetFramework = baseDirectory.Name
     let configuration = baseDirectory.Parent.Name
-    let testsDirectory = baseDirectory.Parent.Parent.Parent.Parent.FullName
+    let orleansVersion = baseDirectory.Parent.Parent.Name
+    let testsDirectory = baseDirectory.Parent.Parent.Parent.Parent.Parent.FullName
 
     Path.Combine(
         testsDirectory,
         projectName,
         "bin",
+        orleansVersion,
         configuration,
-        "net10.0",
+        targetFramework,
         projectName + ".dll"
     )
 
