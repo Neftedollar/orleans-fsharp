@@ -12,7 +12,7 @@ This section preserves documentation for Orleans.FSharp applications built on th
 - [Legacy How To](how-to.md) — the archived end-to-end tutorial
 - [Grain Definition](grain-definition.md) — complete original grain-definition reference
 - [Legacy API Reference](api-reference.md) — original types, builders, registration, and handle modules
-- [API Migration](migration.md) — move an existing application to the functional runtime
+- [Migrate from Orleans.FSharp 4.x and earlier](migration.md) — move an existing application to the functional runtime
 
 ## Topic guides
 

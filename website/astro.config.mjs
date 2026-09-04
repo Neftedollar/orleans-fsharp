@@ -82,7 +82,7 @@ export default defineConfig({
 						{ label: 'How To', link: '/legacy/how-to' },
 						{ label: 'Grain Definition', link: '/legacy/grain-definition' },
 						{ label: 'API Reference', link: '/legacy/api-reference' },
-						{ label: 'API Migration', link: '/legacy/migration' },
+						{ label: 'Migrate from 4.x', link: '/legacy/migration' },
 						{ label: 'Event Sourcing', link: '/legacy/event-sourcing' },
 						{ label: 'Serialization', link: '/legacy/serialization' },
 						{ label: 'Streaming', link: '/legacy/streaming' },

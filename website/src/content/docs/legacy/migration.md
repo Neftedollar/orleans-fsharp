@@ -1,15 +1,15 @@
 ---
-title: "Legacy: API Migration"
-description: "Migration guide from the original authoring API to the functional runtime."
+title: "Migrate from Orleans.FSharp 4.x"
+description: "Move an Orleans.FSharp 4.x-or-earlier application to the current functional runtime."
 ---
 
-# Legacy API Migration
+# Migrating from Orleans.FSharp 4.x and earlier
 
 > **Archived and unsupported.** This material is retained only to help migrate existing
 > applications. There is no new Legacy release line, feature or compatibility work, or security
 > fixes. New development must use the current functional API.
 
-**Move an application from the original Orleans.FSharp authoring API to the functional runtime.**
+**Move an existing application to the current functional runtime.**
 
 > This page contains old API names on purpose. Current guides teach only `grainContract` / `grainFor` / `journaledGrainFor`.
 
