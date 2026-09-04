@@ -12,13 +12,14 @@
 
 The universal message-passing surface built on the `grain { }` CE -- the builder itself, the
 `GrainDefinition`/`GrainContext` types it produces, `FSharpGrainAttribute`,
-`AddFSharpGrain(sFromAssembly)`, the `FSharpGrain.*` handle module, `Timers`, and `Reminder` --
-is superseded by this functional runtime and now carries `[<Obsolete>]` (warning, not error).
+`AddFSharpGrain(sFromAssembly)`, the `FSharpGrain.*` handle module, and `Timers` -- is superseded
+by this functional runtime and carries `[<Obsolete>]` (warning, not error). The former `Reminder`
+helper module was deprecated on the 4.x line and removed from the 5.0 package surface.
 
 Where the warning fires -- the whole cluster, not just its entry points: on `grain { }` and the
 `GrainBuilder` type behind it, on `GrainDefinition` and the old `GrainContext` (types and
 modules), on `AdditionalStateSpec`, on `[<FSharpGrain>]`, on `AddFSharpGrain` /
-`AddFSharpGrainsFromAssembly`, on the `Timers` and `Reminder` modules, on every operation of the
+`AddFSharpGrainsFromAssembly`, on the `Timers` module, on every operation of the
 universal handle module (`FSharpGrain.ref`/`refGuid`/`refInt` and `send`/`post`/`ask` with their
 `Guid`/`Int` variants), on the three handle types, on the `IFSharpGrain*` interface aliases, on
 the runtime host class `FSharpGrain<'State,'Message>` and `NamedPersistentState`, on the C#
@@ -63,7 +64,7 @@ Before/after mapping:
 | `onTimer "name" dueTime period handler` (in `grain { }`) | `onTimer` operation in `grainFor { }` |
 | `onReminder "name" handler` (in `grain { }`) | `onReminder` operation in `grainFor { }` |
 | `Timers.register` / `Timers.registerWithState` (class grain) | `Grain.RegisterGrainTimer` directly -- unchanged, this is a class-grain-native Orleans API, not something the functional runtime replaces |
-| `Reminder.register` / `.unregister` / `.get` (class grain) | `Grain.RegisterOrUpdateReminder` / `.UnregisterReminder` / `.GetReminder` directly -- likewise class-grain-native |
+| `Reminder.register` / `.unregister` / `.get` | `onReminder` for declared functional schedules; Orleans' `IReminderRegistry` resolved from `context.services` for imperative access in current functional handlers; direct Orleans reminder methods in class grains |
 | `persist "Default"` | `usePersistentState` with a `PersistentState.create<'State> "name" "provider"` descriptor |
 | one-way `FSharpGrain.post` | `oneWay (_.op)` in the contract |
 | `handleWithContext` / `GrainContext.getService` etc. | the `context` parameter passed to every `handle` callback (`context.services`, `context.grainFactory`, ...) |

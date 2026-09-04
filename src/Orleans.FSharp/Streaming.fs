@@ -198,15 +198,18 @@ module internal StreamTaskSeqCleanup =
         }
 
 [<Sealed>]
-type private StreamTaskSeqEnumerator<'T>(stream: StreamRef<'T>, cancellationToken: CancellationToken) =
+type private StreamTaskSeqEnumerator<'T, 'Item>
+    (stream: StreamRef<'T>,
+     cancellationToken: CancellationToken,
+     project: 'T -> StreamSequenceToken option -> 'Item) =
     let channelOptions =
         BoundedChannelOptions(1000, FullMode = BoundedChannelFullMode.Wait)
 
-    let channel = Channel.CreateBounded<'T>(channelOptions)
+    let channel = Channel.CreateBounded<'Item>(channelOptions)
     let lifetime = CancellationTokenSource.CreateLinkedTokenSource cancellationToken
     let lifetimeToken = lifetime.Token
     let mutable subscriptionTask: Task<StreamSubscriptionHandle<'T>> = null
-    let mutable current = Unchecked.defaultof<'T>
+    let mutable current = Unchecked.defaultof<'Item>
     let mutable disposed = 0
 
     let ensureSubscribed () =
@@ -214,10 +217,11 @@ type private StreamTaskSeqEnumerator<'T>(stream: StreamRef<'T>, cancellationToke
             let asyncStream = stream.Provider.GetStream<'T>(stream.StreamId)
 
             let onNext =
-                Func<'T, StreamSequenceToken, Task>(fun item _token ->
+                Func<'T, StreamSequenceToken, Task>(fun item token ->
                     task {
                         try
-                            do! channel.Writer.WriteAsync(item, lifetimeToken).AsTask()
+                            let projected = project item (Option.ofObj token)
+                            do! channel.Writer.WriteAsync(projected, lifetimeToken).AsTask()
                         with
                         | :? OperationCanceledException when lifetimeToken.IsCancellationRequested -> ()
                         | :? ChannelClosedException -> ()
@@ -272,16 +276,18 @@ type private StreamTaskSeqEnumerator<'T>(stream: StreamRef<'T>, cancellationToke
                         subscription.UnsubscribeAsync())
         }
 
-    interface IAsyncEnumerator<'T> with
+    interface IAsyncEnumerator<'Item> with
         member _.Current = current
         member _.MoveNextAsync() = ValueTask<bool>(moveNext ())
         member _.DisposeAsync() = ValueTask(dispose ())
 
 [<Sealed>]
-type private StreamTaskSeqEnumerable<'T>(stream: StreamRef<'T>) =
-    interface IAsyncEnumerable<'T> with
+type private StreamTaskSeqEnumerable<'T, 'Item>
+    (stream: StreamRef<'T>, project: 'T -> StreamSequenceToken option -> 'Item) =
+    interface IAsyncEnumerable<'Item> with
         member _.GetAsyncEnumerator(cancellationToken) =
-            new StreamTaskSeqEnumerator<'T>(stream, cancellationToken) :> IAsyncEnumerator<'T>
+            new StreamTaskSeqEnumerator<'T, 'Item>(stream, cancellationToken, project)
+            :> IAsyncEnumerator<'Item>
 
 /// <summary>
 /// Functions for creating, publishing to, subscribing to, and consuming Orleans streams
@@ -458,7 +464,25 @@ module Stream =
     /// the channel is completed by the stream's OnCompleted callback. Disposing the enumerator
     /// unsubscribes the underlying Orleans subscription, including when consumption stops early.</returns>
     let asTaskSeq<'T> (stream: StreamRef<'T>) : TaskSeq<'T> =
-        new StreamTaskSeqEnumerable<'T>(stream) :> IAsyncEnumerable<'T>
+        new StreamTaskSeqEnumerable<'T, 'T>(stream, fun item _ -> item) :> IAsyncEnumerable<'T>
+
+    /// <summary>
+    /// Consumes a stream as a pull-based TaskSeq while preserving every item's provider sequence
+    /// token. Save a delivered token after processing its item and pass it to
+    /// <c>subscribeFromWithToken</c> when resuming from that checkpoint.
+    /// </summary>
+    /// <param name="stream">The stream reference to consume.</param>
+    /// <typeparam name="'T">The type of events on the stream.</typeparam>
+    /// <returns>
+    /// A TaskSeq of item/token pairs. The token is <c>Some</c> for providers which expose cursors
+    /// and <c>None</c> otherwise. Subscription, backpressure, cancellation, and disposal semantics
+    /// are identical to <c>asTaskSeq</c>.
+    /// </returns>
+    let asTaskSeqWithToken<'T>
+        (stream: StreamRef<'T>)
+        : TaskSeq<'T * StreamSequenceToken option> =
+        new StreamTaskSeqEnumerable<'T, 'T * StreamSequenceToken option>(stream, fun item token -> item, token)
+        :> IAsyncEnumerable<'T * StreamSequenceToken option>
 
     /// <summary>
     /// Subscribes to a stream starting from a specific sequence token (rewind/resume).
@@ -561,22 +585,6 @@ module Stream =
             let! handle = asyncStream.SubscribeAsync(observer, token)
             return { Handle = handle }
         }
-
-    /// <summary>
-    /// Always returns <c>None</c>: <c>StreamSubscriptionHandle</c> does not expose the sequence
-    /// token directly, so this is a permanent stub rather than a lookup. The token is delivered
-    /// with each event via the <c>onNext</c> callback and must be tracked by the consumer.
-    /// </summary>
-    /// <param name="sub">The stream subscription to query.</param>
-    /// <typeparam name="'T">The type of events on the subscribed stream.</typeparam>
-    /// <returns>Always <c>None</c>.</returns>
-    [<Obsolete("Stream.getSequenceToken can only ever return None -- a subscription handle carries no cursor. Subscribe with Stream.subscribeWithToken (or Stream.subscribeFromWithToken after a rewind), whose handler receives each event's own StreamSequenceToken; on the functional grain runtime read context.streamSequenceToken inside an onStream hook. See docs/streaming.md, \"Rewinding / Resuming\".",
-              false)>]
-    let getSequenceToken<'T> (sub: StreamSubscription<'T>) : StreamSequenceToken option =
-        // StreamSubscriptionHandle does not directly expose the token;
-        // the token is delivered with each event via the onNext callback.
-        // This function returns None since the token must be tracked by the consumer.
-        None
 
     /// <summary>
     /// Unsubscribes from a stream, stopping event delivery to the handler.

@@ -979,6 +979,9 @@ let ``the definition builder declares exactly the specified custom operations`` 
            "persistenceCodec"
            "placement"
            "stateFrom"
+           // The shorthand keeps Orleans' removeIdleWorkers=true default; the second overload
+           // exposes the stock bool so collectionAge can govern retained workers.
+           "statelessWorker"
            "statelessWorker"
            "transactionalStateFrom"
            "usePersistentState" |]

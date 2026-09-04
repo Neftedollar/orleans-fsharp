@@ -313,7 +313,7 @@ let private timerHook _ state = task { return state }
 // ──────────────────────────────────────────────────────────────────────────────
 
 [<Fact>]
-let ``statelessWorker is frozen into definition metadata`` () =
+let ``statelessWorker shorthand freezes removeIdleWorkers true into definition metadata`` () =
     let definition =
         grainFor contract {
             defaultState (fun () -> { count = 0 })
@@ -322,7 +322,19 @@ let ``statelessWorker is frozen into definition metadata`` () =
             handle (_.say) sayHandler
         }
 
-    test <@ definition.Placement = Some(StatelessWorker 4) @>
+    test <@ definition.Placement = Some(StatelessWorker(4, true)) @>
+
+[<Fact>]
+let ``statelessWorker explicit form freezes removeIdleWorkers into definition metadata`` () =
+    let definition =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            statelessWorker 4 false
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    test <@ definition.Placement = Some(StatelessWorker(4, false)) @>
 
 [<Fact>]
 let ``placement is frozen into definition metadata`` () =
@@ -352,7 +364,7 @@ let ``a non-positive maxLocalWorkers fails definition sealing`` () =
         throws (fun () ->
             grainFor contract {
                 defaultState (fun () -> { count = 0 })
-                statelessWorker -1
+                statelessWorker -1 false
                 handle (_.join) joinHandler
                 handle (_.say) sayHandler
             }
@@ -401,13 +413,12 @@ let ``statelessWorker and placement are mutually exclusive in either order`` () 
     test <@ repeatedPlacement.Message.Contains "cannot be combined" @>
 
 /// <remarks>
-/// Spec item 4: "statelessWorker rejects stateFrom, usePersistentState, and onReminder (durable
-/// identity is meaningless for multiplexed local activations) and rejects collectionAge." All
-/// four in both declaration orders (the rejected operation before or after 'statelessWorker'),
-/// since the check is deferred to sealing rather than order-dependent.
+/// Durable identity is meaningless for multiplexed local activations, regardless of the
+/// removeIdleWorkers policy. Both policies and both declaration orders are represented here;
+/// collectionAge has its own Orleans-compatible policy test below.
 /// </remarks>
 [<Fact>]
-let ``statelessWorker rejects stateFrom, usePersistentState, onReminder, and collectionAge`` () =
+let ``statelessWorker rejects durable features for either removeIdleWorkers policy`` () =
     let rejectsStateFromBefore =
         throws (fun () ->
             grainFor contract {
@@ -423,7 +434,7 @@ let ``statelessWorker rejects stateFrom, usePersistentState, onReminder, and col
         throws (fun () ->
             grainFor contract {
                 defaultState (fun () -> { count = 0 })
-                statelessWorker 4
+                statelessWorker 4 false
                 stateFrom primary
                 handle (_.join) joinHandler
                 handle (_.say) sayHandler
@@ -434,7 +445,7 @@ let ``statelessWorker rejects stateFrom, usePersistentState, onReminder, and col
         throws (fun () ->
             grainFor contract {
                 defaultState (fun () -> { count = 0 })
-                statelessWorker 4
+                statelessWorker 4 false
                 usePersistentState audit (fun _ -> { total = 0L })
                 handle (_.join) joinHandler
                 handle (_.say) sayHandler
@@ -445,19 +456,8 @@ let ``statelessWorker rejects stateFrom, usePersistentState, onReminder, and col
         throws (fun () ->
             grainFor contract {
                 defaultState (fun () -> { count = 0 })
-                statelessWorker 4
+                statelessWorker 4 false
                 onReminder "sweep" (TimeSpan.FromMinutes 1.0) (TimeSpan.FromMinutes 5.0) reminderHook
-                handle (_.join) joinHandler
-                handle (_.say) sayHandler
-            }
-            |> ignore)
-
-    let rejectsCollectionAge =
-        throws (fun () ->
-            grainFor contract {
-                defaultState (fun () -> { count = 0 })
-                statelessWorker 4
-                collectionAge (TimeSpan.FromMinutes 10.0)
                 handle (_.join) joinHandler
                 handle (_.say) sayHandler
             }
@@ -467,7 +467,57 @@ let ``statelessWorker rejects stateFrom, usePersistentState, onReminder, and col
     test <@ rejectsStateFromAfter.Message.Contains "'statelessWorker' with 'stateFrom'" @>
     test <@ rejectsUsePersistentState.Message.Contains "'statelessWorker' with 'usePersistentState'" @>
     test <@ rejectsOnReminder.Message.Contains "'statelessWorker' with 'onReminder'" @>
-    test <@ rejectsCollectionAge.Message.Contains "'statelessWorker' with 'collectionAge'" @>
+
+[<Fact>]
+let ``statelessWorker allows collectionAge only when removeIdleWorkers is false`` () =
+    let age = TimeSpan.FromMinutes 10.0
+
+    let statelessBefore =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            statelessWorker 4 false
+            collectionAge age
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    let collectionAgeBefore =
+        grainFor contract {
+            defaultState (fun () -> { count = 0 })
+            collectionAge age
+            statelessWorker 4 false
+            handle (_.join) joinHandler
+            handle (_.say) sayHandler
+        }
+
+    let shorthandError =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                statelessWorker 4
+                collectionAge age
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    let explicitTrueError =
+        throws (fun () ->
+            grainFor contract {
+                defaultState (fun () -> { count = 0 })
+                collectionAge age
+                statelessWorker 4 true
+                handle (_.join) joinHandler
+                handle (_.say) sayHandler
+            }
+            |> ignore)
+
+    test <@ statelessBefore.Placement = Some(StatelessWorker(4, false)) @>
+    test <@ statelessBefore.CollectionAge = Some age @>
+    test <@ collectionAgeBefore.Placement = Some(StatelessWorker(4, false)) @>
+    test <@ collectionAgeBefore.CollectionAge = Some age @>
+    test <@ shorthandError.Message.Contains "removeIdleWorkers is true" @>
+    test <@ explicitTrueError.Message.Contains "removeIdleWorkers is true" @>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Implicit subscriptions (spec 004 item 1)

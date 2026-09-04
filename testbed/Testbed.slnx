@@ -10,7 +10,8 @@
   <!-- CodeGen's build target runs the Generator against the built Sample assembly. Both must
        be solution members: during a solution build MSBuild unsets Configuration for a
        ProjectReference that is not in the solution, so without these two entries a Release
-       build sends them to bin/Debug while CodeGen looks under bin/Release and fails. -->
+       build sends them to bin/$(OrleansVersion)/Debug while CodeGen looks under
+       bin/$(OrleansVersion)/Release and fails. -->
   <Project Path="../src/Orleans.FSharp.Sample/Orleans.FSharp.Sample.fsproj" />
   <Project Path="../src/Orleans.FSharp.Generator/Orleans.FSharp.Generator.fsproj" />
 </Solution>

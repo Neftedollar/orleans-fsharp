@@ -37,8 +37,9 @@ When one grain relays another grain's streaming reply, return a direct delegatin
 `IAsyncEnumerable`/enumerator instead of using those wrapping forms. The exact pattern and the SDK
 boundary are documented under [Authoring a producer](/orleans-fsharp/streaming-replies/#authoring-a-producer).
 
-`Stream.asTaskSeq` is a separate Orleans pub/sub adapter. On `main` it creates the subscription on
-first enumeration and disposes that subscription when enumeration ends, including early exit.
+`Stream.asTaskSeq` and its cursor-preserving `Stream.asTaskSeqWithToken` variant are separate
+Orleans pub/sub adapters. On `main` they create the subscription on first enumeration and dispose
+that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
@@ -75,6 +76,12 @@ equivalent stateless-worker semantics.
 
 This capability is part of the 5.0 preview and has a live Orleans 10.3 integration test. It is not
 part of the published 4.1 package.
+
+The 5.0 preview also exposes Orleans' complete stateless-worker placement setting:
+`statelessWorker maxLocalWorkers` preserves the stock `removeIdleWorkers = true` default, while
+`statelessWorker maxLocalWorkers false` allows a functional definition to use `collectionAge`.
+The generated manifest is checked against the corresponding live Orleans attribute on both ends
+of the supported version matrix.
 
 ## What the repository checks do not prove
 

@@ -93,7 +93,7 @@ spelled curried fails contract construction. See [Functional grains](functional-
 | `transactionalStateFrom` | `TransactionalStateRef<'S>` + `('Key -> 'S)` | Attach a transactional facet (repeatable) |
 | `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
 | `placement` | `PlacementStrategy` | `Random` / `PreferLocal` / `ActivationCountBased` / `ResourceOptimized` / `HashBased` / `SiloRoleBased` |
-| `statelessWorker` | `int` | Stateless-worker placement with a max-local-workers cap |
+| `statelessWorker` | `int` or `int` + `bool` | Stateless-worker placement with a max-local-workers cap; the optional explicit `removeIdleWorkers` flag defaults to `true`, while `false` permits `collectionAge` |
 | `migrationParticipant` | `FunctionalMigrationParticipantFactory<'Actor,'Key>` | Add an activation-scoped Orleans migration participant; repeatable and created before rehydration |
 | `onActivate` | `ActivateHook<'Actor,'Key,'State>` | Activation hook; its returned state is published in memory |
 | `onDeactivate` | `DeactivateHook<'Actor,'Key,'State>` | Deactivation hook; no replacement state |
@@ -630,6 +630,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `subscribeFiltered<'T>` | `StreamRef<'T> -> string -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Pass filter data to the provider's `IStreamFilter` |
 | `subscribeBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe through `IAsyncBatchObserver<'T>` |
 | `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption; first pull subscribes, cancellation/early disposal unsubscribes; 5.0 lifetime behavior |
+| `asTaskSeqWithToken<'T>` | `StreamRef<'T> -> TaskSeq<'T * StreamSequenceToken option>` | Pull-based consumption which preserves each item cursor for durable checkpointing |
 | `subscribeFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe from token (rewind is inclusive of that event) |
 | `subscribeFromWithToken<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Rewind and keep checkpointing |
 | `subscribeFromHandlers<'T>` | `StreamRef<'T> -> StreamSequenceToken -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Rewind with item/error/completion callbacks |
@@ -644,8 +645,6 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `resumeBatchFrom<'T>` | `StreamSubscription<'T> -> StreamSequenceToken -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Reattach one batch subscription from a token |
 | `resumeAllHandlers<'T>` | `StreamRef<'T> -> StreamHandlers<'T> -> Task<unit>` | Reattach all durable subscriptions with item callbacks |
 | `resumeAllBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<unit>` | Reattach all durable subscriptions with batch callbacks |
-| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | **Deprecated** — carries `[<Obsolete>]` (a warning, not an error) and still returns **always `None`**: `StreamSubscriptionHandle` exposes no token, so there was never anything to return. Replacement: `subscribeWithToken` / `subscribeFromWithToken`, or `context.streamSequenceToken` in an `onStream` hook |
-
 `StreamHandlers.create` / `withToken` create item callbacks; `withError` and `withCompletion`
 replace terminal callbacks immutably. `StreamBatchHandlers` exposes the corresponding `create`,
 `withError`, and `withCompletion` functions.

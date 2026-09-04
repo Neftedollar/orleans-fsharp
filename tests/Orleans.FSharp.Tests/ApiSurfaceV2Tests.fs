@@ -52,12 +52,12 @@ let ``No v2 public property returns FSharpAsync`` () =
 // --- v2 module existence checks ---
 
 [<Fact>]
-let ``Reminder module is publicly accessible`` () =
+let ``removed Reminder helper module is not publicly accessible`` () =
     let hasReminder =
         publicTypes
         |> Array.exists (fun t -> t.Name = "Reminder" && t.IsAbstract && t.IsSealed)
 
-    test <@ hasReminder @>
+    test <@ not hasReminder @>
 
 [<Fact>]
 let ``Timers module is publicly accessible`` () =

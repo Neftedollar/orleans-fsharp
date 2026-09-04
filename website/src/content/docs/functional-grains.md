@@ -1309,7 +1309,8 @@ leaves that item undelivered. Implicit `onStream` delivery is item-by-item; use 
 
 `statelessWorker maxLocalWorkers` multiplexes a grain type across up to `maxLocalWorkers` local
 activations per silo (Orleans' `StatelessWorkerPlacement`) -- useful for stateless, CPU-bound work
-where one activation per grain id would otherwise serialize concurrent calls:
+where one activation per grain id would otherwise serialize concurrent calls. This one-argument
+form matches Orleans' default and enables proactive idle-worker removal:
 
 ```fsharp
 grainFor contract {
@@ -1318,6 +1319,23 @@ grainFor contract {
     handle (_.work) handler
 }
 ```
+
+Use the explicit form when collection age, rather than proactive removal, should govern idle
+workers:
+
+```fsharp
+grainFor contract {
+    defaultState (fun () -> Guid.NewGuid().ToString())
+    statelessWorker 4 false
+    collectionAge (TimeSpan.FromMinutes 10.0)
+    handle (_.work) handler
+}
+```
+
+The second argument is Orleans' `removeIdleWorkers` flag. `true` is the shorthand default and
+cannot be combined with `collectionAge`; `false` keeps idle workers eligible for the declared
+collection age. Both forms publish the same properties as Orleans'
+`StatelessWorkerAttribute(maxLocalWorkers, removeIdleWorkers)`.
 
 `placement strategy` selects one stock Orleans placement strategy instead:
 
@@ -1347,11 +1365,11 @@ silo's display name. Prefer a `stringKey` contract whose key is the intended rol
 roles actually published by your deployment environment.
 
 `statelessWorker` and `placement` are mutually exclusive (in either declaration order), and
-`statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
-`collectionAge` -- durable identity and idle collection age are both meaningless for activations
-Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
-It accepts `onStream` only with a loaded Orleans.Streaming 10.3.0+ runtime and always rejects
-`onBroadcast`; see [Release and Production Status](/orleans-fsharp/release-status/#stateless-worker-implicit-streams-require-orleans-103).
+`statelessWorker` always rejects `stateFrom`, `usePersistentState`, and `onReminder` because
+durable identity is not meaningful for multiplexed local activations. `collectionAge` is accepted
+only by the explicit `statelessWorker maxLocalWorkers false` form. `onStream` requires a loaded
+Orleans.Streaming 10.3.0+ runtime and `onBroadcast` remains rejected; see
+[Release and Production Status](/orleans-fsharp/release-status/#stateless-worker-implicit-streams-require-orleans-103).
 
 ### Live activation migration
 

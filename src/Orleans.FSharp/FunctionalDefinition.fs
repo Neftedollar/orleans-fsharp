@@ -103,8 +103,11 @@ type PlacementStrategy =
 type internal PlacementConfiguration =
     /// <summary>One stock Orleans placement strategy.</summary>
     | Strategy of PlacementStrategy
-    /// <summary>Stateless-worker placement with the given maximum local activation count.</summary>
-    | StatelessWorker of maxLocalWorkers: int
+    /// <summary>
+    /// Stateless-worker placement with the given maximum local activation count and idle-worker
+    /// removal policy.
+    /// </summary>
+    | StatelessWorker of maxLocalWorkers: int * removeIdleWorkers: bool
 
 /// <summary>A declared reminder frozen into definition metadata.</summary>
 [<ReferenceEquality>]
@@ -418,11 +421,12 @@ module internal DefinitionDraft =
     /// transactional-state name, or one whose stored type Orleans cannot hold; a transactional
     /// facet no transactional operation can reach; a non-positive 'collectionAge'; any of the
     /// combinations 'statelessWorker' rejects ('stateFrom', 'usePersistentState',
-    /// 'transactionalStateFrom', 'onReminder', 'collectionAge', 'onStream'/'onBroadcast', a
-    /// non-positive maxLocalWorkers, or a streaming API field); a blank or duplicate reminder or
-    /// timer name, an invalid reminder dueTime/period, a timer declared with Interleave = true,
-    /// or a mutating always-interleaving operation (supported only by journaled definitions);
-    /// or a blank or duplicate 'onStream'/'onBroadcast' provider/namespace pair.
+    /// 'transactionalStateFrom', 'onReminder', 'collectionAge' when removeIdleWorkers is true,
+    /// 'onStream' before Orleans 10.3, 'onBroadcast', a non-positive maxLocalWorkers, or a
+    /// streaming API field); a blank or duplicate reminder or timer name, an invalid reminder
+    /// dueTime/period, a timer declared with Interleave = true, or a mutating always-interleaving
+    /// operation (supported only by journaled definitions); or a blank or duplicate
+    /// 'onStream'/'onBroadcast' provider/namespace pair.
     /// </exception>
     let run
         (draft: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>)
@@ -581,12 +585,13 @@ module internal DefinitionDraft =
                 $"'collectionAge' for grain type '{grainTypeName}' must be strictly positive, but {age} was supplied."
         | _ -> ()
 
-        // "statelessWorker rejects stateFrom, usePersistentState, onReminder (durable identity is
-        // meaningless for multiplexed local activations) and rejects collectionAge (Orleans
-        // ignores it for stateless workers)." Checked at sealing so it applies regardless of the
-        // order 'statelessWorker' and the rejected operation were declared in.
+        // A stateless worker always rejects durable attachments: multiplexed local activations do
+        // not have the one-activation identity those features require. collectionAge is different:
+        // Orleans applies it when removeIdleWorkers=false and proactively removes idle workers
+        // instead when removeIdleWorkers=true. Checked at sealing so declaration order is
+        // irrelevant.
         match state.Placement with
-        | Some(StatelessWorker maxLocalWorkers) ->
+        | Some(StatelessWorker(maxLocalWorkers, removeIdleWorkers)) ->
             if maxLocalWorkers <= 0 then
                 fail
                     DefinitionStage
@@ -612,10 +617,10 @@ module internal DefinitionDraft =
                     DefinitionStage
                     $"grain type '{grainTypeName}' combines 'statelessWorker' with 'onReminder'. Durable identity is meaningless for multiplexed local activations that Orleans may create, deactivate, and re-create at will."
 
-            if state.CollectionAge.IsSome then
+            if removeIdleWorkers && state.CollectionAge.IsSome then
                 fail
                     DefinitionStage
-                    $"grain type '{grainTypeName}' combines 'statelessWorker' with 'collectionAge'. Orleans ignores the idle collection age for stateless-worker activations."
+                    $"grain type '{grainTypeName}' combines 'statelessWorker' with 'collectionAge' while removeIdleWorkers is true. Orleans uses collection age for stateless-worker activations only when removeIdleWorkers is false."
 
             // Orleans 10.3 added first-class implicit STREAM subscriptions for stateless workers:
             // every local worker activation can join the subscription as a competing consumer.
@@ -1206,8 +1211,10 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// delivery matches no hook, is logged as a warning, and is left for Orleans to drop.
     /// </para>
     /// <para>
-    /// <b>Rejected with <c>statelessWorker</c>.</b> Orleans refuses to bind a consumer extension
-    /// to a stateless worker, and implicit delivery addresses one activation identity.
+    /// <b>Stateless workers require Orleans 10.3 or newer.</b> Starting with Orleans 10.3, every
+    /// local stateless-worker activation can join an implicit stream subscription as a competing
+    /// consumer. On Orleans 10.1 and 10.2 this combination is rejected at definition sealing;
+    /// ordinary grains support it on every package version supported by Orleans.FSharp.
     /// </para>
     /// </remarks>
     [<CustomOperation("onStream")>]
@@ -1300,8 +1307,8 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
     /// </para>
     /// <para>
     /// Several <c>onBroadcast</c> operations are allowed, one per (provider, namespace) pair.
-    /// Rejected in combination with <c>statelessWorker</c>, for the reasons <c>onStream</c>'s
-    /// remarks give.
+    /// Their interaction with <c>statelessWorker</c> remains a separate unresolved compatibility
+    /// question from Orleans 10.3's explicit stream support, so that combination is rejected.
     /// </para>
     /// </remarks>
     [<CustomOperation("onBroadcast")>]
@@ -1355,15 +1362,13 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                 StreamBindings = draft.StreamBindings @ [ declaration ] }
 
     /// <summary>
-    /// Multiplex this grain type across up to <paramref name="maxLocalWorkers"/> local
-    /// activations per silo (Orleans' <c>StatelessWorkerPlacement</c>). Mutually exclusive with
-    /// <c>placement</c>; rejects <c>stateFrom</c>, <c>usePersistentState</c>, <c>onReminder</c>,
-    /// and <c>collectionAge</c> at sealing, in either declaration order -- durable identity and
-    /// idle collection age are both meaningless for activations Orleans may create, deactivate,
-    /// and re-create at will. It also rejects <c>onStream</c> and <c>onBroadcast</c>: Orleans'
-    /// <c>SiloStreamProviderRuntime.BindExtension</c> refuses to bind a consumer extension to a
-    /// stateless worker at all, and implicit delivery addresses one activation identity derived
-    /// from the stream key.
+    /// Multiplex this grain type across up to <paramref name="maxLocalWorkers"/> local activations
+    /// per silo (Orleans' <c>StatelessWorkerPlacement</c>), proactively removing idle workers.
+    /// This is the compatibility shorthand for
+    /// <c>statelessWorker maxLocalWorkers true</c>. Mutually exclusive with <c>placement</c> and
+    /// incompatible with durable attachments. <c>collectionAge</c> is rejected because proactive
+    /// idle-worker removal is enabled. <c>onStream</c> is supported with Orleans 10.3 or newer;
+    /// <c>onBroadcast</c> remains independently rejected pending resolution of its compatibility.
     /// </summary>
     /// <param name="maxLocalWorkers">
     /// The maximum local activation count per silo; validated (strictly positive) at sealing.
@@ -1385,7 +1390,45 @@ type FunctionalGrainDefinitionBuilder<'Actor, 'Key, 'Api> internal (contract: Gr
                         "statelessWorker"
                         draft.Contract.GrainTypeName
                         draft.Placement
-                        (StatelessWorker maxLocalWorkers) }
+                        (StatelessWorker(maxLocalWorkers, true)) }
+
+    /// <summary>
+    /// Multiplex this grain type across up to <paramref name="maxLocalWorkers"/> local activations
+    /// per silo (Orleans' <c>StatelessWorkerPlacement</c>) and select whether Orleans proactively
+    /// removes idle workers. Mutually exclusive with <c>placement</c> and incompatible with durable
+    /// attachments. <c>collectionAge</c> is valid only when
+    /// <paramref name="removeIdleWorkers"/> is <c>false</c>. <c>onStream</c> is supported with
+    /// Orleans 10.3 or newer; <c>onBroadcast</c> remains independently rejected pending resolution
+    /// of its compatibility.
+    /// </summary>
+    /// <param name="maxLocalWorkers">
+    /// The maximum local activation count per silo; validated (strictly positive) at sealing.
+    /// </param>
+    /// <param name="removeIdleWorkers">
+    /// <c>true</c> to proactively remove idle workers; <c>false</c> to let collection age govern
+    /// their deactivation.
+    /// </param>
+    /// <exception cref="System.InvalidOperationException">
+    /// Thrown when a placement configuration ('statelessWorker' or 'placement') is already
+    /// declared for this draft.
+    /// </exception>
+    [<CustomOperation("statelessWorker")>]
+    member _.StatelessWorker<'State>
+        (
+            state: FunctionalGrainDefinitionDraft<'Actor, 'Key, 'Api, 'State>,
+            maxLocalWorkers: int,
+            removeIdleWorkers: bool
+        ) =
+        let draft = state.State
+
+        DefinitionDraft.withState
+            { draft with
+                Placement =
+                    DefinitionDraft.singlePlacement
+                        "statelessWorker"
+                        draft.Contract.GrainTypeName
+                        draft.Placement
+                        (StatelessWorker(maxLocalWorkers, removeIdleWorkers)) }
 
     /// <summary>
     /// Select one stock Orleans placement strategy for this grain type. Mutually exclusive with

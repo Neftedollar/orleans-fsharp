@@ -139,6 +139,65 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
             test <@ remainingSubscriptions.Count = 0 @>
         }
 
+    [<Fact>]
+    member _.``asTaskSeqWithToken preserves provider cursors and unsubscribes on disposal`` () =
+        task {
+            let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef =
+                Stream.getStream<int> streamProvider "taskseq-token-ns" (Guid.NewGuid().ToString())
+
+            let eventCount = 5
+            let received = ConcurrentQueue<int * StreamSequenceToken option>()
+
+            let distinctPayload () =
+                received
+                |> Seq.map fst
+                |> Seq.filter (fun item -> item > 0)
+                |> Seq.distinct
+                |> Seq.length
+
+            let consumerTask =
+                task {
+                    let source = Stream.asTaskSeqWithToken streamRef
+                    use enumerator = source.GetAsyncEnumerator()
+
+                    while distinctPayload () < eventCount do
+                        let! moved = enumerator.MoveNextAsync()
+
+                        if not moved then
+                            failwith "The Orleans stream completed before every payload item arrived."
+
+                        received.Enqueue enumerator.Current
+                }
+
+            let probeDeadline = DateTime.UtcNow.AddSeconds 30.0
+
+            while received.IsEmpty && DateTime.UtcNow < probeDeadline do
+                do! Stream.publish streamRef 0
+                do! Task.Delay 100
+
+            test <@ not received.IsEmpty @>
+
+            for item in 1..eventCount do
+                do! Stream.publish streamRef item
+
+            let! completed = Task.WhenAny(consumerTask, Task.Delay(TimeSpan.FromSeconds 30.0))
+            test <@ Object.ReferenceEquals(completed, consumerTask) @>
+            do! consumerTask
+
+            let payload =
+                received
+                |> Seq.filter (fun (item, _) -> item > 0)
+                |> Seq.toList
+
+            test <@ payload |> List.map fst |> List.distinct |> List.sort = [ 1..eventCount ] @>
+            test <@ payload |> List.forall (fun (_, token) -> token.IsSome) @>
+
+            let asyncStream = streamProvider.GetStream<int>(streamRef.StreamId)
+            let! remainingSubscriptions = asyncStream.GetAllSubscriptionHandles()
+            test <@ remainingSubscriptions.Count = 0 @>
+        }
+
     // -----------------------------------------------------------------------
     // Cursors: subscribeWithToken / subscribeFromWithToken over a rewindable provider
     // -----------------------------------------------------------------------
@@ -323,10 +382,10 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
             let streamProvider = fixture.Client.GetStreamProvider("StreamProvider")
             let streamRef = Stream.getStream<int> streamProvider "terminal-ns" (Guid.NewGuid().ToString())
 
-            // Orleans 10.2.2 exposes producer terminal methods, but its persistent producer
-            // deliberately throws NotImplementedException for both. The F# wrapper must not hide
-            // or translate that provider contract. Consumer terminal callbacks are exercised by
-            // the adapter unit tests and work for providers which emit them.
+            // Orleans 10.1 through 10.3.1 expose producer terminal methods, but the persistent
+            // producer deliberately throws NotImplementedException for both. The F# wrapper must
+            // not hide or translate that provider contract. Consumer terminal callbacks are
+            // exercised by the adapter unit tests and work for providers which emit them.
             let! completion =
                 Assert.ThrowsAsync<NotImplementedException>(fun () -> Stream.complete streamRef :> Task)
 

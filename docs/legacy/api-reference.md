@@ -166,14 +166,11 @@ operations instead — `reentrant`, `statelessWorker`, `placement`, `oneWay`, `r
 
 #### `Reminder`
 
-| Function | Signature | Description |
-|---|---|---|
-| `register` | `Grain -> string -> TimeSpan -> TimeSpan -> Task<IGrainReminder>` | Register/update reminder |
-| `unregister` | `Grain -> string -> Task<unit>` | Unregister reminder |
-| `get` | `Grain -> string -> Task<IGrainReminder option>` | Get reminder by name |
-
-Replacement: `onReminder` on a functional definition, which reconciles declared reminders on every
-activation.
+Removed. The obsolete `Reminder.register` / `.unregister` / `.get` helper is no longer part of the
+package. In current functional grains, declare durable recurring work with `onReminder`; when a
+handler needs imperative reminder access, resolve Orleans' `IReminderRegistry` from
+`context.services`. Class grains should call Orleans' `Grain.RegisterOrUpdateReminder`,
+`Grain.UnregisterReminder`, and `Grain.GetReminder` APIs directly.
 
 #### `Timers`
 

@@ -1,8 +1,18 @@
 <Project>
+  <Import Project="$(MSBuildThisFileDirectory)eng/Versions.props"
+          Condition="'$(OrleansSharedVersionsImported)' != 'true'" />
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- A single checkout can verify the support floor and newest Orleans sequentially without
+         reusing stale generated serializers or project.assets.json from the other version. -->
+    <BaseIntermediateOutputPath>obj/$(OrleansVersion)/</BaseIntermediateOutputPath>
+    <BaseOutputPath>bin/$(OrleansVersion)/</BaseOutputPath>
+    <!-- Once BaseIntermediateOutputPath is versioned, the SDK only excludes that one subtree.
+         Keep every historical/default output subtree out of wildcard Compile/Content items too. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <PropertyGroup>

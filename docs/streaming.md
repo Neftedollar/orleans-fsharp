@@ -150,6 +150,24 @@ preview the first pull creates and awaits the Orleans subscription; cancellation
 completion, and early enumerator disposal unsubscribe it. A subscription failure therefore
 surfaces to the consumer instead of leaving a sequence waiting forever.
 
+When a pull-based consumer also owns a durable checkpoint, keep the provider cursor beside each
+item instead of dropping it:
+
+```fsharp
+let consumeWithCheckpoints stream =
+    task {
+        for (event, token) in Stream.asTaskSeqWithToken stream do
+            do! processEvent event
+
+            match token with
+            | Some cursor -> do! saveCheckpoint cursor
+            | None -> () // The selected provider does not expose cursors.
+    }
+```
+
+`asTaskSeqWithToken` has the same bounded-channel, lazy-subscription, cancellation, and disposal
+behavior as `asTaskSeq`. A checkpoint must be persisted only after its corresponding item succeeds.
+
 ---
 
 ## Rewinding / Resuming
@@ -211,10 +229,9 @@ streams in `tests/Orleans.FSharp.Integration/StreamingIntegrationTests.fs`:
   stream flushed the whole backlog from the checkpoint plus the new event. On a live stream this
   is invisible; in a test, publish rather than sleep.
 
-`Stream.getSequenceToken` is **deprecated** (`[<Obsolete>]` — a warning, not an error) and still
-returns `None`. It was never a lookup: `StreamSubscriptionHandle` carries no cursor, so there was
-nothing for it to return. Use `subscribeWithToken` / `subscribeFromWithToken`, or — on the
-functional grain runtime — read `context.streamSequenceToken` inside an `onStream` hook.
+`StreamSubscriptionHandle` itself carries no cursor. Use `subscribeWithToken`,
+`subscribeFromWithToken`, or `asTaskSeqWithToken`; on the functional grain runtime read
+`context.streamSequenceToken` inside an `onStream` hook.
 
 ---
 
@@ -233,6 +250,8 @@ Use `resume` / `resumeFrom` for one subscription with `StreamHandlers`, `resumeB
 `resumeBatchFrom` for batch callbacks, and `resumeAllHandlers` / `resumeAllBatch` for every durable
 subscription. The corresponding new-subscription functions are `subscribeFromHandlers`,
 `subscribeFromFiltered`, and `subscribeBatchFrom`.
+Build the argument to `resumeAllHandlers` with `StreamHandlers.withToken` when every resumed
+subscription must continue exposing provider cursors; a separate alias is unnecessary.
 
 There is one deliberate Orleans distinction: `subscribeFrom*` creates a new subscription and the
 tested memory provider includes the checkpoint event, while `resumeFrom` / `resumeBatchFrom`

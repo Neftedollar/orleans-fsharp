@@ -54,7 +54,8 @@
          bin/<Configuration>/ path. Guessed paths break whenever the referenced project's
          effective Configuration differs from this project's: MSBuild unsets Configuration
          for a ProjectReference that is not a member of the solution being built, so the
-         same reference lands in bin/Debug under one solution and bin/Release under another
+         same reference lands in bin/$(OrleansVersion)/Debug under one solution and
+         bin/$(OrleansVersion)/Release under another
          (Orleans.FSharp.slnx and testbed/Testbed.slnx now list Sample and Generator as
          members precisely so these calls and the actual build agree). The GetTargetPath
          call inherits this project's global properties, matching the in-solution case;

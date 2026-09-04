@@ -23,7 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         # Both ends of the supported Orleans range.
-        #  - floor: no override, so the version declared in Directory.Packages.props is
+        #  - floor: no override, so the version declared in eng/Versions.props is
         #    used. That is the version consumers are forced onto and the one published
         #    assemblies are compiled against, so it must stay green.
         #  - newest: proves we still work when Orleans moves forward, without raising
@@ -32,8 +32,10 @@ jobs:
         include:
           - label: floor
             arg: ''
+            version: '10.1.0'
           - label: 10.3.1 (newest)
             arg: '-p:OrleansVersion=10.3.1'
+            version: '10.3.1'
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       # The SDK is PINNED, not floated. FSharp.Control.TaskSeq 1.1.1 implements the dynamic
@@ -43,6 +45,15 @@ jobs:
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
           dotnet-version: '10.0.201'
+      - name: Verify Orleans-version build isolation
+        shell: bash
+        run: |
+          expected_output="bin/${{ matrix.version }}/"
+          expected_intermediate="obj/${{ matrix.version }}/"
+          actual_output="$(dotnet msbuild src/Orleans.FSharp/Orleans.FSharp.fsproj -nologo -getProperty:BaseOutputPath ${{ matrix.arg }})"
+          actual_intermediate="$(dotnet msbuild src/Orleans.FSharp/Orleans.FSharp.fsproj -nologo -getProperty:BaseIntermediateOutputPath ${{ matrix.arg }})"
+          [[ "$actual_output" == "$expected_output" ]]
+          [[ "$actual_intermediate" == "$expected_intermediate" ]]
       # `dotnet build` before any `dotnet test` step is deliberate, not incidental: the very
       # first compile after a cold NuGet cache can, in rare cases, complete without Orleans'
       # own source-generated codegen having been applied to every assembly in the same MSBuild
@@ -199,7 +210,7 @@ jobs:
       #
       # Release, like the examples: Testbed.slnx now lists Orleans.FSharp.Sample and
       # Orleans.FSharp.Generator as solution members so CodeGen's generator finds the Sample
-      # under bin/$(Configuration). (During a solution build MSBuild unsets Configuration for a
+      # under bin/$(OrleansVersion)/$(Configuration). (During a solution build MSBuild unsets Configuration for a
       # ProjectReference that is not itself a solution member — the historical Release failure
       # before those two entries existed.)
       - name: Build the testbed solution

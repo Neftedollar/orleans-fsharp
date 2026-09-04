@@ -14,7 +14,6 @@
     <Compile Include="GrainState.fs" />
     <Compile Include="GrainRef.fs" />
     <Compile Include="GrainBuilder.fs" />
-    <Compile Include="Reminders.fs" />
     <Compile Include="Timers.fs" />
     <Compile Include="Streaming.fs" />
     <Compile Include="BroadcastChannel.fs" />

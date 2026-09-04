@@ -119,20 +119,18 @@ Each item is grounded in a verified finding; pointers name the evidence.
     receiving the token, or documenting Orleans' own `SubscribeAsync` as
     the path (docs already point there).
     *Resolution:* `subscribeWithToken` / `subscribeFromWithToken` added
-    (handler takes `StreamSequenceToken option`), `getSequenceToken`
-    deprecated with `[<Obsolete>]` (warning) and unchanged behaviour, and the
-    full rewind loop is covered by an integration test over the fixture's
-    memory streams.
-14. **Two more `Stream` entry points still discard the cursor** (found while
-    fixing item 13, not fixed): `resumeAll` re-attaches a `'T -> Task<unit>`
-    handler, so a durable subscription resumed after deactivation loses the
-    checkpointing that `subscribeWithToken` now gives a fresh subscription;
-    and `asTaskSeq` yields bare `'T`, so a pull-based consumer cannot
-    checkpoint at all. Cost of closing both: two public functions
-    (`resumeAllWithToken`, and an `asTaskSeqWithToken` yielding
-    `'T * StreamSequenceToken option`, ~12 and ~20 lines), two api-reference
-    rows, a doc paragraph each, and one test each. Left out of the 4.0.1 fix
-    on scope grounds — the surface additions are the owner's call.
+    (handler takes `StreamSequenceToken option`) and the full rewind loop is
+    covered by an integration test over the fixture's memory streams. The
+    always-`None` `getSequenceToken` stub was removed in the 5.0 preview after
+    cursor-preserving callback and TaskSeq paths were both available.
+14. **[FIXED 2026-09-04] Cursor-preserving durable and pull consumption.**
+    `resumeAllHandlers` together with `StreamHandlers.withToken` already
+    re-attaches every durable subscription without discarding its cursor, so a
+    second public alias would only duplicate that composition. Pull-based
+    consumption now has `asTaskSeqWithToken`, yielding
+    `'T * StreamSequenceToken option` with the same bounded backpressure and
+    subscription lifetime as `asTaskSeq`. Its public shape is pinned by a unit
+    test and its token/lifetime behavior by a live Orleans memory-stream test.
 15. **Two `ResilienceOptions` values throw from inside the call** (found
     while fixing item 12, documented not fixed): Polly validates its strategy
     options with data annotations at pipeline-build time, so

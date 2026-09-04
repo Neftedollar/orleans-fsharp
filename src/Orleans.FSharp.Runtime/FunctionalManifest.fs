@@ -185,25 +185,25 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
 
                 // "The registry properties provider publishes the same property keys Orleans' own
                 // attributes produce." Verified against a live IGrainPropertiesProviderAttribute.
-                // Populate() call on Orleans 10.1.0 and 10.2.2 (identical on both):
+                // Populate() call on Orleans 10.1.0 and 10.3.1 (identical on both):
                 //   RandomPlacementAttribute()               -> placement-strategy=RandomPlacement
                 //   PreferLocalPlacementAttribute()           -> placement-strategy=PreferLocalPlacement
                 //   ActivationCountBasedPlacementAttribute()  -> placement-strategy=ActivationCountBasedPlacement
                 //   ResourceOptimizedPlacementAttribute()     -> placement-strategy=ResourceOptimizedPlacement
-                //   StatelessWorkerAttribute(n)                -> placement-strategy=StatelessWorkerPlacement,
+                //   StatelessWorkerAttribute(n, removeIdleWorkers)
+                //                                               -> placement-strategy=StatelessWorkerPlacement,
                 //                                                  max-local-instances=n (exact string, no
-                //                                                  culture formatting), remove-idle-workers=True
-                //                                                  (bool.ToString() casing), unordered=true
-                //                                                  (lowercase literal -- NOT bool.ToString(),
-                //                                                  and NOT tied to the removeIdleWorkers ctor
-                //                                                  argument, which this runtime does not expose).
+                //                                                  culture formatting), remove-idle-workers equal
+                //                                                  to the argument (bool.ToString() casing), and
+                //                                                  unordered=true (lowercase literal, independent
+                //                                                  of removeIdleWorkers).
                 // "max-local-instances" and "remove-idle-workers" are StatelessWorkerAttribute-internal key
                 // names with no WellKnownGrainTypeProperties constant, so they are literals here too, exactly
                 // as examples/feature-tour/src/FeatureTour/Placement.fs already documents them.
-                // Spec 004 item 5. Both keys are written by constructing the REAL Orleans
-                // attribute and taking its own Populate output, exactly as the implicit-
-                // subscription bindings below take GetBindings': the property names and values
-                // are then Orleans' own, not a transcription of them.
+                // Spec 004 item 5. Tests construct the REAL Orleans attribute, take its Populate
+                // output, and compare every placement property below against that reference for
+                // both removeIdleWorkers values. This keeps the literal internal keys and their
+                // exact value casing pinned to Orleans rather than to an unverified transcription.
                 //
                 // [Reentrant] contributes nothing but a property, so this is complete. Orleans'
                 // ReentrantSharedComponentsConfigurator (an IConfigureGrainTypeComponents
@@ -240,10 +240,10 @@ type internal FunctionalGrainPropertiesProvider(services: IServiceProvider, regi
                         | SiloRoleBased -> "SiloRoleBasedPlacement"
 
                     properties.[WellKnownGrainTypeProperties.PlacementStrategy] <- value
-                | Some(StatelessWorker maxLocalWorkers) ->
+                | Some(StatelessWorker(maxLocalWorkers, removeIdleWorkers)) ->
                     properties.[WellKnownGrainTypeProperties.PlacementStrategy] <- "StatelessWorkerPlacement"
                     properties.["max-local-instances"] <- maxLocalWorkers.ToString CultureInfo.InvariantCulture
-                    properties.["remove-idle-workers"] <- true.ToString()
+                    properties.["remove-idle-workers"] <- removeIdleWorkers.ToString()
                     properties.[WellKnownGrainTypeProperties.Unordered] <- "true"
                 | None -> ()
 

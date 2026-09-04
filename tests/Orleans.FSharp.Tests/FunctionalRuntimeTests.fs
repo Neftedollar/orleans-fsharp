@@ -119,6 +119,7 @@ let private collectionAgeContract =
 let private collectionAgeDefinition =
     grainFor collectionAgeContract {
         defaultState (fun () -> { touched = false })
+        statelessWorker 2 false
         collectionAge (TimeSpan.FromMinutes 5.0)
         handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
     }
@@ -126,7 +127,7 @@ let private collectionAgeDefinition =
 // Minimal, independent contracts used only to prove that 'statelessWorker' / 'placement' are
 // frozen into the well-known Orleans placement manifest properties, EXACTLY matching what the
 // corresponding stock Orleans attribute publishes (verified live against Orleans 10.1.0 and
-// 10.2.2 -- see FunctionalManifest.fs's Populate comment).
+// 10.3.1 -- see FunctionalManifest.fs's Populate comment).
 type StatelessWorkerActor = private StatelessWorkerActor of unit
 type PreferLocalActor = private PreferLocalActor of unit
 
@@ -140,6 +141,13 @@ let private statelessWorkerDefinition =
     grainFor statelessWorkerContract {
         defaultState (fun () -> { touched = false })
         statelessWorker 4
+        handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
+    }
+
+let private retainedStatelessWorkerDefinition =
+    grainFor statelessWorkerContract {
+        defaultState (fun () -> { touched = false })
+        statelessWorker 4 false
         handle (_.touch) (fun _ state () -> task { return { touched = true }, () })
     }
 
@@ -520,6 +528,8 @@ let ``the properties provider replaces exactly the normalized functional entry``
 /// Orleans.Runtime.dll rather than assumed. This test proves both halves: an override publishes
 /// the property in the exact invariant format that round-trips through <c>TimeSpan.Parse</c>,
 /// and an omitted override publishes no property at all, so the host default applies untouched.
+/// The configured override belongs to a stateless worker with removeIdleWorkers=false, proving
+/// that the Orleans-supported combination survives hosting and manifest publication.
 /// </remarks>
 [<Fact>]
 let ``the properties provider freezes collectionAge into the idle-duration manifest property`` () =
@@ -546,6 +556,7 @@ let ``the properties provider freezes collectionAge into the idle-duration manif
 
     let parsed = TimeSpan.Parse ageProperties.[WellKnownGrainTypeProperties.IdleDeactivationPeriod]
     test <@ parsed = TimeSpan.FromMinutes 5.0 @>
+    test <@ ageProperties.["remove-idle-workers"] = "False" @>
 
 /// <summary>Populate a scratch dictionary through a live Orleans placement attribute, exactly
 /// the way <c>examples/feature-tour/src/FeatureTour/Placement.fs</c> already does, to get the
@@ -584,6 +595,34 @@ let ``statelessWorker publishes exactly what a live StatelessWorkerAttribute(4) 
     test <@ properties.["max-local-instances"] = "4" @>
     test <@ properties.["remove-idle-workers"] = "True" @> // bool.ToString() casing, NOT "true"
     test <@ properties.[WellKnownGrainTypeProperties.Unordered] = "true" @> // literal, NOT bool.ToString()
+
+/// <remarks>
+/// The explicit overload must preserve removeIdleWorkers=false through the sealed definition,
+/// hosted model, and functional manifest. The reference is the real two-argument Orleans
+/// attribute available at the supported 10.1.0 floor as well as 10.3.1.
+/// </remarks>
+[<Fact>]
+let ``statelessWorker false publishes exactly what a live StatelessWorkerAttribute(4, false) publishes`` () =
+    let registry = FunctionalGrainRegistry()
+    registry.Add(FunctionalHosted.create retainedStatelessWorkerDefinition)
+    registry.Freeze() |> ignore
+
+    let provider = FunctionalGrainPropertiesProvider(manifestServices, registry) :> IGrainPropertiesProvider
+    let marker = typedefof<FunctionalGrainMarker<_>>.MakeGenericType typeof<StatelessWorkerActor>
+    let properties = Dictionary<string, string>(StringComparer.Ordinal)
+    properties.["interface.0"] <- typedefof<IFunctionalGrainTarget<_>>.FullName
+    provider.Populate(marker, GrainType.Create "runtime.statelessworker", properties)
+
+    let reference = referencePropertiesOf (StatelessWorkerAttribute(4, false))
+
+    test <@ reference.Count = 4 @>
+    test <@ properties.[WellKnownGrainTypeProperties.PlacementStrategy] = reference.["placement-strategy"] @>
+    test <@ properties.["max-local-instances"] = reference.["max-local-instances"] @>
+    test <@ properties.["remove-idle-workers"] = reference.["remove-idle-workers"] @>
+    test <@ properties.[WellKnownGrainTypeProperties.Unordered] = reference.["unordered"] @>
+    test <@ properties.["max-local-instances"] = "4" @>
+    test <@ properties.["remove-idle-workers"] = "False" @>
+    test <@ properties.[WellKnownGrainTypeProperties.Unordered] = "true" @>
 
 /// <remarks>
 /// The same exactness proof for every plain stock strategy the DU mirrors, each against its own

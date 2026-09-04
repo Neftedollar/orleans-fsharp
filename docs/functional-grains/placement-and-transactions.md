@@ -14,7 +14,9 @@ A definition can select Orleans' stock placement strategies:
 - `SiloRoleBased`
 
 `statelessWorker` permits several local activations for throughput. It is intentionally
-incompatible with durable state, reminders, and collection-age semantics.
+incompatible with durable state and reminders. Its one-argument form proactively removes idle
+workers; use `statelessWorker maxLocalWorkers false` when `collectionAge` should govern idle
+deactivation instead.
 
 ```fsharp
 grainFor RouterApi.contract {

@@ -35,6 +35,13 @@ published stable line is 4.1 (currently 4.1.0).
   token-aware subscribe/resume variants, and durable reattachment helpers. Producer terminal
   methods preserve the selected provider's behavior, including Orleans persistent streams which
   report them as unsupported.
+- **Cursor-preserving pull-based stream consumption.** `Stream.asTaskSeqWithToken` keeps each
+  provider `StreamSequenceToken` beside its item, so a TaskSeq consumer can persist a durable
+  checkpoint without falling back to callback-style subscription. It shares `asTaskSeq`'s lazy
+  subscription, bounded backpressure, cancellation, and cleanup behavior.
+- **Complete stateless-worker placement control.** `statelessWorker maxLocalWorkers` keeps Orleans'
+  `removeIdleWorkers = true` default, while `statelessWorker maxLocalWorkers false` lets
+  `collectionAge` govern retained workers. Both forms publish the exact stock Orleans manifest.
 - **Live activation migration and the remaining stock placement strategies.** Functional contexts
   expose advisory and target-hinted `migrateOnIdle`; ordinary ephemeral state participates
   automatically, and repeatable `migrationParticipant` factories support application-local
@@ -66,6 +73,10 @@ published stable line is 4.1 (currently 4.1.0).
 
 ### Fixed
 
+- **Local Orleans-version matrix runs no longer share incremental artifacts.** Repository builds
+  partition `bin` and `obj` by `OrleansVersion`, preventing a sequential 10.3.1 → 10.1.0 check from
+  reusing incompatible generated serializers or NuGet assets. The floor version now has one shared
+  source in `eng/Versions.props` for both package resolution and output isolation.
 - **Pull-based stream consumption now owns its subscription lifetime.** `Stream.asTaskSeq` starts
   the Orleans subscription on first enumeration, propagates cancellation, and unsubscribes when
   the enumerator is disposed, including early loop exit. Its bounded channel remains capacity
@@ -113,6 +124,12 @@ published stable line is 4.1 (currently 4.1.0).
 
 ### Removed
 
+- **Obsolete `Reminder` helper module.** Current functional grains use `onReminder` declarations
+  and resolve Orleans' `IReminderRegistry` from `context.services` for explicit migrations; class
+  grains use Orleans' reminder APIs directly.
+- **Dead stream cursor stub.** `Stream.getSequenceToken`, which could only ever return `None`, is
+  removed in 5.0. Use `subscribeWithToken`, `subscribeFromWithToken`, `asTaskSeqWithToken`, or
+  `context.streamSequenceToken` instead.
 - **No new Legacy package line.** The Legacy-only CodeGen and classic event-sourcing projects are
   no longer packable in the 5.0 package set. Their source and archived documentation remain for
   migration reference, but they receive no new release, compatibility work, or security fixes.

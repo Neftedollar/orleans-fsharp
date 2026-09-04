@@ -2,12 +2,10 @@ module Orleans.FSharp.Tests.ReminderTests
 
 open System
 open System.Reflection
-open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
 open FsCheck
 open FsCheck.Xunit
-open Orleans
 open Orleans.Runtime
 open Orleans.FSharp
 
@@ -104,83 +102,16 @@ let ``onReminder handler has correct signature`` () =
     test <@ handlerCalled @>
     test <@ result = 43 @>
 
-// --- Reminder module type signature tests ---
+// --- Removed Reminder helper module ---
 
 #warnon "44"
 [<Fact>]
-let ``Reminder module exists in Orleans.FSharp assembly`` () =
+let ``obsolete Reminder helper module is absent from the 5.0 surface`` () =
     let reminderModule =
         typeof<AssemblyMarker>.Assembly.GetTypes()
         |> Array.tryFind (fun t -> t.Name = "Reminder" && t.IsAbstract && t.IsSealed)
 
-    test <@ reminderModule.IsSome @>
-
-[<Fact>]
-let ``Reminder.register method exists`` () =
-    let reminderModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "Reminder" && t.IsAbstract && t.IsSealed)
-
-    let registerMethod =
-        reminderModule.GetMethods()
-        |> Array.tryFind (fun m -> m.Name = "register")
-
-    test <@ registerMethod.IsSome @>
-
-[<Fact>]
-let ``Reminder.unregister method exists`` () =
-    let reminderModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "Reminder" && t.IsAbstract && t.IsSealed)
-
-    let unregisterMethod =
-        reminderModule.GetMethods()
-        |> Array.tryFind (fun m -> m.Name = "unregister")
-
-    test <@ unregisterMethod.IsSome @>
-
-[<Fact>]
-let ``Reminder.get method exists`` () =
-    let reminderModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "Reminder" && t.IsAbstract && t.IsSealed)
-
-    let getMethod =
-        reminderModule.GetMethods()
-        |> Array.tryFind (fun m -> m.Name = "get")
-
-    test <@ getMethod.IsSome @>
-
-[<Fact>]
-let ``Reminder.register returns Task of IGrainReminder`` () =
-    let reminderModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "Reminder" && t.IsAbstract && t.IsSealed)
-
-    let registerMethod =
-        reminderModule.GetMethods()
-        |> Array.find (fun m -> m.Name = "register")
-
-    let returnType = registerMethod.ReturnType
-    test <@ returnType.IsGenericType @>
-    test <@ returnType.GetGenericTypeDefinition() = typedefof<Task<_>> @>
-
-[<Fact>]
-let ``Reminder module functions do not return FSharpAsync`` () =
-    let reminderModule =
-        typeof<AssemblyMarker>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.Name = "Reminder" && t.IsAbstract && t.IsSealed)
-
-    let asyncMethods =
-        reminderModule.GetMethods()
-        |> Array.filter (fun m ->
-            let ret = m.ReturnType
-
-            (ret.IsGenericType
-             && ret.GetGenericTypeDefinition().FullName = "Microsoft.FSharp.Control.FSharpAsync`1")
-            || ret.FullName = "Microsoft.FSharp.Control.FSharpAsync")
-
-    test <@ asyncMethods = Array.empty @>
+    test <@ reminderModule.IsNone @>
 
 // ---------------------------------------------------------------------------
 // FsCheck property tests

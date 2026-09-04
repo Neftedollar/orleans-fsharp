@@ -11,11 +11,12 @@ description: "Reference for the deprecated grain computation expression."
 
 **Complete guide to the `grain { }` computation expression.**
 
-> **Deprecated authoring model.** Everything on this page -- the `grain { }` CE, `GrainDefinition`,
-> the old `GrainContext`, `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, `Reminder`,
-> and the `FSharpGrain.*` handle module -- now carries `[<Obsolete>]` (warning, not error). It keeps
-> compiling and running; new code should use the functional grain runtime described in
-> [functional-grains.md](/orleans-fsharp/functional-grains/), which also carries the before/after mapping table.
+> **Deprecated authoring model.** The `grain { }` CE, `GrainDefinition`, the old `GrainContext`,
+> `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, and the `FSharpGrain.*` handle
+> module carry `[<Obsolete>]` (warning, not error) and still compile on the 5.0 line. The former
+> `Reminder` helper was deprecated in 4.x and removed in 5.0. New code should use the functional
+> grain runtime described in [functional-grains.md](/orleans-fsharp/functional-grains/), which also carries
+> the before/after mapping table.
 
 ## What you'll learn
 
@@ -525,11 +526,10 @@ grain {
 }
 ```
 
-To register the reminder at runtime, use the `Reminder` module:
-
-```fsharp
-Reminder.register grain "HealthCheck" (TimeSpan.FromMinutes 1.) (TimeSpan.FromMinutes 5.)
-```
+The obsolete `Reminder` helper module has been removed. In current `grainFor` definitions, use the
+current `onReminder` declaration for scheduled work. When imperative access is required, resolve
+Orleans' `IReminderRegistry` from `context.services`; class grains should use Orleans' reminder
+methods directly.
 
 ### `onTimer`
 

@@ -3,12 +3,12 @@
 // Stress test: 1000s of actors across 2 Orleans silos via Redis
 // Run: docker compose up -d && dotnet fsi stress-test.fsx
 
-#r "nuget: Microsoft.Orleans.Client, 10.0.1"
-#r "nuget: Orleans.Clustering.Redis, 10.0.1"
+#r "nuget: Microsoft.Orleans.Client, 10.1.0"
+#r "nuget: Orleans.Clustering.Redis, 10.1.0"
 #r "nuget: Microsoft.Extensions.Hosting, 10.0.0"
-#r "../src/Orleans.FSharp/bin/Debug/net10.0/Orleans.FSharp.dll"
-#r "src/Shared/bin/Debug/net10.0/Shared.dll"
-#r "src/CodeGen/bin/Debug/net10.0/CodeGen.dll"
+#r "../src/Orleans.FSharp/bin/10.1.0/Debug/net10.0/Orleans.FSharp.dll"
+#r "src/Shared/bin/10.1.0/Debug/net10.0/Shared.dll"
+#r "src/CodeGen/bin/10.1.0/Debug/net10.0/CodeGen.dll"
 
 open System
 open System.Diagnostics

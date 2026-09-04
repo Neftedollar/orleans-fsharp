@@ -451,8 +451,9 @@ When one grain relays another grain's streaming reply, return a direct delegatin
 `IAsyncEnumerable`/enumerator instead of using those wrapping forms. The exact pattern and the SDK
 boundary are documented under [Authoring a producer](https://neftedollar.com/orleans-fsharp/streaming-replies/#authoring-a-producer).
 
-`Stream.asTaskSeq` is a separate Orleans pub/sub adapter. On `main` it creates the subscription on
-first enumeration and disposes that subscription when enumeration ends, including early exit.
+`Stream.asTaskSeq` and its cursor-preserving `Stream.asTaskSeqWithToken` variant are separate
+Orleans pub/sub adapters. On `main` they create the subscription on first enumeration and dispose
+that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
@@ -489,6 +490,12 @@ equivalent stateless-worker semantics.
 
 This capability is part of the 5.0 preview and has a live Orleans 10.3 integration test. It is not
 part of the published 4.1 package.
+
+The 5.0 preview also exposes Orleans' complete stateless-worker placement setting:
+`statelessWorker maxLocalWorkers` preserves the stock `removeIdleWorkers = true` default, while
+`statelessWorker maxLocalWorkers false` allows a functional definition to use `collectionAge`.
+The generated manifest is checked against the corresponding live Orleans attribute on both ends
+of the supported version matrix.
 
 ## What the repository checks do not prove
 
@@ -963,7 +970,9 @@ A definition can select Orleans' stock placement strategies:
 - `SiloRoleBased`
 
 `statelessWorker` permits several local activations for throughput. It is intentionally
-incompatible with durable state, reminders, and collection-age semantics.
+incompatible with durable state and reminders. Its one-argument form proactively removes idle
+workers; use `statelessWorker maxLocalWorkers false` when `collectionAge` should govern idle
+deactivation instead.
 
 ```fsharp
 grainFor RouterApi.contract {
@@ -2310,7 +2319,8 @@ leaves that item undelivered. Implicit `onStream` delivery is item-by-item; use 
 
 `statelessWorker maxLocalWorkers` multiplexes a grain type across up to `maxLocalWorkers` local
 activations per silo (Orleans' `StatelessWorkerPlacement`) -- useful for stateless, CPU-bound work
-where one activation per grain id would otherwise serialize concurrent calls:
+where one activation per grain id would otherwise serialize concurrent calls. This one-argument
+form matches Orleans' default and enables proactive idle-worker removal:
 
 ```fsharp
 grainFor contract {
@@ -2319,6 +2329,23 @@ grainFor contract {
     handle (_.work) handler
 }
 ```
+
+Use the explicit form when collection age, rather than proactive removal, should govern idle
+workers:
+
+```fsharp
+grainFor contract {
+    defaultState (fun () -> Guid.NewGuid().ToString())
+    statelessWorker 4 false
+    collectionAge (TimeSpan.FromMinutes 10.0)
+    handle (_.work) handler
+}
+```
+
+The second argument is Orleans' `removeIdleWorkers` flag. `true` is the shorthand default and
+cannot be combined with `collectionAge`; `false` keeps idle workers eligible for the declared
+collection age. Both forms publish the same properties as Orleans'
+`StatelessWorkerAttribute(maxLocalWorkers, removeIdleWorkers)`.
 
 `placement strategy` selects one stock Orleans placement strategy instead:
 
@@ -2348,11 +2375,11 @@ silo's display name. Prefer a `stringKey` contract whose key is the intended rol
 roles actually published by your deployment environment.
 
 `statelessWorker` and `placement` are mutually exclusive (in either declaration order), and
-`statelessWorker` additionally rejects `stateFrom`, `usePersistentState`, `onReminder`, and
-`collectionAge` -- durable identity and idle collection age are both meaningless for activations
-Orleans may create, deactivate, and re-create at will to satisfy the local-activation cap.
-It accepts `onStream` only with a loaded Orleans.Streaming 10.3.0+ runtime and always rejects
-`onBroadcast`; see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/#stateless-worker-implicit-streams-require-orleans-103).
+`statelessWorker` always rejects `stateFrom`, `usePersistentState`, and `onReminder` because
+durable identity is not meaningful for multiplexed local activations. `collectionAge` is accepted
+only by the explicit `statelessWorker maxLocalWorkers false` form. `onStream` requires a loaded
+Orleans.Streaming 10.3.0+ runtime and `onBroadcast` remains rejected; see
+[Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/#stateless-worker-implicit-streams-require-orleans-103).
 
 ### Live activation migration
 
@@ -3463,6 +3490,24 @@ preview the first pull creates and awaits the Orleans subscription; cancellation
 completion, and early enumerator disposal unsubscribe it. A subscription failure therefore
 surfaces to the consumer instead of leaving a sequence waiting forever.
 
+When a pull-based consumer also owns a durable checkpoint, keep the provider cursor beside each
+item instead of dropping it:
+
+```fsharp
+let consumeWithCheckpoints stream =
+    task {
+        for (event, token) in Stream.asTaskSeqWithToken stream do
+            do! processEvent event
+
+            match token with
+            | Some cursor -> do! saveCheckpoint cursor
+            | None -> () // The selected provider does not expose cursors.
+    }
+```
+
+`asTaskSeqWithToken` has the same bounded-channel, lazy-subscription, cancellation, and disposal
+behavior as `asTaskSeq`. A checkpoint must be persisted only after its corresponding item succeeds.
+
 ---
 
 ## Rewinding / Resuming
@@ -3524,10 +3569,9 @@ streams in `tests/Orleans.FSharp.Integration/StreamingIntegrationTests.fs`:
   stream flushed the whole backlog from the checkpoint plus the new event. On a live stream this
   is invisible; in a test, publish rather than sleep.
 
-`Stream.getSequenceToken` is **deprecated** (`[<Obsolete>]` — a warning, not an error) and still
-returns `None`. It was never a lookup: `StreamSubscriptionHandle` carries no cursor, so there was
-nothing for it to return. Use `subscribeWithToken` / `subscribeFromWithToken`, or — on the
-functional grain runtime — read `context.streamSequenceToken` inside an `onStream` hook.
+`StreamSubscriptionHandle` itself carries no cursor. Use `subscribeWithToken`,
+`subscribeFromWithToken`, or `asTaskSeqWithToken`; on the functional grain runtime read
+`context.streamSequenceToken` inside an `onStream` hook.
 
 ---
 
@@ -3546,6 +3590,8 @@ Use `resume` / `resumeFrom` for one subscription with `StreamHandlers`, `resumeB
 `resumeBatchFrom` for batch callbacks, and `resumeAllHandlers` / `resumeAllBatch` for every durable
 subscription. The corresponding new-subscription functions are `subscribeFromHandlers`,
 `subscribeFromFiltered`, and `subscribeBatchFrom`.
+Build the argument to `resumeAllHandlers` with `StreamHandlers.withToken` when every resumed
+subscription must continue exposing provider cursors; a separate alias is unnecessary.
 
 There is one deliberate Orleans distinction: `subscribeFrom*` creates a new subscription and the
 tested memory provider includes the checkpoint event, while `resumeFrom` / `resumeBatchFrom`
@@ -8540,7 +8586,7 @@ spelled curried fails contract construction. See [Functional grains](https://nef
 | `transactionalStateFrom` | `TransactionalStateRef<'S>` + `('Key -> 'S)` | Attach a transactional facet (repeatable) |
 | `collectionAge` | `TimeSpan` | Idle-deactivation threshold override |
 | `placement` | `PlacementStrategy` | `Random` / `PreferLocal` / `ActivationCountBased` / `ResourceOptimized` / `HashBased` / `SiloRoleBased` |
-| `statelessWorker` | `int` | Stateless-worker placement with a max-local-workers cap |
+| `statelessWorker` | `int` or `int` + `bool` | Stateless-worker placement with a max-local-workers cap; the optional explicit `removeIdleWorkers` flag defaults to `true`, while `false` permits `collectionAge` |
 | `migrationParticipant` | `FunctionalMigrationParticipantFactory<'Actor,'Key>` | Add an activation-scoped Orleans migration participant; repeatable and created before rehydration |
 | `onActivate` | `ActivateHook<'Actor,'Key,'State>` | Activation hook; its returned state is published in memory |
 | `onDeactivate` | `DeactivateHook<'Actor,'Key,'State>` | Deactivation hook; no replacement state |
@@ -9077,6 +9123,7 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `subscribeFiltered<'T>` | `StreamRef<'T> -> string -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Pass filter data to the provider's `IStreamFilter` |
 | `subscribeBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Subscribe through `IAsyncBatchObserver<'T>` |
 | `asTaskSeq<'T>` | `StreamRef<'T> -> TaskSeq<'T>` | Pull-based consumption; first pull subscribes, cancellation/early disposal unsubscribes; 5.0 lifetime behavior |
+| `asTaskSeqWithToken<'T>` | `StreamRef<'T> -> TaskSeq<'T * StreamSequenceToken option>` | Pull-based consumption which preserves each item cursor for durable checkpointing |
 | `subscribeFrom<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> Task<unit>) -> Task<StreamSubscription<'T>>` | Subscribe from token (rewind is inclusive of that event) |
 | `subscribeFromWithToken<'T>` | `StreamRef<'T> -> StreamSequenceToken -> ('T -> StreamSequenceToken option -> Task<unit>) -> Task<StreamSubscription<'T>>` | Rewind and keep checkpointing |
 | `subscribeFromHandlers<'T>` | `StreamRef<'T> -> StreamSequenceToken -> StreamHandlers<'T> -> Task<StreamSubscription<'T>>` | Rewind with item/error/completion callbacks |
@@ -9091,8 +9138,6 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `resumeBatchFrom<'T>` | `StreamSubscription<'T> -> StreamSequenceToken -> StreamBatchHandlers<'T> -> Task<StreamSubscription<'T>>` | Reattach one batch subscription from a token |
 | `resumeAllHandlers<'T>` | `StreamRef<'T> -> StreamHandlers<'T> -> Task<unit>` | Reattach all durable subscriptions with item callbacks |
 | `resumeAllBatch<'T>` | `StreamRef<'T> -> StreamBatchHandlers<'T> -> Task<unit>` | Reattach all durable subscriptions with batch callbacks |
-| `getSequenceToken<'T>` | `StreamSubscription<'T> -> StreamSequenceToken option` | **Deprecated** — carries `[<Obsolete>]` (a warning, not an error) and still returns **always `None`**: `StreamSubscriptionHandle` exposes no token, so there was never anything to return. Replacement: `subscribeWithToken` / `subscribeFromWithToken`, or `context.streamSequenceToken` in an `onStream` hook |
-
 `StreamHandlers.create` / `withToken` create item callbacks; `withError` and `withCompletion`
 replace terminal callbacks immutably. `StreamBatchHandlers` exposes the corresponding `create`,
 `withError`, and `withCompletion` functions.
@@ -10055,14 +10100,11 @@ operations instead — `reentrant`, `statelessWorker`, `placement`, `oneWay`, `r
 
 #### `Reminder`
 
-| Function | Signature | Description |
-|---|---|---|
-| `register` | `Grain -> string -> TimeSpan -> TimeSpan -> Task<IGrainReminder>` | Register/update reminder |
-| `unregister` | `Grain -> string -> Task<unit>` | Unregister reminder |
-| `get` | `Grain -> string -> Task<IGrainReminder option>` | Get reminder by name |
-
-Replacement: `onReminder` on a functional definition, which reconciles declared reminders on every
-activation.
+Removed. The obsolete `Reminder.register` / `.unregister` / `.get` helper is no longer part of the
+package. In current functional grains, declare durable recurring work with `onReminder`; when a
+handler needs imperative reminder access, resolve Orleans' `IReminderRegistry` from
+`context.services`. Class grains should call Orleans' `Grain.RegisterOrUpdateReminder`,
+`Grain.UnregisterReminder`, and `Grain.GetReminder` APIs directly.
 
 #### `Timers`
 
@@ -10784,11 +10826,12 @@ dotnet test
 
 **Complete guide to the `grain { }` computation expression.**
 
-> **Deprecated authoring model.** Everything on this page -- the `grain { }` CE, `GrainDefinition`,
-> the old `GrainContext`, `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, `Reminder`,
-> and the `FSharpGrain.*` handle module -- now carries `[<Obsolete>]` (warning, not error). It keeps
-> compiling and running; new code should use the functional grain runtime described in
-> [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/), which also carries the before/after mapping table.
+> **Deprecated authoring model.** The `grain { }` CE, `GrainDefinition`, the old `GrainContext`,
+> `[<FSharpGrain>]`, `AddFSharpGrain(sFromAssembly)`, `Timers`, and the `FSharpGrain.*` handle
+> module carry `[<Obsolete>]` (warning, not error) and still compile on the 5.0 line. The former
+> `Reminder` helper was deprecated in 4.x and removed in 5.0. New code should use the functional
+> grain runtime described in [functional-grains.md](https://neftedollar.com/orleans-fsharp/functional-grains/), which also carries
+> the before/after mapping table.
 
 ## What you'll learn
 
@@ -11298,11 +11341,10 @@ grain {
 }
 ```
 
-To register the reminder at runtime, use the `Reminder` module:
-
-```fsharp
-Reminder.register grain "HealthCheck" (TimeSpan.FromMinutes 1.) (TimeSpan.FromMinutes 5.)
-```
+The obsolete `Reminder` helper module has been removed. In current `grainFor` definitions, use the
+current `onReminder` declaration for scheduled work. When imperative access is required, resolve
+Orleans' `IReminderRegistry` from `context.services`; class grains should use Orleans' reminder
+methods directly.
 
 ### `onTimer`
 
@@ -11890,13 +11932,14 @@ For new development, begin with [Getting Started](https://neftedollar.com/orlean
 
 The universal message-passing surface built on the `grain { }` CE -- the builder itself, the
 `GrainDefinition`/`GrainContext` types it produces, `FSharpGrainAttribute`,
-`AddFSharpGrain(sFromAssembly)`, the `FSharpGrain.*` handle module, `Timers`, and `Reminder` --
-is superseded by this functional runtime and now carries `[<Obsolete>]` (warning, not error).
+`AddFSharpGrain(sFromAssembly)`, the `FSharpGrain.*` handle module, and `Timers` -- is superseded
+by this functional runtime and carries `[<Obsolete>]` (warning, not error). The former `Reminder`
+helper module was deprecated on the 4.x line and removed from the 5.0 package surface.
 
 Where the warning fires -- the whole cluster, not just its entry points: on `grain { }` and the
 `GrainBuilder` type behind it, on `GrainDefinition` and the old `GrainContext` (types and
 modules), on `AdditionalStateSpec`, on `[<FSharpGrain>]`, on `AddFSharpGrain` /
-`AddFSharpGrainsFromAssembly`, on the `Timers` and `Reminder` modules, on every operation of the
+`AddFSharpGrainsFromAssembly`, on the `Timers` module, on every operation of the
 universal handle module (`FSharpGrain.ref`/`refGuid`/`refInt` and `send`/`post`/`ask` with their
 `Guid`/`Int` variants), on the three handle types, on the `IFSharpGrain*` interface aliases, on
 the runtime host class `FSharpGrain<'State,'Message>` and `NamedPersistentState`, on the C#
@@ -11941,7 +11984,7 @@ Before/after mapping:
 | `onTimer "name" dueTime period handler` (in `grain { }`) | `onTimer` operation in `grainFor { }` |
 | `onReminder "name" handler` (in `grain { }`) | `onReminder` operation in `grainFor { }` |
 | `Timers.register` / `Timers.registerWithState` (class grain) | `Grain.RegisterGrainTimer` directly -- unchanged, this is a class-grain-native Orleans API, not something the functional runtime replaces |
-| `Reminder.register` / `.unregister` / `.get` (class grain) | `Grain.RegisterOrUpdateReminder` / `.UnregisterReminder` / `.GetReminder` directly -- likewise class-grain-native |
+| `Reminder.register` / `.unregister` / `.get` | `onReminder` for declared functional schedules; Orleans' `IReminderRegistry` resolved from `context.services` for imperative access in current functional handlers; direct Orleans reminder methods in class grains |
 | `persist "Default"` | `usePersistentState` with a `PersistentState.create<'State> "name" "provider"` descriptor |
 | one-way `FSharpGrain.post` | `oneWay (_.op)` in the contract |
 | `handleWithContext` / `GrainContext.getService` etc. | the `context` parameter passed to every `handle` callback (`context.services`, `context.grainFactory`, ...) |

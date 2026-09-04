@@ -694,9 +694,11 @@ facts above were known.
 ## 4. First-class placement operations
 
 **Status (Phase A, Task A1 — delivered):** implemented on
-`feat/004-parity-phase-a`. `statelessWorker (maxLocalWorkers: int)` and
-`placement (strategy: PlacementStrategy)` are `grainFor` definition
-operations (`src/Orleans.FSharp/FunctionalDefinition.fs`); the registry's
+`feat/004-parity-phase-a`, then completed on the 5.0 line. `statelessWorker`
+has a compatibility shorthand `(maxLocalWorkers: int)` and the complete Orleans form
+`(maxLocalWorkers: int, removeIdleWorkers: bool)`; `placement
+(strategy: PlacementStrategy)` is the other `grainFor` placement operation
+(`src/Orleans.FSharp/FunctionalDefinition.fs`). The registry's
 `FunctionalGrainPropertiesProvider` publishes their manifest properties
 (`src/Orleans.FSharp.Runtime/FunctionalManifest.fs`), replacing the
 feature-tour §10 composition (`examples/feature-tour/src/FeatureTour/Placement.fs`
@@ -713,19 +715,17 @@ type PlacementStrategy =
     | PreferLocal
     | ActivationCountBased
     | ResourceOptimized
+    | HashBased
+    | SiloRoleBased
 ```
 
-Verified by reflection against Orleans 10.1.0 and 10.2.2 (both, identical):
-all four strategy classes, all four placement attributes, and the
+Verified by reflection against Orleans 10.1.0 and 10.3.1 (both, identical):
+all six strategy classes, all six placement attributes, and the
 `StatelessWorkerPlacement` strategy and its attribute are present on both
 versions with byte-identical `IGrainPropertiesProviderAttribute.Populate`
-output. **No strategy here is version-gated.** Orleans also ships
-`HashBasedPlacement` and `SiloRoleBasedPlacement` (present on both versions
-too) plus the internal `ClientObserversPlacement` /
-`SystemTargetPlacementStrategy`; none of the four are mirrored — hash-based
-and silo-role placement address separate, more specialized concerns this
-design sketch's candidate list did not name, and the other two are not
-meant for application grains.
+output. **No strategy here is version-gated.** Orleans' internal
+`ClientObserversPlacement` / `SystemTargetPlacementStrategy` are not application-grain
+strategies and are intentionally not mirrored.
 
 **Exact published properties (verified live, identical on both versions):**
 
@@ -735,7 +735,10 @@ meant for application grains.
 | `placement PreferLocal` | `PreferLocalPlacement` | — |
 | `placement ActivationCountBased` | `ActivationCountBasedPlacement` | — |
 | `placement ResourceOptimized` | `ResourceOptimizedPlacement` | — |
-| `statelessWorker n` | `StatelessWorkerPlacement` | `max-local-instances = n`, `remove-idle-workers = True` (`bool.ToString()` casing), `unordered = true` (lowercase literal, independent of any `removeIdleWorkers` argument — this runtime does not expose one) |
+| `placement HashBased` | `HashBasedPlacement` | — |
+| `placement SiloRoleBased` | `SiloRoleBasedPlacement` | — |
+| `statelessWorker n` | `StatelessWorkerPlacement` | `max-local-instances = n`, `remove-idle-workers = True`, `unordered = true` |
+| `statelessWorker n false` | `StatelessWorkerPlacement` | `max-local-instances = n`, `remove-idle-workers = False`, `unordered = true` |
 
 A property-key exactness test
 (`tests/Orleans.FSharp.Tests/FunctionalRuntimeTests.fs`) constructs a live
@@ -746,10 +749,11 @@ A property-key exactness test
 **Sealing (as designed, confirmed by mutation-checked tests):** `statelessWorker`
 and `placement` are mutually exclusive in either declaration order;
 `statelessWorker` requires a strictly positive `maxLocalWorkers` and rejects
-`stateFrom`, `usePersistentState`, `onReminder`, and `collectionAge` — in
-either order relative to `statelessWorker` itself, checked at sealing
-(`DefinitionDraft.run`) rather than at the custom-operation call site, since
-the rejected operation may be declared before or after `statelessWorker`.
+`stateFrom`, `usePersistentState`, and `onReminder` under either idle-worker policy.
+`collectionAge` is accepted only by `statelessWorker n false`; the shorthand and explicit
+`true` form reject it because Orleans proactively removes idle workers in that mode. These rules
+are checked at sealing (`DefinitionDraft.run`) rather than at the custom-operation call site, so
+they hold in either declaration order.
 
 **Size:** S/M as estimated. **Depends on:** nothing, confirmed.
 
