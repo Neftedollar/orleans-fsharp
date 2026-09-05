@@ -10,15 +10,16 @@
 /// is collected after one to two periods. At the 30-second default that is a minute-long test.
 /// </para>
 /// <para>
-/// The timeout is shortened here rather than on the main Phase F cluster on purpose: a three-second
-/// response timeout is a real constraint on every call the silo makes, and the whole suite's
-/// clusters are deployed in parallel by xUnit. Confining it to one single-silo cluster that hosts
-/// one grain type keeps it from turning unrelated tests flaky.
+/// Only the silo's timeout is shortened: it controls the extension's cleanup period. The client
+/// keeps a normal RPC budget so delayed scheduling cannot replace the missing-enumerator reply
+/// with a client timeout. This single-silo fixture hosts one grain type and makes no cross-grain
+/// calls. Tests observe producer cleanup directly instead of guessing when timer ticks ran.
 /// </para>
 /// </remarks>
 module Orleans.FSharp.Integration.FunctionalPhaseFExpiryFixture
 
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
@@ -32,8 +33,22 @@ open Orleans.TestingHost
 open Orleans.FSharp
 open Xunit
 
-/// <summary>The shortened response timeout, and therefore the enumerator cleanup period.</summary>
+/// <summary>The shortened silo response timeout, and therefore the enumerator cleanup period.</summary>
 let expiryPeriod = TimeSpan.FromSeconds 3.0
+
+let private rpcTimeout = TimeSpan.FromSeconds 30.0
+
+/// <summary>Out-of-band observation; TestCluster's silo and its test share one process.</summary>
+[<RequireQualifiedAccess>]
+module private ExpiryProbe =
+    let private completions = ConcurrentDictionary<string, TaskCompletionSource<bool>>()
+
+    let private cell key =
+        completions.GetOrAdd(key, fun _ -> TaskCompletionSource<bool> TaskCreationOptions.RunContinuationsAsynchronously)
+
+    let record key cancelled = (cell key).TrySetResult cancelled |> ignore
+
+    let wait key = (cell key).Task.WaitAsync(TimeSpan.FromSeconds 45.0)
 
 [<Literal>]
 let ExpiringGrainType = "phasef.expiring"
@@ -42,8 +57,8 @@ let ExpiringGrainType = "phasef.expiring"
 type ExpiringApi =
     { /// Yields one item immediately and then parks until the enumeration is cancelled.
       once: unit -> IAsyncEnumerable<int>
-      /// An ordinary call, so the test can prove the activation is still healthy afterwards.
-      ping: unit -> Task<int> }
+      /// An ordinary call with a deliberate reply delay, independent of stream expiry.
+      ping: int -> Task<int> }
 
 type ExpiringActor = private ExpiringActor of unit
 
@@ -63,14 +78,21 @@ let expiringDefinition =
 
         handleStream (_.once) (fun context _ () ->
             taskSeq {
-                yield 1
-                // Parks forever; the enumeration's own token is what releases it, which is exactly
-                // what the extension cancels when it collects an abandoned enumerator.
-                do! Task.Delay(Timeout.InfiniteTimeSpan, context.cancellationToken)
-                yield 2
+                try
+                    yield 1
+                    // Parks forever; the enumeration's own token is what releases it, which is exactly
+                    // what the extension cancels when it collects an abandoned enumerator.
+                    do! Task.Delay(Timeout.InfiniteTimeSpan, context.cancellationToken)
+                    yield 2
+                finally
+                    ExpiryProbe.record context.key context.cancellationToken.IsCancellationRequested
             })
 
-        handle (_.ping) (fun _ state () -> task { return state, 42 })
+        handle (_.ping) (fun _ state (replyDelay: int) ->
+            task {
+                do! Task.Delay replyDelay
+                return state, 42
+            })
     }
 
 type PhaseFExpirySiloConfigurator() =
@@ -86,7 +108,7 @@ type PhaseFExpiryClientConfigurator() =
     interface IClientBuilderConfigurator with
         member _.Configure(_configuration: IConfiguration, clientBuilder: IClientBuilder) =
             clientBuilder.Services.Configure<ClientMessagingOptions>(fun (options: ClientMessagingOptions) ->
-                options.ResponseTimeout <- expiryPeriod)
+                options.ResponseTimeout <- rpcTimeout)
             |> ignore
 
             clientBuilder.AddFunctionalGrainClient() |> ignore
@@ -116,6 +138,14 @@ type FunctionalPhaseFExpiryCollection() =
 [<Collection("FunctionalPhaseFExpiry")>]
 type FunctionalPhaseFExpiryTests(fixture: FunctionalPhaseFExpiryFixture) =
 
+    [<Fact>]
+    member _.``stream expiry does not shorten the client RPC budget``() =
+        task {
+            let api = expiringRef fixture.Client (Guid.NewGuid().ToString "N")
+            let! pinged = api.ping 4000
+            Assert.Equal(42, pinged)
+        }
+
     /// <summary>
     /// A caller that takes one item and then walks away leaves an enumerator behind on the target.
     /// Orleans collects it, and a caller that comes back afterwards is told so by name rather than
@@ -127,16 +157,17 @@ type FunctionalPhaseFExpiryTests(fixture: FunctionalPhaseFExpiryFixture) =
             let key = Guid.NewGuid().ToString "N"
             let api = expiringRef fixture.Client key
 
-            let enumerator = (api.once ()).GetAsyncEnumerator CancellationToken.None
+            use enumerator = (api.once ()).GetAsyncEnumerator CancellationToken.None
 
             let! first = enumerator.MoveNextAsync()
             Assert.True first
             Assert.Equal(1, enumerator.Current)
 
-            // Stop asking. Every tick of the extension's cleanup timer clears the "seen" flag, and
-            // the tick after that removes an enumerator nobody touched, so two periods plus a
-            // margin is the wait.
-            do! Task.Delay(expiryPeriod + expiryPeriod + TimeSpan.FromSeconds 3.0)
+            // Stop asking, then observe the producer's cancellation/finally out of band. Orleans
+            // removes the table entry BEFORE cancelling/disposing the producer, so this signal
+            // proves cleanup has actually run without touching the enumerator's "seen" flag.
+            let! cancelled = ExpiryProbe.wait key
+            Assert.True(cancelled, "the abandoned producer ended without Orleans cancelling it")
 
             let! failure = Assert.ThrowsAnyAsync<Exception>(fun () -> enumerator.MoveNextAsync().AsTask() :> Task)
 
@@ -144,9 +175,7 @@ type FunctionalPhaseFExpiryTests(fixture: FunctionalPhaseFExpiryFixture) =
             // enumerator table and its expiry are entirely Orleans'.
             Assert.Contains("does not have a record of this enumerator", failure.Message)
 
-            do! enumerator.DisposeAsync()
-
             // The activation is unharmed: an expired enumerator is a per-enumeration fact.
-            let! pinged = api.ping ()
+            let! pinged = api.ping 0
             Assert.Equal(42, pinged)
         }

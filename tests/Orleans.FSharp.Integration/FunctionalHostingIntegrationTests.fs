@@ -7,6 +7,7 @@ module Orleans.FSharp.Integration.FunctionalHostingIntegrationTests
 
 open System
 open System.Linq
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Options
@@ -71,6 +72,32 @@ type BrokenManifestSiloConfigurator() =
                     descriptor.ImplementationType = typeof<FunctionalGrainTypeOptionsPostConfigure>)
 
             services.Remove postConfigure |> ignore
+
+/// <summary>
+/// Observe the real RuntimeInitialize boundary without starting a background task. Only the
+/// two cases of the startup-order theory register this probe; xUnit runs them sequentially.
+/// </summary>
+type RuntimeInitializationProbe() =
+    static let mutable starts = 0
+    static member Starts = Volatile.Read(&starts)
+    static member Reset() = Interlocked.Exchange(&starts, 0) |> ignore
+
+    interface ILifecycleParticipant<ISiloLifecycle> with
+        member _.Participate(lifecycle: ISiloLifecycle) =
+            lifecycle.Subscribe(
+                "functional startup-order probe",
+                ServiceLifecycleStage.RuntimeInitialize,
+                Func<CancellationToken, Task>(fun _ ->
+                    Interlocked.Increment(&starts) |> ignore
+                    Task.CompletedTask)
+            )
+            |> ignore
+
+type RuntimeInitializationProbeConfigurator() =
+    interface ISiloConfigurator with
+        member _.Configure(siloBuilder: ISiloBuilder) =
+            siloBuilder.Services.AddSingleton<ILifecycleParticipant<ISiloLifecycle>, RuntimeInitializationProbe>()
+            |> ignore
 
 // ──────────────────────────────────────────────────────────────────────────────
 // A definition nothing binds — the silo-side payload-type declaration
@@ -375,6 +402,37 @@ let ``silo startup validation rejects a manifest which disagrees with the regist
 
     Assert.Contains(reported, (fun message -> message.Contains "Orleans.FSharp functional silo startup"))
     Assert.Contains(reported, (fun message -> message.Contains "post-configure did not run"))
+
+/// <remarks>
+/// A rejected configuration must fail before Orleans starts runtime background services.
+/// Rejecting it in the same lifecycle stage can leave already-started services running after
+/// failed startup. The valid arm proves the sentinel is registered and the stage is reached.
+/// </remarks>
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``functional startup validation precedes runtime initialization`` (invalidManifest: bool) =
+    RuntimeInitializationProbe.Reset()
+    let builder = TestClusterBuilder 1s
+    builder.AddSiloBuilderConfigurator<RuntimeInitializationProbeConfigurator>() |> ignore
+
+    if invalidManifest then
+        builder.AddSiloBuilderConfigurator<BrokenManifestSiloConfigurator>() |> ignore
+    else
+        builder.AddSiloBuilderConfigurator<ConfiguratorLastSiloConfigurator>() |> ignore
+
+    use cluster = builder.Build()
+
+    if invalidManifest then
+        let error = Assert.ThrowsAny<exn>(fun () -> cluster.Deploy())
+        Assert.Contains(messages error, (fun message -> message.Contains "post-configure did not run"))
+        Assert.Equal(0, RuntimeInitializationProbe.Starts)
+    else
+        try
+            cluster.Deploy()
+            Assert.Equal(1, RuntimeInitializationProbe.Starts)
+        finally
+            cluster.StopAllSilos()
 
 /// <remarks>
 /// The silo startup validator declares every hosted argument and reply type as a top-level
