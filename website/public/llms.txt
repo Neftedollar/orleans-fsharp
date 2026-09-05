@@ -6,6 +6,10 @@ License: MIT
 Published stable: Orleans.FSharp 4.1 (latest 4.1.0)
 Documentation channel: main / Orleans.FSharp 5.0 preview (next major; not published stable)
 
+## Author
+
+- [Roman Melnikov (Neftedollar)](https://neftedollar.com/)
+
 ## High-Value Actions
 - Start here: https://neftedollar.com/orleans-fsharp/getting-started/
 - Release and production status: https://neftedollar.com/orleans-fsharp/release-status/

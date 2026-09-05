@@ -163,6 +163,8 @@ def generate() -> str:
         'This file contains the complete published documentation. Current functional API pages '
         'come first. Unsupported migration material is isolated under the Legacy Archive heading '
         'near the end.\n\n',
+        '## Author\n\n',
+        '- [Roman Melnikov (Neftedollar)](https://neftedollar.com/)\n\n',
     ]
 
     homepage = (WEBSITE_DOCS / 'index.mdx').read_text(encoding='utf-8')
