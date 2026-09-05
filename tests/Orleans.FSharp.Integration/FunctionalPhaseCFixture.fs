@@ -58,6 +58,10 @@ module PhaseCGrainTypes =
 // Out-of-band gate observation
 // ──────────────────────────────────────────────────────────────────────────────
 
+// A stuck test fails with an exception. This is not a successful "timeout" outcome
+// competing with release in tests which are meant to prove permitted interleaving.
+let private gateWatchdog = TimeSpan.FromSeconds 30.0
+
 /// <summary>
 /// The gate one parked handler waits on. Silos of a <c>TestCluster</c> share one process, so a
 /// test observes the gate WITHOUT calling the grain — which matters for every negative control:
@@ -71,8 +75,17 @@ type PhaseCGate() =
     member val Gate =
         TaskCompletionSource<bool> TaskCreationOptions.RunContinuationsAsynchronously with get
 
+    // Every probe uses a fresh key, so entry is a one-shot signal. Keep the live flag too:
+    // observing an old entry after a finite control has left cannot prove interleaving.
+    member val Entry =
+        TaskCompletionSource<bool> TaskCreationOptions.RunContinuationsAsynchronously with get
+
     member _.Entered = Volatile.Read(&entered) = 1
-    member _.Enter() = Volatile.Write(&entered, 1)
+
+    member this.Enter() =
+        Volatile.Write(&entered, 1)
+        this.Entry.TrySetResult true |> ignore
+
     member _.Leave() = Volatile.Write(&entered, 0)
 
 [<RequireQualifiedAccess>]
@@ -82,25 +95,28 @@ module PhaseCGates =
     /// <summary>The gate of one domain key. Tests use a fresh key per case.</summary>
     let cell (key: string) = cells.GetOrAdd(key, fun _ -> PhaseCGate())
 
-    /// <summary>Wait until a handler for that key has parked; false if it never did.</summary>
+    /// <summary>Wait for entry; false if the handler never enters or has already left.</summary>
     let waitForEntry (key: string) =
         task {
-            let deadline = DateTime.UtcNow.AddSeconds 10.0
-
-            while not (cell key).Entered && DateTime.UtcNow < deadline do
-                do! Task.Delay 25
-
-            return (cell key).Entered
+            try
+                let gate = cell key
+                let! _ = gate.Entry.Task.WaitAsync gateWatchdog
+                return gate.Entered
+            with :? TimeoutException ->
+                return false
         }
 
-/// <summary>Park until released or until the timeout expires, reporting which happened.</summary>
+/// <summary>
+/// Park until released, or until a finite negative-control timeout expires.
+/// Timeout.Infinite waits only for release; the outer watchdog faults a stuck test.
+/// </summary>
 let private parkOn (key: string) (timeout: int) =
     task {
         let cell = PhaseCGates.cell key
         cell.Enter()
 
         try
-            let! finished = Task.WhenAny(cell.Gate.Task, Task.Delay timeout)
+            let! finished = Task.WhenAny(cell.Gate.Task, Task.Delay timeout).WaitAsync gateWatchdog
 
             return
                 if obj.ReferenceEquals(finished, cell.Gate.Task) then
@@ -155,7 +171,7 @@ let private gateDefinition (contract: GrainContract<'Actor, string, GateApi>) =
         handle (_.slowAppend) (fun context state (note: string) ->
             task {
                 let snapshot = state
-                let! _ = parkOn context.key 4000
+                let! _ = parkOn context.key Timeout.Infinite
                 return snapshot @ [ note ], ()
             })
 
@@ -223,7 +239,7 @@ let reentrantWorkerDefinition =
         handle (_.slowAppend) (fun context state (note: string) ->
             task {
                 let snapshot = state
-                let! _ = parkOn context.key 4000
+                let! _ = parkOn context.key Timeout.Infinite
                 return snapshot @ [ note ], ()
             })
 
