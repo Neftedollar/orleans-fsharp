@@ -52,6 +52,41 @@ type OrderReply = Result<int64, string>
 
 Supported shapes include records, discriminated unions, options and value options, lists, arrays, sets, maps, tuples, enums, common collection interfaces, POCO classes, and nested combinations of those shapes.
 
+### Binary graph and CLR-class contract
+
+The binary codec participates in Orleans' outer reference table. If a generated Orleans object or
+another native container has two fields which point to the same generalized F# value, the decoded
+fields point to the same object too. Nulls, value fields, and later references consume matching
+reader/writer positions, so a generalized field cannot shift references which follow it.
+New writes retain the CLR type in the standard Orleans field header. Existing payload bodies and
+embedded type envelopes are unchanged, and historical elided headers remain readable through the
+declared contract types. Functional payload reads validate the expected type before decoding when
+the F# codec owns the root; generated Orleans containers keep their own typed field codecs.
+
+Inside one opaque F# payload, the contract is deliberately smaller:
+
+- recursive types and finite acyclic values are supported up to 128 nested codec calls;
+- a reference cycle is rejected on write with a named `InvalidOperationException`;
+- excessive depth is rejected on both write and read before it can exhaust the process stack;
+- two fields which share one mutable child are accepted, but decode as two independent values.
+
+Use Orleans `[<GenerateSerializer>]` and stable `[<Id>]` fields for an object graph whose internal
+reference identity is part of the contract. The F# binary format adds no internal object IDs, so
+these safety checks do not change existing wire bytes.
+
+Ordinary CLR classes use one member model in both directions. A property-based class keeps the
+historical property order and reconstructs each value through that property's setter or its exact
+compiler backing field. A field-only class serializes its fields. A class which mixes readable
+properties with independent public fields, or exposes a computed property with no setter/backing
+field, is rejected instead of silently losing state. Historical property-POCO bytes remain pinned
+by fixtures. The old field-only format contained no field values; it remains readable as the
+default instance, but no non-default value can be recovered from bytes which never stored it.
+
+Enums use their exact signed or unsigned underlying integer type. Flags combinations and unnamed
+numeric values are preserved, including inside records, unions, options, and collections. Runtime
+case types of closed generic unions resolve through their closed parent, so both `Leaf 42` and a
+nested `Tree<Tree<int>>` keep their type arguments.
+
 ## Durable persistence codecs
 
 Functional persistent state and functional journals default to
@@ -367,6 +402,11 @@ Do not configure incompatible policies on different cluster participants. A clie
 | Rename a DU case | Ordinal representation is unchanged | Breaking | Safe when ids stay fixed |
 
 Treat persisted grain state, journal events, and custom snapshots as durable contracts. For the functional binary codec, union cases and record fields are positional: append cases, keep old cases foldable, and migrate stored state explicitly when a record shape changes.
+
+For CLR property classes, property order is positional too. Renaming, reordering, adding, or
+removing a serialized property is therefore a durable-format change even when the CLR class can
+still be constructed. Field-only classes first become data-bearing in 5.0; an older reader must not
+be expected to consume their new payloads.
 
 ## Security boundary
 

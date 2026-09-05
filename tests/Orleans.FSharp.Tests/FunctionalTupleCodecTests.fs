@@ -295,13 +295,13 @@ let ``a tuple of arrays round-trips`` () =
     }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// The guard the fix widens is still a guard
+// Constituent declarations never relax the expected root type
 // ──────────────────────────────────────────────────────────────────────────────
 
 [<Fact>]
 let ``a payload naming a type outside the declared shape is still rejected`` () =
-    // Widening the expected-type check to the declared tuple's constituents must not widen it to
-    // anything else: a name that is neither the expected type nor one of its elements is refused.
+    // Declaring tuple constituents keeps historical element names resolvable. It does not make
+    // a different root assignable to an explicitly published tuple expectation.
     FSharpBinaryFormat.declareType typeof<TupleProbe>
     FSharpBinaryFormat.declareType typeof<Colour * Colour>
 
@@ -315,7 +315,8 @@ let ``a payload naming a type outside the declared shape is still rejected`` () 
             ))
 
     test <@ error.Message.Contains "is not assignable to the expected type" @>
-    test <@ error.Message.Contains "nor to any of its constituents" @>
+    test <@ error.Message.Contains typeof<Colour * Colour>.FullName @>
+    test <@ error.Message.Contains typeof<TupleProbe>.FullName @>
 
 [<Fact>]
 let ``declaring a tuple declares its elements by name`` () =

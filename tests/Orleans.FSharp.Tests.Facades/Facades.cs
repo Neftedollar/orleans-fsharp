@@ -24,6 +24,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Core;
+using Orleans;
 using Orleans.FSharp;
 
 namespace Orleans.FSharp.Tests.Facades;
@@ -278,4 +279,143 @@ public static class ImplicitSubscriptionNamespaces
 {
     public const string Stream = "orleans.fsharp.tests.implicit.stream";
     public const string Channel = "orleans.fsharp.tests.implicit.channel";
+}
+
+// ── Binary-codec POCO fixtures (issue #33) ──────────────────────────────────
+//
+// These are deliberately ordinary CLR classes. An F# [<CLIMutable>] record is still an
+// F# record to TypeShape and therefore cannot prove that the Shape.Poco codec is correct.
+
+public sealed class FieldsOnlyPoco
+{
+    public int Count;
+    public string? Name;
+}
+
+public sealed class PropertyPoco
+{
+    public int Count { get; set; }
+    public string Name { get; set; } = string.Empty;
+}
+
+/// Orleans owns this outer object through a generated codec while the unannotated POCO fields
+/// are delegated to the generalized F# codec. Repeated fields therefore share one Orleans session.
+[GenerateSerializer]
+public sealed class NativeMixedEnvelope
+{
+    [Id(0)]
+    public int Native { get; set; }
+
+    [Id(1)]
+    public PropertyPoco First { get; set; } = new();
+
+    [Id(2)]
+    public PropertyPoco Second { get; set; } = new();
+
+    [Id(3)]
+    public PropertyPoco? Missing { get; set; }
+}
+
+/// The private fields intentionally have the opposite order from the public properties.
+/// A positional property-to-field mapping silently swaps First and Second.
+public sealed class ReorderedBackingFieldsPoco
+{
+    private int _second;
+    private int _first;
+
+    public int First
+    {
+        get => _first;
+        set => _first = value;
+    }
+
+    public int Second
+    {
+        get => _second;
+        set => _second = value;
+    }
+}
+
+public class InheritedPocoBase
+{
+    public int BaseValue { get; set; }
+}
+
+public sealed class InheritedPoco : InheritedPocoBase
+{
+    public int DerivedValue { get; set; }
+}
+
+public class ReadOnlyPocoBase
+{
+    public int Count { get; } = 3;
+}
+
+public sealed class InheritedReadOnlyPoco : ReadOnlyPocoBase
+{
+    public string Name { get; } = "readonly";
+}
+
+/// A base property's compiler backing field cannot reconstruct this unrelated hidden getter.
+public sealed class HiddenComputedPoco : ReadOnlyPocoBase
+{
+    public new int Count => base.Count * 2;
+}
+
+/// This shape has state which is not represented by one reconstructable property model.
+/// The binary codec must reject it explicitly instead of silently dropping Value.
+public sealed class ComputedPropertyPoco
+{
+    public int Value;
+    public int Double => Value * 2;
+}
+
+public enum SignedByteEnum : sbyte
+{
+    Minimum = sbyte.MinValue,
+    Zero = 0,
+    Maximum = sbyte.MaxValue,
+}
+
+public enum UnsignedByteEnum : byte
+{
+    Minimum = byte.MinValue,
+    Maximum = byte.MaxValue,
+}
+
+public enum SignedShortEnum : short
+{
+    Minimum = short.MinValue,
+    Maximum = short.MaxValue,
+}
+
+public enum UnsignedShortEnum : ushort
+{
+    Minimum = ushort.MinValue,
+    Maximum = ushort.MaxValue,
+}
+
+public enum SignedIntEnum : int
+{
+    Minimum = int.MinValue,
+    Maximum = int.MaxValue,
+}
+
+public enum UnsignedIntEnum : uint
+{
+    Minimum = uint.MinValue,
+    Maximum = uint.MaxValue,
+}
+
+public enum SignedLongEnum : long
+{
+    Minimum = long.MinValue,
+    Maximum = long.MaxValue,
+}
+
+public enum UnsignedLongEnum : ulong
+{
+    Minimum = ulong.MinValue,
+    Zero = 0,
+    Maximum = ulong.MaxValue,
 }

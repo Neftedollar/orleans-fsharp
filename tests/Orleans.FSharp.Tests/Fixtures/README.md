@@ -23,3 +23,11 @@ The three `*-v0.base64` files were generated from commit
 `19cab0d7836972200b2a8fdc157d97e3ff7eb2c9`, after codec envelopes were introduced but before
 their `SchemaVersion` field existed. They prove omitted schema fields read as version `0`; they
 are pre-schema revision fixtures, not artifacts from the `v4.1.0` package.
+
+`fsharp-binary-property-poco-body-v5-preview.base64` and
+`fsharp-binary-property-poco-envelope-v5-preview.base64` freeze the binary bytes emitted by
+commit `a6cfb488d019c6d54f09344505270d4b28c965f3` for an ordinary CLR property POCO with
+`Count = 42` and `Name = "baseline"`. They were captured before the issue #33 member-mapping
+fix. The body fixture pins the inner codec, while the envelope fixture also pins its embedded
+`Type.FullName`. Existing property-based POCOs must continue reading both fixtures and emitting
+the same bytes after the fix.
