@@ -4,7 +4,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Orleans.FSharp.Analyzers</AssemblyName>
-    <Description>Roslyn-style F# analyzers for Orleans.FSharp — compile-time feedback for idiomatic grain code.</Description>
+    <Description>FSharp.Analyzers.SDK CLI analyzer for Orleans.FSharp — task-based grain code feedback.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
@@ -14,7 +14,7 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
-  <!-- FSharp.Analyzers.SDK 0.36.0 pins FSharp.Core 10.0.101; suppress NU1608 -->
+  <!-- FSharp.Analyzers.SDK 0.37.2 pins FSharp.Core 10.0.101; suppress NU1608 -->
   <PropertyGroup>
     <NoWarn>$(NoWarn);NU1608</NoWarn>
   </PropertyGroup>

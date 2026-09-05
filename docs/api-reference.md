@@ -592,6 +592,16 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainBatch.choose<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR option>) -> Task<'TR list>` | Fan-out; filters out None results |
 | `GrainBatch.partition<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list * exn list>` | Fan-out; separates successes from failures |
 
+Every function materializes the input before starting calls. Once invocation starts, every item is
+invoked and every returned task is observed even if another invocation throws synchronously or
+returns `null`. After all work finishes, the non-`try` functions propagate the first synchronous
+exception in input order. If no invocation threw synchronously, the usual `Task.WhenAll`
+fault/cancellation behavior applies. Returning a `null Task` produces a diagnostic
+`InvalidOperationException`, captured as `Error` by the tolerant functions.
+`tryMap`, `tryIter`, and `partition` retain per-item result order. An input-enumerator failure
+faults the whole batch before any operation starts. Batch failure does not cancel or roll back
+grain calls.
+
 > **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and starts every bound call before awaiting any of them, exactly as these do. Use `GrainBatch` when the number of grains is dynamic.
 
 #### Other modules

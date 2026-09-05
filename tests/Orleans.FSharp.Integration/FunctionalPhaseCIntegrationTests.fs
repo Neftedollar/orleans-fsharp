@@ -7,6 +7,7 @@
 module Orleans.FSharp.Integration.FunctionalPhaseCIntegrationTests
 
 open System
+open System.Threading
 open System.Threading.Tasks
 open Orleans.Runtime
 open Orleans.FSharp
@@ -44,7 +45,7 @@ type PhaseCReentrancyTests(fixture: FunctionalPhaseCFixture) =
             let key = freshKey "reentrant"
             let api = reentrantRef fixture.Client key
 
-            let parked = api.park 5000
+            let parked = api.park Timeout.Infinite
             let! entered = PhaseCGates.waitForEntry key
             Assert.True(entered, "the first call never parked")
 
@@ -73,6 +74,19 @@ type PhaseCReentrancyTests(fixture: FunctionalPhaseCFixture) =
 
             let! released = release
             Assert.Equal<string>("ok", released)
+        }
+
+    [<Fact>]
+    member _.``entry observation rejects a finite probe that has already left``() =
+        task {
+            let key = freshKey "left-before-observation"
+            let api = plainRef fixture.Client key
+
+            let! outcome = api.park 1
+            Assert.Equal<string>("timeout", outcome)
+
+            let! entered = PhaseCGates.waitForEntry key
+            Assert.False(entered, "entry was signalled, but the handler is no longer parked")
         }
 
     /// <remarks>
@@ -123,15 +137,21 @@ type PhaseCReentrancyTests(fixture: FunctionalPhaseCFixture) =
         Assert.False(selective.ContainsKey "reentrant")
         Assert.False((fixture.PropertiesOf PhaseCGrainTypes.Reentrant).ContainsKey "may-interleave-predicate")
 
-    [<Fact>]
-    member _.``the predicate admits the operation it names``() =
+    [<Theory>]
+    [<InlineData(0)>]
+    [<InlineData(6000)>]
+    member _.``the predicate admits the operation it names``(callerDelay: int) =
         task {
             let key = freshKey "selective-yes"
             let api = selectiveRef fixture.Client key
 
-            let parked = api.park 5000
+            let parked = api.park Timeout.Infinite
             let! entered = PhaseCGates.waitForEntry key
             Assert.True(entered, "the first call never parked")
+
+            // A delayed client continuation must not turn permitted interleaving into a
+            // timeout outcome. Six seconds exceeds this probe's former five-second timer.
+            do! Task.Delay callerDelay
 
             let! released = api.release ()
             Assert.Equal<string>("ok", released)
@@ -170,7 +190,7 @@ type PhaseCReentrancyTests(fixture: FunctionalPhaseCFixture) =
             let key = freshKey "throwing"
             let api = throwingRef fixture.Client key
 
-            let parked = api.park 4000
+            let parked = api.park Timeout.Infinite
             let! entered = PhaseCGates.waitForEntry key
             Assert.True(entered, "the first call never parked")
 
@@ -203,8 +223,8 @@ type PhaseCReentrancyTests(fixture: FunctionalPhaseCFixture) =
             let key = freshKey "metadata-only"
             let api = selectiveRef fixture.Client key
 
-            // A large payload on the parked call changes nothing about the decision.
-            let parked = api.park 5000
+            // The parked call's timeout argument does not influence the metadata predicate.
+            let parked = api.park Timeout.Infinite
             let! entered = PhaseCGates.waitForEntry key
             Assert.True(entered, "the first call never parked")
 
@@ -428,7 +448,7 @@ type PhaseCFacadeTests(fixture: FunctionalPhaseCFixture) =
             let facade =
                 FunctionalGrainInterop.For<ISelectiveFacade>(selectiveContract, fixture.Client, key)
 
-            let parked = facade.Park 5000
+            let parked = facade.Park Timeout.Infinite
             let! entered = PhaseCGates.waitForEntry key
             Assert.True(entered, "the facade call never parked")
 
@@ -521,7 +541,7 @@ type PhaseCCompositionTests(fixture: FunctionalPhaseCFixture) =
             let key = freshKey "reentrant-worker"
             let api = reentrantWorkerRef fixture.Client key
 
-            let parked = api.park 5000
+            let parked = api.park Timeout.Infinite
             let! entered = PhaseCGates.waitForEntry key
             Assert.True(entered, "the first call never parked")
 

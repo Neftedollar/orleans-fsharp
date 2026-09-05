@@ -173,7 +173,7 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 | Clustering | Built-in (Redis, Azure, Kubernetes) | Akka.Cluster |
 | Maintenance | Active (Orleans 10 compatible) | Community maintained |
 
-## What NuGet packages does Orleans.FSharp include?
+## What NuGet packages does Orleans.FSharp 5.0 include?
 
 | Package | Description |
 |---------|-------------|
@@ -181,10 +181,13 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 | `Orleans.FSharp.Runtime` | Silo and client hosting: `AddFunctionalGrain`, `siloConfig { }`, `clientConfig { }` |
 | `Orleans.FSharp.Abstractions` | The fixed functional transport and its precompiled Orleans proxies (arrives transitively) |
 | `Orleans.FSharp.Testing` | TestHarness, GrainMock, GrainArbitrary, log capture |
-| `Orleans.FSharp.EventSourcing` | The classic `eventSourcedGrain { }` model |
-| `Orleans.FSharp.CodeGen` | Optional per-grain C# code generation for hand-written grain interfaces |
 | `Orleans.FSharp.Analyzers` | The OF0001 analyzer with an `[<AllowAsync>]` opt-out |
 | `Orleans.FSharp.Templates` | The `dotnet new orleans-fsharp` project template |
+
+`Orleans.FSharp.EventSourcing` and `Orleans.FSharp.CodeGen` are retained only as archived source
+projects for migration and repository fixtures. They are not published in the 5.0 package set,
+and CodeGen does not provide a universal generator for ordinary grain definitions. Use
+`journaledGrainFor` and the functional contract/definition operations in new or migrating code.
 
 ## Where can I find the source code?
 

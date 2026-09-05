@@ -12,8 +12,9 @@
 ## Orleans.FSharp.EventSourcing
 
 The historical `eventSourcedGrain { }` CE and its `JournaledGrain` bridge are not the same thing as
-the current `journaledGrainFor` definition builder. The old path needs the archived CodeGen
-package and is not published in the 5.0 package set. See [Event Sourcing](../event-sourcing.md).
+the current `journaledGrainFor` definition builder. The old path depended on the archived CodeGen
+source bridge; neither project is published in the 5.0 package set. See
+[Event Sourcing](../event-sourcing.md).
 
 ### Types
 
@@ -121,9 +122,11 @@ for each entry is the [functional grain runtime](../functional-runtime.md); see
 Each `handle*` keyword also has a `*WithServices` form (`handleWithServices`,
 `handleStateWithServices`, `handleTypedWithServices`, and their `Cancellable` variants) taking an
 `IServiceProvider` instead of a `GrainContext`. See
-[legacy Grain Definition guide](grain-definition.md) for the full keyword list. Per-grain Orleans
-attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
-`[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
+[legacy Grain Definition guide](grain-definition.md) for the full keyword list. In the historical
+model, per-grain Orleans attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`,
+`[ReadOnly]`, `[ImplicitStreamSubscription]`, …) were applied to application-owned C# grain
+classes or methods, not expressed as `grain { }` keywords. The retained repository generator
+does not generate ordinary `GrainDefinition` classes.
 On the [functional grain runtime](../functional-grains.md) they are ordinary contract and definition
 operations instead — `reentrant`, `statelessWorker`, `placement`, `oneWay`, `readOnly`, and
 `onStream` / `onBroadcast` for implicit subscriptions.

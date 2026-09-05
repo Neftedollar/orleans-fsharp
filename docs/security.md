@@ -364,27 +364,46 @@ the same cluster**. It is NOT designed to deserialize untrusted input from:
 
 ### What the codec already refuses
 
-A wire-supplied type name is checked **before** any assembly load, not after resolution:
+When an embedded type prefix needs fallback resolution (there is no declared type or resolved
+header type), the codec applies these checks **before** calling `Type.GetType`:
 
 - **An assembly allow-list**, matched on whole dotted segments. Only `Orleans.FSharp`, `System`,
   `Microsoft.FSharp`, `FSharp.Core`, `mscorlib`, `netstandard` and `TypeShape` (and namespaces
   beneath them) pass — so `Orleans.FSharpHostile` is refused despite the shared prefix. The check
   covers a generic's arguments as well as its own qualifier, because `Type.GetType` loads every
   one of them.
-- **A cap on distinct wire-resolved type names** (512 per process), so a stream of unique names
-  cannot grow the type and codec caches without bound. A rejected name is never cached.
+- **A cap on distinct fallback-resolved type names** (512 per process), with atomic admission
+  under concurrent misses. This bounds this fallback cache; a rejected name is never cached.
 - **A length cap on the type name itself**, which also bounds the qualifier scan's nesting depth.
+
+New writes also carry the runtime type in the standard Orleans field header. Orleans resolves
+that header **before** invoking this codec, using its own type manifest and filtering machinery;
+it does not pass through the embedded-prefix allow-list or the 512-entry fallback cache. Declared
+types bypass fallback resolution too. This library registers an Orleans `ITypeFilter`, not an
+`ITypeNameFilter`; these guards do not establish a pre-load allow-list for every Orleans header
+or a bound on every serializer cache. Configure the host's Orleans type policy for its trust
+boundary; the codec is not an untrusted-input sandbox.
+
+Independently of fallback type resolution, the binary reader applies:
+
+- **Outer wire-tag validation**: non-reference fields must be `LengthPrefixed`, before any
+  payload bytes or reference-table entries are consumed.
 - **Bounds checks on every wire-supplied length, element count, union case tag, and record or
   POCO arity**, against the bytes actually remaining and the real shape of the target type.
+- **A per-operation graph-depth bound** on write and read (128 nested codec calls), plus
+  reference-cycle detection on write. Both fail with a codec diagnostic before recursive values
+  can exhaust the process stack; the cycle regression also runs in a timed child process.
 
-A rejection is an `InvalidOperationException` naming the offending assembly or field, not an
-`IndexOutOfRangeException` or an oversized allocation.
+Inner-format rejection is an `InvalidOperationException` naming the offending assembly or field,
+not an `IndexOutOfRangeException` or an oversized allocation. An invalid outer tag produces
+Orleans' `UnsupportedWireTypeException`.
 
 ### What it still does not defend against
 
-The allow-list bounds *which* assemblies a payload can name; it does not make an arbitrary
-attacker-chosen graph inside those assemblies safe. Crafted bytes that clear every check above can
-still set your own grain state to values the application never intended. Treat the codec as
+The allow-list and structural bounds do not make attacker-chosen application values trustworthy.
+Crafted bytes that clear every check above can still set your own grain state to values the
+application never intended. Internal shared-reference identity is also not preserved inside one
+opaque payload: repeated acyclic children decode as independent values. Treat the codec as
 in-cluster infrastructure, not as an input parser.
 
 ### Mitigation

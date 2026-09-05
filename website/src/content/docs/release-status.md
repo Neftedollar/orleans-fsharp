@@ -61,6 +61,19 @@ default; journal definition, then silo default. The provider-wide
 controls the complete provider value rather than a functional envelope payload. These limits are
 present on `main`; they are not part of the published 4.1 package.
 
+### Generalized binary payloads reject unsafe graphs
+
+The 5.0 binary codec preserves repeated generalized values in Orleans' surrounding serializer
+session, including values held by a generated C# or F# object. Inside one opaque F# payload,
+cycles are rejected, nesting is capped at 128 codec calls on write and read, and repeated mutable
+children decode independently. This is a bounded value codec, not a native identity-preserving
+graph format; use generated Orleans serialization when internal object identity is required.
+
+The same release fixes field-only and property-based CLR class reconstruction, exact-width enum
+values, and runtime cases of closed generic unions without changing historical property-POCO wire
+bytes. The precise contract is in
+[Serialization](/orleans-fsharp/serialization/#binary-graph-and-clr-class-contract).
+
 ### Stateless-worker implicit streams require Orleans 10.3+
 
 On `main`, a `grainFor` definition can combine `statelessWorker` with `onStream` when the loaded

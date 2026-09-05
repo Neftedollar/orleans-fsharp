@@ -13,6 +13,8 @@
          FunctionalGrainInterop and [FunctionalOperation]) and FSharp.Core (for FSharpResult,
          FSharpList, and Unit, which appear in reply types). See docs/calling-from-csharp.md. -->
     <PackageReference Include="FSharp.Core" />
+    <!-- Source-generate the mixed native/generalized serializer fixture below. -->
+    <PackageReference Include="Microsoft.Orleans.Sdk" />
     <ProjectReference Include="..\..\src\Orleans.FSharp\Orleans.FSharp.fsproj" />
   </ItemGroup>
 

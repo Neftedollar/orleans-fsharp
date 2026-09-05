@@ -23,11 +23,15 @@ description: "Reference for the deprecated grain computation expression."
 - Every keyword in the `grain { }` CE
 - How to define handlers, lifecycle hooks, reminders, and timers
 - Allowing message types to interleave with `interleaveMessage`
-- Multiple named states, and where per-grain Orleans attributes live (the C# CodeGen path)
+- Multiple named states, and how historical application-owned C# classes carried per-grain Orleans attributes
 
 ## Overview
 
-The `grain { }` CE builds a `GrainDefinition<'State, 'Message>` -- an immutable record that fully describes a grain's behavior. The Orleans.FSharp.CodeGen package reads this definition at build time and generates the corresponding C# grain class with all the correct Orleans attributes.
+The `grain { }` CE builds a `GrainDefinition<'State, 'Message>` -- an immutable record consumed
+at runtime by the legacy universal grain implementation. It does not generate a per-grain C#
+class. The repository retains non-packable CodeGen source and an event-sourced stub generator for
+migration fixtures, but neither is a 5.0 package and the retained generator does not generate
+ordinary `GrainDefinition` classes.
 
 ```fsharp
 open Orleans.FSharp
@@ -583,7 +587,9 @@ covered. Repeated registrations of the same type are de-duplicated.
 
 ---
 
-## Per-grain Orleans attributes (C# CodeGen path)
+<a id="per-grain-orleans-attributes-c-codegen-path"></a>
+
+## Per-grain Orleans attributes (historical C# class bridge)
 
 > This whole section is about the deprecated `grain { }` model. On the
 > [functional grain runtime](/orleans-fsharp/functional-grains/) each of these concepts is a first-class
@@ -599,10 +605,13 @@ keywords. All of them are first-class contract operations on the [functional gra
 runtime](/orleans-fsharp/functional-grains/). The universal grain pattern shares a single `FSharpGrainImpl` class and
 one handler method, so per-grain class-level or per-method attributes cannot be expressed there.
 
-To use them, define the grain through the per-grain `Orleans.FSharp.CodeGen` path: each grain
-compiles to its own C# class/method that carries the real Orleans attribute.
+An existing legacy application can keep an application-owned concrete C# grain class and apply
+the relevant attributes directly to that class or method. This is a source-maintenance pattern,
+not a 5.0 CodeGen package: the repository's CodeGen project is non-packable, and its retained
+generator only emits event-sourced stubs. New or migrating applications should use the functional
+operations listed above.
 
-| Concept | Orleans attribute (CodeGen path) |
+| Concept | Attribute on the historical C# class or method |
 |---|---|
 | Reentrant grain | `[Reentrant]` |
 | Custom interleave predicate | `[MayInterleave("Predicate")]` |

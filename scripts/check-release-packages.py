@@ -94,6 +94,22 @@ def validate_template(package: Path, version: str) -> None:
         )
 
 
+def validate_analyzer(package: Path) -> None:
+    # This is an FSharp.Analyzers.SDK CLI plugin, not a Roslyn compiler analyzer.
+    # Its lib asset also exposes the public AllowAsync attribute to consumer code.
+    with zipfile.ZipFile(package) as archive:
+        required = {
+            "lib/net8.0/Orleans.FSharp.Analyzers.dll",
+            "lib/net8.0/Orleans.FSharp.Analyzers.xml",
+        }
+        missing = required - set(archive.namelist())
+        if missing:
+            raise ValueError(f"{package.name} is missing analyzer assets: {sorted(missing)}")
+        for name in required:
+            if archive.getinfo(name).file_size == 0:
+                raise ValueError(f"{package.name} contains empty analyzer asset {name}")
+
+
 def current_manifest(directory: Path, version: str) -> dict:
     expected_names = {
         *(f"{package_id}.{version}.nupkg" for package_id in PACKAGE_IDS),
@@ -123,6 +139,7 @@ def current_manifest(directory: Path, version: str) -> dict:
         )
 
     validate_template(directory / f"Orleans.FSharp.Templates.{version}.nupkg", version)
+    validate_analyzer(directory / f"Orleans.FSharp.Analyzers.{version}.nupkg")
     return {"version": version, "artifacts": entries}
 
 

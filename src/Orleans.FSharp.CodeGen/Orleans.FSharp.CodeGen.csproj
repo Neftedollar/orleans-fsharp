@@ -23,8 +23,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Orleans.FSharp.Abstractions\Orleans.FSharp.Abstractions.csproj" />
-    <!-- Optional: add your grain project here to generate per-grain proxies (legacy pattern).
-         In the new universal interface pattern, only Abstractions is needed. -->
+    <!-- Legacy fixture input: the retained generator discovers only event-sourced definitions
+         from the referenced assembly. It does not generate ordinary GrainDefinition classes or
+         provide a 5.x package. -->
     <ProjectReference Include="..\Orleans.FSharp.Sample\Orleans.FSharp.Sample.fsproj" />
     <!-- Pull the F# generator into this project's build graph so MSBuild builds it
          in a single coordinated pass. Without this, the Exec below spawns a sibling

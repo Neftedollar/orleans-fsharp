@@ -1,14 +1,19 @@
 module Orleans.FSharp.Tests.FSharpBinaryCodecEdgeCases
 
 open System
+open System.Diagnostics
 open System.IO
 open System.Text
 open System.Threading
+open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
 open Xunit
 open Swensen.Unquote
 open Orleans.Serialization
+open Orleans.Serialization.WireProtocol
 open Orleans.FSharp
+open Orleans.FSharp.CodecProbe
+open Orleans.FSharp.Tests.Facades
 
 // ── Test types ───────────────────────────────────────────────────────────────
 
@@ -35,6 +40,27 @@ type Tree<'T> =
     | Leaf of 'T
     | Node of Tree<'T> * Tree<'T>
 
+/// A unary recursive shape makes the codec depth boundary exact and easy to construct on the wire.
+type GraphChain =
+    | End
+    | Next of GraphChain
+
+[<AllowNullLiteral>]
+type GraphNode(value: int) =
+    member val Value = value with get, set
+    member val Next: GraphNode = null with get, set
+
+type SharedGraph =
+    { Left: GraphNode
+      Right: GraphNode }
+
+type PocoEnvelope =
+    { Label: string
+      Value: PropertyPoco }
+
+[<Struct>]
+type ValuePayload = { Number: int }
+
 /// Record with multiple option fields
 type RecordWithOptions =
     { IntOpt: int option
@@ -45,6 +71,30 @@ type RecordWithOptions =
 type MixedRecord =
     { FSharpList: string list
       PocoValue: SimplePoco }
+
+type BinaryStatus =
+    | Waiting = -1
+    | Done = 1
+
+[<Flags>]
+type BinaryPermissions =
+    | None = 0
+    | Read = 1
+    | Write = 2
+
+type EnumUnion =
+    | StatusChanged of BinaryStatus
+    | PermissionsChanged of BinaryPermissions
+
+type EnumPayload =
+    { Status: BinaryStatus
+      Permissions: BinaryPermissions
+      Unknown: BinaryStatus
+      History: BinaryStatus list
+      Current: BinaryStatus option
+      Changes: EnumUnion list
+      SignedBoundary: SignedByteEnum
+      UnsignedBoundary: UnsignedLongEnum }
 
 // ── Helper functions ─────────────────────────────────────────────────────────
 
@@ -58,12 +108,118 @@ let roundTripWithType<'T> (value: 'T) : 'T =
     let result = FSharpBinaryFormat.deserializeWithType bytes typeof<'T>
     unbox<'T> result
 
+let private withOrleansSerializer action =
+    let services = ServiceCollection()
+
+    ServiceCollectionExtensions.AddSerializer(
+        services,
+        Action<ISerializerBuilder>(fun builder ->
+            FSharpBinaryCodecRegistration.addToSerializerBuilder builder |> ignore)
+    )
+    |> ignore
+
+    use provider = services.BuildServiceProvider()
+    let serializer = provider.GetRequiredService<Serializer>()
+    action serializer
+
+let private roundTripWithOrleans<'T> (value: 'T) : 'T =
+    withOrleansSerializer (fun serializer ->
+        let bytes = serializer.SerializeToArray value
+        serializer.Deserialize<'T> bytes)
+
+let private roundTripWithFunctionalPayload<'T> (value: 'T) : 'T =
+    withOrleansSerializer (fun serializer ->
+        let codec = FunctionalPayloadCodec(serializer, serializer.SessionPool)
+        let bytes = codec.Serialize value
+        codec.Deserialize<'T> bytes)
+
+let private binaryFixture name =
+    Path.Combine(__SOURCE_DIRECTORY__, "Fixtures", name)
+    |> File.ReadAllText
+    |> Convert.FromBase64String
+
+let private chain length =
+    (End, [ 1..length ]) ||> List.fold (fun current _ -> Next current)
+
+let private chainBody length =
+    use stream = new MemoryStream()
+    use writer = new BinaryWriter(stream, Encoding.UTF8, true)
+
+    for _ in 1..length do
+        writer.Write 1 // Next
+        writer.Write 1 // one field
+
+    writer.Write 0 // End
+    writer.Write 0 // no fields
+    writer.Flush()
+    stream.ToArray()
+
 /// DU case type (a concrete union case) for regression testing.
 type LocalCmd = | Deposit of decimal | Withdraw of decimal
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 type FSharpBinaryCodecEdgeCases() =
+
+    [<Theory>]
+    [<InlineData(WireType.VarInt)>]
+    [<InlineData(WireType.TagDelimited)>]
+    [<InlineData(WireType.Fixed32)>]
+    [<InlineData(WireType.Fixed64)>]
+    member _.``generalized reads reject unsupported outer wire tags`` (wireType: WireType) =
+        withOrleansSerializer (fun serializer ->
+            let value: SimplePoco = { Name = "wire-tag"; Value = 42 }
+            let valid = serializer.SerializeToArray value
+            let malformed = Array.copy valid
+            // Orleans stores WireType in the high three bits of the first tag byte.
+            Assert.Equal(byte WireType.LengthPrefixed, malformed.[0] &&& 0xE0uy)
+            malformed.[0] <- (malformed.[0] &&& 0x1Fuy) ||| byte wireType
+
+            let error =
+                Assert.Throws<UnsupportedWireTypeException>(fun () ->
+                    serializer.Deserialize<SimplePoco> malformed |> ignore)
+
+            Assert.Contains("LengthPrefixed", error.Message)
+            // A rejected field must not poison a subsequently rented serializer session.
+            Assert.Equal<SimplePoco>(value, serializer.Deserialize<SimplePoco> valid))
+
+    member private _.RunProbe(command: string, timeoutDuration: TimeSpan) =
+        task {
+            let testAssembly = typeof<FSharpBinaryCodecEdgeCases>.Assembly.Location
+            let probeAssembly = typeof<Marker>.Assembly.Location
+            let startInfo = ProcessStartInfo("dotnet")
+            startInfo.UseShellExecute <- false
+            startInfo.RedirectStandardOutput <- true
+            startInfo.RedirectStandardError <- true
+            startInfo.ArgumentList.Add "exec"
+            startInfo.ArgumentList.Add "--runtimeconfig"
+            startInfo.ArgumentList.Add(Path.ChangeExtension(testAssembly, ".runtimeconfig.json"))
+            startInfo.ArgumentList.Add "--depsfile"
+            startInfo.ArgumentList.Add(Path.ChangeExtension(testAssembly, ".deps.json"))
+            startInfo.ArgumentList.Add probeAssembly
+            startInfo.ArgumentList.Add command
+
+            use childProcess = new Process()
+            childProcess.StartInfo <- startInfo
+            Assert.True(childProcess.Start(), $"The {command} codec probe process did not start.")
+
+            let outputTask = childProcess.StandardOutput.ReadToEndAsync()
+            let errorTask = childProcess.StandardError.ReadToEndAsync()
+            use timeout = new CancellationTokenSource(timeoutDuration)
+
+            try
+                do! childProcess.WaitForExitAsync(timeout.Token)
+            with :? OperationCanceledException ->
+                if not childProcess.HasExited then
+                    childProcess.Kill(true)
+
+                do! childProcess.WaitForExitAsync()
+                failwithf "The %s codec probe exceeded its %.0f second timeout." command timeoutDuration.TotalSeconds
+
+            let! output = outputTask
+            let! errorOutput = errorTask
+            return childProcess.ExitCode, output, errorOutput
+        }
 
     /// <summary>
     /// Null reference type should round-trip as null.
@@ -129,6 +285,78 @@ type FSharpBinaryCodecEdgeCases() =
             |> L1
         let result = roundTrip value
         test <@ result = value @>
+
+    [<Fact>]
+    member _.``recursive graph at the depth boundary round-trips`` () =
+        let value = chain (FSharpBinaryFormat.MaxGraphDepth - 1)
+        test <@ roundTrip value = value @>
+
+    [<Fact>]
+    member _.``recursive graph beyond the depth boundary fails while writing`` () =
+        let value = chain FSharpBinaryFormat.MaxGraphDepth
+
+        let error =
+            Assert.Throws<InvalidOperationException>(fun () ->
+                FSharpBinaryFormat.serialize (box value) typeof<GraphChain> |> ignore)
+
+        test <@ error.Message.Contains "exceeds the maximum supported depth" @>
+        test <@ error.Message.Contains "while writing" @>
+
+    [<Fact>]
+    member _.``recursive payload beyond the depth boundary fails while reading`` () =
+        let bytes = chainBody FSharpBinaryFormat.MaxGraphDepth
+
+        let error =
+            Assert.Throws<InvalidOperationException>(fun () ->
+                FSharpBinaryFormat.deserialize bytes typeof<GraphChain> |> ignore)
+
+        test <@ error.Message.Contains "exceeds the maximum supported depth" @>
+        test <@ error.Message.Contains "while reading" @>
+
+    [<Fact>]
+    member this.``cyclic graph rejection and recovery stay inside a bounded child process`` () =
+        task {
+            let! exitCode, output, errorOutput =
+                this.RunProbe("cycle", TimeSpan.FromSeconds 10.0)
+
+            test <@ exitCode = 0 @>
+            test <@ output.Contains "reference cycle was detected" @>
+            test <@ output.Contains "Orleans.FSharp.CodecProbe.CyclicNode" @>
+            test <@ output.Contains "CYCLE_TYPE_CONFIRMED" @>
+            test <@ output.Contains "POST_FAILURE_ROUNDTRIP_OK" @>
+            test <@ String.IsNullOrWhiteSpace errorOutput @>
+        }
+
+    [<Fact>]
+    member this.``concurrent wire type admission never exceeds its process cap`` () =
+        task {
+            let! exitCode, output, errorOutput =
+                this.RunProbe("cache-cap", TimeSpan.FromSeconds 30.0)
+
+            test <@ exitCode = 0 @>
+            test <@ output.Contains "CACHE_CAP_OK count=512 resolved=32 rejected=32 verified=64" @>
+            test <@ String.IsNullOrWhiteSpace errorOutput @>
+        }
+
+    [<Fact>]
+    member this.``assembly resolver reentry cannot exceed the wire type cap`` () =
+        task {
+            let! exitCode, output, errorOutput =
+                this.RunProbe("cache-reentry", TimeSpan.FromSeconds 30.0)
+
+            Assert.True((exitCode = 0), output + errorOutput)
+            Assert.Contains("CACHE_REENTRY_OK count=512", output)
+            Assert.True(String.IsNullOrWhiteSpace errorOutput, errorOutput)
+        }
+
+    [<Fact>]
+    member _.``shared acyclic references are accepted but decoded as independent values`` () =
+        let shared = GraphNode(7)
+        let restored = roundTrip { Left = shared; Right = shared }
+
+        test <@ restored.Left.Value = 7 @>
+        test <@ restored.Right.Value = 7 @>
+        test <@ not (Object.ReferenceEquals(restored.Left, restored.Right)) @>
 
     /// <summary>
     /// Large list (100K elements) should round-trip correctly.
@@ -202,6 +430,269 @@ type FSharpBinaryCodecEdgeCases() =
         let result = FSharpBinaryFormat.deserializeWithType bytes typeof<RecordWithOptions>
         let unboxed = unbox<RecordWithOptions> result
         test <@ unboxed.IntOpt = Some 42 @>
+
+
+// ── Issue #33: generalized-codec correctness ────────────────────────────────
+
+[<Fact>]
+let ``Orleans serializer preserves repeated generalized values by reference`` () : unit =
+    let shared = PropertyPoco(Count = 42, Name = "shared")
+    let distinct = PropertyPoco(Count = 7, Name = "distinct")
+    let input: obj[] = [| shared; distinct; shared; null |]
+
+    let restored = roundTripWithOrleans input
+
+    test <@ restored.Length = 4 @>
+    test <@ obj.ReferenceEquals(restored.[0], restored.[2]) @>
+    test <@ not (obj.ReferenceEquals(restored.[0], restored.[1])) @>
+    test <@ isNull restored.[3] @>
+
+[<Fact>]
+let ``generated Orleans wrapper mixes native fields and repeated generalized values`` () : unit =
+    let shared = PropertyPoco(Count = 42, Name = "shared")
+
+    let input =
+        NativeMixedEnvelope(
+            Native = 17,
+            First = shared,
+            Second = shared,
+            Missing = null)
+
+    for restored in [ roundTripWithOrleans input; roundTripWithFunctionalPayload input ] do
+        test <@ restored.Native = 17 @>
+        test <@ restored.First.Count = 42 @>
+        test <@ obj.ReferenceEquals(restored.First, restored.Second) @>
+        test <@ isNull restored.Missing @>
+
+[<Fact>]
+let ``generalized struct fields keep repeated FSharp record references aligned`` () : unit =
+    let shared = { IntOpt = Some 42; StringOpt = Some "shared"; ListOpt = None }
+    let distinct = { IntOpt = Some 7; StringOpt = None; ListOpt = Some [] }
+    let input: obj[] =
+        [| box 17; box shared; box { Number = 23 }; box distinct
+           null; box { Number = 29 }; box shared; box distinct |]
+
+    for restored in [ roundTripWithOrleans input; roundTripWithFunctionalPayload input ] do
+        test <@ restored.[0] :?> int = 17 @>
+        test <@ restored.[1] :?> RecordWithOptions = shared @>
+        test <@ restored.[2] :?> ValuePayload = { Number = 23 } @>
+        test <@ restored.[3] :?> RecordWithOptions = distinct @>
+        test <@ isNull restored.[4] @>
+        test <@ restored.[5] :?> ValuePayload = { Number = 29 } @>
+        test <@ obj.ReferenceEquals(restored.[1], restored.[6]) @>
+        test <@ obj.ReferenceEquals(restored.[3], restored.[7]) @>
+        test <@ not (obj.ReferenceEquals(restored.[1], restored.[3])) @>
+
+[<Fact>]
+let ``property POCO keeps the historical binary body and envelope`` () : unit =
+    let value = PropertyPoco(Count = 42, Name = "baseline")
+    let expectedBody = binaryFixture "fsharp-binary-property-poco-body-v5-preview.base64"
+    let expectedEnvelope = binaryFixture "fsharp-binary-property-poco-envelope-v5-preview.base64"
+
+    let actualBody = FSharpBinaryFormat.serialize (box value) typeof<PropertyPoco>
+    let actualEnvelope = FSharpBinaryFormat.serializeWithType (box value) typeof<PropertyPoco>
+    let restoredBody = FSharpBinaryFormat.deserialize expectedBody typeof<PropertyPoco> :?> PropertyPoco
+    let restoredEnvelope =
+        FSharpBinaryFormat.deserializeWithType expectedEnvelope typeof<PropertyPoco> :?> PropertyPoco
+
+    test <@ actualBody = expectedBody @>
+    test <@ actualEnvelope = expectedEnvelope @>
+    test <@ restoredBody.Count = 42 && restoredBody.Name = "baseline" @>
+    test <@ restoredEnvelope.Count = 42 && restoredEnvelope.Name = "baseline" @>
+
+[<Fact>]
+let ``field-only CLR POCO round-trips every field`` () : unit =
+    let value = FieldsOnlyPoco(Count = 42, Name = "fields")
+    let restored = roundTrip value
+
+    test <@ restored.Count = 42 @>
+    test <@ restored.Name = "fields" @>
+
+[<Fact>]
+let ``historical field-only POCO body remains readable as its old default value`` () : unit =
+    use stream = new MemoryStream()
+    use writer = new BinaryWriter(stream, Encoding.UTF8, true)
+    writer.Write 1uy // present
+    writer.Write 0 // the old writer emitted zero properties and therefore no field data
+    writer.Flush()
+
+    let restored =
+        FSharpBinaryFormat.deserialize (stream.ToArray()) typeof<FieldsOnlyPoco>
+        :?> FieldsOnlyPoco
+
+    test <@ restored.Count = 0 @>
+    test <@ isNull restored.Name @>
+
+[<Fact>]
+let ``CLR POCO nested in an FSharp record crosses the production Orleans serializer`` () : unit =
+    let input =
+        { Label = "nested"
+          Value = PropertyPoco(Count = 23, Name = "poco") }
+
+    let restoredDirect = roundTrip input
+    let restoredThroughOrleans = roundTripWithOrleans input
+
+    for restored in [ restoredDirect; restoredThroughOrleans ] do
+        test <@ restored.Label = "nested" @>
+        test <@ restored.Value.Count = 23 @>
+        test <@ restored.Value.Name = "poco" @>
+
+[<Fact>]
+let ``POCO properties are matched to their own storage instead of field position`` () : unit =
+    let value = ReorderedBackingFieldsPoco(First = 11, Second = 22)
+    let restored = roundTrip value
+
+    test <@ restored.First = 11 @>
+    test <@ restored.Second = 22 @>
+
+[<Fact>]
+let ``inherited POCO properties round-trip`` () : unit =
+    let value = InheritedPoco(BaseValue = 3, DerivedValue = 9)
+    let restored = roundTrip value
+
+    test <@ restored.BaseValue = 3 @>
+    test <@ restored.DerivedValue = 9 @>
+
+[<Fact>]
+let ``inherited read-only auto properties use their own backing fields`` () : unit =
+    let value = InheritedReadOnlyPoco()
+
+    for restored in [ roundTrip value; roundTripWithOrleans value ] do
+        test <@ restored.Count = 3 @>
+        test <@ restored.Name = "readonly" @>
+
+[<Fact>]
+let ``a hidden computed property cannot borrow a base property backing field`` () : unit =
+    let value = HiddenComputedPoco()
+    test <@ value.Count = 6 @>
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FSharpBinaryFormat.serialize (box value) typeof<HiddenComputedPoco> |> ignore)
+
+    test <@ error.Message.Contains "Count" @>
+    test <@ error.Message.Contains "cannot be reconstructed" @>
+
+[<Fact>]
+let ``ambiguous computed POCO fails instead of losing state`` () : unit =
+    let value = ComputedPropertyPoco(Value = 21)
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            FSharpBinaryFormat.serialize (box value) typeof<ComputedPropertyPoco> |> ignore)
+
+    test <@ error.Message.Contains "ambiguous shape is unsupported" @>
+    test <@ error.Message.Contains "ComputedPropertyPoco" @>
+
+type EnumWidthPayload =
+    { Signed8: SignedByteEnum[]
+      Unsigned8: UnsignedByteEnum[]
+      Signed16: SignedShortEnum[]
+      Unsigned16: UnsignedShortEnum[]
+      Signed32: SignedIntEnum[]
+      Unsigned32: UnsignedIntEnum[]
+      Signed64: SignedLongEnum[]
+      Unsigned64: UnsignedLongEnum[] }
+
+let private unnamedEnum<'T> (underlyingValue: obj) : 'T =
+    let value = Enum.ToObject(typeof<'T>, underlyingValue) |> unbox<'T>
+    Assert.False(Enum.IsDefined(typeof<'T>, value), $"{typeof<'T>.FullName} fixture must stay unnamed.")
+    value
+
+[<Fact>]
+let ``all enum underlying widths preserve minimum maximum and unknown values`` () : unit =
+    let value =
+        { Signed8 =
+            [| SignedByteEnum.Minimum
+               unnamedEnum<SignedByteEnum> (box 37y)
+               SignedByteEnum.Maximum |]
+          Unsigned8 =
+            [| UnsignedByteEnum.Minimum
+               unnamedEnum<UnsignedByteEnum> (box 37uy)
+               UnsignedByteEnum.Maximum |]
+          Signed16 =
+            [| SignedShortEnum.Minimum
+               unnamedEnum<SignedShortEnum> (box 12345s)
+               SignedShortEnum.Maximum |]
+          Unsigned16 =
+            [| UnsignedShortEnum.Minimum
+               unnamedEnum<UnsignedShortEnum> (box 54321us)
+               UnsignedShortEnum.Maximum |]
+          Signed32 =
+            [| SignedIntEnum.Minimum
+               unnamedEnum<SignedIntEnum> (box 123456789)
+               SignedIntEnum.Maximum |]
+          Unsigned32 =
+            [| UnsignedIntEnum.Minimum
+               unnamedEnum<UnsignedIntEnum> (box 3456789012u)
+               UnsignedIntEnum.Maximum |]
+          Signed64 =
+            [| SignedLongEnum.Minimum
+               unnamedEnum<SignedLongEnum> (box 1234567890123456789L)
+               SignedLongEnum.Maximum |]
+          Unsigned64 =
+            [| UnsignedLongEnum.Minimum
+               unnamedEnum<UnsignedLongEnum> (box 12345678901234567890UL)
+               UnsignedLongEnum.Maximum |] }
+
+    for restored in [ roundTrip value; roundTripWithOrleans value ] do
+        test <@ restored = value @>
+
+[<Fact>]
+let ``nested enums preserve exact underlying values`` () : unit =
+    let unknown = enum<BinaryStatus> 123
+    let flags = enum<BinaryPermissions> 3
+
+    let value =
+        { Status = BinaryStatus.Waiting
+          Permissions = flags
+          Unknown = unknown
+          History = [ BinaryStatus.Done; BinaryStatus.Waiting; unknown ]
+          Current = Some BinaryStatus.Done
+          Changes = [ StatusChanged unknown; PermissionsChanged flags ]
+          SignedBoundary = SignedByteEnum.Minimum
+          UnsignedBoundary = UnsignedLongEnum.Maximum }
+
+    let restored = roundTrip value
+    let restoredThroughOrleans = roundTripWithOrleans value
+
+    test <@ restored = value @>
+    test <@ restoredThroughOrleans = value @>
+    let unknownValue: int = LanguagePrimitives.EnumToValue restored.Unknown
+    let permissionValue: int = LanguagePrimitives.EnumToValue restored.Permissions
+
+    test <@ unknownValue = 123 @>
+    test <@ permissionValue = 3 @>
+
+[<Fact>]
+let ``closed generic union runtime cases round-trip through their closed parent`` () : unit =
+    let cases: obj[] =
+        [| box (Leaf 42: Tree<int>)
+           box (Node(Leaf 1, Leaf 2): Tree<int>)
+           box (Leaf "forty-two": Tree<string>)
+           box (Leaf(Leaf 42): Tree<Tree<int>>) |]
+
+    for value in cases do
+        let runtimeType = value.GetType()
+        let bytes = FSharpBinaryFormat.serialize value runtimeType
+        let restored = FSharpBinaryFormat.deserialize bytes runtimeType
+
+        test <@ runtimeType.DeclaringType.ContainsGenericParameters @>
+        test <@ not runtimeType.BaseType.ContainsGenericParameters @>
+        test <@ restored = value @>
+
+[<Fact>]
+let ``closed generic union runtime cases cross the real Orleans serializer`` () : unit =
+    let input: obj[] =
+        [| box (Leaf 42: Tree<int>)
+           box (Node(Leaf "a", Leaf "b"): Tree<string>)
+           box (Leaf(Leaf 42): Tree<Tree<int>>) |]
+
+    let restored = roundTripWithOrleans input
+
+    test <@ restored.[0] :?> Tree<int> = Leaf 42 @>
+    test <@ restored.[1] :?> Tree<string> = Node(Leaf "a", Leaf "b") @>
+    test <@ restored.[2] :?> Tree<Tree<int>> = Leaf(Leaf 42) @>
 
 
 // ── Codec build cell: concurrency and failed builds ──────────────────────────
@@ -500,15 +991,16 @@ let ``a wire type outside the expected hierarchy is rejected`` () : unit =
     let bytes =
         FSharpBinaryFormat.serializeWithType (box { hardened = "x" }) typeof<HardenedPayload>
 
-    let error =
-        rejects (fun () ->
-            FSharpBinaryFormat.ExpectedPayloadType.Scoped(
-                typeof<UnrelatedPayload>,
-                fun () -> FSharpBinaryFormat.deserializeWithType bytes null |> ignore))
+    for hint in [ null; typeof<HardenedPayload> ] do
+        let error =
+            rejects (fun () ->
+                FSharpBinaryFormat.ExpectedPayloadType.Scoped(
+                    typeof<UnrelatedPayload>,
+                    fun () -> FSharpBinaryFormat.deserializeWithType bytes hint |> ignore))
 
-    test <@ error.Message.Contains "is not assignable to the expected type" @>
-    test <@ error.Message.Contains "HardenedPayload" @>
-    test <@ error.Message.Contains "UnrelatedPayload" @>
+        test <@ error.Message.Contains "is not assignable to the expected type" @>
+        test <@ error.Message.Contains "HardenedPayload" @>
+        test <@ error.Message.Contains "UnrelatedPayload" @>
 
 [<Fact>]
 let ``a wire type inside the expected hierarchy still resolves by name`` () : unit =
@@ -553,6 +1045,26 @@ let ``the payload codec publishes the exact type it was asked for`` () : unit =
 
     test <@ error.Message.Contains "is not assignable to the expected type" @>
 
+[<Fact>]
+let ``a generalized root cannot be replaced by its generic argument`` () : unit =
+    withOrleansSerializer (fun serializer ->
+        let codec = FunctionalPayloadCodec(serializer, serializer.SessionPool)
+        let value = { hardened = "root" }
+        let payload = codec.Serialize<HardenedPayload> value
+
+        let optionError =
+            rejects (fun () -> codec.Deserialize<HardenedPayload option> payload |> ignore)
+
+        let listError =
+            rejects (fun () -> codec.Deserialize<HardenedPayload list> payload |> ignore)
+
+        for error in [ optionError; listError ] do
+            test <@ error.Message.Contains "is not assignable to the expected type" @>
+            test <@ error.Message.Contains "HardenedPayload" @>
+
+        // Refusal must not leave an ambient type or a poisoned serializer session behind.
+        test <@ codec.Deserialize<HardenedPayload> payload = value @>)
+
 // ── F4: the allow-list runs before any assembly is loaded, and rejections do not cache ──
 
 [<Fact>]
@@ -584,8 +1096,8 @@ let ``a genuine sub-namespace of an allowed prefix still resolves`` () : unit =
     // The counterweight: tightening the match must not lock out the real framework assemblies.
     let name = typeof<Version>.FullName + ", System.Private.CoreLib"
 
-    // The body says "present, zero fields"; System.Version has more than that, so what stops
-    // this payload is the arity check — proof that resolution itself got past the allow-list.
+    // System.Version is deliberately not reconstructable as a POCO. Reaching that shape error
+    // proves resolution itself got past the allow-list.
     let body = [| 1uy; 0uy; 0uy; 0uy; 0uy |]
 
     let error =
@@ -593,7 +1105,7 @@ let ``a genuine sub-namespace of an allowed prefix still resolves`` () : unit =
 
     test <@ not (error.Message.Contains "allow-list") @>
     test <@ error.Message.Contains "System.Version" @>
-    test <@ error.Message.Contains "does not match" @>
+    test <@ error.Message.Contains "cannot be reconstructed" @>
 
 [<Fact>]
 let ``an unlisted assembly named only by a generic argument is rejected`` () : unit =

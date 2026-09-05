@@ -73,6 +73,43 @@ published stable line is 4.1 (currently 4.1.0).
 
 ### Fixed
 
+- **Generalized F# binary serialization now follows Orleans' reference protocol symmetrically.**
+  First-seen reference values are reserved and recorded on read, value fields consume matching
+  slots, and the standard Orleans field header retains the CLR type without changing codec
+  registration state. Real Orleans serializer tests cover nulls, distinct values, repeats,
+  generalized struct fields, and a generated wrapper mixing native and generalized fields.
+  Functional reads identify the actual root codec and enforce root-type assignability before
+  constructing a value, including explicit type headers and generic-argument substitution.
+- **Binary read boundaries reject malformed outer tags and atomically bound fallback resolution.**
+  Non-reference fields must be length-prefixed before consuming payload bytes or reference ids.
+  Concurrent fallback type-name admissions cannot exceed the 512-entry cache limit. Security
+  documentation distinguishes this embedded-prefix cache from Orleans' own header type policy.
+- **Binary POCO, enum, and closed-generic-union handling no longer loses type information.**
+  One matched member descriptor now drives both POCO directions; field-only classes retain their
+  values, property classes keep their historical wire order, and ambiguous/computed shapes fail
+  explicitly. Enums preserve their exact signed/unsigned representation, flags, and unnamed
+  values, while generic runtime union cases resolve through the closed parent type. Golden POCO
+  body/envelope fixtures pin the pre-fix property format.
+- **Binary value graphs now fail safely on cycles and excessive nesting.** Every operation owns a
+  bounded graph context: cycles are diagnosed during write and depth beyond 128 codec calls is
+  rejected on write and read without adding object IDs or changing existing bytes. Finite
+  recursive values remain supported; shared acyclic children inside one opaque payload are
+  documented and tested as independent decoded values. A timed child-process regression protects
+  the main test host from a future stack-overflow regression.
+- **`GrainBatch` now owns all work it starts.** Inputs are materialized before invocation; every
+  item is invoked and every returned task is observed even when a later call throws synchronously
+  or returns `null`. Non-`try` functions wait for all work and retain the first synchronous
+  invocation failure's priority; without one, existing async-fault/cancellation behavior remains.
+  Result order stays stable, enumeration failure starts no operations, and `null Task` diagnostics
+  are consistent across map/iter variants. Deterministic tests cover all seven public combinators,
+  including already-started tasks which fail after another invocation has thrown.
+- **Release validation exercises the packaged F# analyzer in its actual CLI host.** The consumer
+  compiles the public `AllowAsync` attribute and requires OF0001 on the bad example but not on
+  `task` or suppressed bindings. Setup documentation now uses the supported library-plugin path
+  and no longer promises automatic compiler/editor execution for a CLI-only analyzer.
+- **Concurrency and journal-loss integration gates no longer depend on speed or lucky placement.**
+  The read-only probe requires two calls to enter a shared gate, and journal-loss tests explicitly
+  place the first activation on the silo they will stop before testing normal recovery placement.
 - **Local Orleans-version matrix runs no longer share incremental artifacts.** Repository builds
   partition `bin` and `obj` by `OrleansVersion`, preventing a sequential 10.3.1 → 10.1.0 check from
   reusing incompatible generated serializers or NuGet assets. The floor version now has one shared

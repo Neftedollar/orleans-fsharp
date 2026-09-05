@@ -479,6 +479,19 @@ default; journal definition, then silo default. The provider-wide
 controls the complete provider value rather than a functional envelope payload. These limits are
 present on `main`; they are not part of the published 4.1 package.
 
+### Generalized binary payloads reject unsafe graphs
+
+The 5.0 binary codec preserves repeated generalized values in Orleans' surrounding serializer
+session, including values held by a generated C# or F# object. Inside one opaque F# payload,
+cycles are rejected, nesting is capped at 128 codec calls on write and read, and repeated mutable
+children decode independently. This is a bounded value codec, not a native identity-preserving
+graph format; use generated Orleans serialization when internal object identity is required.
+
+The same release fixes field-only and property-based CLR class reconstruction, exact-width enum
+values, and runtime cases of closed generic unions without changing historical property-POCO wire
+bytes. The precise contract is in
+[Serialization](https://neftedollar.com/orleans-fsharp/serialization/#binary-graph-and-clr-class-contract).
+
 ### Stateless-worker implicit streams require Orleans 10.3+
 
 On `main`, a `grainFor` definition can combine `statelessWorker` with `onStream` when the loaded
@@ -3012,6 +3025,41 @@ type OrderReply = Result<int64, string>
 
 Supported shapes include records, discriminated unions, options and value options, lists, arrays, sets, maps, tuples, enums, common collection interfaces, POCO classes, and nested combinations of those shapes.
 
+### Binary graph and CLR-class contract
+
+The binary codec participates in Orleans' outer reference table. If a generated Orleans object or
+another native container has two fields which point to the same generalized F# value, the decoded
+fields point to the same object too. Nulls, value fields, and later references consume matching
+reader/writer positions, so a generalized field cannot shift references which follow it.
+New writes retain the CLR type in the standard Orleans field header. Existing payload bodies and
+embedded type envelopes are unchanged, and historical elided headers remain readable through the
+declared contract types. Functional payload reads validate the expected type before decoding when
+the F# codec owns the root; generated Orleans containers keep their own typed field codecs.
+
+Inside one opaque F# payload, the contract is deliberately smaller:
+
+- recursive types and finite acyclic values are supported up to 128 nested codec calls;
+- a reference cycle is rejected on write with a named `InvalidOperationException`;
+- excessive depth is rejected on both write and read before it can exhaust the process stack;
+- two fields which share one mutable child are accepted, but decode as two independent values.
+
+Use Orleans `[<GenerateSerializer>]` and stable `[<Id>]` fields for an object graph whose internal
+reference identity is part of the contract. The F# binary format adds no internal object IDs, so
+these safety checks do not change existing wire bytes.
+
+Ordinary CLR classes use one member model in both directions. A property-based class keeps the
+historical property order and reconstructs each value through that property's setter or its exact
+compiler backing field. A field-only class serializes its fields. A class which mixes readable
+properties with independent public fields, or exposes a computed property with no setter/backing
+field, is rejected instead of silently losing state. Historical property-POCO bytes remain pinned
+by fixtures. The old field-only format contained no field values; it remains readable as the
+default instance, but no non-default value can be recovered from bytes which never stored it.
+
+Enums use their exact signed or unsigned underlying integer type. Flags combinations and unnamed
+numeric values are preserved, including inside records, unions, options, and collections. Runtime
+case types of closed generic unions resolve through their closed parent, so both `Leaf 42` and a
+nested `Tree<Tree<int>>` keep their type arguments.
+
 ## Durable persistence codecs
 
 Functional persistent state and functional journals default to
@@ -3327,6 +3375,11 @@ Do not configure incompatible policies on different cluster participants. A clie
 | Rename a DU case | Ordinal representation is unchanged | Breaking | Safe when ids stay fixed |
 
 Treat persisted grain state, journal events, and custom snapshots as durable contracts. For the functional binary codec, union cases and record fields are positional: append cases, keep old cases foldable, and migrate stored state explicitly when a record shape changes.
+
+For CLR property classes, property order is positional too. Renaming, reordering, adding, or
+removing a serialized property is therefore a durable-format change even when the CLR class can
+still be constructed. Field-only classes first become data-bearing in 5.0; an older reader must not
+be expected to consume their new payloads.
 
 ## Security boundary
 
@@ -6632,27 +6685,46 @@ the same cluster**. It is NOT designed to deserialize untrusted input from:
 
 ### What the codec already refuses
 
-A wire-supplied type name is checked **before** any assembly load, not after resolution:
+When an embedded type prefix needs fallback resolution (there is no declared type or resolved
+header type), the codec applies these checks **before** calling `Type.GetType`:
 
 - **An assembly allow-list**, matched on whole dotted segments. Only `Orleans.FSharp`, `System`,
   `Microsoft.FSharp`, `FSharp.Core`, `mscorlib`, `netstandard` and `TypeShape` (and namespaces
   beneath them) pass — so `Orleans.FSharpHostile` is refused despite the shared prefix. The check
   covers a generic's arguments as well as its own qualifier, because `Type.GetType` loads every
   one of them.
-- **A cap on distinct wire-resolved type names** (512 per process), so a stream of unique names
-  cannot grow the type and codec caches without bound. A rejected name is never cached.
+- **A cap on distinct fallback-resolved type names** (512 per process), with atomic admission
+  under concurrent misses. This bounds this fallback cache; a rejected name is never cached.
 - **A length cap on the type name itself**, which also bounds the qualifier scan's nesting depth.
+
+New writes also carry the runtime type in the standard Orleans field header. Orleans resolves
+that header **before** invoking this codec, using its own type manifest and filtering machinery;
+it does not pass through the embedded-prefix allow-list or the 512-entry fallback cache. Declared
+types bypass fallback resolution too. This library registers an Orleans `ITypeFilter`, not an
+`ITypeNameFilter`; these guards do not establish a pre-load allow-list for every Orleans header
+or a bound on every serializer cache. Configure the host's Orleans type policy for its trust
+boundary; the codec is not an untrusted-input sandbox.
+
+Independently of fallback type resolution, the binary reader applies:
+
+- **Outer wire-tag validation**: non-reference fields must be `LengthPrefixed`, before any
+  payload bytes or reference-table entries are consumed.
 - **Bounds checks on every wire-supplied length, element count, union case tag, and record or
   POCO arity**, against the bytes actually remaining and the real shape of the target type.
+- **A per-operation graph-depth bound** on write and read (128 nested codec calls), plus
+  reference-cycle detection on write. Both fail with a codec diagnostic before recursive values
+  can exhaust the process stack; the cycle regression also runs in a timed child process.
 
-A rejection is an `InvalidOperationException` naming the offending assembly or field, not an
-`IndexOutOfRangeException` or an oversized allocation.
+Inner-format rejection is an `InvalidOperationException` naming the offending assembly or field,
+not an `IndexOutOfRangeException` or an oversized allocation. An invalid outer tag produces
+Orleans' `UnsupportedWireTypeException`.
 
 ### What it still does not defend against
 
-The allow-list bounds *which* assemblies a payload can name; it does not make an arbitrary
-attacker-chosen graph inside those assemblies safe. Crafted bytes that clear every check above can
-still set your own grain state to values the application never intended. Treat the codec as
+The allow-list and structural bounds do not make attacker-chosen application values trustworthy.
+Crafted bytes that clear every check above can still set your own grain state to values the
+application never intended. Internal shared-reference identity is also not preserved inside one
+opaque payload: repeated acyclic children decode as independent values. Treat the codec as
 in-cluster infrastructure, not as an input parser.
 
 ### Mitigation
@@ -7864,7 +7936,7 @@ assembly dependency on the Kubernetes hosting package.
 
 # Orleans.FSharp Analyzers
 
-**Compile-time feedback for idiomatic Orleans grain code.**
+An opt-in F# CLI analyzer for task-based grain code.
 
 ## Installation
 
@@ -7872,7 +7944,14 @@ assembly dependency on the Kubernetes hosting package.
 dotnet add package Orleans.FSharp.Analyzers
 ```
 
-> **Note**: F# analyzers surface warnings in editors that support Ionide (VS Code + Ionide extension, JetBrains Rider). They also run via the `fsharp-analyzers` CLI tool.
+Keep the package's normal library assets: they expose the public `AllowAsync` suppression
+attribute. Set `PrivateAssets="all"` and `GeneratePathProperty="true"` on its
+`PackageReference`, and pin the package version you selected. Do not restrict
+`IncludeAssets` to `analyzers`: this F# SDK plugin is distributed under `lib/net8.0`.
+
+The supported host is `fsharp-analyzers` 0.37.2. This package currently exports a
+`CliAnalyzer`, not an `EditorAnalyzer` or a Roslyn compiler analyzer. Package installation
+alone does **not** run OF0001 during `dotnet build` or in an editor; run the CLI explicitly.
 
 ---
 
@@ -7882,7 +7961,10 @@ dotnet add package Orleans.FSharp.Analyzers
 
 ### Description
 
-`async { }` computation expressions are **banned in Orleans.FSharp grain code**. Orleans is built on .NET `Task`-based concurrency. Using `async { }` requires an unnecessary `Async.AwaitTask` / `Async.StartAsTask` conversion at every grain boundary, adds overhead, and is incompatible with Orleans's `CancellationToken` propagation model.
+OF0001 is an opt-in style warning for unsuppressed `async { }` expressions in the selected
+files. It scans syntax; it does not infer whether a binding is a grain handler. Orleans grain
+handlers return `Task<_>`, so `task { }` is the direct fit. Intentional Async interop is valid
+when its Task boundary and cancellation are handled explicitly; suppress that binding below.
 
 Use `task { }` instead — the computation expression FSharp.Core has shipped since F# 6 (`IcedTasks` adds cancellable and resumable variants on top of it). It compiles directly to a `Task<'T>` and is fully compatible with Orleans grain handlers.
 
@@ -7936,7 +8018,7 @@ let fetchFromLegacyApi (url: string) : Async<string> =
 - Script files (`.fsx`) that use the F# `Async` workflow (use `[<AllowAsync>]`)
 - Unit tests calling `Async.RunSynchronously` (use `[<AllowAsync>]` on the test helper)
 
-In all other cases, use `task { }`.
+Apply this rule to the files where you want the task-based style convention enforced.
 
 ---
 
@@ -7945,16 +8027,22 @@ In all other cases, use `task { }`.
 Install the analyzer CLI tool:
 
 ```bash
-dotnet tool install --global fsharp-analyzers
+dotnet tool install --global fsharp-analyzers --version 0.37.2
 ```
 
 Run against your project:
 
 ```bash
-fsharp-analyzers --project MyGrains.fsproj --analyzers-path <path-to-Orleans.FSharp.Analyzers.dll>
+dotnet restore MyGrains.fsproj
+analyzer_package="$(dotnet msbuild MyGrains.fsproj -nologo -getProperty:PkgOrleans_FSharp_Analyzers)"
+fsharp-analyzers --project MyGrains.fsproj --analyzers-path "$analyzer_package/lib/net8.0"
 ```
 
 ---
+
+The path is a directory containing the packed plugin. Keep the CLI and analyzer SDK versions
+aligned; arbitrary editor/runner versions are not certified by the package smoke test. See the
+[F# SDK packaging model](https://ionide.io/FSharp.Analyzers.SDK/content/Getting%20Started%20Writing.html#Packaging-and-Distribution).
 
 ## Analyzer list
 
@@ -9089,6 +9177,16 @@ Wrap any grain call in retry, circuit-breaker, and timeout strategies. See [Resi
 | `GrainBatch.choose<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR option>) -> Task<'TR list>` | Fan-out; filters out None results |
 | `GrainBatch.partition<'TG,'TR>` | `'TG seq -> ('TG -> Task<'TR>) -> Task<'TR list * exn list>` | Fan-out; separates successes from failures |
 
+Every function materializes the input before starting calls. Once invocation starts, every item is
+invoked and every returned task is observed even if another invocation throws synchronously or
+returns `null`. After all work finishes, the non-`try` functions propagate the first synchronous
+exception in input order. If no invocation threw synchronously, the usual `Task.WhenAll`
+fault/cancellation behavior applies. Returning a `null Task` produces a diagnostic
+`InvalidOperationException`, captured as `Error` by the tolerant functions.
+`tryMap`, `tryIter`, and `partition` retain per-item result order. An input-enumerator failure
+faults the whole batch before any operation starts. Batch failure does not cancel or roll back
+grain calls.
+
 > **Tip**: For 2–4 fixed grain calls, prefer the F# `and!` applicative keyword inside `task {}` — it is more ergonomic and starts every bound call before awaiting any of them, exactly as these do. Use `GrainBatch` when the number of grains is dynamic.
 
 #### Other modules
@@ -9950,8 +10048,9 @@ The complete original grain, timer, reminder, scripting-handle, and registration
 ## Orleans.FSharp.EventSourcing
 
 The historical `eventSourcedGrain { }` CE and its `JournaledGrain` bridge are not the same thing as
-the current `journaledGrainFor` definition builder. The old path needs the archived CodeGen
-package and is not published in the 5.0 package set. See [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/).
+the current `journaledGrainFor` definition builder. The old path depended on the archived CodeGen
+source bridge; neither project is published in the 5.0 package set. See
+[Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/).
 
 ### Types
 
@@ -10059,9 +10158,11 @@ for each entry is the [functional grain runtime](https://neftedollar.com/orleans
 Each `handle*` keyword also has a `*WithServices` form (`handleWithServices`,
 `handleStateWithServices`, `handleTypedWithServices`, and their `Cancellable` variants) taking an
 `IServiceProvider` instead of a `GrainContext`. See
-[legacy Grain Definition guide](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/) for the full keyword list. Per-grain Orleans
-attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`, `[ReadOnly]`,
-`[ImplicitStreamSubscription]`, …) are applied via the C# CodeGen path, not `grain { }` keywords.
+[legacy Grain Definition guide](https://neftedollar.com/orleans-fsharp/legacy/grain-definition/) for the full keyword list. In the historical
+model, per-grain Orleans attributes (`[Reentrant]`, `[StatelessWorker]`, placement, `[OneWay]`,
+`[ReadOnly]`, `[ImplicitStreamSubscription]`, …) were applied to application-owned C# grain
+classes or methods, not expressed as `grain { }` keywords. The retained repository generator
+does not generate ordinary `GrainDefinition` classes.
 On the [functional grain runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) they are ordinary contract and definition
 operations instead — `reentrant`, `statelessWorker`, `placement`, `oneWay`, `readOnly`, and
 `onStream` / `onBroadcast` for implicit subscriptions.
@@ -10203,13 +10304,17 @@ These settings apply to Legacy C# CodeGen grain interfaces. Current functional c
 ## Classic event-sourced grain
 
 > The historical `eventSourcedGrain { }` computation expression and
-> `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class.
-> They need the archived CodeGen package for the grain interface. New code must use
-> `journaledGrainFor` from the functional runtime; no new classic package release is produced.
+> `Orleans.FSharp.EventSourcing` built on Orleans' `JournaledGrain` through a generated C# class.
+> They depended on the archived CodeGen source bridge. Neither project is published in the 5.0
+> package set; new code must use `journaledGrainFor` from the functional runtime.
 
 The classic model splits a grain into `apply` (a pure fold), `handle` (a command handler
-returning events), and `defaultState`, and the `Orleans.FSharp.CodeGen` package generates a C#
-`JournaledGrain` that delegates to them.
+returning events), and `defaultState`. The retained generator can emit a C# `JournaledGrain`
+which delegates to them, but only for this historical event-sourced model; it is not a generator
+for ordinary `GrainDefinition` values.
+
+The following installation command is preserved to identify 4.1-and-earlier project files. It
+does not install a 5.0 package:
 
 ```bash
 dotnet add package Orleans.FSharp.EventSourcing
@@ -10520,7 +10625,7 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 | Clustering | Built-in (Redis, Azure, Kubernetes) | Akka.Cluster |
 | Maintenance | Active (Orleans 10 compatible) | Community maintained |
 
-## What NuGet packages does Orleans.FSharp include?
+## What NuGet packages does Orleans.FSharp 5.0 include?
 
 | Package | Description |
 |---------|-------------|
@@ -10528,10 +10633,13 @@ Akkling is an F# API for Akka.NET (a port of JVM Akka). Orleans.FSharp wraps Mic
 | `Orleans.FSharp.Runtime` | Silo and client hosting: `AddFunctionalGrain`, `siloConfig { }`, `clientConfig { }` |
 | `Orleans.FSharp.Abstractions` | The fixed functional transport and its precompiled Orleans proxies (arrives transitively) |
 | `Orleans.FSharp.Testing` | TestHarness, GrainMock, GrainArbitrary, log capture |
-| `Orleans.FSharp.EventSourcing` | The classic `eventSourcedGrain { }` model |
-| `Orleans.FSharp.CodeGen` | Optional per-grain C# code generation for hand-written grain interfaces |
 | `Orleans.FSharp.Analyzers` | The OF0001 analyzer with an `[<AllowAsync>]` opt-out |
 | `Orleans.FSharp.Templates` | The `dotnet new orleans-fsharp` project template |
+
+`Orleans.FSharp.EventSourcing` and `Orleans.FSharp.CodeGen` are retained only as archived source
+projects for migration and repository fixtures. They are not published in the 5.0 package set,
+and CodeGen does not provide a universal generator for ordinary grain definitions. Use
+`journaledGrainFor` and the functional contract/definition operations in new or migrating code.
 
 ## Where can I find the source code?
 
@@ -10842,11 +10950,15 @@ dotnet test
 - Every keyword in the `grain { }` CE
 - How to define handlers, lifecycle hooks, reminders, and timers
 - Allowing message types to interleave with `interleaveMessage`
-- Multiple named states, and where per-grain Orleans attributes live (the C# CodeGen path)
+- Multiple named states, and how historical application-owned C# classes carried per-grain Orleans attributes
 
 ## Overview
 
-The `grain { }` CE builds a `GrainDefinition<'State, 'Message>` -- an immutable record that fully describes a grain's behavior. The Orleans.FSharp.CodeGen package reads this definition at build time and generates the corresponding C# grain class with all the correct Orleans attributes.
+The `grain { }` CE builds a `GrainDefinition<'State, 'Message>` -- an immutable record consumed
+at runtime by the legacy universal grain implementation. It does not generate a per-grain C#
+class. The repository retains non-packable CodeGen source and an event-sourced stub generator for
+migration fixtures, but neither is a 5.0 package and the retained generator does not generate
+ordinary `GrainDefinition` classes.
 
 ```fsharp
 open Orleans.FSharp
@@ -11402,7 +11514,9 @@ covered. Repeated registrations of the same type are de-duplicated.
 
 ---
 
-## Per-grain Orleans attributes (C# CodeGen path)
+<a id="per-grain-orleans-attributes-c-codegen-path"></a>
+
+## Per-grain Orleans attributes (historical C# class bridge)
 
 > This whole section is about the deprecated `grain { }` model. On the
 > [functional grain runtime](https://neftedollar.com/orleans-fsharp/functional-grains/) each of these concepts is a first-class
@@ -11418,10 +11532,13 @@ keywords. All of them are first-class contract operations on the [functional gra
 runtime](https://neftedollar.com/orleans-fsharp/functional-grains/). The universal grain pattern shares a single `FSharpGrainImpl` class and
 one handler method, so per-grain class-level or per-method attributes cannot be expressed there.
 
-To use them, define the grain through the per-grain `Orleans.FSharp.CodeGen` path: each grain
-compiles to its own C# class/method that carries the real Orleans attribute.
+An existing legacy application can keep an application-owned concrete C# grain class and apply
+the relevant attributes directly to that class or method. This is a source-maintenance pattern,
+not a 5.0 CodeGen package: the repository's CodeGen project is non-packable, and its retained
+generator only emits event-sourced stubs. New or migrating applications should use the functional
+operations listed above.
 
-| Concept | Orleans attribute (CodeGen path) |
+| Concept | Attribute on the historical C# class or method |
 |---|---|
 | Reentrant grain | `[Reentrant]` |
 | Custom interleave predicate | `[MayInterleave("Predicate")]` |
@@ -12494,7 +12611,7 @@ authoring model. Serializer changes which affect persisted data require an expli
 |------|-----------|-------|-------------------|-------------|----------|
 | **F# Binary** | `useFSharpBinarySerialization` | Fast | No | None | Pure F# clusters (recommended) |
 | **JSON** | `useFSharpJsonSerialization` | Good | No | None | Readable generalized payloads |
-| **Orleans Native** | *(default)* | Fastest | Yes (CodeGen) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
+| **Orleans Native** | *(default)* | Fastest | Yes (application-owned C# bridge) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
 
 ## Universal Grain Pattern — auto-registration
 
@@ -12507,7 +12624,9 @@ builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
 
 The registration is idempotent: calling `AddFSharpGrain` multiple times for different `(State, Command)` pairs only registers the codec once.
 
-If you are NOT using the universal pattern (i.e., you are using per-grain C# stubs via `Orleans.FSharp.CodeGen`), you still need to opt in manually via `useFSharpBinarySerialization` or `useFSharpJsonSerialization`.
+When maintaining the archived model outside the universal pattern with application-owned C# grain
+classes, you still need to opt in manually via `useFSharpBinarySerialization` or
+`useFSharpJsonSerialization`. No 5.0 CodeGen package creates those classes.
 
 ---
 
@@ -12611,10 +12730,12 @@ let config = siloConfig {
 **Requirements:**
 - `[<GenerateSerializer>]` attribute on every type crossing grain boundaries
 - `[<Id(n)>]` attribute on every DU case and record field (ordinal position)
-- A **C# CodeGen project** (`Orleans.FSharp.CodeGen`) that references your F# types — Orleans Roslyn source generators only work on C# projects
+- An application-owned **C# bridge project** that references your F# types — the repository's `Orleans.FSharp.CodeGen` project is archived source, not a 5.0 package
 - A C# grain class per grain definition (inherits `Grain`, delegates to F# handler)
 
-**Why so much boilerplate?** Orleans uses Roslyn source generators to produce optimized binary serializers at compile time. Roslyn does not support F# — hence the C# bridge project.
+**Why so much boilerplate?** This historical model put the Orleans-facing class and serializer
+generation boundary in an application-owned C# project. The retained Orleans.FSharp generator
+only emits event-sourced stubs; it is not an ordinary-grain bridge generator.
 
 ### When You MUST Use Orleans Native
 
@@ -12630,7 +12751,7 @@ F# Silo only            → F# Binary (recommended)
 
 **C# core plus new F# grains.** Existing C# grains keep Orleans Native serialization. New F# grains can use F# Binary — they have separate state types that don't cross the C#/F# boundary.
 
-### Setting Up CodeGen (Orleans Native only)
+### Setting Up an Application-Owned C# Bridge (Orleans Native only, historical)
 
 1. Create a C# class library project:
 
@@ -12660,7 +12781,7 @@ public class CounterGrainImpl : Grain, ICounterGrain
 }
 ```
 
-4. Reference the CodeGen project from your Silo project.
+4. Reference the application-owned C# bridge project from your Silo project.
 
 ## Mixing Modes
 
@@ -12739,13 +12860,16 @@ All modes are fast enough for real-world Orleans usage. Grain call network laten
 > The streaming modules remain current. This page only isolates the old grain-definition examples which previously appeared in the current guide.
 > New actors use the functional `grainContract` / `grainFor` subscription operations.
 
-### On the classic `grain { }` / CodeGen path
+### On the classic `grain { }` / C# class path
 
 Implicit subscriptions there are a per-grain Orleans attribute. The universal grain pattern shares
 a single `FSharpGrainImpl` class, so it cannot carry a per-grain
-`[ImplicitStreamSubscription("namespace")]`. Define the grain via `Orleans.FSharp.CodeGen` and
-annotate the generated C# class. For explicit subscriptions from any grain, use `Stream.subscribe`
-(shown above), which works with the universal pattern.
+`[ImplicitStreamSubscription("namespace")]`. When maintaining a legacy application which already
+has an application-owned concrete C# grain class, annotate that class directly. The repository's
+CodeGen project is archived, non-packable source, and its retained generator does not create
+ordinary grain classes. For new actors, use the functional subscription operations; for explicit
+subscriptions from any grain, use `Stream.subscribe` (shown above), which works with the universal
+pattern.
 
 ---
 
@@ -13021,6 +13145,9 @@ path is either calling a context-free handler function directly, or a `TestingHo
 ---
 
 ## Testing Event-Sourced Grains
+
+> This is a historical 4.1-and-earlier example. It requires the archived source/package setup;
+> `Orleans.FSharp.EventSourcing` is not published in the 5.0 package set.
 
 Event-sourced grains are especially testable because `apply` and `handle` are pure functions:
 

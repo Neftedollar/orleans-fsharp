@@ -289,15 +289,13 @@ type RuntimeTests(fixture: FunctionalClusterFixture) =
     member _.``read-only requests interleave with each other``() =
         task {
             let probe = fixture.Probe $"sched-ro-{Guid.NewGuid():N}"
-            let watch = Stopwatch.StartNew()
-            let first = probe.api.readSlow 600
-            let second = probe.api.readSlow 600
+            let first = probe.api.readTogether ()
+            let second = probe.api.readTogether ()
             let! replies = Task.WhenAll [| first; second |]
-            watch.Stop()
 
             let maxObserved = replies |> Array.map (counters >> snd) |> Array.max
             Assert.Equal(2, maxObserved)
-            Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds 1100.0, string watch.Elapsed)
+            Assert.Equal<int[]>([| 1; 2 |], replies |> Array.map (counters >> fst) |> Array.sort)
         }
 
     member private _.WaitForGate(probe: FunctionalGrainRef<ProbeActor, ProbeId, ProbeApi>) =

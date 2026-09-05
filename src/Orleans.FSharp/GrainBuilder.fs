@@ -352,7 +352,9 @@ type GrainDefinition<'State, 'Message> =
         InterleaveMessageTypes: Type list
         /// <summary>Lifecycle hooks keyed by GrainLifecycleStage (int).
         /// Each hook is invoked during the corresponding lifecycle stage with a CancellationToken.
-        /// Standard stages: First=2000, SetupState=4000, Activate=6000, Last=int.MaxValue.</summary>
+        /// Standard stages are <c>GrainLifecycleStage.First</c>,
+        /// <c>GrainLifecycleStage.SetupState</c>, <c>GrainLifecycleStage.Activate</c>, and
+        /// <c>GrainLifecycleStage.Last</c>.</summary>
         LifecycleHooks: Map<int, (CancellationToken -> Task<unit>) list>
     }
 #warnon "44"
@@ -1154,7 +1156,9 @@ type GrainBuilder() =
     /// <summary>
     /// Registers a lifecycle hook at the specified grain lifecycle stage.
     /// The hook is invoked with a CancellationToken during grain activation.
-    /// Standard stages: GrainLifecycleStage.First (2000), SetupState (4000), Activate (6000), Last (int.MaxValue).
+    /// Standard stages are <c>GrainLifecycleStage.First</c>,
+    /// <c>GrainLifecycleStage.SetupState</c>, <c>GrainLifecycleStage.Activate</c>, and
+    /// <c>GrainLifecycleStage.Last</c>.
     /// Multiple hooks at the same stage are executed in registration order.
     /// </summary>
     /// <param name="definition">The current grain definition being built.</param>

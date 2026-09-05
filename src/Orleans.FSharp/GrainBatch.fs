@@ -14,6 +14,17 @@ open System.Threading.Tasks
 /// Results are returned in the same order as the input collection.
 /// </para>
 /// <para>
+/// The input sequence is fully materialized before any operation starts. Every operation is then
+/// invoked even if another invocation fails synchronously, and all started tasks are observed before
+/// the batch completes.
+/// </para>
+/// <para>
+/// For strict operations, the first synchronous invocation exception is propagated after all started
+/// tasks have been observed. Without a synchronous exception, normal <c>Task.WhenAll</c> exception
+/// behavior is preserved. A null task is treated as an <c>InvalidOperationException</c>; tolerant
+/// operations capture that exception as an <c>Error</c> value.
+/// </para>
+/// <para>
 /// For a small, fixed set of grains (2–4), consider the F# <c>and!</c> applicative CE syntax
 /// instead — it is more ergonomic and compiles to the same parallel execution:
 /// </para>
@@ -30,6 +41,74 @@ open System.Threading.Tasks
 [<RequireQualifiedAccess>]
 module GrainBatch =
 
+    let private nullTaskError () : exn =
+        InvalidOperationException("GrainBatch operation returned a null Task.")
+
+    let private startAll<'TInput, 'TTask when 'TTask :> Task>
+        (inputs: 'TInput seq)
+        (operation: 'TInput -> 'TTask)
+        (fromException: exn -> 'TTask)
+        : 'TTask array * exn option =
+        let materializedInputs = inputs |> Seq.toArray
+        let mutable firstSynchronousError = None
+
+        let start input =
+            let startedTask =
+                try
+                    operation input
+                with error ->
+                    if Option.isNone firstSynchronousError then
+                        firstSynchronousError <- Some error
+
+                    fromException error
+
+            if isNull (startedTask :> Task) then
+                fromException (nullTaskError ())
+            else
+                startedTask
+
+        let tasks = materializedInputs |> Array.map start
+        tasks, firstSynchronousError
+
+    let private invokeAll<'TInput, 'TResult>
+        (inputs: 'TInput seq)
+        (operation: 'TInput -> Task<'TResult>)
+        : Task<'TResult array> =
+        task {
+            let tasks, firstSynchronousError =
+                startAll inputs operation (fun error -> Task.FromException<'TResult>(error))
+
+            match firstSynchronousError with
+            | None -> return! Task.WhenAll(tasks)
+            | Some synchronousError ->
+                try
+                    do! (Task.WhenAll(tasks) :> Task)
+                with _taskError ->
+                    ()
+
+                return raise synchronousError
+        }
+
+    let private invokeAllTasks<'TInput>
+        (inputs: 'TInput seq)
+        (operation: 'TInput -> Task)
+        : Task =
+        task {
+            let tasks, firstSynchronousError =
+                startAll inputs operation (fun error -> Task.FromException(error))
+
+            match firstSynchronousError with
+            | None -> do! Task.WhenAll(tasks)
+            | Some synchronousError ->
+                try
+                    do! Task.WhenAll(tasks)
+                with _taskError ->
+                    ()
+
+                return raise synchronousError
+        }
+        :> Task
+
     /// <summary>
     /// Executes a task-returning function on each grain concurrently and collects all results.
     /// Results are returned in the same order as the input sequence.
@@ -45,8 +124,7 @@ module GrainBatch =
     /// </returns>
     let map<'TGrain, 'TResult> (grains: 'TGrain seq) (f: 'TGrain -> Task<'TResult>) : Task<'TResult list> =
         task {
-            let tasks = grains |> Seq.map f |> Seq.toArray
-            let! results = Task.WhenAll(tasks)
+            let! results = invokeAll grains f
             return results |> Array.toList
         }
 
@@ -72,14 +150,18 @@ module GrainBatch =
             let wrap (grain: 'TGrain) : Task<Result<'TResult, exn>> =
                 task {
                     try
-                        let! result = f grain
-                        return Ok result
+                        let startedTask = f grain
+
+                        if isNull startedTask then
+                            return Error(nullTaskError ())
+                        else
+                            let! result = startedTask
+                            return Ok result
                     with ex ->
                         return Error ex
                 }
 
-            let tasks = grains |> Seq.map wrap |> Seq.toArray
-            let! results = Task.WhenAll(tasks)
+            let! results = invokeAll grains wrap
             return results |> Array.toList
         }
 
@@ -115,11 +197,7 @@ module GrainBatch =
     /// <param name="f">The unit-returning function to invoke on each grain.</param>
     /// <returns>A <c>Task</c> that completes when all grain calls complete.</returns>
     let iter<'TGrain> (grains: 'TGrain seq) (f: 'TGrain -> Task) : Task =
-        task {
-            let tasks = grains |> Seq.map f |> Seq.toArray
-            do! Task.WhenAll(tasks)
-        }
-        :> Task
+        invokeAllTasks grains f
 
     /// <summary>
     /// Executes a fire-and-forget operation on each grain concurrently, capturing
@@ -137,14 +215,18 @@ module GrainBatch =
             let wrap (grain: 'TGrain) : Task<Result<unit, exn>> =
                 task {
                     try
-                        do! f grain
-                        return Ok()
+                        let startedTask = f grain
+
+                        if isNull startedTask then
+                            return Error(nullTaskError ())
+                        else
+                            do! startedTask
+                            return Ok()
                     with ex ->
                         return Error ex
                 }
 
-            let tasks = grains |> Seq.map wrap |> Seq.toArray
-            let! results = Task.WhenAll(tasks)
+            let! results = invokeAll grains wrap
             return results |> Array.toList
         }
 

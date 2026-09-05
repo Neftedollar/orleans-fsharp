@@ -208,10 +208,10 @@ type internal FunctionalPayloadCodec
 
     /// <summary>Deserialize one value as its exact declared type.</summary>
     /// <remarks>
-    /// When the F# binary codec owns the whole payload — which is when Orleans elides the field
-    /// type and the codec has to recover the CLR type from a name in the bytes — the exact type
-    /// asked for here is published for the duration of the read, so the wire name can only ever
-    /// resolve to something assignable to it. When some other Orleans codec owns the top level,
+    /// When the F# binary codec owns the whole payload, the exact type asked for here is
+    /// published for the duration of the read. Both explicit Orleans field types and historical
+    /// embedded names must resolve to something assignable to it. Codec ownership comes from
+    /// Orleans' actual selection, not a structural F# shape test. When another codec owns the top level,
     /// nothing is published: the F# codec may then be entered for a nested field whose type is
     /// not <c>'T</c>, and an expectation would be wrong rather than protective.
     /// </remarks>
@@ -220,13 +220,12 @@ type internal FunctionalPayloadCodec
         let session = sessionPool.GetSession()
         FunctionalInstrumentation.trackSessionRented session
 
-        let expected =
-            if FSharpBinaryFormat.isSupportedType typeof<'T> then
-                typeof<'T>
-            else
-                null
-
         try
+            let expected =
+                match (session.CodecProvider :> IFieldCodecProvider).GetCodec typeof<'T> with
+                | :? FSharpBinaryCodec -> typeof<'T>
+                | _ -> null
+
             let value =
                 FSharpBinaryFormat.ExpectedPayloadType.Scoped(
                     expected,
