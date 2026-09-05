@@ -23,7 +23,7 @@ open Orleans.FSharp.FunctionalSiloDiagnostics
 
 /// <summary>
 /// Silo startup validation: registry and manifest agreement plus serializer availability for
-/// every hosted argument and reply type. It runs before the silo admits traffic, so a
+/// every hosted argument and reply type. It runs before runtime initialization, so a
 /// misconfigured definition fails startup instead of failing the first call.
 /// </summary>
 [<Sealed>]
@@ -362,12 +362,18 @@ type internal FunctionalSiloStartupValidator(services: IServiceProvider, registr
                     $"the functional interface ID '{entry.InterfaceId}' of grain type '{entry.GrainTypeName}' does not appear in this silo's grain manifest."
 
     interface ILifecycleParticipant<ISiloLifecycle> with
-        /// <summary>Subscribes <c>validate</c> to run at <c>ServiceLifecycleStage.RuntimeInitialize</c>, before the silo admits traffic.</summary>
+        /// <summary>Subscribes <c>validate</c> at <c>ServiceLifecycleStage.First</c>, before Orleans starts runtime services.</summary>
         /// <param name="lifecycle">The silo's observable lifecycle to subscribe on.</param>
         member _.Participate(lifecycle: ISiloLifecycle) =
             lifecycle.Subscribe(
                 "Orleans.FSharp.FunctionalGrainRuntime",
-                ServiceLifecycleStage.RuntimeInitialize,
+                // Observers in one lifecycle stage start together. If validation rejects a
+                // definition at RuntimeInitialize, already-started Orleans services need not
+                // receive their stop callback after that stage fails. In Orleans 10.3.1 this
+                // leaves the directory membership loop spinning after its stream is disposed.
+                // All checks use DI registrations/options and the local manifest, not a running
+                // silo, so complete them before any RuntimeInitialize observer can start.
+                ServiceLifecycleStage.First,
                 Func<CancellationToken, Task>(fun _ ->
                     validate ()
                     Task.CompletedTask)

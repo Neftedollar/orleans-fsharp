@@ -73,6 +73,10 @@ published stable line is 4.1 (currently 4.1.0).
 
 ### Fixed
 
+- **Functional silo validation precedes Orleans runtime initialization.** Invalid definitions
+  now fail at `ServiceLifecycleStage.First`, before the `RuntimeInitialize` stage starts
+  background services. This avoids leaked directory membership loops after rejected startup
+  on Orleans 10.3.1; a real-lifecycle regression covers both rejection and successful startup.
 - **Generalized F# binary serialization now follows Orleans' reference protocol symmetrically.**
   First-seen reference values are reserved and recorded on read, value fields consume matching
   slots, and the standard Orleans field header retains the CLR type without changing codec

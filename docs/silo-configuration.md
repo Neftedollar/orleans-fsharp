@@ -32,6 +32,16 @@ host.Run()
 
 Or apply directly to an `ISiloBuilder` with `SiloConfig.applyToSiloBuilder`.
 
+## Startup validation
+
+Functional definitions are checked at `ServiceLifecycleStage.First`, before Orleans reaches
+`RuntimeInitialize`. The checks cover the local manifest, serializers, named providers, and
+functional configuration limits. A rejected definition therefore fails before that runtime
+stage starts background services; it does not leave them running after a failed startup.
+
+Register the required providers and configure their options before building the host. Startup
+callbacks are not a place to finish these registrations.
+
 ---
 
 ## Clustering
