@@ -33,6 +33,7 @@ bld/
 [Ll]ogs/
 
 ## Test results
+__pycache__/
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
 TestResult.xml

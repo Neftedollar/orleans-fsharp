@@ -13,13 +13,17 @@
 ## Classic event-sourced grain
 
 > The historical `eventSourcedGrain { }` computation expression and
-> `Orleans.FSharp.EventSourcing` build on Orleans' `JournaledGrain` through a generated C# class.
-> They need the archived CodeGen package for the grain interface. New code must use
-> `journaledGrainFor` from the functional runtime; no new classic package release is produced.
+> `Orleans.FSharp.EventSourcing` built on Orleans' `JournaledGrain` through a generated C# class.
+> They depended on the archived CodeGen source bridge. Neither project is published in the 5.0
+> package set; new code must use `journaledGrainFor` from the functional runtime.
 
 The classic model splits a grain into `apply` (a pure fold), `handle` (a command handler
-returning events), and `defaultState`, and the `Orleans.FSharp.CodeGen` package generates a C#
-`JournaledGrain` that delegates to them.
+returning events), and `defaultState`. The retained generator can emit a C# `JournaledGrain`
+which delegates to them, but only for this historical event-sourced model; it is not a generator
+for ordinary `GrainDefinition` values.
+
+The following installation command is preserved to identify 4.1-and-earlier project files. It
+does not install a 5.0 package:
 
 ```bash
 dotnet add package Orleans.FSharp.EventSourcing

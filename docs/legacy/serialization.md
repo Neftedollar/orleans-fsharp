@@ -18,7 +18,7 @@ authoring model. Serializer changes which affect persisted data require an expli
 |------|-----------|-------|-------------------|-------------|----------|
 | **F# Binary** | `useFSharpBinarySerialization` | Fast | No | None | Pure F# clusters (recommended) |
 | **JSON** | `useFSharpJsonSerialization` | Good | No | None | Readable generalized payloads |
-| **Orleans Native** | *(default)* | Fastest | Yes (CodeGen) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
+| **Orleans Native** | *(default)* | Fastest | Yes (application-owned C# bridge) | `[<GenerateSerializer>]` + `[<Id>]` | Mixed F#/C# clusters |
 
 ## Universal Grain Pattern — auto-registration
 
@@ -31,7 +31,9 @@ builder.Services.AddFSharpGrain<CounterState, CounterCommand>(counter) |> ignore
 
 The registration is idempotent: calling `AddFSharpGrain` multiple times for different `(State, Command)` pairs only registers the codec once.
 
-If you are NOT using the universal pattern (i.e., you are using per-grain C# stubs via `Orleans.FSharp.CodeGen`), you still need to opt in manually via `useFSharpBinarySerialization` or `useFSharpJsonSerialization`.
+When maintaining the archived model outside the universal pattern with application-owned C# grain
+classes, you still need to opt in manually via `useFSharpBinarySerialization` or
+`useFSharpJsonSerialization`. No 5.0 CodeGen package creates those classes.
 
 ---
 
@@ -135,10 +137,12 @@ let config = siloConfig {
 **Requirements:**
 - `[<GenerateSerializer>]` attribute on every type crossing grain boundaries
 - `[<Id(n)>]` attribute on every DU case and record field (ordinal position)
-- A **C# CodeGen project** (`Orleans.FSharp.CodeGen`) that references your F# types — Orleans Roslyn source generators only work on C# projects
+- An application-owned **C# bridge project** that references your F# types — the repository's `Orleans.FSharp.CodeGen` project is archived source, not a 5.0 package
 - A C# grain class per grain definition (inherits `Grain`, delegates to F# handler)
 
-**Why so much boilerplate?** Orleans uses Roslyn source generators to produce optimized binary serializers at compile time. Roslyn does not support F# — hence the C# bridge project.
+**Why so much boilerplate?** This historical model put the Orleans-facing class and serializer
+generation boundary in an application-owned C# project. The retained Orleans.FSharp generator
+only emits event-sourced stubs; it is not an ordinary-grain bridge generator.
 
 ### When You MUST Use Orleans Native
 
@@ -154,7 +158,7 @@ F# Silo only            → F# Binary (recommended)
 
 **C# core plus new F# grains.** Existing C# grains keep Orleans Native serialization. New F# grains can use F# Binary — they have separate state types that don't cross the C#/F# boundary.
 
-### Setting Up CodeGen (Orleans Native only)
+### Setting Up an Application-Owned C# Bridge (Orleans Native only, historical)
 
 1. Create a C# class library project:
 
@@ -184,7 +188,7 @@ public class CounterGrainImpl : Grain, ICounterGrain
 }
 ```
 
-4. Reference the CodeGen project from your Silo project.
+4. Reference the application-owned C# bridge project from your Silo project.
 
 ## Mixing Modes
 

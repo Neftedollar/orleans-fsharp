@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <!-- AnalyzerPackageVersion is supplied by the release-candidate smoke, not a source reference. -->
+  <ItemGroup>
+    <Compile Include="Consumer.fs" />
+    <PackageReference Include="Orleans.FSharp.Analyzers" Version="$(AnalyzerPackageVersion)"
+                      PrivateAssets="all" GeneratePathProperty="true" />
+    <!-- Match the FSharp.Analyzers.SDK 0.37.2 host's exact FSharp.Core dependency. -->
+    <PackageReference Update="FSharp.Core" Version="10.0.101" />
+  </ItemGroup>
+</Project>

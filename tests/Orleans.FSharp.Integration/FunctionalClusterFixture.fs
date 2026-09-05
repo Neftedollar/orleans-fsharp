@@ -66,6 +66,7 @@ type ProbeApi =
       identity: unit -> Task<string>
       slow: int -> Task<string>
       readSlow: int -> Task<string>
+      readTogether: unit -> Task<string>
       peek: unit -> Task<int>
       bump: int -> Task<unit>
       /// A PLAIN one-way operation (no alwaysInterleave): "ok" records what it saw,
@@ -111,6 +112,10 @@ type ProbeCell() =
     /// <summary>The gate a parked default-policy request waits on.</summary>
     member val Gate =
         TaskCompletionSource<bool> TaskCreationOptions.RunContinuationsAsynchronously with get
+
+    /// <summary>Both read-only calls must enter before either may complete.</summary>
+    member val ReadPair =
+        TaskCompletionSource<unit> TaskCreationOptions.RunContinuationsAsynchronously with get
 
     member _.InFlight = Volatile.Read(&inFlight)
     member _.MaxInFlight = Volatile.Read(&maxInFlight)
@@ -191,6 +196,7 @@ let private contractFor<'Actor> (name: string) =
         stringKeyMapped ProbeId.value ProbeId.create
 
         readOnly (_.readSlow)
+        readOnly (_.readTogether)
         readOnly (_.counter)
         readOnly (_.stateRead)
         readOnly (_.stateReadOnlyWrite)
@@ -272,6 +278,22 @@ let private definitionFor (contract: GrainContract<'Actor, ProbeId, ProbeApi>) =
                 try
                     do! Task.Delay(delay, context.cancellationToken)
                     return state, $"readSlow:entered={entered}:max={cell.MaxInFlight}"
+                finally
+                    cell.Leave()
+            })
+
+        handle (_.readTogether) (fun context state () ->
+            task {
+                let cell = Probe.cell context.grainId
+                let entered = cell.Enter()
+
+                try
+                    if entered = 2 then
+                        cell.ReadPair.TrySetResult() |> ignore
+
+                    // A missing read-only flag must fail, not merely finish more slowly.
+                    do! cell.ReadPair.Task.WaitAsync(TimeSpan.FromSeconds 10.0, context.cancellationToken)
+                    return state, $"readTogether:entered={entered}:max={cell.MaxInFlight}"
                 finally
                     cell.Leave()
             })

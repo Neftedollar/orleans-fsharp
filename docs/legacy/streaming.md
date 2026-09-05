@@ -9,13 +9,16 @@
 > The streaming modules remain current. This page only isolates the old grain-definition examples which previously appeared in the current guide.
 > New actors use the functional `grainContract` / `grainFor` subscription operations.
 
-### On the classic `grain { }` / CodeGen path
+### On the classic `grain { }` / C# class path
 
 Implicit subscriptions there are a per-grain Orleans attribute. The universal grain pattern shares
 a single `FSharpGrainImpl` class, so it cannot carry a per-grain
-`[ImplicitStreamSubscription("namespace")]`. Define the grain via `Orleans.FSharp.CodeGen` and
-annotate the generated C# class. For explicit subscriptions from any grain, use `Stream.subscribe`
-(shown above), which works with the universal pattern.
+`[ImplicitStreamSubscription("namespace")]`. When maintaining a legacy application which already
+has an application-owned concrete C# grain class, annotate that class directly. The repository's
+CodeGen project is archived, non-packable source, and its retained generator does not create
+ordinary grain classes. For new actors, use the functional subscription operations; for explicit
+subscriptions from any grain, use `Stream.subscribe` (shown above), which works with the universal
+pattern.
 
 ---
 

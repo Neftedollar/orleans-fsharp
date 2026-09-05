@@ -447,6 +447,15 @@ jobs:
             --no-build \
             --no-restore \
             --verbosity normal
+      - name: Run the packed F# analyzer in its matching CLI host
+        run: |
+          python3 scripts/test-analyzer-package-report.py
+          dotnet tool install fsharp-analyzers --version 0.37.2 --tool-path "$RUNNER_TEMP/analyzer-cli"
+          python3 scripts/check-analyzer-package.py \
+            --directory "$RUNNER_TEMP/nupkgs" \
+            --version "${{ steps.candidate.outputs.version }}" \
+            --cli "$RUNNER_TEMP/analyzer-cli/fsharp-analyzers" \
+            --report "$RUNNER_TEMP/analyzer-consumer.sarif"
       - name: Upload the verified release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -227,6 +227,9 @@ path is either calling a context-free handler function directly, or a `TestingHo
 
 ## Testing Event-Sourced Grains
 
+> This is a historical 4.1-and-earlier example. It requires the archived source/package setup;
+> `Orleans.FSharp.EventSourcing` is not published in the 5.0 package set.
+
 Event-sourced grains are especially testable because `apply` and `handle` are pure functions:
 
 ```fsharp

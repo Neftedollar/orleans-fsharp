@@ -17,12 +17,11 @@
 
   <PropertyGroup>
     <!-- Versioning is driven by MinVer from git tags (tag prefix "v", see
-         MinVerTagPrefix below). To cut a release: `git tag v3.0.1 && git push
-         origin v3.0.1` — CI's publish job fires only on v* tag pushes, so a plain
+         MinVerTagPrefix below). To cut a release: `git tag v5.0.0 && git push
+         origin v5.0.0` — CI's publish job fires only on v5.* tag pushes, so a plain
          merge to main never publishes. Between tags MinVer emits a pre-release
-         version (e.g. 3.0.1-alpha.0.N) for local/dev packs, which is expected.
-         (The v3.0.0 release used a temporary MinVerVersionOverride; it has been
-         removed now that tag-driven versioning is the steady state.) -->
+         version for local/dev packs, which is expected. Release-candidate validation
+         uses MinVerVersionOverride without creating or pushing a release tag. -->
     <Authors>Orleans.FSharp Contributors</Authors>
     <Description>Idiomatic F# API for Microsoft Orleans</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

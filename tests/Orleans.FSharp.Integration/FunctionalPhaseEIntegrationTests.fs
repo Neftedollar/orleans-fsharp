@@ -748,8 +748,8 @@ type FunctionalPhaseEIntegrationTests(fixture: FunctionalPhaseEFixture) =
 /// cluster is stable and recycling would land the grain back where it was.
 /// </para>
 /// <para>
-/// The silo removed is always a SECONDARY, and the test picks grain keys until it finds one placed
-/// there. Stopping the primary would take the development clustering table and the client's gateway
+/// The silo removed is always a SECONDARY, selected explicitly for the first activation with the
+/// stock placement hint. Stopping the primary would take the development clustering table and the client's gateway
 /// with it, which proves nothing about journals and everything about the test host.
 /// </para>
 /// <para>
@@ -771,23 +771,25 @@ let private journalSurvivesSiloLoss (provider: string) (bind: IClusterClient -> 
             let account = bind cluster.Client
             let secondary = cluster.SecondarySilos |> Seq.head
             let secondaryAddress = string secondary.SiloAddress
+            let api = account $"move-{provider}-{Guid.NewGuid():N}"
 
-            let mutable placed = None
-            let mutable attempt = 0
+            let! initialSilo =
+                task {
+                    let hintKey = Placement.IPlacementDirector.PlacementHintKey
+                    let previousHint = RequestContext.Get hintKey
 
-            while placed.IsNone && attempt < 60 do
-                let api = account $"move-{provider}-{attempt}"
-                let! host = api.whereAmI ()
+                    try
+                        RequestContext.Set(hintKey, secondary.SiloAddress)
+                        return! api.whereAmI ()
+                    finally
+                        // Only the initial activation is pinned. Recovery must use normal placement.
+                        if isNull previousHint then
+                            RequestContext.Remove hintKey |> ignore
+                        else
+                            RequestContext.Set(hintKey, previousHint)
+                }
 
-                if host = secondaryAddress then
-                    placed <- Some api
-
-                attempt <- attempt + 1
-
-            let api =
-                match placed with
-                | Some api -> api
-                | None -> failwith $"no grain of '{provider}' was placed on the secondary silo in {attempt} attempts"
+            Assert.Equal<string>(secondaryAddress, initialSilo)
 
             let! _ = api.deposit 60m
             let! _ = api.deposit 15m

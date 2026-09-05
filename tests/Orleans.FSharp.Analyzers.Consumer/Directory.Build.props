@@ -1,0 +1,9 @@
+<Project>
+  <!-- A package consumer, deliberately independent of repository project references/CPM. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>
