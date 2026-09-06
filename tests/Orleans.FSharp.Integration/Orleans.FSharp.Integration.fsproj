@@ -40,6 +40,7 @@
     <Compile Include="BroadcastChannelIntegrationTests.fs" />
     <Compile Include="VersioningIntegrationTests.fs" />
     <Compile Include="RollingUpdateIntegrationTests.fs" />
+    <Compile Include="RollingDurableIntegrationTests.fs" />
     <Compile Include="SerializationModeIntegrationTests.fs" />
     <Compile Include="FSharpBinaryCodecIntegrationTests.fs" />
     <Compile Include="TemplateTests.fs" />
@@ -70,6 +71,7 @@
     <Compile Include="FunctionalPhaseEIntegrationTests.fs" />
     <Compile Include="FunctionalJournalHostingTests.fs" />
     <Compile Include="FunctionalPersistenceCodecIntegrationTests.fs" />
+    <Compile Include="FunctionalPersistentHolderIntegrationTests.fs" />
     <Compile Include="FunctionalPhaseFFixture.fs" />
     <Compile Include="FunctionalPhaseFIntegrationTests.fs" />
     <Compile Include="FunctionalPhaseFExpiryFixture.fs" />
@@ -100,6 +102,7 @@
     <ProjectReference Include="..\..\src\Orleans.FSharp.EventSourcing\Orleans.FSharp.EventSourcing.fsproj" />
     <ProjectReference Include="..\Orleans.FSharp.Rolling.V1\Orleans.FSharp.Rolling.V1.fsproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Orleans.FSharp.Rolling.V2\Orleans.FSharp.Rolling.V2.fsproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Orleans.FSharp.Rolling.Bridge\Orleans.FSharp.Rolling.Bridge.fsproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

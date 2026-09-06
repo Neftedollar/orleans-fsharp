@@ -15,6 +15,7 @@
     <Project Path="tests/Orleans.FSharp.Integration/Orleans.FSharp.Integration.fsproj" />
     <Project Path="tests/Orleans.FSharp.Rolling.V1/Orleans.FSharp.Rolling.V1.fsproj" />
     <Project Path="tests/Orleans.FSharp.Rolling.V2/Orleans.FSharp.Rolling.V2.fsproj" />
+    <Project Path="tests/Orleans.FSharp.Rolling.Bridge/Orleans.FSharp.Rolling.Bridge.fsproj" />
     <Project Path="tests/Orleans.FSharp.Tests/Orleans.FSharp.Tests.fsproj" />
     <Project Path="tests/Orleans.FSharp.Tests.Facades/Orleans.FSharp.Tests.Facades.csproj" />
   </Folder>

@@ -330,6 +330,19 @@ builds and starts two separate silo executables, keeps both alive in one cluster
 native interface versions, and then removes N+1 to verify rollback. The harness is
 `RollingUpdateIntegrationTests.fs`; the binaries live in `Orleans.FSharp.Rolling.V1` and `.V2`.
 
+`RollingDurableIntegrationTests.fs` adds a separate-process data-evolution scenario. N writes old
+state and events to retained files; N+1 upgrades an existing identity while N is still running,
+and both old API calls and the new operation are exercised. Fresh processes then verify recovery,
+rollback to a bridge with compatible readers, and explicit refusal by the original old reader
+without changing the durable files.
+
+The scenario covers ordinary versioned state, native `StateStorage` journal views, native
+`LogStorage` events, and a typed `CustomStorage` snapshot plus retained tail. The custom store owns
+its versioned JSON format and pure mappings; it does not imply that runtime envelope upcasters
+automatically migrate a user's database. The test checks old/new tail versions, snapshot contents
+after compaction, and exact folded totals after restart. Its local file CAS and atomic replacement
+do not certify power-loss behavior or arbitrary third-party database providers.
+
 For persistence compatibility, keep byte fixtures written by historical serializers. The current
 suite has two layers: pre-schema envelope fixtures prove an omitted field becomes schema version
 `0`; released `v4.1.0` journal view/entry fixtures contain a real F# binary `EvolutionV0` payload

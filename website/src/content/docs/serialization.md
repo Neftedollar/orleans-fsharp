@@ -155,9 +155,17 @@ let accountDefinition =
 
 ### Payload-size guard (5.0 preview)
 
-On `main`, every functional persistence codec rejects an encoded state value, journal event, or
-snapshot larger than **16 MiB** on both write and read. The guard applies to each payload
-individually; it is not a limit on the complete provider record, grain state, or journal.
+On `main`, every functional persistence codec defaults to **16 MiB** per encoded value. Functional
+state envelopes, journal events, and snapshots check that budget before payload decoding and
+before a storage write. The guard is not a quota for the complete provider record, grain, or journal.
+
+Direct `OrleansBinary` state without `withSchema` keeps its original provider-facing application
+type: it is not silently converted to an envelope. Its logical Orleans-encoded value is checked
+after the provider loads it, before application access, and again before every explicit write.
+This check cannot prevent the provider's initial decoding allocation or measure its outer JSON,
+base64, or database framing. Configure the provider's serializer when a raw-storage-byte limit is
+required. Encoding may also allocate before the encoded length can be checked; this is an accepted
+payload-size limit, not a maximum-memory guarantee.
 
 `WithMaxPayloadBytes` returns a new codec configuration, leaving the built-in singleton unchanged:
 
@@ -171,9 +179,25 @@ let auditState =
     |> PersistentState.withCodec largeJsonCodec
 ```
 
-The override follows the same element/grain/silo resolution order as the codec itself. Choose it
-from measured payloads and provider limits; increasing it also increases the maximum allocation
-accepted before deserialization. This API is part of the 5.0 preview on `main`, not stable 4.1.
+The override follows the same element/grain/silo resolution order as the codec itself, including
+direct binary holders. Choose it from measured payloads and provider limits. This API is part of
+the 5.0 preview on `main`, not stable 4.1.
+
+### Persistent holder semantics
+
+JSON and schema-backed holders retain one live decoded `IPersistentState<'State>.State` value.
+`WriteStateAsync()` re-encodes its current contents, including deliberate in-place edits to mutable
+fields or nested collections. A successful reload or clear replaces that live value; a failed
+write does not discard it, so application code can retry. No getter or handler return value writes
+storage implicitly.
+
+Activation migration refreshes the encoded envelope before delegating to Orleans' native holder
+migration. Deliberate in-memory edits move with the activation without an implicit storage write;
+a later ordinary deactivation/reload still restores the last explicitly committed value.
+
+Prefer immutable F# records and explicit assignment of replacement state. Supporting deliberate
+mutable values does not make deep mutation safe in `readOnly` or interleaving callbacks; see
+[Immutable-state guidance](/orleans-fsharp/functional-grains/#immutable-state-guidance-deep-mutation-is-unguarded-by-design).
 
 ### Provider-wide serializer versus a functional envelope
 

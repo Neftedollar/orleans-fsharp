@@ -38,9 +38,12 @@ that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
-The 5.0 preview rejects any one encoded functional state value, journal event, or snapshot larger
-than **16 MiB**, before writing and before decoding. This is a per-payload guard, not a quota for a
-whole grain, storage record, journal, or provider.
+The 5.0 preview defaults to **16 MiB** for one encoded functional state value, journal event, or
+snapshot. Enveloped payloads are checked before decoding and before writing. Direct binary state
+keeps its old provider schema: its logical Orleans encoding is checked after the provider loads
+the value and before each explicit write. Pre-decode protection for that direct format belongs to
+the provider serializer. This is a per-payload guard, not a quota for a whole grain, storage record,
+journal, provider, or process memory.
 
 Use an immutable per-codec override only after validating the storage provider and memory budget:
 

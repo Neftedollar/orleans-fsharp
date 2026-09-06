@@ -65,17 +65,31 @@ A field name is its operation ID unless `operationId` overrides it. Renaming a f
 keeping the old ID is a protocol change.
 
 Contract matching is exact by default. For a rolling deployment, Orleans routing and functional
-payload admission must both accept the caller:
+payload admission must both accept the caller. This independently complete v2 contract admits v1
+callers while keeping `rebuildIndex`, introduced in v2, unavailable to them:
 
+<!-- docs-snippet:functional-contract-versioning-v2 -->
 ```fsharp
-grainContract<RoomActor, RoomId, RoomApiV2> {
-    grainType "chat.room"
-    version 2
-    acceptsVersions 1 2
-    stringKeyMapped RoomId.value RoomId.create
-    sinceVersion (_.newOperation) 2
-}
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type CatalogActor = private CatalogActor of unit
+
+[<NoEquality; NoComparison>]
+type CatalogApiV2 =
+    { getItem: string -> Task<string>
+      rebuildIndex: unit -> Task<unit> }
+
+let catalogContractV2 =
+    grainContract<CatalogActor, string, CatalogApiV2> {
+        grainType "catalog"
+        version 2
+        acceptsVersions (BackwardCompatible 1)
+        stringKey
+        sinceVersion 2 (_.rebuildIndex)
+    }
 ```
+<!-- docs-snippet-end:functional-contract-versioning-v2 -->
 
 Deploy readers before writers, keep stable operation IDs, and test N and N+1 as separate
 processes. Contract compatibility does not prove stored state or event compatibility.

@@ -461,9 +461,12 @@ that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
-The 5.0 preview rejects any one encoded functional state value, journal event, or snapshot larger
-than **16 MiB**, before writing and before decoding. This is a per-payload guard, not a quota for a
-whole grain, storage record, journal, or provider.
+The 5.0 preview defaults to **16 MiB** for one encoded functional state value, journal event, or
+snapshot. Enveloped payloads are checked before decoding and before writing. Direct binary state
+keeps its old provider schema: its logical Orleans encoding is checked after the provider loads
+the value and before each explicit write. Pre-decode protection for that direct format belongs to
+the provider serializer. This is a per-payload guard, not a quota for a whole grain, storage record,
+journal, provider, or process memory.
 
 Use an immutable per-codec override only after validating the storage provider and memory budget:
 
@@ -800,17 +803,31 @@ A field name is its operation ID unless `operationId` overrides it. Renaming a f
 keeping the old ID is a protocol change.
 
 Contract matching is exact by default. For a rolling deployment, Orleans routing and functional
-payload admission must both accept the caller:
+payload admission must both accept the caller. This independently complete v2 contract admits v1
+callers while keeping `rebuildIndex`, introduced in v2, unavailable to them:
 
+<!-- docs-snippet:functional-contract-versioning-v2 -->
 ```fsharp
-grainContract<RoomActor, RoomId, RoomApiV2> {
-    grainType "chat.room"
-    version 2
-    acceptsVersions 1 2
-    stringKeyMapped RoomId.value RoomId.create
-    sinceVersion (_.newOperation) 2
-}
+open System.Threading.Tasks
+open Orleans.FSharp
+
+type CatalogActor = private CatalogActor of unit
+
+[<NoEquality; NoComparison>]
+type CatalogApiV2 =
+    { getItem: string -> Task<string>
+      rebuildIndex: unit -> Task<unit> }
+
+let catalogContractV2 =
+    grainContract<CatalogActor, string, CatalogApiV2> {
+        grainType "catalog"
+        version 2
+        acceptsVersions (BackwardCompatible 1)
+        stringKey
+        sinceVersion 2 (_.rebuildIndex)
+    }
 ```
+<!-- docs-snippet-end:functional-contract-versioning-v2 -->
 
 Deploy readers before writers, keep stable operation IDs, and test N and N+1 as separate
 processes. Contract compatibility does not prove stored state or event compatibility.
@@ -3128,9 +3145,17 @@ let accountDefinition =
 
 ### Payload-size guard (5.0 preview)
 
-On `main`, every functional persistence codec rejects an encoded state value, journal event, or
-snapshot larger than **16 MiB** on both write and read. The guard applies to each payload
-individually; it is not a limit on the complete provider record, grain state, or journal.
+On `main`, every functional persistence codec defaults to **16 MiB** per encoded value. Functional
+state envelopes, journal events, and snapshots check that budget before payload decoding and
+before a storage write. The guard is not a quota for the complete provider record, grain, or journal.
+
+Direct `OrleansBinary` state without `withSchema` keeps its original provider-facing application
+type: it is not silently converted to an envelope. Its logical Orleans-encoded value is checked
+after the provider loads it, before application access, and again before every explicit write.
+This check cannot prevent the provider's initial decoding allocation or measure its outer JSON,
+base64, or database framing. Configure the provider's serializer when a raw-storage-byte limit is
+required. Encoding may also allocate before the encoded length can be checked; this is an accepted
+payload-size limit, not a maximum-memory guarantee.
 
 `WithMaxPayloadBytes` returns a new codec configuration, leaving the built-in singleton unchanged:
 
@@ -3144,9 +3169,25 @@ let auditState =
     |> PersistentState.withCodec largeJsonCodec
 ```
 
-The override follows the same element/grain/silo resolution order as the codec itself. Choose it
-from measured payloads and provider limits; increasing it also increases the maximum allocation
-accepted before deserialization. This API is part of the 5.0 preview on `main`, not stable 4.1.
+The override follows the same element/grain/silo resolution order as the codec itself, including
+direct binary holders. Choose it from measured payloads and provider limits. This API is part of
+the 5.0 preview on `main`, not stable 4.1.
+
+### Persistent holder semantics
+
+JSON and schema-backed holders retain one live decoded `IPersistentState<'State>.State` value.
+`WriteStateAsync()` re-encodes its current contents, including deliberate in-place edits to mutable
+fields or nested collections. A successful reload or clear replaces that live value; a failed
+write does not discard it, so application code can retry. No getter or handler return value writes
+storage implicitly.
+
+Activation migration refreshes the encoded envelope before delegating to Orleans' native holder
+migration. Deliberate in-memory edits move with the activation without an implicit storage write;
+a later ordinary deactivation/reload still restores the last explicitly committed value.
+
+Prefer immutable F# records and explicit assignment of replacement state. Supporting deliberate
+mutable values does not make deep mutation safe in `readOnly` or interleaving callbacks; see
+[Immutable-state guidance](https://neftedollar.com/orleans-fsharp/functional-grains/#immutable-state-guidance-deep-mutation-is-unguarded-by-design).
 
 ### Provider-wide serializer versus a functional envelope
 
@@ -6311,6 +6352,19 @@ Do not model an N/N+1 deployment by loading both definitions into one test assem
 builds and starts two separate silo executables, keeps both alive in one cluster, exercises their
 native interface versions, and then removes N+1 to verify rollback. The harness is
 `RollingUpdateIntegrationTests.fs`; the binaries live in `Orleans.FSharp.Rolling.V1` and `.V2`.
+
+`RollingDurableIntegrationTests.fs` adds a separate-process data-evolution scenario. N writes old
+state and events to retained files; N+1 upgrades an existing identity while N is still running,
+and both old API calls and the new operation are exercised. Fresh processes then verify recovery,
+rollback to a bridge with compatible readers, and explicit refusal by the original old reader
+without changing the durable files.
+
+The scenario covers ordinary versioned state, native `StateStorage` journal views, native
+`LogStorage` events, and a typed `CustomStorage` snapshot plus retained tail. The custom store owns
+its versioned JSON format and pure mappings; it does not imply that runtime envelope upcasters
+automatically migrate a user's database. The test checks old/new tail versions, snapshot contents
+after compaction, and exact folded totals after restart. Its local file CAS and atomic replacement
+do not certify power-loss behavior or arbitrary third-party database providers.
 
 For persistence compatibility, keep byte fixtures written by historical serializers. The current
 suite has two layers: pre-schema envelope fixtures prove an omitted field becomes schema version

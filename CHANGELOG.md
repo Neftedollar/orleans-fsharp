@@ -8,7 +8,9 @@ published stable line is 4.1 (currently 4.1.0).
 ### Added
 
 - **Bounded functional persistence payloads.** Functional state values, journal events, and
-  snapshots now reject encoded payloads larger than 16 MiB on both write and read. A specific
+  snapshots now reject encoded payloads larger than 16 MiB on both write and read. Direct binary
+  state retains its provider schema and is measured after provider decoding; envelopes and journal
+  payloads are checked before decoding. A specific
   immutable codec configuration can opt into a different positive limit with
   `WithMaxPayloadBytes`; the provider-wide `FSharpJsonGrainStorageSerializer` exposes the same
   default and an explicit constructor override. The limit is per payload, not a total grain-state
@@ -30,6 +32,10 @@ published stable line is 4.1 (currently 4.1.0).
   `PersistentState.withSchema`, journal `stateSchema`, and journal `eventSchema` select them.
   Pre-feature envelopes are version zero, pinned by pre-schema envelope fixtures and released
   v4.1.0 journal payload fixtures which run through the current typed upcaster pipeline.
+- **Durable rolling-update regression coverage.** Separate N/N+1/bridge binaries now exercise
+  changed ordinary state, native journal views/events, and an application-owned snapshot/tail
+  format. Old callers remain usable during overlap; fresh processes prove recovery and compatible
+  rollback, while original readers reject future schemas without rewriting durable records.
 - **Complete provider-level stream callbacks.** The F# stream module now exposes native batch
   publish/subscribe, item and batch error/completion handlers, server-side Orleans filter data,
   token-aware subscribe/resume variants, and durable reattachment helpers. Producer terminal
@@ -73,6 +79,13 @@ published stable line is 4.1 (currently 4.1.0).
 
 ### Fixed
 
+- **Persistent holders preserve deliberate in-place edits.** JSON and schema-backed state retain
+  their decoded live value and re-encode it on every explicit write. Reloads and clears replace
+  the cached value, while failed/cancelled writes remain retryable. Activation migration refreshes
+  the native envelope without implicitly committing storage. Direct binary state also
+  enforces its selected payload budget without changing the provider-facing type or stored format.
+- **Compilable contract-versioning documentation.** The focused contract page now uses the actual
+  policy-based `acceptsVersions` and version-first `sinceVersion` syntax in a self-contained sample.
 - **Functional silo validation precedes Orleans runtime initialization.** Invalid definitions
   now fail at `ServiceLifecycleStage.First`, before the `RuntimeInitialize` stage starts
   background services. This avoids leaked directory membership loops after rejected startup

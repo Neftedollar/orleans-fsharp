@@ -89,6 +89,7 @@
     <Compile Include="FunctionalPointFreeFixture.fs" />
     <Compile Include="GrainTypeDerivationFixtures.fs" />
     <Compile Include="FunctionalCompileFixtures.fs" />
+    <Compile Include="DocumentationContractSamplesTests.fs" />
     <Compile Include="FunctionalShapeTests.fs" />
     <Compile Include="FunctionalContractTests.fs" />
     <Compile Include="FunctionalKeyCodecTests.fs" />
@@ -103,6 +104,7 @@
     <Compile Include="FunctionalTupleCodecTests.fs" />
     <Compile Include="FunctionalObserverContractTests.fs" />
     <Compile Include="FunctionalPersistenceSerializationTests.fs" />
+    <Compile Include="FunctionalPersistentHolderRegressionTests.fs" />
     <Compile Include="FunctionalPersistentStateTests.fs" />
     <Compile Include="FunctionalRuntimeTests.fs" />
     <Compile Include="FunctionalInterleaveMarkerTests.fs" />

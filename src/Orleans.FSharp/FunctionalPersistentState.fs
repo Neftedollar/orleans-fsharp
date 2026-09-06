@@ -507,27 +507,175 @@ type internal FunctionalEncodedPersistentState<'State>
             SchemaVersion = (schema |> Option.map _.CurrentVersion |> Option.defaultValue 0)
         )
 
+    // The application observes one live holder value, just like IPersistentState<T>. Decoding
+    // on every getter detached in-place edits from the envelope written by WriteStateAsync.
+    let mutable cachedEnvelope: FunctionalPersistenceEnvelope = null
+    let mutable cachedState: 'State voption = ValueNone
+
+    let invalidate () =
+        cachedEnvelope <- null
+        cachedState <- ValueNone
+
+    let getState () =
+        let envelope = inner.State
+        match cachedState with
+        | ValueSome value when obj.ReferenceEquals(envelope, cachedEnvelope) -> value
+        | _ ->
+            let value = decode ()
+            cachedEnvelope <- envelope
+            cachedState <- ValueSome value
+            value
+
+    let setState value =
+        // Encoding first keeps a failed assignment from replacing either holder.
+        let envelope = encode value
+        inner.State <- envelope
+        cachedEnvelope <- envelope
+        cachedState <- ValueSome value
+
+    let write (operation: unit -> Task) : Task =
+        task {
+            // Re-encode the live object, even if the State setter was never called after a
+            // read. This also rechecks payload size after an in-place collection mutation.
+            setState (getState ())
+            do! operation ()
+        }
+
+    let read (operation: unit -> Task) : Task =
+        task {
+            do! operation ()
+            invalidate ()
+            // A successful reload must not hide an oversized/corrupt record until a later
+            // getter. A failed provider read leaves the previous live holder available.
+            getState () |> ignore
+        }
+
+    let clear (operation: unit -> Task) : Task =
+        task {
+            do! operation ()
+            invalidate ()
+        }
+
+    /// <summary>
+    /// Replace only the native holder's migration participant, retaining its SetupState lifecycle
+    /// subscription. Delegating through one participant makes refresh-before-dehydrate explicit
+    /// instead of depending on registration/iteration order between two participants.
+    /// </summary>
+    member this.AttachMigration(context: IGrainContext) =
+        match inner with
+        | :? IGrainMigrationParticipant as native when not (isNull (box context)) ->
+            context.ObservableLifecycle.RemoveMigrationParticipant native
+            context.ObservableLifecycle.AddMigrationParticipant(this :> IGrainMigrationParticipant)
+        | _ -> ()
+
+    interface IGrainMigrationParticipant with
+        member _.OnDehydrate(context) =
+            match inner with
+            | :? IGrainMigrationParticipant as native ->
+                // This updates memory only. Native migration transfers the refreshed envelope
+                // together with its original ETag/RecordExists; it must not write storage.
+                setState (getState ())
+                native.OnDehydrate context
+            | _ -> ()
+
+        member _.OnRehydrate(context) =
+            try
+                match inner with
+                | :? IGrainMigrationParticipant as native -> native.OnRehydrate context
+                | _ -> ()
+            finally
+                // Native rehydration precedes SetupState and may still fall back to loading
+                // storage. Decode lazily once that lifecycle has established the native value.
+                invalidate ()
+
     interface IPersistentState<'State>
 
     interface IStorage<'State> with
         member _.State
-            with get () = decode ()
-            and set value = inner.State <- encode value
+            with get () = getState ()
+            and set value = setState value
 
     interface IStorage with
         member _.Etag = inner.Etag
         member _.RecordExists = inner.RecordExists
-        member _.ReadStateAsync() = inner.ReadStateAsync()
-        member _.WriteStateAsync() = inner.WriteStateAsync()
-        member _.ClearStateAsync() = inner.ClearStateAsync()
+        member _.ReadStateAsync() = read inner.ReadStateAsync
+        member _.WriteStateAsync() = write inner.WriteStateAsync
+        member _.ClearStateAsync() = clear inner.ClearStateAsync
         member _.ReadStateAsync(cancellationToken: CancellationToken) : Task =
-            inner.ReadStateAsync cancellationToken
+            read (fun () -> inner.ReadStateAsync cancellationToken)
 
         member _.WriteStateAsync(cancellationToken: CancellationToken) : Task =
-            inner.WriteStateAsync cancellationToken
+            write (fun () -> inner.WriteStateAsync cancellationToken)
 
         member _.ClearStateAsync(cancellationToken: CancellationToken) : Task =
-            inner.ClearStateAsync cancellationToken
+            clear (fun () -> inner.ClearStateAsync cancellationToken)
+
+/// <summary>
+/// Applies the functional payload budget to the legacy direct provider schema without changing
+/// the provider-facing CLR type or bytes. The provider necessarily decodes a direct value before
+/// this adapter can measure it; byte-level pre-decode limits belong to the provider serializer.
+/// </summary>
+[<Sealed>]
+type internal FunctionalDirectPersistentState<'State>
+    (inner: IPersistentState<'State>, selectedCodec: FunctionalPersistenceCodec, orleansCodec: IFunctionalPayloadCodec) =
+
+    let mutable validated = false
+    let mutable validatedValue: obj = null
+
+    let invalidate () =
+        validated <- false
+        validatedValue <- null
+
+    let validate value =
+        FunctionalPersistenceEncoding.encode selectedCodec orleansCodec value |> ignore
+        validatedValue <- box value
+        validated <- true
+
+    let getState () =
+        let value = inner.State
+        // Lifecycle loading is performed by the native facet before its first application read.
+        // Revalidate a replaced native value too (for example after Orleans rehydration). Mutable
+        // changes to an already admitted value are always checked again at the write boundary.
+        if inner.RecordExists && (not validated || not (obj.ReferenceEquals(box value, validatedValue))) then
+            validate value
+        value
+
+    let read (operation: unit -> Task) : Task =
+        task {
+            do! operation ()
+            invalidate ()
+            getState () |> ignore
+        }
+
+    let write (operation: unit -> Task) : Task =
+        task {
+            validate inner.State
+            do! operation ()
+        }
+
+    let clear (operation: unit -> Task) : Task =
+        task {
+            do! operation ()
+            invalidate ()
+        }
+
+    interface IPersistentState<'State>
+    interface IStorage<'State> with
+        member _.State
+            with get () = getState ()
+            and set value =
+                inner.State <- value
+                invalidate ()
+
+    interface IStorage with
+        member _.Etag = inner.Etag
+        member _.RecordExists = inner.RecordExists
+        member _.ReadStateAsync() = read inner.ReadStateAsync
+        member _.WriteStateAsync() = write inner.WriteStateAsync
+        member _.ClearStateAsync() = clear inner.ClearStateAsync
+        member _.ReadStateAsync(cancellationToken: CancellationToken) = read (fun () -> inner.ReadStateAsync cancellationToken)
+        member _.WriteStateAsync(cancellationToken: CancellationToken) = write (fun () -> inner.WriteStateAsync cancellationToken)
+        member _.ClearStateAsync(cancellationToken: CancellationToken) = clear (fun () -> inner.ClearStateAsync cancellationToken)
 
 /// <summary>The Orleans facet configuration of one attached persistent state.</summary>
 [<Sealed>]
@@ -600,19 +748,24 @@ module internal FunctionalFacet =
             fun selectedCodec orleansCodec factory context ->
                 match selectedCodec.Kind, reference.Schema with
                 | FunctionalPersistenceCodecKind.OrleansBinary, None ->
-                    box (factory.Create<'StoredState>(context, configuration))
+                    box (
+                        FunctionalDirectPersistentState<'StoredState>(
+                            factory.Create<'StoredState>(context, configuration), selectedCodec, orleansCodec)
+                        :> IPersistentState<'StoredState>
+                    )
                 | _ ->
                     let inner = factory.Create<FunctionalPersistenceEnvelope>(context, configuration)
 
-                    box (
+                    let encoded =
                         FunctionalEncodedPersistentState<'StoredState>(
                             inner,
                             selectedCodec,
                             orleansCodec,
                             reference.Schema
                         )
-                        :> IPersistentState<'StoredState>
-                    )
+
+                    encoded.AttachMigration context
+                    box (encoded :> IPersistentState<'StoredState>)
           Facade =
             fun instance scope -> box (FunctionalPersistentStateFacade<'StoredState>(facet instance, descriptor, scope))
           GetState = fun instance -> box (facet instance).State

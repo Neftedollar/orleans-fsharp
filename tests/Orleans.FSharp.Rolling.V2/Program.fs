@@ -4,6 +4,7 @@ open System
 open System.Net
 open System.Threading.Tasks
 open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Orleans.Hosting
 open Orleans.FSharp
@@ -73,13 +74,28 @@ let main arguments =
     builder.UseOrleans(fun silo -> silo.AddFunctionalGrain(definition) |> ignore)
     |> ignore
 
+    if arguments |> Array.contains "--store" then
+        builder.UseOrleans(fun silo -> Orleans.FSharp.Rolling.Durable.configure (argument "--store" arguments) silo)
+        |> ignore
+
     let host = builder.Build()
 
     task {
         do! host.StartAsync()
         Console.Out.WriteLine "READY v2"
         Console.Out.Flush()
-        let! _ = Console.In.ReadLineAsync()
+        let mutable running = true
+        while running do
+            let! line = Console.In.ReadLineAsync()
+            if isNull line || line = "stop" then running <- false
+            else
+                try
+                    let! result =
+                        Orleans.FSharp.Rolling.Durable.command
+                            (host.Services.GetRequiredService<Orleans.IGrainFactory>()) line
+                    Console.Out.WriteLine $"RESULT {result}"
+                with error -> Console.Out.WriteLine $"ERROR {error}"
+                Console.Out.Flush()
         do! host.StopAsync()
     }
     |> fun work -> work.GetAwaiter().GetResult()

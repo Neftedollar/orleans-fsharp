@@ -76,7 +76,7 @@ jobs:
       # `dotnet test ... --list-tests`.
       - run: >
           dotnet test tests/Orleans.FSharp.Integration
-          --filter "FullyQualifiedName~Functional|FullyQualifiedName~ChatRoomSample|FullyQualifiedName~RollingUpdate|FullyQualifiedName~StreamingIntegrationTests"
+          --filter "FullyQualifiedName~Functional|FullyQualifiedName~ChatRoomSample|FullyQualifiedName~RollingUpdate|FullyQualifiedName~RollingDurable|FullyQualifiedName~StreamingIntegrationTests"
           --verbosity normal ${{ matrix.arg }}
       # The sample is a real console process, not a test host: `dotnet build` alone would not
       # notice it crashing on its first grain call — which is exactly how it stayed broken for as
