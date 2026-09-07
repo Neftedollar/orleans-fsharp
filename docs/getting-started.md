@@ -31,6 +31,10 @@ dotnet new orleans-fsharp -n MyCounter
 cd MyCounter
 ```
 
+**5.0.0 template correction:** in `src/MyCounter.Grains/CounterGrain.fs`, add
+`readOnly (_.value)` to `CounterApi.contract` after `int64Key` before running the silo.
+See the [template startup note](release-status.md#the-500-project-template-needs-a-one-line-contract-correction).
+
 If you are contributing to Orleans.FSharp or validating changes from `main`, clone the repository
 and replace the package-install command above with the optional checkout install:
 

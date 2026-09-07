@@ -119,6 +119,10 @@ dotnet build
 dotnet test
 ```
 
+The published 5.0.0 template needs `readOnly (_.value)` added to `CounterApi.contract` in
+`src/MyApp.Grains/CounterGrain.fs` before running its silo. The source template is corrected;
+see the [startup note and workaround](docs/release-status.md#the-500-project-template-needs-a-one-line-contract-correction).
+
 Or add the packages to an existing application:
 
 ```bash

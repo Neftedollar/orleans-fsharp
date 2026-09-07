@@ -13,5 +13,9 @@ Install a 5.x template package to get the functional scaffold. Each published te
 to the exact matching Orleans.FSharp package set, including prerelease versions, so generated
 projects cannot silently restore an older stable runtime.
 
+Projects created with the published 5.0.0 template need a
+[one-line startup correction](https://neftedollar.com/orleans-fsharp/release-status/#the-500-project-template-needs-a-one-line-contract-correction).
+The source template already includes that correction.
+
 See the [Getting Started guide](https://neftedollar.com/orleans-fsharp/getting-started/) for the
 generated solution structure and next steps.

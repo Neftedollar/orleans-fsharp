@@ -5,6 +5,10 @@ open MyApp.Grains
 open Swensen.Unquote
 open global.Xunit
 
+[<Fact>]
+let ``functional grain definition initializes with a valid contract`` () =
+    Assert.NotNull(box CounterGrain.definition)
+
 [<global.FsCheck.Xunit.Property>]
 let ``increment increases a non-negative counter by one`` (state: NonNegativeInt) =
     Counter.increment state.Get = state.Get + 1

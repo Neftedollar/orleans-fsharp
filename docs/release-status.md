@@ -21,6 +21,19 @@ records, and `FunctionalGrain.ref`.
 
 ## Production boundaries in 5.0.0
 
+### The 5.0.0 project template needs a one-line contract correction
+
+The published `Orleans.FSharp.Templates` 5.0.0 package omits `readOnly (_.value)` from
+`CounterApi.contract` in `src/<App>.Grains/CounterGrain.fs`. The project builds and its five pure
+transition tests pass, but starting its silo fails because `handleQuery` requires a read-only
+operation. Add `readOnly (_.value)` inside that contract, immediately after `int64Key`, then
+rebuild and run the application. The core 5.0.0 packages do not need changing for this correction.
+
+The source template is corrected, with a regression test that initializes the grain definition
+and an end-to-end template process check in the release gate. A package update does not rewrite
+previously generated application files; applications created with the 5.0.0 template need the
+source correction above.
+
 ### TaskSeq is an upstream boundary when wrapping streaming replies
 
 Direct enumeration of a functional streaming reply is the supported path. With

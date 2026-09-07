@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The project template now declares its `value` query `readOnly`, so a generated counter silo
+  starts with the 5.0 runtime's contract validation. The 5.0.0 template compiled and its pure
+  transition tests passed, but its grain definition failed during application startup.
+- Template tests now initialize the actual functional definition, and the release gate runs the
+  generated silo, verifies its grain-call results, and requires a successful process exit.
+
 ## [5.0.0] - 2026-09-07
 
 The functional-first release: typed grain contracts, explicit state transitions, durable schema

@@ -21,6 +21,7 @@ module CounterApi =
             grainType "myapp.counter"
             version 1
             int64Key
+            readOnly (_.value)
         }
 
     /// <summary>Create a typed counter reference from an Orleans grain factory and key.</summary>
