@@ -69,7 +69,7 @@ implemented, and the wrapper preserves that behavior.
 
 ## Are DurableGrain, Microsoft.Orleans.Journaling, and Durable Jobs included?
 
-Not in the current main package. They are intentionally deferred; the current journaled functional
+Not in Orleans.FSharp 5.0.0. They are intentionally deferred; the current journaled functional
 grain is built over Orleans log-consistency providers. Experimental journaling support can be
 isolated in a future opt-in subpackage instead of making the stable package depend on it.
 
@@ -86,15 +86,14 @@ The Dashboard activation table displays the functional manifest type, for exampl
 ## How do I start a project?
 
 ```bash
-git clone https://github.com/Neftedollar/orleans-fsharp.git
-dotnet new install ./orleans-fsharp/templates
+dotnet new install Orleans.FSharp.Templates::5.0.0
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
-Legacy archive. Use the source-checkout command above for the preview, then follow
-[Getting Started](/orleans-fsharp/getting-started/). See [Release and Production Status](/orleans-fsharp/release-status/) before
-choosing between released packages and `main`.
+This installs the published stable template. Contributors validating repository changes can
+instead clone the repository and run `dotnet new install ./orleans-fsharp/templates`. Then follow
+[Getting Started](/orleans-fsharp/getting-started/) and review the boundaries in
+[Release and Production Status](/orleans-fsharp/release-status/).
 
 ## Where is documentation for existing applications on the original API?
 

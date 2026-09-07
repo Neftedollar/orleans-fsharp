@@ -1,24 +1,25 @@
 # Release and Production Status
 
-This page separates the published package line from the documentation built from `main`.
+Orleans.FSharp 5.0.0 is the current published stable release. This page records its verified
+production boundaries and the status of earlier release lines.
 
 ## Release channels
 
 | Channel | Status | Use it for |
 |---|---|---|
-| Orleans.FSharp 4.1 (latest `4.1.0`) | Published stable | Production evaluation and applications which need a released package |
-| `main` / Orleans.FSharp 5.0 preview | Next major, not published stable | Evaluating and contributing to the next release from source |
+| Orleans.FSharp `5.0.0` | Published stable | New applications and production evaluation |
+| Orleans.FSharp `4.1.0` | Superseded stable line | Existing applications preparing a 5.0 migration |
 | Legacy authoring models | Archived and unsupported | Migration reference for existing applications only |
 
-The current README, `docs/`, website, and `[Unreleased]` changelog section track `main`, so they may
-describe 5.0-preview behavior that 4.1 packages do not contain. For the exact stable surface, read
-the documentation at the `v4.1.0` tag. Do not infer that an item under `[Unreleased]` has shipped.
+The current documentation describes 5.0.0. For immutable release documentation, read the repository
+at the `v5.0.0` tag. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
+tag while planning their migration.
 
 The Legacy archive receives no new Legacy release line, features, compatibility work, or security
 fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
 records, and `FunctionalGrain.ref`.
 
-## Production boundaries on `main`
+## Production boundaries in 5.0.0
 
 ### TaskSeq is an upstream boundary when wrapping streaming replies
 
@@ -33,12 +34,12 @@ When one grain relays another grain's streaming reply, return a direct delegatin
 boundary are documented under [Authoring a producer](streaming-replies.md#authoring-a-producer).
 
 `Stream.asTaskSeq` and its cursor-preserving `Stream.asTaskSeqWithToken` variant are separate
-Orleans pub/sub adapters. On `main` they create the subscription on first enumeration and dispose
+Orleans pub/sub adapters. In 5.0.0 they create the subscription on first enumeration and dispose
 that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
-The 5.0 preview defaults to **16 MiB** for one encoded functional state value, journal event, or
+Orleans.FSharp 5.0.0 defaults to **16 MiB** for one encoded functional state value, journal event, or
 snapshot. Enveloped payloads are checked before decoding and before writing. Direct binary state
 keeps its old provider schema: its logical Orleans encoding is checked after the provider loads
 the value and before each explicit write. Pre-decode protection for that direct format belongs to
@@ -56,8 +57,8 @@ let largeJsonCodec =
 The normal resolution order is unchanged: persistent-state element, grain definition, then silo
 default; journal definition, then silo default. The provider-wide
 `FSharpJsonGrainStorageSerializer` has its own 16 MiB default and constructor override because it
-controls the complete provider value rather than a functional envelope payload. These limits are
-present on `main`; they are not part of the published 4.1 package.
+controls the complete provider value rather than a functional envelope payload. These limits were
+introduced in 5.0.0 and are not part of the 4.1 package.
 
 ### Generalized binary payloads reject unsafe graphs
 
@@ -74,7 +75,7 @@ bytes. The precise contract is in
 
 ### Stateless-worker implicit streams require Orleans 10.3+
 
-On `main`, a `grainFor` definition can combine `statelessWorker` with `onStream` when the loaded
+In 5.0.0, a `grainFor` definition can combine `statelessWorker` with `onStream` when the loaded
 `Orleans.Streaming` runtime is 10.3.0 or newer. Orleans treats the local worker activations as
 competing consumers, so one stream item is handled by one available worker; do not assume that all
 local activations receive a copy.
@@ -85,10 +86,10 @@ diagnostic instead of failing later during activation. `statelessWorker` plus `o
 remains unsupported on every supported Orleans version because broadcast channels did not gain
 equivalent stateless-worker semantics.
 
-This capability is part of the 5.0 preview and has a live Orleans 10.3 integration test. It is not
-part of the published 4.1 package.
+This capability shipped in 5.0.0 and has a live Orleans 10.3 integration test. It is not part of
+the 4.1 package.
 
-The 5.0 preview also exposes Orleans' complete stateless-worker placement setting:
+Orleans.FSharp 5.0.0 also exposes Orleans' complete stateless-worker placement setting:
 `statelessWorker maxLocalWorkers` preserves the stock `removeIdleWorkers = true` default, while
 `statelessWorker maxLocalWorkers false` allows a functional definition to use `collectionAge`.
 The generated manifest is checked against the corresponding live Orleans attribute on both ends

@@ -22,9 +22,10 @@ Security support applies to the current functional API only.
 
 | Version / branch | Supported | Notes |
 |---|---|---|
-| `4.1.x` | Yes | Latest published stable line |
-| `main` / 5.0 preview | Yes | Next major under development; not a stable package |
-| `4.0.x` and older | No | Upgrade to the latest 4.1 patch or a later supported release |
+| `5.0.x` | Yes | Current published stable line |
+| `4.1.x` | Yes | Previous stable line; functional API only |
+| `main` | Yes | Development branch; changes after the release tag may be unreleased |
+| `4.0.x` and older | No | Upgrade to 5.0.0 or another supported release |
 | Legacy authoring models | No | Archived; no new Legacy release line or security fixes |
 
 `SECURITY.md` at the repository root is canonical. `.github/SECURITY.md` is an exact mirror for

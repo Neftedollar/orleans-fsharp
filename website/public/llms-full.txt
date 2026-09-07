@@ -2,7 +2,7 @@
 
 Canonical site: https://neftedollar.com/orleans-fsharp/
 Repository: https://github.com/Neftedollar/orleans-fsharp
-Published stable: Orleans.FSharp 4.1 (latest 4.1.0). Documentation channel: main / Orleans.FSharp 5.0 preview (next major; not published stable).
+Published stable: Orleans.FSharp 5.0.0. Documentation channel: Orleans.FSharp 5.0 stable.
 This file contains the complete published documentation. Current functional API pages come first. Unsupported migration material is isolated under the Legacy Archive heading near the end.
 
 ## Author
@@ -15,11 +15,11 @@ This file contains the complete published documentation. Current functional API 
 
 
 
-:::caution[Preview documentation]
-The published stable line is **4.1** (latest `4.1.0`). This website tracks `main`, the **5.0
-preview/next major**, and can describe behavior not present in 4.1. Review
-[Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) before choosing packages or
-deploying from source.
+:::note[Orleans.FSharp 5.0.0]
+This website documents the current stable release. Review
+[Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for supported versions and
+verified production boundaries, or the [Legacy migration guide](https://neftedollar.com/orleans-fsharp/legacy/migration/)
+when upgrading from 4.x.
 :::
 
 ## Why Orleans.FSharp
@@ -123,23 +123,21 @@ only the functional runtime.
 | Test suite | Unit, integration, provider, rolling-update, and persisted-fixture coverage |
 | Orleans support | **10.1.0 – 10.3.1**, CI-tested at both ends of the range |
 | Feature tour | **16** Orleans capabilities demonstrated live in `examples/feature-tour` |
-| Next production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
+| Production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
 | License | **MIT** |
 | Dispatch overhead | **under 5%** versus calling the handler function directly, measured over 1,000,000 iterations |
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/Neftedollar/orleans-fsharp.git
-dotnet new install ./orleans-fsharp/templates
+dotnet new install Orleans.FSharp.Templates::5.0.0
 dotnet new orleans-fsharp -n MyApp
 cd MyApp
 dotnet build && dotnet test
 ```
 
-A working Orleans.FSharp 5.0-preview solution with a counter grain, FsCheck property tests, and
-silo configuration — ready in under 2 minutes. The published 4.1.0 template belongs to the
-unsupported archive; the source checkout is the preview template until 5.0 is published.
+A working Orleans.FSharp 5.0.0 solution with a counter grain, FsCheck property tests, and
+silo configuration. The packaged template references the matching 5.0.0 packages.
 
 ## Packages
 
@@ -157,10 +155,10 @@ unsupported archive; the source checkout is the preview template until 5.0 is pu
     TestHarness, WebTestHarness, MockGrainFactory, GrainArbitrary, and log capture utilities.
   </Card>
   <Card title="Orleans.FSharp.Analyzers">
-    Compile-time safety checks (for example OF0001 for `async { }`) with explicit opt-out where needed.
+    F# safety checks (for example OF0001 for `async { }`) run through the `fsharp-analyzers` CLI, with explicit opt-out where needed.
   </Card>
   <Card title="Orleans.FSharp.Templates">
-    The current functional solution template. On `main` it targets the 5.0 preview package set.
+    The current functional solution template, with exact references to the matching release packages.
   </Card>
 </CardGrid>
 
@@ -186,7 +184,7 @@ The current wrapped and composed surface includes:
 
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
-  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Published 4.1 stable versus the main/5.0 preview, plus verified limitations." />
+  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Orleans.FSharp 5.0.0, supported versions, and verified production boundaries." />
   <LinkCard title="Recipes" href="/orleans-fsharp/how-to/" description="Task-oriented paths for persistence, streaming, upgrades, and production hosting." />
   <LinkCard title="Examples" href="/orleans-fsharp/examples/" description="Runnable projects mapped to the features they prove." />
   <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-runtime/" description="The short path through contracts, state, delivery, placement, and transactions." />
@@ -210,8 +208,8 @@ The current wrapped and composed surface includes:
 > `FunctionalGrain.ref`. Earlier authoring models are isolated in the unsupported
 > [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/).
 
-> **Version scope.** This guide tracks `main`, the 5.0 preview/next major. The published stable
-> packages are 4.1 (latest `4.1.0`); see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
+> **Version scope.** This guide describes Orleans.FSharp 5.0.0, the current published stable
+> release; see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
 
 ## What you'll learn
 
@@ -227,15 +225,20 @@ The current wrapped and composed surface includes:
 
 ## Step 1: Create the project
 
-The template in this repository tracks the 5.0 preview and uses the current functional API. The
-published 4.1.0 template belongs to the unsupported archive, so install the preview template from
-a source checkout:
+Install the published Orleans.FSharp 5.0.0 template, which uses the current functional API:
+
+```bash
+dotnet new install Orleans.FSharp.Templates::5.0.0
+dotnet new orleans-fsharp -n MyCounter
+cd MyCounter
+```
+
+If you are contributing to Orleans.FSharp or validating changes from `main`, clone the repository
+and replace the package-install command above with the optional checkout install:
 
 ```bash
 git clone https://github.com/Neftedollar/orleans-fsharp.git
 dotnet new install ./orleans-fsharp/templates
-dotnet new orleans-fsharp -n MyCounter
-cd MyCounter
 ```
 
 Or from scratch:
@@ -244,9 +247,9 @@ Or from scratch:
 mkdir MyCounter && cd MyCounter
 dotnet new console -lang F# -n MyCounter.Silo
 cd MyCounter.Silo
-dotnet add package Orleans.FSharp
-dotnet add package Orleans.FSharp.Runtime
-dotnet add package Microsoft.Orleans.Server
+dotnet add package Orleans.FSharp --version 5.0.0
+dotnet add package Orleans.FSharp.Runtime --version 5.0.0
+dotnet add package Microsoft.Orleans.Server --version 10.3.1
 ```
 
 `Orleans.FSharp.Abstractions` -- the C# assembly the functional runtime's pre-generated proxies live
@@ -404,7 +407,7 @@ dotnet test
 | Guide | Description |
 |---|---|
 | [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-runtime/) | The short path through the current authoring model |
-| [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) | Stable 4.1 versus main/5.0 preview and production boundaries |
+| [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) | Orleans.FSharp 5.0.0 stable release and production boundaries |
 | [Functional Runtime Reference](https://neftedollar.com/orleans-fsharp/functional-grains/) | Complete builder operations, invariants, and edge cases |
 | [Examples](https://neftedollar.com/orleans-fsharp/examples/) | Runnable projects mapped to features and use cases |
 | [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
@@ -423,25 +426,26 @@ isolated in the [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/)
 
 # Release and Production Status
 
-This page separates the published package line from the documentation built from `main`.
+Orleans.FSharp 5.0.0 is the current published stable release. This page records its verified
+production boundaries and the status of earlier release lines.
 
 ## Release channels
 
 | Channel | Status | Use it for |
 |---|---|---|
-| Orleans.FSharp 4.1 (latest `4.1.0`) | Published stable | Production evaluation and applications which need a released package |
-| `main` / Orleans.FSharp 5.0 preview | Next major, not published stable | Evaluating and contributing to the next release from source |
+| Orleans.FSharp `5.0.0` | Published stable | New applications and production evaluation |
+| Orleans.FSharp `4.1.0` | Superseded stable line | Existing applications preparing a 5.0 migration |
 | Legacy authoring models | Archived and unsupported | Migration reference for existing applications only |
 
-The current README, `docs/`, website, and `[Unreleased]` changelog section track `main`, so they may
-describe 5.0-preview behavior that 4.1 packages do not contain. For the exact stable surface, read
-the documentation at the `v4.1.0` tag. Do not infer that an item under `[Unreleased]` has shipped.
+The current documentation describes 5.0.0. For immutable release documentation, read the repository
+at the `v5.0.0` tag. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
+tag while planning their migration.
 
 The Legacy archive receives no new Legacy release line, features, compatibility work, or security
 fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
 records, and `FunctionalGrain.ref`.
 
-## Production boundaries on `main`
+## Production boundaries in 5.0.0
 
 ### TaskSeq is an upstream boundary when wrapping streaming replies
 
@@ -456,12 +460,12 @@ When one grain relays another grain's streaming reply, return a direct delegatin
 boundary are documented under [Authoring a producer](https://neftedollar.com/orleans-fsharp/streaming-replies/#authoring-a-producer).
 
 `Stream.asTaskSeq` and its cursor-preserving `Stream.asTaskSeqWithToken` variant are separate
-Orleans pub/sub adapters. On `main` they create the subscription on first enumeration and dispose
+Orleans pub/sub adapters. In 5.0.0 they create the subscription on first enumeration and dispose
 that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
-The 5.0 preview defaults to **16 MiB** for one encoded functional state value, journal event, or
+Orleans.FSharp 5.0.0 defaults to **16 MiB** for one encoded functional state value, journal event, or
 snapshot. Enveloped payloads are checked before decoding and before writing. Direct binary state
 keeps its old provider schema: its logical Orleans encoding is checked after the provider loads
 the value and before each explicit write. Pre-decode protection for that direct format belongs to
@@ -479,8 +483,8 @@ let largeJsonCodec =
 The normal resolution order is unchanged: persistent-state element, grain definition, then silo
 default; journal definition, then silo default. The provider-wide
 `FSharpJsonGrainStorageSerializer` has its own 16 MiB default and constructor override because it
-controls the complete provider value rather than a functional envelope payload. These limits are
-present on `main`; they are not part of the published 4.1 package.
+controls the complete provider value rather than a functional envelope payload. These limits were
+introduced in 5.0.0 and are not part of the 4.1 package.
 
 ### Generalized binary payloads reject unsafe graphs
 
@@ -497,7 +501,7 @@ bytes. The precise contract is in
 
 ### Stateless-worker implicit streams require Orleans 10.3+
 
-On `main`, a `grainFor` definition can combine `statelessWorker` with `onStream` when the loaded
+In 5.0.0, a `grainFor` definition can combine `statelessWorker` with `onStream` when the loaded
 `Orleans.Streaming` runtime is 10.3.0 or newer. Orleans treats the local worker activations as
 competing consumers, so one stream item is handled by one available worker; do not assume that all
 local activations receive a copy.
@@ -508,10 +512,10 @@ diagnostic instead of failing later during activation. `statelessWorker` plus `o
 remains unsupported on every supported Orleans version because broadcast channels did not gain
 equivalent stateless-worker semantics.
 
-This capability is part of the 5.0 preview and has a live Orleans 10.3 integration test. It is not
-part of the published 4.1 package.
+This capability shipped in 5.0.0 and has a live Orleans 10.3 integration test. It is not part of
+the 4.1 package.
 
-The 5.0 preview also exposes Orleans' complete stateless-worker placement setting:
+Orleans.FSharp 5.0.0 also exposes Orleans' complete stateless-worker placement setting:
 `statelessWorker maxLocalWorkers` preserves the stock `removeIdleWorkers = true` default, while
 `statelessWorker maxLocalWorkers false` allows a functional definition to use `collectionAge`.
 The generated manifest is checked against the corresponding live Orleans attribute on both ends
@@ -537,18 +541,16 @@ and N/N+1 rollback path with representative data.
 
 ## Start a new current-API project
 
-Until a template package containing the current functional scaffold is published, install the
-template from a source checkout:
+Install the published Orleans.FSharp 5.0.0 template:
 
 ```bash
-git clone https://github.com/Neftedollar/orleans-fsharp.git
-dotnet new install ./orleans-fsharp/templates
+dotnet new install Orleans.FSharp.Templates::5.0.0
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
-Legacy archive; do not use its package-only install command for a new functional-runtime
-application. See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for the package/doc split.
+For contributor work against repository changes, clone the repository and install
+`./orleans-fsharp/templates` instead. See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for
+the stable release and its production boundaries.
 
 ## Choose the grain shape
 
@@ -2981,7 +2983,7 @@ field.
 
 ## See also
 
-- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) -- stable/preview split and production boundaries
+- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) -- stable release and production boundaries
 - [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) / [Client Configuration](https://neftedollar.com/orleans-fsharp/client-configuration/) --
   `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
   there
@@ -3143,9 +3145,11 @@ let accountDefinition =
     }
 ```
 
-### Payload-size guard (5.0 preview)
+<a id="payload-size-guard-50-preview"></a>
 
-On `main`, every functional persistence codec defaults to **16 MiB** per encoded value. Functional
+### Payload-size guard (5.0.0)
+
+In 5.0.0, every functional persistence codec defaults to **16 MiB** per encoded value. Functional
 state envelopes, journal events, and snapshots check that budget before payload decoding and
 before a storage write. The guard is not a quota for the complete provider record, grain, or journal.
 
@@ -3170,8 +3174,8 @@ let auditState =
 ```
 
 The override follows the same element/grain/silo resolution order as the codec itself, including
-direct binary holders. Choose it from measured payloads and provider limits. This API is part of
-the 5.0 preview on `main`, not stable 4.1.
+direct binary holders. Choose it from measured payloads and provider limits. This API shipped in
+5.0.0 and is not available in 4.1.
 
 ### Persistent holder semantics
 
@@ -3583,8 +3587,8 @@ let consume stream =
 ```
 
 Internally, `asTaskSeq` uses a bounded `Channel` with capacity 1000 and
-`BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind. On `main`/5.0
-preview the first pull creates and awaits the Orleans subscription; cancellation, normal
+`BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind. In 5.0.0, the first
+pull creates and awaits the Orleans subscription; cancellation, normal
 completion, and early enumerator disposal unsubscribe it. A subscription failure therefore
 surfaces to the consumer instead of leaving a sequence waiting forever.
 
@@ -3855,7 +3859,9 @@ matches on `(provider, namespace)`, logs a warning, and leaves the item undelive
 Implicit `onStream` batch delivery is not exposed: that definition hook receives one item at a
 time. Explicit `Stream.subscribeBatch` is the separate provider-native batch API.
 
-### Stateless-worker implicit streams (5.0 preview)
+<a id="stateless-worker-implicit-streams-50-preview"></a>
+
+### Stateless-worker implicit streams (5.0.0)
 
 With Orleans.Streaming 10.3.0 or newer, `statelessWorker` may be combined with `onStream`.
 Orleans treats local worker activations as competing consumers: one item is handled by one
@@ -3906,7 +3912,7 @@ Apply these to the `ISiloBuilder` directly or via `addCustomStorage` in the silo
 
 ## Next steps
 
-- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) -- stable/preview split and production boundaries
+- [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) -- stable release and production boundaries
 - [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) -- configure stream providers
 - [Event Sourcing](https://neftedollar.com/orleans-fsharp/event-sourcing/) -- CQRS pattern with event streams
 
@@ -8564,8 +8570,8 @@ handler side is still an F# record. An observer facade is a possible future addi
 
 **Supported version policy, verified runtimes, and relevant changes in new Orleans releases.**
 
-This page describes framework compatibility for `main`, the Orleans.FSharp 5.0 preview/next major.
-The published stable Orleans.FSharp line is 4.1; see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
+This page describes framework compatibility for Orleans.FSharp 5.0.0, the current published stable
+release. See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for production boundaries.
 
 ## Version policy
 
@@ -8625,7 +8631,7 @@ These additions fall into three different categories:
 |---|---|
 | Core runtime reliability and routing changes | Inherited when the application resolves Orleans 10.3.x |
 | Storage and stream providers configured through Orleans hosting APIs | Usable alongside functional grains through the native `ISiloBuilder`/host configuration; dedicated F# helpers are optional convenience work |
-| Stateless-worker implicit stream consumers | Integrated on `main`: `statelessWorker` + `onStream` seals only with loaded Orleans.Streaming 10.3.0+ and has a live competing-consumer integration test; `onBroadcast` remains rejected |
+| Stateless-worker implicit stream consumers | Integrated in 5.0.0: `statelessWorker` + `onStream` seals only with loaded Orleans.Streaming 10.3.0+ and has a live competing-consumer integration test; `onBroadcast` remains rejected |
 | `Microsoft.Orleans.Journaling`, `DurableGrain`, and Durable Jobs | Deliberately deferred and not represented as supported Orleans.FSharp APIs yet |
 
 The last category is highlighted here for discovery only. It is not a promise that the current
@@ -8649,8 +8655,8 @@ persisted data can be rolled back without an explicit schema migration strategy.
 
 # API Reference
 
-> This reference tracks `main`, the 5.0 preview/next major. The published stable line is 4.1;
-> see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
+> This reference describes Orleans.FSharp 5.0.0, the current published stable release. See
+> [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for verified production boundaries.
 
 **Quick reference for the public modules, types, and functions in Orleans.FSharp.**
 
@@ -8912,16 +8918,16 @@ with `migrationParticipant`; see [Functional grains](https://neftedollar.com/orl
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `JsonSerializerOptions -> FunctionalPersistenceCodec` | Compatibility overload using `fsharp-json-v1` with copied custom options |
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `string * JsonSerializerOptions -> FunctionalPersistenceCodec` | F# JSON with an application-owned stable codec id; prefer this for custom durable contracts |
 | `codec.WithReadCodec` | `FunctionalPersistenceCodec -> FunctionalPersistenceCodec` | Keep a historical JSON decoder registered while the returned codec remains the current writer; duplicate reader ids are rejected |
-| `codec.WithMaxPayloadBytes` | `int -> FunctionalPersistenceCodec` | Return an immutable codec configuration with a positive per-payload read/write limit; 5.0 preview |
+| `codec.WithMaxPayloadBytes` | `int -> FunctionalPersistenceCodec` | Return an immutable codec configuration with a positive per-payload read/write limit; introduced in 5.0.0 |
 | `FunctionalPersistenceCodec.Id` | `string` | Stable durable id; built-ins use `orleans-binary-v1` / `fsharp-json-v1`, explicit custom codecs use the supplied id |
-| `FunctionalPersistenceCodec.DefaultMaxPayloadBytes` | `int` | Built-in per-payload default: 16 MiB; 5.0 preview |
-| `FunctionalPersistenceCodec.MaxPayloadBytes` | `int` | Effective per-payload limit for this codec configuration; 5.0 preview |
+| `FunctionalPersistenceCodec.DefaultMaxPayloadBytes` | `int` | Built-in per-payload default: 16 MiB; introduced in 5.0.0 |
+| `FunctionalPersistenceCodec.MaxPayloadBytes` | `int` | Effective per-payload limit for this codec configuration; introduced in 5.0.0 |
 | `FunctionalPersistenceOptions.DefaultStateCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional state without grain/element overrides |
 | `FunctionalPersistenceOptions.DefaultJournalCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional journals without `journalCodec` |
 | `FSharpJsonGrainStorageSerializer()` | `FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with standard options |
 | `FSharpJsonGrainStorageSerializer(options)` | `JsonSerializerOptions -> FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with copied custom options |
-| `FSharpJsonGrainStorageSerializer(maxPayloadBytes)` | `int -> FSharpJsonGrainStorageSerializer` | Standard F# JSON options with a positive provider-value limit; default is 16 MiB; 5.0 preview |
-| `FSharpJsonGrainStorageSerializer(options, maxPayloadBytes)` | `JsonSerializerOptions * int -> FSharpJsonGrainStorageSerializer` | Custom options and provider-value limit; 5.0 preview |
+| `FSharpJsonGrainStorageSerializer(maxPayloadBytes)` | `int -> FSharpJsonGrainStorageSerializer` | Standard F# JSON options with a positive provider-value limit; default is 16 MiB; introduced in 5.0.0 |
+| `FSharpJsonGrainStorageSerializer(options, maxPayloadBytes)` | `JsonSerializerOptions * int -> FSharpJsonGrainStorageSerializer` | Custom options and provider-value limit; introduced in 5.0.0 |
 
 `FSharpJsonGrainStorageSerializer` belongs to a provider's `GrainStorageSerializer` setting and
 also affects ordinary Orleans grains. It is independent of functional per-element envelopes and
@@ -9516,10 +9522,13 @@ A functional definition is tested against a real `TestCluster` rather than a moc
 
 ## Orleans.FSharp.Analyzers
 
-Compile-time F# analyzer package — install in your grain projects to catch `async {}` misuse at build time.
+`Orleans.FSharp.Analyzers` is an opt-in FSharp.Analyzers.SDK CLI plugin. The package also supplies
+the public `AllowAsync` suppression attribute; installing it alone does not run OF0001 during
+`dotnet build` or in an editor. Run it with `fsharp-analyzers` using the exact setup in the
+[Analyzers guide](https://neftedollar.com/orleans-fsharp/analyzers/).
 
 ```bash
-dotnet add package Orleans.FSharp.Analyzers
+dotnet add package Orleans.FSharp.Analyzers --version 5.0.0
 ```
 
 ### Diagnostics
@@ -9622,7 +9631,7 @@ implemented, and the wrapper preserves that behavior.
 
 ## Are DurableGrain, Microsoft.Orleans.Journaling, and Durable Jobs included?
 
-Not in the current main package. They are intentionally deferred; the current journaled functional
+Not in Orleans.FSharp 5.0.0. They are intentionally deferred; the current journaled functional
 grain is built over Orleans log-consistency providers. Experimental journaling support can be
 isolated in a future opt-in subpackage instead of making the stable package depend on it.
 
@@ -9639,15 +9648,14 @@ The Dashboard activation table displays the functional manifest type, for exampl
 ## How do I start a project?
 
 ```bash
-git clone https://github.com/Neftedollar/orleans-fsharp.git
-dotnet new install ./orleans-fsharp/templates
+dotnet new install Orleans.FSharp.Templates::5.0.0
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
-Legacy archive. Use the source-checkout command above for the preview, then follow
-[Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/). See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) before
-choosing between released packages and `main`.
+This installs the published stable template. Contributors validating repository changes can
+instead clone the repository and run `dotnet new install ./orleans-fsharp/templates`. Then follow
+[Getting Started](https://neftedollar.com/orleans-fsharp/getting-started/) and review the boundaries in
+[Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
 
 ## Where is documentation for existing applications on the original API?
 

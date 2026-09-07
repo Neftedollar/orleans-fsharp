@@ -8,18 +8,16 @@
 
 ## Start a new current-API project
 
-Until a template package containing the current functional scaffold is published, install the
-template from a source checkout:
+Install the published Orleans.FSharp 5.0.0 template:
 
 ```bash
-git clone https://github.com/Neftedollar/orleans-fsharp.git
-dotnet new install ./orleans-fsharp/templates
+dotnet new install Orleans.FSharp.Templates::5.0.0
 dotnet new orleans-fsharp -n MyApp
 ```
 
-The source template tracks the 5.0 preview. The published 4.1.0 template belongs to the unsupported
-Legacy archive; do not use its package-only install command for a new functional-runtime
-application. See [Release and Production Status](release-status.md) for the package/doc split.
+For contributor work against repository changes, clone the repository and install
+`./orleans-fsharp/templates` instead. See [Release and Production Status](release-status.md) for
+the stable release and its production boundaries.
 
 ## Choose the grain shape
 

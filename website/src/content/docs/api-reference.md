@@ -5,8 +5,8 @@ description: "Quick reference for the public modules, types, and functions in Or
 
 # API Reference
 
-> This reference tracks `main`, the 5.0 preview/next major. The published stable line is 4.1;
-> see [Release and Production Status](/orleans-fsharp/release-status/).
+> This reference describes Orleans.FSharp 5.0.0, the current published stable release. See
+> [Release and Production Status](/orleans-fsharp/release-status/) for verified production boundaries.
 
 **Quick reference for the public modules, types, and functions in Orleans.FSharp.**
 
@@ -268,16 +268,16 @@ with `migrationParticipant`; see [Functional grains](/orleans-fsharp/functional-
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `JsonSerializerOptions -> FunctionalPersistenceCodec` | Compatibility overload using `fsharp-json-v1` with copied custom options |
 | `FunctionalPersistenceCodec.CreateFSharpJson` | `string * JsonSerializerOptions -> FunctionalPersistenceCodec` | F# JSON with an application-owned stable codec id; prefer this for custom durable contracts |
 | `codec.WithReadCodec` | `FunctionalPersistenceCodec -> FunctionalPersistenceCodec` | Keep a historical JSON decoder registered while the returned codec remains the current writer; duplicate reader ids are rejected |
-| `codec.WithMaxPayloadBytes` | `int -> FunctionalPersistenceCodec` | Return an immutable codec configuration with a positive per-payload read/write limit; 5.0 preview |
+| `codec.WithMaxPayloadBytes` | `int -> FunctionalPersistenceCodec` | Return an immutable codec configuration with a positive per-payload read/write limit; introduced in 5.0.0 |
 | `FunctionalPersistenceCodec.Id` | `string` | Stable durable id; built-ins use `orleans-binary-v1` / `fsharp-json-v1`, explicit custom codecs use the supplied id |
-| `FunctionalPersistenceCodec.DefaultMaxPayloadBytes` | `int` | Built-in per-payload default: 16 MiB; 5.0 preview |
-| `FunctionalPersistenceCodec.MaxPayloadBytes` | `int` | Effective per-payload limit for this codec configuration; 5.0 preview |
+| `FunctionalPersistenceCodec.DefaultMaxPayloadBytes` | `int` | Built-in per-payload default: 16 MiB; introduced in 5.0.0 |
+| `FunctionalPersistenceCodec.MaxPayloadBytes` | `int` | Effective per-payload limit for this codec configuration; introduced in 5.0.0 |
 | `FunctionalPersistenceOptions.DefaultStateCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional state without grain/element overrides |
 | `FunctionalPersistenceOptions.DefaultJournalCodec` | mutable `FunctionalPersistenceCodec` | Silo default inherited by functional journals without `journalCodec` |
 | `FSharpJsonGrainStorageSerializer()` | `FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with standard options |
 | `FSharpJsonGrainStorageSerializer(options)` | `JsonSerializerOptions -> FSharpJsonGrainStorageSerializer` | Provider-wide F# JSON serializer with copied custom options |
-| `FSharpJsonGrainStorageSerializer(maxPayloadBytes)` | `int -> FSharpJsonGrainStorageSerializer` | Standard F# JSON options with a positive provider-value limit; default is 16 MiB; 5.0 preview |
-| `FSharpJsonGrainStorageSerializer(options, maxPayloadBytes)` | `JsonSerializerOptions * int -> FSharpJsonGrainStorageSerializer` | Custom options and provider-value limit; 5.0 preview |
+| `FSharpJsonGrainStorageSerializer(maxPayloadBytes)` | `int -> FSharpJsonGrainStorageSerializer` | Standard F# JSON options with a positive provider-value limit; default is 16 MiB; introduced in 5.0.0 |
+| `FSharpJsonGrainStorageSerializer(options, maxPayloadBytes)` | `JsonSerializerOptions * int -> FSharpJsonGrainStorageSerializer` | Custom options and provider-value limit; introduced in 5.0.0 |
 
 `FSharpJsonGrainStorageSerializer` belongs to a provider's `GrainStorageSerializer` setting and
 also affects ordinary Orleans grains. It is independent of functional per-element envelopes and
@@ -872,10 +872,13 @@ A functional definition is tested against a real `TestCluster` rather than a moc
 
 ## Orleans.FSharp.Analyzers
 
-Compile-time F# analyzer package — install in your grain projects to catch `async {}` misuse at build time.
+`Orleans.FSharp.Analyzers` is an opt-in FSharp.Analyzers.SDK CLI plugin. The package also supplies
+the public `AllowAsync` suppression attribute; installing it alone does not run OF0001 during
+`dotnet build` or in an editor. Run it with `fsharp-analyzers` using the exact setup in the
+[Analyzers guide](/orleans-fsharp/analyzers/).
 
 ```bash
-dotnet add package Orleans.FSharp.Analyzers
+dotnet add package Orleans.FSharp.Analyzers --version 5.0.0
 ```
 
 ### Diagnostics

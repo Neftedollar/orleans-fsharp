@@ -1932,7 +1932,7 @@ field.
 
 ## See also
 
-- [Release and Production Status](release-status.md) -- stable/preview split and production boundaries
+- [Release and Production Status](release-status.md) -- stable release and production boundaries
 - [Silo Configuration](silo-configuration.md) / [Client Configuration](client-configuration.md) --
   `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
   there

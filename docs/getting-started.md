@@ -6,8 +6,8 @@
 > `FunctionalGrain.ref`. Earlier authoring models are isolated in the unsupported
 > [Legacy archive](legacy/index.md).
 
-> **Version scope.** This guide tracks `main`, the 5.0 preview/next major. The published stable
-> packages are 4.1 (latest `4.1.0`); see [Release and Production Status](release-status.md).
+> **Version scope.** This guide describes Orleans.FSharp 5.0.0, the current published stable
+> release; see [Release and Production Status](release-status.md).
 
 ## What you'll learn
 
@@ -23,15 +23,20 @@
 
 ## Step 1: Create the project
 
-The template in this repository tracks the 5.0 preview and uses the current functional API. The
-published 4.1.0 template belongs to the unsupported archive, so install the preview template from
-a source checkout:
+Install the published Orleans.FSharp 5.0.0 template, which uses the current functional API:
+
+```bash
+dotnet new install Orleans.FSharp.Templates::5.0.0
+dotnet new orleans-fsharp -n MyCounter
+cd MyCounter
+```
+
+If you are contributing to Orleans.FSharp or validating changes from `main`, clone the repository
+and replace the package-install command above with the optional checkout install:
 
 ```bash
 git clone https://github.com/Neftedollar/orleans-fsharp.git
 dotnet new install ./orleans-fsharp/templates
-dotnet new orleans-fsharp -n MyCounter
-cd MyCounter
 ```
 
 Or from scratch:
@@ -40,9 +45,9 @@ Or from scratch:
 mkdir MyCounter && cd MyCounter
 dotnet new console -lang F# -n MyCounter.Silo
 cd MyCounter.Silo
-dotnet add package Orleans.FSharp
-dotnet add package Orleans.FSharp.Runtime
-dotnet add package Microsoft.Orleans.Server
+dotnet add package Orleans.FSharp --version 5.0.0
+dotnet add package Orleans.FSharp.Runtime --version 5.0.0
+dotnet add package Microsoft.Orleans.Server --version 10.3.1
 ```
 
 `Orleans.FSharp.Abstractions` -- the C# assembly the functional runtime's pre-generated proxies live
@@ -200,7 +205,7 @@ dotnet test
 | Guide | Description |
 |---|---|
 | [Functional Grain Runtime](functional-runtime.md) | The short path through the current authoring model |
-| [Release and Production Status](release-status.md) | Stable 4.1 versus main/5.0 preview and production boundaries |
+| [Release and Production Status](release-status.md) | Orleans.FSharp 5.0.0 stable release and production boundaries |
 | [Functional Runtime Reference](functional-grains.md) | Complete builder operations, invariants, and edge cases |
 | [Examples](examples.md) | Runnable projects mapped to features and use cases |
 | [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |

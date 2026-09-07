@@ -148,9 +148,11 @@ let accountDefinition =
     }
 ```
 
-### Payload-size guard (5.0 preview)
+<a id="payload-size-guard-50-preview"></a>
 
-On `main`, every functional persistence codec defaults to **16 MiB** per encoded value. Functional
+### Payload-size guard (5.0.0)
+
+In 5.0.0, every functional persistence codec defaults to **16 MiB** per encoded value. Functional
 state envelopes, journal events, and snapshots check that budget before payload decoding and
 before a storage write. The guard is not a quota for the complete provider record, grain, or journal.
 
@@ -175,8 +177,8 @@ let auditState =
 ```
 
 The override follows the same element/grain/silo resolution order as the codec itself, including
-direct binary holders. Choose it from measured payloads and provider limits. This API is part of
-the 5.0 preview on `main`, not stable 4.1.
+direct binary holders. Choose it from measured payloads and provider limits. This API shipped in
+5.0.0 and is not available in 4.1.
 
 ### Persistent holder semantics
 

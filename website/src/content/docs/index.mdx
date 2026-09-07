@@ -20,11 +20,11 @@ hero:
 import { Card, CardGrid, Badge, LinkCard } from '@astrojs/starlight/components';
 import FeatureCard from '../../components/FeatureCard.astro';
 
-:::caution[Preview documentation]
-The published stable line is **4.1** (latest `4.1.0`). This website tracks `main`, the **5.0
-preview/next major**, and can describe behavior not present in 4.1. Review
-[Release and Production Status](/orleans-fsharp/release-status/) before choosing packages or
-deploying from source.
+:::note[Orleans.FSharp 5.0.0]
+This website documents the current stable release. Review
+[Release and Production Status](/orleans-fsharp/release-status/) for supported versions and
+verified production boundaries, or the [Legacy migration guide](/orleans-fsharp/legacy/migration/)
+when upgrading from 4.x.
 :::
 
 ## Why Orleans.FSharp
@@ -128,23 +128,21 @@ only the functional runtime.
 | Test suite | Unit, integration, provider, rolling-update, and persisted-fixture coverage |
 | Orleans support | **10.1.0 – 10.3.1**, CI-tested at both ends of the range |
 | Feature tour | **16** Orleans capabilities demonstrated live in `examples/feature-tour` |
-| Next production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
+| Production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
 | License | **MIT** |
 | Dispatch overhead | **under 5%** versus calling the handler function directly, measured over 1,000,000 iterations |
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/Neftedollar/orleans-fsharp.git
-dotnet new install ./orleans-fsharp/templates
+dotnet new install Orleans.FSharp.Templates::5.0.0
 dotnet new orleans-fsharp -n MyApp
 cd MyApp
 dotnet build && dotnet test
 ```
 
-A working Orleans.FSharp 5.0-preview solution with a counter grain, FsCheck property tests, and
-silo configuration — ready in under 2 minutes. The published 4.1.0 template belongs to the
-unsupported archive; the source checkout is the preview template until 5.0 is published.
+A working Orleans.FSharp 5.0.0 solution with a counter grain, FsCheck property tests, and
+silo configuration. The packaged template references the matching 5.0.0 packages.
 
 ## Packages
 
@@ -162,10 +160,10 @@ unsupported archive; the source checkout is the preview template until 5.0 is pu
     TestHarness, WebTestHarness, MockGrainFactory, GrainArbitrary, and log capture utilities.
   </Card>
   <Card title="Orleans.FSharp.Analyzers">
-    Compile-time safety checks (for example OF0001 for `async { }`) with explicit opt-out where needed.
+    F# safety checks (for example OF0001 for `async { }`) run through the `fsharp-analyzers` CLI, with explicit opt-out where needed.
   </Card>
   <Card title="Orleans.FSharp.Templates">
-    The current functional solution template. On `main` it targets the 5.0 preview package set.
+    The current functional solution template, with exact references to the matching release packages.
   </Card>
 </CardGrid>
 
@@ -191,7 +189,7 @@ The current wrapped and composed surface includes:
 
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
-  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Published 4.1 stable versus the main/5.0 preview, plus verified limitations." />
+  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Orleans.FSharp 5.0.0, supported versions, and verified production boundaries." />
   <LinkCard title="Recipes" href="/orleans-fsharp/how-to/" description="Task-oriented paths for persistence, streaming, upgrades, and production hosting." />
   <LinkCard title="Examples" href="/orleans-fsharp/examples/" description="Runnable projects mapped to the features they prove." />
   <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-runtime/" description="The short path through contracts, state, delivery, placement, and transactions." />

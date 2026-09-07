@@ -1,9 +1,12 @@
 # Changelog
 
-## [Unreleased] — 5.0 preview (next major)
+## [Unreleased]
 
-This section describes the `main` branch and is not the published stable package. The latest
-published stable line is 4.1 (currently 4.1.0).
+## [5.0.0] - 2026-09-07
+
+The functional-first release: typed grain contracts, explicit state transitions, durable schema
+evolution, and verified rolling upgrades on Orleans 10.1.0 through 10.3.1. Review the breaking
+changes and the unsupported Legacy archive before upgrading from 4.x.
 
 ### Added
 
@@ -974,10 +977,13 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 - 3 sample patterns: CQRS, Saga, Rate Limiter
 - Complete API reference
 
-[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.1.0...v5.0.0
 [4.1.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.2...v4.1.0
 [4.0.2]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.1...v4.0.2
 [4.0.1]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v3.0.2...v4.0.0
+[3.0.1]: https://github.com/Neftedollar/orleans-fsharp/compare/v3.0.0...v3.0.1
+[3.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v2.0.0-alpha.1...v3.0.0
 [2.0.0-alpha.1]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v2.0.0-alpha.1
 [1.0.0]: https://github.com/Neftedollar/orleans-fsharp/releases/tag/v1.0.0

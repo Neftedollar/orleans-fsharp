@@ -158,8 +158,8 @@ def generate() -> str:
         '# Orleans.FSharp — Full Documentation\n\n',
         f'Canonical site: {BASE_URL}/\n',
         'Repository: https://github.com/Neftedollar/orleans-fsharp\n',
-        'Published stable: Orleans.FSharp 4.1 (latest 4.1.0). Documentation channel: main / '
-        'Orleans.FSharp 5.0 preview (next major; not published stable).\n',
+        'Published stable: Orleans.FSharp 5.0.0. Documentation channel: '
+        'Orleans.FSharp 5.0 stable.\n',
         'This file contains the complete published documentation. Current functional API pages '
         'come first. Unsupported migration material is isolated under the Legacy Archive heading '
         'near the end.\n\n',

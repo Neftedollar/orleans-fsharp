@@ -145,8 +145,8 @@ let consume stream =
 ```
 
 Internally, `asTaskSeq` uses a bounded `Channel` with capacity 1000 and
-`BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind. On `main`/5.0
-preview the first pull creates and awaits the Orleans subscription; cancellation, normal
+`BoundedChannelFullMode.Wait` for backpressure when the consumer falls behind. In 5.0.0, the first
+pull creates and awaits the Orleans subscription; cancellation, normal
 completion, and early enumerator disposal unsubscribe it. A subscription failure therefore
 surfaces to the consumer instead of leaving a sequence waiting forever.
 
@@ -417,7 +417,9 @@ matches on `(provider, namespace)`, logs a warning, and leaves the item undelive
 Implicit `onStream` batch delivery is not exposed: that definition hook receives one item at a
 time. Explicit `Stream.subscribeBatch` is the separate provider-native batch API.
 
-### Stateless-worker implicit streams (5.0 preview)
+<a id="stateless-worker-implicit-streams-50-preview"></a>
+
+### Stateless-worker implicit streams (5.0.0)
 
 With Orleans.Streaming 10.3.0 or newer, `statelessWorker` may be combined with `onStream`.
 Orleans treats local worker activations as competing consumers: one item is handled by one
@@ -468,6 +470,6 @@ Apply these to the `ISiloBuilder` directly or via `addCustomStorage` in the silo
 
 ## Next steps
 
-- [Release and Production Status](release-status.md) -- stable/preview split and production boundaries
+- [Release and Production Status](release-status.md) -- stable release and production boundaries
 - [Silo Configuration](silo-configuration.md) -- configure stream providers
 - [Event Sourcing](event-sourcing.md) -- CQRS pattern with event streams

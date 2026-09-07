@@ -22,10 +22,9 @@ continues to own routing, activation, clustering, persistence, streams, and tran
 [Examples](docs/examples.md) ·
 [Release status](docs/release-status.md)
 
-> [!IMPORTANT]
-> This README documents `main`, the **5.0 preview**. The latest published stable packages are
-> **4.1.0**; use the [v4.1.0 documentation](https://github.com/Neftedollar/orleans-fsharp/tree/v4.1.0)
-> for their exact API. Features described here may not be available in 4.1 yet.
+This README documents **Orleans.FSharp 5.0.0**, the current stable release. Applications upgrading
+from 4.x should review the [breaking changes](CHANGELOG.md#500---2026-09-07) and
+[Legacy migration guide](docs/legacy/migration.md).
 
 ## Why Orleans.FSharp?
 
@@ -108,38 +107,42 @@ activation boundaries; it is not an in-process function call.
 For a complete host, persistence, and tests, continue with
 [Getting started](docs/getting-started.md).
 
-## Try the current preview
+## Install
 
-The most reliable way to evaluate the unpublished 5.0 preview is to build and run its examples
-from this repository:
+Start a working solution with the 5.0.0 template:
 
 ```bash
-git clone https://github.com/Neftedollar/orleans-fsharp.git
-cd orleans-fsharp
-dotnet build Orleans.FSharp.slnx
-dotnet run --project examples/feature-tour/src/FeatureTour
+dotnet new install Orleans.FSharp.Templates::5.0.0
+dotnet new orleans-fsharp -n MyApp
+cd MyApp
+dotnet build
+dotnet test
 ```
 
-The source template under `templates/` targets packages `5.*`; it becomes a standalone
-`dotnet new` path when the matching 5.x packages are published.
-
-## Install the stable release
-
-For Orleans.FSharp 4.1.0:
+Or add the packages to an existing application:
 
 ```bash
-dotnet add package Orleans.FSharp --version 4.1.0
-dotnet add package Orleans.FSharp.Runtime --version 4.1.0
+dotnet add package Orleans.FSharp --version 5.0.0
+dotnet add package Orleans.FSharp.Runtime --version 5.0.0
 ```
 
 Add testing support when needed:
 
 ```bash
-dotnet add package Orleans.FSharp.Testing --version 4.1.0
+dotnet add package Orleans.FSharp.Testing --version 5.0.0
 ```
 
 `Orleans.FSharp.Abstractions`, which contains the fixed transport and precompiled Orleans
 proxies, arrives transitively. Applications do not reference it directly.
+
+To run the repository examples:
+
+```bash
+git clone --branch v5.0.0 https://github.com/Neftedollar/orleans-fsharp.git
+cd orleans-fsharp
+dotnet build Orleans.FSharp.slnx
+dotnet run --project examples/feature-tour/src/FeatureTour
+```
 
 ## The four building blocks
 

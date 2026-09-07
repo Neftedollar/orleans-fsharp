@@ -1937,7 +1937,7 @@ field.
 
 ## See also
 
-- [Release and Production Status](/orleans-fsharp/release-status/) -- stable/preview split and production boundaries
+- [Release and Production Status](/orleans-fsharp/release-status/) -- stable release and production boundaries
 - [Silo Configuration](/orleans-fsharp/silo-configuration/) / [Client Configuration](/orleans-fsharp/client-configuration/) --
   `AddFunctionalGrain` / `AddFunctionalGrainClient` sit alongside the CE-based registration shown
   there
