@@ -1,43 +1,48 @@
 ---
 title: "Release and Production Status"
-description: "Orleans.FSharp 5.0.0 stable release status and verified production boundaries."
+description: "Orleans.FSharp 5.0.1 stable release status and verified production boundaries."
 ---
 
 # Release and Production Status
 
-Orleans.FSharp 5.0.0 is the current published stable release. This page records its verified
+Orleans.FSharp 5.0.1 is the current published stable release. This page records its verified
 production boundaries and the status of earlier release lines.
 
 ## Release channels
 
 | Channel | Status | Use it for |
 |---|---|---|
-| Orleans.FSharp `5.0.0` | Published stable | New applications and production evaluation |
+| Orleans.FSharp `5.0.1` | Published stable | New applications and production evaluation |
+| Orleans.FSharp `5.0.0` | Superseded | Existing applications; its project template has the startup defect documented below |
 | Orleans.FSharp `4.1.0` | Superseded stable line | Existing applications preparing a 5.0 migration |
 | Legacy authoring models | Archived and unsupported | Migration reference for existing applications only |
 
-The current documentation describes 5.0.0. For immutable release documentation, read the repository
-at the `v5.0.0` tag. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
+The current documentation describes 5.0.1. For immutable release documentation, read the repository
+at the `v5.0.1` tag. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
 tag while planning their migration.
+
+The runtime APIs are unchanged from 5.0.0. Version 5.0.1 corrects the packaged project template and
+adds startup regression coverage to the release gate.
 
 The Legacy archive receives no new Legacy release line, features, compatibility work, or security
 fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
 records, and `FunctionalGrain.ref`.
 
-## Production boundaries in 5.0.0
+## Production boundaries in 5.0.1
 
 ### The 5.0.0 project template needs a one-line contract correction
 
-The published `Orleans.FSharp.Templates` 5.0.0 package omits `readOnly (_.value)` from
+**History and existing-app workaround.** The published `Orleans.FSharp.Templates` 5.0.0 package
+omits `readOnly (_.value)` from
 `CounterApi.contract` in `src/<App>.Grains/CounterGrain.fs`. The project builds and its five pure
 transition tests pass, but starting its silo fails because `handleQuery` requires a read-only
-operation. Add `readOnly (_.value)` inside that contract, immediately after `int64Key`, then
-rebuild and run the application. The core 5.0.0 packages do not need changing for this correction.
+operation. This defect is fixed in `Orleans.FSharp.Templates` 5.0.1.
 
-The source template is corrected, with a regression test that initializes the grain definition
-and an end-to-end template process check in the release gate. A package update does not rewrite
-previously generated application files; applications created with the 5.0.0 template need the
-source correction above.
+For an application already generated with the 5.0.0 template, add `readOnly (_.value)` inside that
+contract, immediately after `int64Key`, then rebuild and run the application. Updating the template
+package does not rewrite existing source, so those applications still need this correction; the
+core 5.0.0 runtime packages do not. The 5.0.1 template is covered by a regression test that
+initializes the grain definition and an end-to-end template process check in the release gate.
 
 ### TaskSeq is an upstream boundary when wrapping streaming replies
 
@@ -57,7 +62,7 @@ that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
-Orleans.FSharp 5.0.0 defaults to **16 MiB** for one encoded functional state value, journal event, or
+Orleans.FSharp 5.0.1 defaults to **16 MiB** for one encoded functional state value, journal event, or
 snapshot. Enveloped payloads are checked before decoding and before writing. Direct binary state
 keeps its old provider schema: its logical Orleans encoding is checked after the provider loads
 the value and before each explicit write. Pre-decode protection for that direct format belongs to
@@ -107,7 +112,7 @@ equivalent stateless-worker semantics.
 This capability shipped in 5.0.0 and has a live Orleans 10.3 integration test. It is not part of
 the 4.1 package.
 
-Orleans.FSharp 5.0.0 also exposes Orleans' complete stateless-worker placement setting:
+Since 5.0.0, Orleans.FSharp also exposes Orleans' complete stateless-worker placement setting:
 `statelessWorker maxLocalWorkers` preserves the stock `removeIdleWorkers = true` default, while
 `statelessWorker maxLocalWorkers false` allows a functional definition to use `collectionAge`.
 The generated manifest is checked against the corresponding live Orleans attribute on both ends

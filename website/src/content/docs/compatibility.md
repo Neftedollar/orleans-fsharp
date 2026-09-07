@@ -7,7 +7,7 @@ description: "Supported Orleans versions, the 10.3.1 compatibility target, and n
 
 **Supported version policy, verified runtimes, and relevant changes in new Orleans releases.**
 
-This page describes framework compatibility for Orleans.FSharp 5.0.0, the current published stable
+This page describes framework compatibility for Orleans.FSharp 5.0.1, the current published stable
 release. See [Release and Production Status](/orleans-fsharp/release-status/) for production boundaries.
 
 ## Version policy

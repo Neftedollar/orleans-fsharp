@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-09-07
+
 ### Fixed
 
 - The project template now declares its `value` query `readOnly`, so a generated counter silo
@@ -985,7 +987,8 @@ From `Orleans.FSharp.CodeGen` (per-grain stubs) to universal `IFSharpGrain` patt
 - 3 sample patterns: CQRS, Saga, Rate Limiter
 - Complete API reference
 
-[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v5.0.0...HEAD
+[Unreleased]: https://github.com/Neftedollar/orleans-fsharp/compare/v5.0.1...HEAD
+[5.0.1]: https://github.com/Neftedollar/orleans-fsharp/compare/v5.0.0...v5.0.1
 [5.0.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.1.0...v5.0.0
 [4.1.0]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.2...v4.1.0
 [4.0.2]: https://github.com/Neftedollar/orleans-fsharp/compare/v4.0.1...v4.0.2

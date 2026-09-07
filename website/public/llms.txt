@@ -3,7 +3,7 @@
 Canonical: https://neftedollar.com/orleans-fsharp/
 Repository: https://github.com/Neftedollar/orleans-fsharp
 License: MIT
-Published stable: Orleans.FSharp 5.0.0
+Published stable: Orleans.FSharp 5.0.1
 Documentation channel: Orleans.FSharp 5.0 stable
 
 ## Author

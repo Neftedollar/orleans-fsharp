@@ -22,7 +22,7 @@ continues to own routing, activation, clustering, persistence, streams, and tran
 [Examples](docs/examples.md) ·
 [Release status](docs/release-status.md)
 
-This README documents **Orleans.FSharp 5.0.0**, the current stable release. Applications upgrading
+This README documents **Orleans.FSharp 5.0.1**, the current stable release. Applications upgrading
 from 4.x should review the [breaking changes](CHANGELOG.md#500---2026-09-07) and
 [Legacy migration guide](docs/legacy/migration.md).
 
@@ -109,31 +109,32 @@ For a complete host, persistence, and tests, continue with
 
 ## Install
 
-Start a working solution with the 5.0.0 template:
+Start a working solution with the 5.0.1 template:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates::5.0.0
+dotnet new install Orleans.FSharp.Templates@5.0.1
 dotnet new orleans-fsharp -n MyApp
 cd MyApp
 dotnet build
 dotnet test
+dotnet run --project src/MyApp.Silo
 ```
 
-The published 5.0.0 template needs `readOnly (_.value)` added to `CounterApi.contract` in
-`src/MyApp.Grains/CounterGrain.fs` before running its silo. The source template is corrected;
-see the [startup note and workaround](docs/release-status.md#the-500-project-template-needs-a-one-line-contract-correction).
+The 5.0.1 template includes the startup correction. If you already generated an application with
+the 5.0.0 template, apply the [one-line source correction](docs/release-status.md#the-500-project-template-needs-a-one-line-contract-correction);
+updating packages does not rewrite existing application files.
 
 Or add the packages to an existing application:
 
 ```bash
-dotnet add package Orleans.FSharp --version 5.0.0
-dotnet add package Orleans.FSharp.Runtime --version 5.0.0
+dotnet add package Orleans.FSharp --version 5.0.1
+dotnet add package Orleans.FSharp.Runtime --version 5.0.1
 ```
 
 Add testing support when needed:
 
 ```bash
-dotnet add package Orleans.FSharp.Testing --version 5.0.0
+dotnet add package Orleans.FSharp.Testing --version 5.0.1
 ```
 
 `Orleans.FSharp.Abstractions`, which contains the fixed transport and precompiled Orleans
@@ -142,7 +143,7 @@ proxies, arrives transitively. Applications do not reference it directly.
 To run the repository examples:
 
 ```bash
-git clone --branch v5.0.0 https://github.com/Neftedollar/orleans-fsharp.git
+git clone --branch v5.0.1 https://github.com/Neftedollar/orleans-fsharp.git
 cd orleans-fsharp
 dotnet build Orleans.FSharp.slnx
 dotnet run --project examples/feature-tour/src/FeatureTour
