@@ -265,6 +265,12 @@ New `subscribeFrom*` subscriptions include that event on both versions. The inte
 compare the wrapper with direct native `ResumeAsync` and require the exact ordered historical
 suffix, rather than imposing the older runtime's boundary on every version.
 
+This is an upstream correction in Orleans 10.4.0's
+[PR #10936](https://github.com/dotnet/orleans/pull/10936): an explicit start token stays inclusive
+during delivery-handshake renegotiation, whereas an acknowledged delivery token advances past the
+already delivered event. It applies to explicit-token resumption even without selecting the new
+`EarliestAvailable` option. Tokenless resumption is a different operation.
+
 Make checkpoint consumers idempotent or de-duplicate by event identity, and retain migration tests
 for your own provider. This checkpoint replay is separate from the TaskSeq wrapping defect in
 [streaming replies](/orleans-fsharp/streaming-replies/#authoring-a-producer); it does not justify dropping the

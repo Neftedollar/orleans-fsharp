@@ -46,7 +46,9 @@ to functional grains:
   regression tests. This changes nullable annotations, not transport bytes or public F# APIs.
 - Explicit-token resumption of an existing memory-stream subscription now replays the checkpoint
   event in our 10.4.2 tests, where 10.1.0 skipped it. The F# helpers preserve native Orleans behavior;
-  consumers must not depend on exclusive resumption. See [checkpoint replay](/orleans-fsharp/streaming/#resuming-subscriptions-after-reactivation).
+  consumers must not depend on exclusive resumption. This corrects start-token handling in
+  Orleans 10.4.0's [PR #10936](https://github.com/dotnet/orleans/pull/10936), not a new F# delivery
+  defect. See [checkpoint replay](/orleans-fsharp/streaming/#resuming-subscriptions-after-reactivation).
 - The Dashboard example needs OpenTelemetry.Api 1.18.0 with Dashboard 10.4.2. The central build
   dependency is updated without raising the Orleans package floor.
 - RPC parameter `[Id]` values are now honored and `CancellationToken` no longer consumes a

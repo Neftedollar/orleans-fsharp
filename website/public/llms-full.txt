@@ -3755,6 +3755,12 @@ New `subscribeFrom*` subscriptions include that event on both versions. The inte
 compare the wrapper with direct native `ResumeAsync` and require the exact ordered historical
 suffix, rather than imposing the older runtime's boundary on every version.
 
+This is an upstream correction in Orleans 10.4.0's
+[PR #10936](https://github.com/dotnet/orleans/pull/10936): an explicit start token stays inclusive
+during delivery-handshake renegotiation, whereas an acknowledged delivery token advances past the
+already delivered event. It applies to explicit-token resumption even without selecting the new
+`EarliestAvailable` option. Tokenless resumption is a different operation.
+
 Make checkpoint consumers idempotent or de-duplicate by event identity, and retain migration tests
 for your own provider. This checkpoint replay is separate from the TaskSeq wrapping defect in
 [streaming replies](https://neftedollar.com/orleans-fsharp/streaming-replies/#authoring-a-producer); it does not justify dropping the
@@ -8675,7 +8681,9 @@ to functional grains:
   regression tests. This changes nullable annotations, not transport bytes or public F# APIs.
 - Explicit-token resumption of an existing memory-stream subscription now replays the checkpoint
   event in our 10.4.2 tests, where 10.1.0 skipped it. The F# helpers preserve native Orleans behavior;
-  consumers must not depend on exclusive resumption. See [checkpoint replay](https://neftedollar.com/orleans-fsharp/streaming/#resuming-subscriptions-after-reactivation).
+  consumers must not depend on exclusive resumption. This corrects start-token handling in
+  Orleans 10.4.0's [PR #10936](https://github.com/dotnet/orleans/pull/10936), not a new F# delivery
+  defect. See [checkpoint replay](https://neftedollar.com/orleans-fsharp/streaming/#resuming-subscriptions-after-reactivation).
 - The Dashboard example needs OpenTelemetry.Api 1.18.0 with Dashboard 10.4.2. The central build
   dependency is updated without raising the Orleans package floor.
 - RPC parameter `[Id]` values are now honored and `CancellationToken` no longer consumes a
