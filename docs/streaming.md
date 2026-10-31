@@ -253,10 +253,17 @@ subscription. The corresponding new-subscription functions are `subscribeFromHan
 Build the argument to `resumeAllHandlers` with `StreamHandlers.withToken` when every resumed
 subscription must continue exposing provider cursors; a separate alias is unnecessary.
 
-There is one deliberate Orleans distinction: `subscribeFrom*` creates a new subscription and the
-tested memory provider includes the checkpoint event, while `resumeFrom` / `resumeBatchFrom`
-reattach a handle which already acknowledged that event and continue after it. Keep that
-new-subscription versus existing-handle distinction in migration tests for your chosen provider.
+These helpers pass the checkpoint token to Orleans unchanged. **Do not assume that resuming an
+existing handle is exclusive.** In our memory-provider tests, Orleans 10.1.0 skipped the already
+acknowledged checkpoint event on `resumeFrom` / `resumeBatchFrom`; Orleans 10.4.2 replays it.
+New `subscribeFrom*` subscriptions include that event on both versions. The integration tests
+compare the wrapper with direct native `ResumeAsync` and require the exact ordered historical
+suffix, rather than imposing the older runtime's boundary on every version.
+
+Make checkpoint consumers idempotent or de-duplicate by event identity, and retain migration tests
+for your own provider. This checkpoint replay is separate from the TaskSeq wrapping defect in
+[streaming replies](streaming-replies.md#authoring-a-producer); it does not justify dropping the
+last item of an arbitrary stream.
 
 ---
 

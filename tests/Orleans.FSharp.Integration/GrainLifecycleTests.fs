@@ -185,7 +185,7 @@ type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
         }
 
     [<Fact>]
-    member _.``grain continues to process commands before deactivation takes effect`` () =
+    member _.``deactivation replies with current state then a fresh activation processes commands`` () =
         task {
             let grain =
                 FSharpGrain.ref<DeactivationCtrlState, DeactivationCtrlCommand>
@@ -202,6 +202,19 @@ type DeactivationControlIntegrationTests(fixture: ClusterFixture) =
             // Request deactivation — grain should still respond to this call
             let! afterRequest = FSharpGrain.send DeactivCtrlRequestDeactivation grain
             test <@ afterRequest.Processed = 10 @>
+
+            // A no-op deactivateOnIdle would satisfy every assertion above. This grain has
+            // no persistent state: observing its seed again proves the old activation ended.
+            let deadline = System.DateTime.UtcNow.AddSeconds 30.0
+            let mutable processed = afterRequest.Processed
+            while processed <> 0 && System.DateTime.UtcNow < deadline do
+                do! System.Threading.Tasks.Task.Delay 25
+                let! current = FSharpGrain.send DeactivCtrlGetProcessed grain
+                processed <- current.Processed
+            test <@ processed = 0 @>
+
+            let! afterReactivation = FSharpGrain.send (DeactivCtrlProcess 4) grain
+            test <@ afterReactivation.Processed = 4 @>
         }
 
 #warnon "44"

@@ -10,7 +10,7 @@
 [![NuGet](https://img.shields.io/nuget/v/Orleans.FSharp.svg)](https://www.nuget.org/packages/Orleans.FSharp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
-[![Orleans 10](https://img.shields.io/badge/Orleans-10.1.0%20%E2%80%93%2010.3.1-blue)](https://learn.microsoft.com/dotnet/orleans/)
+[![Orleans 10](https://img.shields.io/badge/Orleans-10.1.0%20%E2%80%93%2010.4.2-blue)](https://learn.microsoft.com/dotnet/orleans/)
 [![F#](https://img.shields.io/badge/F%23-9%2B-378BBA)](https://fsharp.org/)
 
 Orleans.FSharp keeps the Microsoft Orleans runtime and gives it an F#-first authoring model:
@@ -25,6 +25,9 @@ continues to own routing, activation, clustering, persistence, streams, and tran
 This README documents **Orleans.FSharp 5.0.1**, the current stable release. Applications upgrading
 from 4.x should review the [breaking changes](CHANGELOG.md#500---2026-09-07) and
 [Legacy migration guide](docs/legacy/migration.md).
+
+The development branch prepares **5.0.2** with an Orleans **10.4.2** compatibility target;
+the minimum remains 10.1.0. See [compatibility notes](docs/compatibility.md) for the update's scope.
 
 ## Why Orleans.FSharp?
 

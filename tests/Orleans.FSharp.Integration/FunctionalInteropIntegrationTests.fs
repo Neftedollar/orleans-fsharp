@@ -40,6 +40,8 @@ type IProbeFacade =
     abstract Peek: unit -> Task<int>
     /// A tuple argument, packed from two parameters.
     abstract Tag: name: string * value: string -> Task<string>
+    /// Reads the state published by Tag, rather than echoing the current argument.
+    abstract StateRead: unit -> Task<string>
     /// An F# record argument and a discriminated-union reply, both through the F# binary codec.
     abstract Note: note: Note -> Task<NoteResult>
     /// A one-way operation, declared as the bare Task a C# author writes.
@@ -105,8 +107,10 @@ type InteropTests(fixture: FunctionalClusterFixture) =
     [<Fact>]
     member _.``the same facade interface binds independently to two keys``() =
         task {
-            let first = facade "interop-first"
-            let second = facade "interop-second"
+            let firstKey = $"interop-first-{Guid.NewGuid():N}"
+            let secondKey = $"interop-second-{Guid.NewGuid():N}"
+            let first = facade firstKey
+            let second = facade secondKey
 
             let! a = first.Echo "a"
             let! b = second.Echo "b"
@@ -115,8 +119,20 @@ type InteropTests(fixture: FunctionalClusterFixture) =
 
             // Distinct activations: each key has its own state, so what the first wrote is not
             // what the second reads.
-            let! firstTag = first.Tag("owner", "first")
-            let! secondTag = second.Tag("owner", "second")
-            Assert.Equal("owner=first", firstTag)
-            Assert.Equal("owner=second", secondTag)
+            let! firstTag = first.Tag("first-owner", "first")
+            let! secondTag = second.Tag("second-owner", "second")
+            Assert.Equal("first-owner=first", firstTag)
+            Assert.Equal("second-owner=second", secondTag)
+
+            // Echo/Tag replies alone still pass if facade caching collapses both keys onto
+            // one grain. Read after BOTH writes, and cross-check with the native bound API
+            // so two consistently misbound facade methods cannot mask the routing error.
+            let! firstState = first.StateRead()
+            let! secondState = second.StateRead()
+            Assert.Equal("first-owner", firstState)
+            Assert.Equal("second-owner", secondState)
+            let! nativeFirst = (fixture.Probe firstKey).api.stateRead ()
+            let! nativeSecond = (fixture.Probe secondKey).api.stateRead ()
+            Assert.Equal("first-owner", nativeFirst)
+            Assert.Equal("second-owner", nativeSecond)
         }

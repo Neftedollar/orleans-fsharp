@@ -107,27 +107,45 @@ let ``explicitly written state reloads on a silo which never saw the write`` () 
             let name = $"restart-{Guid.NewGuid():N}"
             let api = ledgerRef cluster.Client name
 
+            // Keep the development membership table and client gateway alive. Pin only the
+            // initial activation; after loss, recovery must use ordinary placement.
+            let secondary = cluster.SecondarySilos |> Seq.head
+            let! hostingSilo =
+                task {
+                    let hintKey = Placement.IPlacementDirector.PlacementHintKey
+                    let previousHint = RequestContext.Get hintKey
+                    try
+                        RequestContext.Set(hintKey, secondary.SiloAddress)
+                        return! api.whereAmI ()
+                    finally
+                        if isNull previousHint then
+                            RequestContext.Remove hintKey |> ignore
+                        else
+                            RequestContext.Set(hintKey, previousHint)
+                }
+            Assert.Equal(string secondary.SiloAddress, hostingSilo)
+
             do! api.writeNow "durable"
+            do! api.auditWrite 11
+            // Recovery must distinguish a committed record from the latest in-memory state.
+            // Without this divergence, silently persisting every handler return goes unnoticed.
+            let! _ = api.append "never-written"
             let! before = api.snapshot ()
-            Assert.Equal("v1:[activated,durable]", before)
-
-            let! hostingSilo = api.whereAmI ()
-
-            let handle =
-                cluster.Silos
-                |> Seq.find (fun silo -> string silo.SiloAddress = hostingSilo)
+            Assert.Equal("v2:[activated,durable,never-written]", before)
 
             // Remove the silo which owns the activation. Its in-memory state is gone with it;
             // only the explicitly written record remains.
-            do! cluster.StopSiloAsync handle
+            do! cluster.StopSiloAsync secondary
             do! cluster.WaitForLivenessToStabilizeAsync()
 
             let! after = api.snapshot ()
+            let! audit = api.auditPeek ()
             let! newSilo = api.whereAmI ()
 
             Assert.NotEqual<string>(hostingSilo, newSilo)
             // The new activation loaded the written record and ran its own activation hook.
             Assert.Equal("v1:[activated,durable,activated]", after)
+            Assert.Equal(11, audit)
         finally
             cluster.StopAllSilos()
             cluster.Dispose()

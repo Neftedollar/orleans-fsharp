@@ -488,6 +488,48 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
             do! Stream.unsubscribe allSub
         }
 
+    /// Independently observe native ResumeAsync on this provider/runtime. The wrapper must
+    /// preserve its checkpoint boundary, while both routes must deliver the full ordered suffix.
+    member private this.NativeCheckpointReplay(batch: bool) =
+        task {
+            let provider = fixture.Client.GetStreamProvider("StreamProvider")
+            let streamRef = Stream.getStream<int> provider "native-resume-control" (Guid.NewGuid().ToString())
+            let! seed, checkpoint = this.SeedCheckpoint(streamRef, 5, 3)
+            let received = ConcurrentQueue<int>()
+
+            let! handle =
+                if batch then
+                    let observer =
+                        { new IAsyncBatchObserver<int> with
+                            member _.OnNextAsync(items) =
+                                for item in items do
+                                    received.Enqueue item.Item
+                                Task.CompletedTask
+                            member _.OnCompletedAsync() = Task.CompletedTask
+                            member _.OnErrorAsync(error) = Task.FromException(error) }
+                    seed.Handle.ResumeAsync(observer, checkpoint)
+                else
+                    let observer =
+                        { new IAsyncObserver<int> with
+                            member _.OnNextAsync(item, _) =
+                                received.Enqueue item
+                                Task.CompletedTask
+                            member _.OnCompletedAsync() = Task.CompletedTask
+                            member _.OnErrorAsync(error) = Task.FromException(error) }
+                    seed.Handle.ResumeAsync(observer, checkpoint)
+
+            try
+                do! this.NudgeUntil(streamRef, 6, fun () -> Seq.contains 4 received && Seq.contains 5 received)
+            finally
+                handle.UnsubscribeAsync().GetAwaiter().GetResult()
+
+            let replay = received |> Seq.filter ((<>) 6) |> Seq.toList
+            // Both observed native boundaries are safe to compare, but an empty, unordered,
+            // duplicated, or incomplete suffix is not a valid oracle.
+            test <@ replay = [ 4; 5 ] || replay = [ 3; 4; 5 ] @>
+            return replay
+        }
+
     [<Fact>]
     member this.``resumeFrom and subscribeFromHandlers rewind item callbacks`` () =
         task {
@@ -503,13 +545,13 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
                     (StreamHandlers.create (fun item -> task { resumed.Enqueue item }))
 
             do! this.NudgeUntil(resumeRef, 6, fun () -> Seq.contains 4 resumed && Seq.contains 5 resumed)
-            // ResumeAsync reattaches the existing durable handle. Since that handle already
-            // acknowledged the checkpoint event, Orleans continues after it rather than
-            // redelivering it as a new SubscribeAsync(..., token) call does.
-            test <@ not (Seq.contains 3 resumed) @>
-            test <@ not (Seq.contains 1 resumed) @>
-            test <@ not (Seq.contains 2 resumed) @>
             do! Stream.unsubscribe resumedSub
+
+            // Compare to the native API, not to a frozen assumption about acknowledged-token
+            // replay: Orleans 10.1 skipped item 3 on an existing handle; 10.4 replays it.
+            let! nativeReplay = this.NativeCheckpointReplay(false)
+            let actualReplay = resumed |> Seq.filter ((<>) 6) |> Seq.toList
+            test <@ actualReplay = nativeReplay @>
 
             let subscribeRef =
                 Stream.getStream<int> streamProvider "subscribe-from-handlers-ns" (Guid.NewGuid().ToString())
@@ -531,10 +573,9 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
                     fun () -> Seq.contains 4 subscribed && Seq.contains 5 subscribed
                 )
 
-            test <@ Seq.contains 3 subscribed @>
-            test <@ not (Seq.contains 1 subscribed) @>
-            test <@ not (Seq.contains 2 subscribed) @>
             do! Stream.unsubscribe subscribedSub
+            let subscribedReplay = subscribed |> Seq.filter ((<>) 6) |> Seq.toList
+            test <@ subscribedReplay = [ 3; 4; 5 ] @>
         }
 
     [<Fact>]
@@ -590,10 +631,9 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
                     fun () -> Seq.contains 4 subscribed && Seq.contains 5 subscribed
                 )
 
-            test <@ Seq.contains 3 subscribed @>
-            test <@ not (Seq.contains 1 subscribed) @>
-            test <@ not (Seq.contains 2 subscribed) @>
             do! Stream.unsubscribe subscribedSub
+            let subscribedReplay = subscribed |> Seq.filter ((<>) 6) |> Seq.toList
+            test <@ subscribedReplay = [ 3; 4; 5 ] @>
 
             let resumeRef = Stream.getStream<int> streamProvider "resume-from-batch-ns" (Guid.NewGuid().ToString())
             let! resumeSource, resumeCheckpoint = this.SeedCheckpoint(resumeRef, 5, 3)
@@ -606,10 +646,10 @@ type StreamingIntegrationTests(fixture: ClusterFixture) =
                 )
 
             do! this.NudgeUntil(resumeRef, 6, fun () -> Seq.contains 4 resumed && Seq.contains 5 resumed)
-            test <@ not (Seq.contains 3 resumed) @>
-            test <@ not (Seq.contains 1 resumed) @>
-            test <@ not (Seq.contains 2 resumed) @>
             do! Stream.unsubscribe resumedSub
+            let! nativeReplay = this.NativeCheckpointReplay(true)
+            let actualReplay = resumed |> Seq.filter ((<>) 6) |> Seq.toList
+            test <@ actualReplay = nativeReplay @>
         }
 
     [<Fact>]

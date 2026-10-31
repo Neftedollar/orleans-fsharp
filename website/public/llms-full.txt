@@ -451,6 +451,18 @@ tag while planning their migration.
 The runtime APIs are unchanged from 5.0.0. Version 5.0.1 corrects the packaged project template and
 adds startup regression coverage to the release gate.
 
+### Upcoming 5.0.2 update
+
+The current branch prepares compatibility with **Orleans 10.4.2**, retaining the **10.1.0**
+minimum and the existing public F# API. It aligns the transport copiers with Orleans' nullable
+contract and updates build-time SourceLink tooling to remove a vulnerable Git task dependency.
+Test hardening checks concrete state, retry outcomes, JSON bytes, and stream contents instead of
+weaker count-only or paired round-trip assertions. This section is a candidate status, not a
+claim that 5.0.2 has already been published.
+
+See [Orleans Compatibility](https://neftedollar.com/orleans-fsharp/compatibility/#what-changed-in-orleans-104) for runtime changes,
+upgrade caveats, and new APIs considered separately from this patch.
+
 The Legacy archive receives no new Legacy release line, features, compatibility work, or security
 fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
 records, and `FunctionalGrain.ref`.
@@ -476,8 +488,21 @@ initializes the grain definition and an end-to-end template process check in the
 Direct enumeration of a functional streaming reply is the supported path. With
 `FSharp.Control.TaskSeq` 1.1.1 on the repository's verified static resumable-code path, wrapping a
 runtime-returned `IAsyncEnumerable` with `TaskSeq.map` or
-`taskSeq { for item in upstream do yield item }` was measured duplicating the final item. TaskSeq
-over ordinary producers such as lists, ranges, and database cursors is not affected.
+`taskSeq { for item in upstream do yield item }` was measured duplicating the final item. The
+repository's ordinary list/range producers do not reproduce this wrapping problem; that is not
+a guarantee about every third-party async source.
+
+As of **1 November 2026**, NuGet still publishes TaskSeq **1.1.1** and
+[TaskSeq #452](https://github.com/fsprojects/FSharp.Control.TaskSeq/issues/452) remains open.
+The merged reproduction-test PR is not a library fix. The F# compiler fix for Debug resumable-code
+lowering was merged and [backported](https://github.com/dotnet/fsharp/pull/20692), but is not included
+in stable SDK 10.0.403. The verified repository SDK remains 10.0.201; a closed compiler issue alone
+is not sufficient evidence to lift that pin.
+
+The `UpstreamBoundary` integration cases compare actual item order and contents for empty,
+single-item, and longer streams. Only the exact known final duplicate is tolerated for wrappers;
+direct enumeration must match exactly. Green characterization tests therefore do **not** mean
+the TaskSeq defect is fixed. Delivery, cancellation, and producer disposal have separate strict tests.
 
 When one grain relays another grain's streaming reply, return a direct delegating
 `IAsyncEnumerable`/enumerator instead of using those wrapping forms. The exact pattern and the SDK
@@ -3723,10 +3748,17 @@ subscription. The corresponding new-subscription functions are `subscribeFromHan
 Build the argument to `resumeAllHandlers` with `StreamHandlers.withToken` when every resumed
 subscription must continue exposing provider cursors; a separate alias is unnecessary.
 
-There is one deliberate Orleans distinction: `subscribeFrom*` creates a new subscription and the
-tested memory provider includes the checkpoint event, while `resumeFrom` / `resumeBatchFrom`
-reattach a handle which already acknowledged that event and continue after it. Keep that
-new-subscription versus existing-handle distinction in migration tests for your chosen provider.
+These helpers pass the checkpoint token to Orleans unchanged. **Do not assume that resuming an
+existing handle is exclusive.** In our memory-provider tests, Orleans 10.1.0 skipped the already
+acknowledged checkpoint event on `resumeFrom` / `resumeBatchFrom`; Orleans 10.4.2 replays it.
+New `subscribeFrom*` subscriptions include that event on both versions. The integration tests
+compare the wrapper with direct native `ResumeAsync` and require the exact ordered historical
+suffix, rather than imposing the older runtime's boundary on every version.
+
+Make checkpoint consumers idempotent or de-duplicate by event identity, and retain migration tests
+for your own provider. This checkpoint replay is separate from the TaskSeq wrapping defect in
+[streaming replies](https://neftedollar.com/orleans-fsharp/streaming-replies/#authoring-a-producer); it does not justify dropping the
+last item of an arbitrary stream.
 
 ---
 
@@ -4928,7 +4960,7 @@ The handler returns the BCL `IAsyncEnumerable<'Item>` and nothing else, so any w
 works. `taskSeq { }` from `FSharp.Control.TaskSeq` is the natural F# tool and this library already
 depends on that package, so using it adds nothing to your closure.
 
-> **One caveat, and it is not about this runtime.** In `FSharp.Control.TaskSeq` 1.1.1, the
+> **Known TaskSeq/Orleans interoperability boundary.** In `FSharp.Control.TaskSeq` 1.1.1, the
 > *wrapping* forms — `TaskSeq.map`, and `taskSeq { for x in someStream do yield x }` — over an
 > `IAsyncEnumerable` returned by **this** runtime were measured yielding the last item twice under
 > an activation's task scheduler; direct enumeration is correct. So when one grain re-streams
@@ -4942,11 +4974,17 @@ depends on that package, so using it adds nothing to your closure.
 >             upstream.GetAsyncEnumerator ct })
 > ```
 >
-> Producing from a `taskSeq { }` over ordinary data — a list, a range, a database cursor — is not
-> affected and is what every example here does. This repository tests the Orleans-specific case
+> The list/range producers used in these examples do not reproduce this wrapping problem; this
+> is not a guarantee for every external async source. This repository tests the Orleans-specific case
 > against both its minimum and newest supported Orleans versions. The repository remains pinned
 > to SDK 10.0.201: TaskSeq's dynamic path under SDK 10.0.400 avoids this `taskSeq { for ... }`
 > duplication, but currently regresses stream delivery and producer-disposal propagation.
+
+As of 1 November 2026, TaskSeq 1.1.1 is still the latest stable package and
+[the upstream issue](https://github.com/fsprojects/FSharp.Control.TaskSeq/issues/452) remains open.
+The compiler fix/backport has not reached stable SDK 10.0.403. The characterization tests allow
+only the exact final-item duplicate, not arbitrary sequences with the same length; they are not
+evidence that wrapping is production-safe.
 
 This is tracked as an upstream production boundary, separate from the 4.1-versus-5.0 package
 split, in [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/#taskseq-is-an-upstream-boundary-when-wrapping-streaming-replies).
@@ -8598,8 +8636,9 @@ handler side is still an F# record. An observer facade is a possible future addi
 
 **Supported version policy, verified runtimes, and relevant changes in new Orleans releases.**
 
-This page describes framework compatibility for Orleans.FSharp 5.0.1, the current published stable
-release. See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for production boundaries.
+This page describes the upcoming Orleans.FSharp 5.0.2 compatibility update. The current published
+stable release is still 5.0.1; the 10.4.2 source-compatibility changes below belong to the update,
+not retroactively to that release. See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
 
 ## Version policy
 
@@ -8612,10 +8651,60 @@ current event-sourcing surface uses `JournaledGrain.ClearLogAsync`, which is abs
 |---|---|---|
 | 10.0.x | Not supported | Missing an API required by the current Orleans.FSharp assemblies |
 | 10.1.0 | Supported floor | The version used to compile packages and one end of the CI matrix |
-| 10.3.1 | Latest stable Orleans release | The newest-version compatibility target |
+| 10.3.1 | Previous compatibility target | Covered by the 5.0.1 release checks |
+| 10.4.2 | Latest stable Orleans release as of 1 November 2026 | The newest-version compatibility target for 5.0.2 |
 
 The package floor should move only when Orleans.FSharp starts using a newer Orleans API. A new
 Orleans release alone is not a reason to force every consumer to upgrade.
+
+## What changed in Orleans 10.4
+
+Target **10.4.2**, including the servicing fixes after 10.4.0. The official notes for
+[10.4.0](https://github.com/dotnet/orleans/releases/tag/v10.4.0),
+[10.4.1](https://github.com/dotnet/orleans/releases/tag/v10.4.1), and
+[10.4.2](https://github.com/dotnet/orleans/releases/tag/v10.4.2) describe several changes relevant
+to functional grains:
+
+- Read-only request isolation, timer scheduling, and queued-request handling during activation
+  migration/retirement were corrected. Applications inherit these fixes from their Orleans runtime.
+- Serializer type-authorization checks were hardened. ADO.NET streaming redelivery and Azure
+  membership interoperability also received fixes; the latter providers still need their own
+  application-level upgrade checks.
+- `IDeepCopier<T>` now describes nullable input explicitly. Seven hand-written Orleans.FSharp
+  transport/observer copiers are aligned with that contract in 5.0.2, including direct null-input
+  regression tests. This changes nullable annotations, not transport bytes or public F# APIs.
+- Explicit-token resumption of an existing memory-stream subscription now replays the checkpoint
+  event in our 10.4.2 tests, where 10.1.0 skipped it. The F# helpers preserve native Orleans behavior;
+  consumers must not depend on exclusive resumption. See [checkpoint replay](https://neftedollar.com/orleans-fsharp/streaming/#resuming-subscriptions-after-reactivation).
+- The Dashboard example needs OpenTelemetry.Api 1.18.0 with Dashboard 10.4.2. The central build
+  dependency is updated without raising the Orleans package floor.
+- RPC parameter `[Id]` values are now honored and `CancellationToken` no longer consumes a
+  serialized parameter ordinal. Audit application-owned C# grain interfaces before a rolling
+  upgrade, particularly tokens placed before other arguments. Our fixed transport places its
+  token last and writes the envelope with its existing explicit field ID; source inspection found
+  no corresponding ordinal change. This is not a blanket proof for arbitrary application interfaces.
+- `SiloAddress.GetUniformHashCodes` changes its return type from an array to an immutable array.
+  Applications using that low-level API need a rebuild. Orleans.FSharp does not expose it as part
+  of its functional API.
+- Request latency metrics move to `orleans-app-requests-latency`, a fractional-millisecond
+  histogram. Review dashboards/alerts, and apply the updated Orleans SQL scripts when using
+  existing SQLite storage databases.
+
+### Useful additions, separate from this compatibility update
+
+| Addition | How it fits Orleans.FSharp |
+|---|---|
+| Explicit stream subscription start: `Latest` / `EarliestAvailable` | A useful next F# helper, not added in 5.0.2. `EarliestAvailable` means the oldest retained **local queue-cache** item, not all provider history. Native 10.4 APIs are usable when the application targets that version; upgrade pulling-agent silos before enabling the feature. |
+| Cancellation-aware framework operations | Evaluate helpers individually. Public stream subscribe/resume/unsubscribe still have no cancellation-token overload; cancelling only the wait can leak a subscription created later. Existing functional-call cancellation is separate. |
+| Management `DeactivateGrain` | Usable through the native management grain on 10.4.1+; a dedicated F# convenience wrapper is optional. |
+| New provider/cache configuration | Configure through native Orleans hosting APIs; no replacement F# configuration layer is required. |
+| `Microsoft.Orleans.Journaling` / Durable Jobs | Still prerelease (`10.4.2-alpha.1`), deliberately deferred. They are not the log-consistency model wrapped by `journaledGrainFor`. |
+
+Adding first-class start-position helpers while retaining the 10.1 floor needs an explicit
+unsupported-runtime error and tests for provider defaults, retained/empty caches, batch delivery,
+and subscription cleanup. Falling back silently to ordinary live delivery would hide a semantic
+change. The [upstream enum contract](https://github.com/dotnet/orleans/blob/v10.4.2/src/Orleans.Streaming/Core/StreamSubscriptionStartPosition.cs)
+defines the cache boundary.
 
 ## What changed in Orleans 10.3
 
@@ -8641,7 +8730,7 @@ version-contract analyzer metadata plus tests and documentation. See its
 [release notes](https://github.com/dotnet/orleans/releases/tag/v10.3.1) and
 [NuGet package](https://www.nuget.org/packages/Microsoft.Orleans.Server/10.3.1).
 
-## Newly available Orleans surface
+## Orleans 10.3 additions already assessed
 
 The release also highlights:
 
@@ -8653,7 +8742,7 @@ The release also highlights:
 - incremental source generation and new Orleans application templates;
 - directory, membership, and rolling-upgrade reliability improvements.
 
-These additions fall into three different categories:
+Their compatibility boundaries are:
 
 | Category | Orleans.FSharp position |
 |---|---|
@@ -8671,6 +8760,11 @@ log-consistency providers.
 The CI matrix keeps the package floor and newest stable Orleans separate. Its newest leg builds the
 solution and runs unit tests, functional integration tests, separate-process rolling-update tests,
 stream tests, the functional sample, and the Dashboard smoke test against the selected release.
+
+The N/N+1 rolling tests change **application** contracts and durable schemas with one Orleans
+version per test run. They do not, by themselves, prove a cluster mixing Orleans 10.1 and 10.4
+binaries. Rebuilding against both versions is also different from running a floor-built NuGet
+package on the newer runtime; package-consumer smoke checks cover that additional boundary.
 
 This verifies the Orleans.FSharp surface exercised by those suites. It does **not** certify every
 third-party storage, clustering, or stream provider, nor does it prove that application-specific
@@ -9632,7 +9726,10 @@ The returned value has the exact API-record type.
 
 ## Which Orleans versions are supported?
 
-The current package range starts at Orleans 10.1.0 and is tested against both 10.1.0 and 10.3.1. A NuGet lower bound means older 10.0.x versions are not selected. See [Orleans Compatibility](https://neftedollar.com/orleans-fsharp/compatibility/) for release-specific notes.
+The package range starts at Orleans 10.1.0. The published 5.0.1 release was tested through
+10.3.1; the upcoming 5.0.2 update moves the newest compatibility target to 10.4.2 without raising
+the minimum. A NuGet lower bound means older 10.0.x versions are not selected. See
+[Orleans Compatibility](https://neftedollar.com/orleans-fsharp/compatibility/) for release-specific notes and verification boundaries.
 
 ## Does event sourcing support snapshots?
 

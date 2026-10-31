@@ -275,7 +275,7 @@ The handler returns the BCL `IAsyncEnumerable<'Item>` and nothing else, so any w
 works. `taskSeq { }` from `FSharp.Control.TaskSeq` is the natural F# tool and this library already
 depends on that package, so using it adds nothing to your closure.
 
-> **One caveat, and it is not about this runtime.** In `FSharp.Control.TaskSeq` 1.1.1, the
+> **Known TaskSeq/Orleans interoperability boundary.** In `FSharp.Control.TaskSeq` 1.1.1, the
 > *wrapping* forms — `TaskSeq.map`, and `taskSeq { for x in someStream do yield x }` — over an
 > `IAsyncEnumerable` returned by **this** runtime were measured yielding the last item twice under
 > an activation's task scheduler; direct enumeration is correct. So when one grain re-streams
@@ -289,11 +289,17 @@ depends on that package, so using it adds nothing to your closure.
 >             upstream.GetAsyncEnumerator ct })
 > ```
 >
-> Producing from a `taskSeq { }` over ordinary data — a list, a range, a database cursor — is not
-> affected and is what every example here does. This repository tests the Orleans-specific case
+> The list/range producers used in these examples do not reproduce this wrapping problem; this
+> is not a guarantee for every external async source. This repository tests the Orleans-specific case
 > against both its minimum and newest supported Orleans versions. The repository remains pinned
 > to SDK 10.0.201: TaskSeq's dynamic path under SDK 10.0.400 avoids this `taskSeq { for ... }`
 > duplication, but currently regresses stream delivery and producer-disposal propagation.
+
+As of 1 November 2026, TaskSeq 1.1.1 is still the latest stable package and
+[the upstream issue](https://github.com/fsprojects/FSharp.Control.TaskSeq/issues/452) remains open.
+The compiler fix/backport has not reached stable SDK 10.0.403. The characterization tests allow
+only the exact final-item duplicate, not arbitrary sequences with the same length; they are not
+evidence that wrapping is production-safe.
 
 This is tracked as an upstream production boundary, separate from the 4.1-versus-5.0 package
 split, in [Release and Production Status](/orleans-fsharp/release-status/#taskseq-is-an-upstream-boundary-when-wrapping-streaming-replies).

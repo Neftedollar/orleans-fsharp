@@ -18,6 +18,7 @@ open Orleans.CodeGeneration
 open Orleans.Serialization
 open Orleans.Serialization.Buffers
 open Orleans.Serialization.Codecs
+open Orleans.Serialization.Cloning
 open Orleans.Serialization.Session
 open Orleans.Serialization.Invocation
 open Orleans.Serialization.WireProtocol
@@ -548,6 +549,27 @@ let ``the envelope and reply copy as the immutable values they are`` () =
 
     test <@ obj.ReferenceEquals((copier ()).Copy value, value) @>
     test <@ obj.ReferenceEquals((copier ()).Copy reply, reply) @>
+
+[<Fact>]
+let ``every functional copier preserves null input directly`` () =
+    let provider = services.Value.GetRequiredService<IDeepCopierProvider>()
+    use context = services.Value.GetRequiredService<CopyContextPool>().GetContext()
+
+    // Invoke the registered copiers themselves: DeepCopier.Copy(null) can short-circuit before
+    // reaching them and would miss a null dereference introduced by an Orleans contract update.
+    let assertNull (expectedCopier: Type) (input: 'T) =
+        let registered = provider.GetDeepCopier<'T>()
+        Assert.IsType(expectedCopier, registered) |> ignore
+        let copy: 'T = registered.DeepCopy(input, context)
+        Assert.Null(box copy)
+
+    assertNull typeof<FunctionalRequestEnvelopeCopier> (null: FunctionalRequestEnvelope)
+    assertNull typeof<FunctionalReplyCopier> (null: FunctionalReply)
+    assertNull typeof<FunctionalRequestCopier> (null: FunctionalRequest)
+    assertNull typeof<FunctionalTransactionRequestCopier> (null: FunctionalTransactionRequest)
+    assertNull typeof<FunctionalStreamRequestCopier> (null: FunctionalStreamRequest)
+    assertNull typeof<FunctionalNotificationEnvelopeCopier> (null: FunctionalNotificationEnvelope)
+    assertNull typeof<FunctionalObserverHandleCopier<CodecActor, obj>> (null: FunctionalObserverHandle<CodecActor, obj>)
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Request argument surface and cancellation

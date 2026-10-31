@@ -19,6 +19,18 @@ tag while planning their migration.
 The runtime APIs are unchanged from 5.0.0. Version 5.0.1 corrects the packaged project template and
 adds startup regression coverage to the release gate.
 
+### Upcoming 5.0.2 update
+
+The current branch prepares compatibility with **Orleans 10.4.2**, retaining the **10.1.0**
+minimum and the existing public F# API. It aligns the transport copiers with Orleans' nullable
+contract and updates build-time SourceLink tooling to remove a vulnerable Git task dependency.
+Test hardening checks concrete state, retry outcomes, JSON bytes, and stream contents instead of
+weaker count-only or paired round-trip assertions. This section is a candidate status, not a
+claim that 5.0.2 has already been published.
+
+See [Orleans Compatibility](compatibility.md#what-changed-in-orleans-104) for runtime changes,
+upgrade caveats, and new APIs considered separately from this patch.
+
 The Legacy archive receives no new Legacy release line, features, compatibility work, or security
 fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
 records, and `FunctionalGrain.ref`.
@@ -44,8 +56,21 @@ initializes the grain definition and an end-to-end template process check in the
 Direct enumeration of a functional streaming reply is the supported path. With
 `FSharp.Control.TaskSeq` 1.1.1 on the repository's verified static resumable-code path, wrapping a
 runtime-returned `IAsyncEnumerable` with `TaskSeq.map` or
-`taskSeq { for item in upstream do yield item }` was measured duplicating the final item. TaskSeq
-over ordinary producers such as lists, ranges, and database cursors is not affected.
+`taskSeq { for item in upstream do yield item }` was measured duplicating the final item. The
+repository's ordinary list/range producers do not reproduce this wrapping problem; that is not
+a guarantee about every third-party async source.
+
+As of **1 November 2026**, NuGet still publishes TaskSeq **1.1.1** and
+[TaskSeq #452](https://github.com/fsprojects/FSharp.Control.TaskSeq/issues/452) remains open.
+The merged reproduction-test PR is not a library fix. The F# compiler fix for Debug resumable-code
+lowering was merged and [backported](https://github.com/dotnet/fsharp/pull/20692), but is not included
+in stable SDK 10.0.403. The verified repository SDK remains 10.0.201; a closed compiler issue alone
+is not sufficient evidence to lift that pin.
+
+The `UpstreamBoundary` integration cases compare actual item order and contents for empty,
+single-item, and longer streams. Only the exact known final duplicate is tolerated for wrappers;
+direct enumeration must match exactly. Green characterization tests therefore do **not** mean
+the TaskSeq defect is fixed. Delivery, cancellation, and producer disposal have separate strict tests.
 
 When one grain relays another grain's streaming reply, return a direct delegating
 `IAsyncEnumerable`/enumerator instead of using those wrapping forms. The exact pattern and the SDK

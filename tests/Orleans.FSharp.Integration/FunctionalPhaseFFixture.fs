@@ -256,10 +256,10 @@ let tickerDefinition =
 type RelayApi =
     { /// Opens `watch` on the named ticker key and re-yields every item's note.
       relay: string * string * int -> IAsyncEnumerable<string>
-      /// Consumes the same upstream stream twice INSIDE the grain — once directly, once through
-      /// `taskSeq { for … }` — and reports both counts. Nothing of the streaming reply path is
-      /// involved, so a difference is a property of the consuming construct alone.
-      probe: string * string * int -> Task<int * int * int>
+      /// Consumes upstream streams INSIDE the grain directly, through `TaskSeq.map`, and through
+      /// `taskSeq { for … }`. Return the actual notes, not counts: equal counts can hide item
+      /// loss, replacement, or reordering. No streaming reply wrapper is involved.
+      probe: string * string * int -> Task<string list * string list * string list>
       whereAmI: unit -> Task<string> }
 
 type RelayActor = private RelayActor of unit
@@ -279,7 +279,7 @@ let relayDefinition =
         defaultState (fun () -> ())
 
         // Hand-written rather than `taskSeq { for tick in upstream.watch … do yield tick.note }`.
-        // FSharp.Control.TaskSeq 0.6.0's wrapping combinators over an IAsyncEnumerable produced by
+        // FSharp.Control.TaskSeq 1.1.1's wrapping combinators over an IAsyncEnumerable produced by
         // this runtime yield the last item twice when they run under an activation's task
         // scheduler — see the `probe` operation below and the discriminator test that measures it.
         // This is the shape a `taskSeq` relay is meant to be, and it is exactly `await foreach`.
@@ -324,7 +324,7 @@ let relayDefinition =
                         }
                     )
 
-                return state, (List.length direct, List.length viaMap, List.length viaFor)
+                return state, (direct |> List.map _.note, viaMap, viaFor)
             })
 
         handle (_.whereAmI) (fun context state () ->

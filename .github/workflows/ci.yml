@@ -33,9 +33,9 @@ jobs:
           - label: floor
             arg: ''
             version: '10.1.0'
-          - label: 10.3.1 (newest)
-            arg: '-p:OrleansVersion=10.3.1'
-            version: '10.3.1'
+          - label: 10.4.2 (newest)
+            arg: '-p:OrleansVersion=10.4.2'
+            version: '10.4.2'
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       # The SDK is PINNED, not floated. FSharp.Control.TaskSeq 1.1.1 implements the dynamic
@@ -132,8 +132,8 @@ jobs:
         include:
           - label: floor
             arg: ''
-          - label: 10.3.1 (newest)
-            arg: '-p:OrleansVersion=10.3.1'
+          - label: 10.4.2 (newest)
+            arg: '-p:OrleansVersion=10.4.2'
     services:
       redis:
         image: redis:7-alpine
@@ -393,7 +393,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v5.* ]]; then
             candidate="${GITHUB_REF_NAME#v}"
           else
-            candidate="5.0.0-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+            candidate="5.0.2-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           fi
           echo "version=$candidate" >> "$GITHUB_OUTPUT"
           echo "Release candidate: $candidate"
@@ -460,6 +460,55 @@ jobs:
             --no-build \
             --no-restore | tee "$RUNNER_TEMP/template-smoke.out"
           python3 scripts/check-template-smoke.py "$RUNNER_TEMP/template-smoke.out"
+      - name: Run the same floor-built packages on newest Orleans
+        timeout-minutes: 5
+        env:
+          NEWEST_ORLEANS_VERSION: '10.4.2'
+        shell: bash
+        run: |
+          set -o pipefail
+          # Upgrade only the generated application. Its Orleans.FSharp dependencies remain the
+          # exact nupkgs packed above against the floor, not ProjectReferences rebuilt for newest.
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "template-smoke"
+          project = root / "src/TemplateSmoke.Silo/TemplateSmoke.Silo.fsproj"
+          assets = json.loads((project.parent / "obj/project.assets.json").read_text())
+          packages = sorted({key.split("/")[0] for key in assets["libraries"]
+                             if key.startswith("Microsoft.Orleans.")})
+          if not packages:
+              raise SystemExit("No Orleans dependencies discovered in the package consumer")
+          for package in packages:
+              subprocess.run(["dotnet", "add", str(project), "package", package,
+                              "--version", os.environ["NEWEST_ORLEANS_VERSION"],
+                              "--no-restore"], check=True)
+          PY
+          dotnet restore "$RUNNER_TEMP/template-smoke/TemplateSmoke.sln" \
+            --source "$RUNNER_TEMP/nupkgs" --source https://api.nuget.org/v3/index.json
+          dotnet build "$RUNNER_TEMP/template-smoke/TemplateSmoke.sln" \
+            --configuration Release --no-restore --verbosity minimal
+          # Do not accept a successful run which silently resolved a mixed/older Orleans set.
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "template-smoke/src/TemplateSmoke.Silo/obj"
+          assets = json.loads((root / "project.assets.json").read_text())
+          expected = os.environ["NEWEST_ORLEANS_VERSION"]
+          wrong = [key for key in assets["libraries"]
+                   if key.startswith("Microsoft.Orleans.") and key.rsplit("/", 1)[1] != expected]
+          if wrong:
+              raise SystemExit(f"Unexpected Orleans runtime resolution: {wrong}")
+          PY
+          dotnet run \
+            --project "$RUNNER_TEMP/template-smoke/src/TemplateSmoke.Silo/TemplateSmoke.Silo.fsproj" \
+            --configuration Release --no-build --no-restore | tee "$RUNNER_TEMP/template-newest.out"
+          python3 scripts/check-template-smoke.py "$RUNNER_TEMP/template-newest.out"
       - name: Run the packed F# analyzer in its matching CLI host
         run: |
           python3 scripts/test-analyzer-package-report.py
