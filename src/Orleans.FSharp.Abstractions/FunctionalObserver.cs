@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -524,15 +525,17 @@ internal sealed class FunctionalNotificationEnvelopeActivator : IActivator<Funct
 internal sealed class FunctionalNotificationEnvelopeCopier : IDeepCopier<FunctionalNotificationEnvelope>
 {
     /// <inheritdoc />
-    public FunctionalNotificationEnvelope DeepCopy(FunctionalNotificationEnvelope input, CopyContext context) => input;
+    [return: NotNullIfNotNull(nameof(input))]
+    public FunctionalNotificationEnvelope? DeepCopy(FunctionalNotificationEnvelope? input, CopyContext context) => input;
 }
 
 /// <summary>Deep copier for the observer handle, which is likewise immutable.</summary>
 internal sealed class FunctionalObserverHandleCopier<TBrand, TApi> : IDeepCopier<FunctionalObserverHandle<TBrand, TApi>>
 {
     /// <inheritdoc />
-    public FunctionalObserverHandle<TBrand, TApi> DeepCopy(
-        FunctionalObserverHandle<TBrand, TApi> input,
+    [return: NotNullIfNotNull(nameof(input))]
+    public FunctionalObserverHandle<TBrand, TApi>? DeepCopy(
+        FunctionalObserverHandle<TBrand, TApi>? input,
         CopyContext context) => input;
 }
 

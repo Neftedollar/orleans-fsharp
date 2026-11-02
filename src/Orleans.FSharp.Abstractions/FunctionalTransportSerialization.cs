@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -696,7 +697,8 @@ internal sealed class FunctionalStreamRequestCodec : IFieldCodec<FunctionalStrea
 internal sealed class FunctionalRequestEnvelopeCopier : IDeepCopier<FunctionalRequestEnvelope>
 {
     /// <inheritdoc />
-    public FunctionalRequestEnvelope DeepCopy(FunctionalRequestEnvelope input, CopyContext context) => input;
+    [return: NotNullIfNotNull(nameof(input))]
+    public FunctionalRequestEnvelope? DeepCopy(FunctionalRequestEnvelope? input, CopyContext context) => input;
 }
 
 /// <summary>
@@ -706,7 +708,8 @@ internal sealed class FunctionalRequestEnvelopeCopier : IDeepCopier<FunctionalRe
 internal sealed class FunctionalReplyCopier : IDeepCopier<FunctionalReply>
 {
     /// <inheritdoc />
-    public FunctionalReply DeepCopy(FunctionalReply input, CopyContext context) => input;
+    [return: NotNullIfNotNull(nameof(input))]
+    public FunctionalReply? DeepCopy(FunctionalReply? input, CopyContext context) => input;
 }
 
 /// <summary>
@@ -717,11 +720,12 @@ internal sealed class FunctionalReplyCopier : IDeepCopier<FunctionalReply>
 internal sealed class FunctionalRequestCopier : IDeepCopier<FunctionalRequest>
 {
     /// <inheritdoc />
-    public FunctionalRequest DeepCopy(FunctionalRequest input, CopyContext context)
+    [return: NotNullIfNotNull(nameof(input))]
+    public FunctionalRequest? DeepCopy(FunctionalRequest? input, CopyContext context)
     {
         if (input is null)
         {
-            return null!;
+            return null;
         }
 
         if (context.TryGetCopy<FunctionalRequest>(input, out var existing) && existing is not null)
@@ -771,11 +775,12 @@ internal sealed class FunctionalTransactionRequestCopier : IDeepCopier<Functiona
     }
 
     /// <inheritdoc />
-    public FunctionalTransactionRequest DeepCopy(FunctionalTransactionRequest input, CopyContext context)
+    [return: NotNullIfNotNull(nameof(input))]
+    public FunctionalTransactionRequest? DeepCopy(FunctionalTransactionRequest? input, CopyContext context)
     {
         if (input is null)
         {
-            return null!;
+            return null;
         }
 
         if (context.TryGetCopy<FunctionalTransactionRequest>(input, out var existing) && existing is not null)
@@ -821,11 +826,12 @@ internal sealed class FunctionalStreamRequestCopier : IDeepCopier<FunctionalStre
         _baseCopier = codecProvider.GetBaseCopier<AsyncEnumerableRequest<FunctionalReply>>();
 
     /// <inheritdoc />
-    public FunctionalStreamRequest DeepCopy(FunctionalStreamRequest input, CopyContext context)
+    [return: NotNullIfNotNull(nameof(input))]
+    public FunctionalStreamRequest? DeepCopy(FunctionalStreamRequest? input, CopyContext context)
     {
         if (input is null)
         {
-            return null!;
+            return null;
         }
 
         if (context.TryGetCopy<FunctionalStreamRequest>(input, out var existing) && existing is not null)

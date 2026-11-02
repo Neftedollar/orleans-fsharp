@@ -492,9 +492,13 @@ type FunctionalPlacementFixture() =
             (cluster.Primary :?> InProcessSiloHandle)
                 .SiloHost.Services.GetRequiredService<IMembershipTable>()
 
+        // ReadAllAsync was added after our Orleans 10.1 floor. Keep the common contract;
+        // 10.4 retains ReadAll as an obsolete forwarding API. Suppress only this call.
+#nowarn "44"
         membershipTable.ReadAll().GetAwaiter().GetResult().Members
         |> Seq.map fst
         |> Seq.toArray
+#warnon "44"
 
     member _.Client = cluster.Client
 

@@ -174,8 +174,15 @@ let ``functional persistence payload limit must be positive`` () =
 
 [<Fact>]
 let ``functional FSharp JSON encoding round-trips without using the Orleans payload codec`` () =
-    let services, binary = binaryCodec ()
-    use services = services
+    let binary =
+        { new IFunctionalPayloadCodec with
+            member _.Serialize<'T>(_value: 'T) : byte[] =
+                failwith "The JSON writer must not use the Orleans binary codec."
+
+            member _.Deserialize<'T>(_bytes: byte[]) : 'T =
+                failwith "The JSON reader must not use the Orleans binary codec."
+
+            member _.MaxPayloadBytes = FunctionalPersistenceCodec.DefaultMaxPayloadBytes }
 
     let encoded =
         FunctionalPersistenceEncoding.encode FunctionalPersistenceCodec.FSharpJson binary payload
@@ -187,6 +194,10 @@ let ``functional FSharp JSON encoding round-trips without using the Orleans payl
             FunctionalPersistenceEncoding.FSharpJsonId
             encoded
 
+    // An independent JSON reader must understand the durable bytes, not only our paired decoder.
+    let independentlyRestored = JsonSerializer.Deserialize<JsonPayload>(encoded, FSharpJson.serializerOptions)
+
+    test <@ independentlyRestored = payload @>
     test <@ restored = payload @>
 
 [<Fact>]

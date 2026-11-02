@@ -118,20 +118,21 @@ let private applyViaHandler
 
 #warnon "44"
 [<Property>]
-let ``handleState score-tracker: total games = Wins + Losses + Draws`` (cmds: ScoreTrackerCommand list) =
-    let s = applyViaHandler scoreTrackerHandleState cmds
-    let nonResetCmds =
-        cmds
-        |> List.fold (fun (acc, live) cmd ->
-            match cmd with
-            | Reset -> acc, false
-            | Win | Lose | Draw when live -> acc + 1, live
-            | GetScore -> acc, live
-            | _ -> acc, live) (0, true)
-        |> fst
-    // After all resets, the last "live" segment determines the totals
-    // Simpler invariant: Wins + Losses + Draws >= 0 always
-    s.Wins >= 0 && s.Losses >= 0 && s.Draws >= 0
+let ``score-tracker handlers count exactly the games after the last reset`` (cmds: ScoreTrackerCommand list) =
+    // Derive the model from the command log, not by repeating a handler's state transitions.
+    // A mandatory suffix covers every outcome and a mid-sequence reset even for an empty input.
+    let commands = [ Win; Lose; Draw; Reset ] @ cmds @ [ Draw; Win; GetScore; Lose; Draw ]
+    let sinceReset = commands |> List.rev |> List.takeWhile ((<>) Reset)
+    let count command = sinceReset |> List.filter ((=) command) |> List.length
+    let wins, losses, draws = count Win, count Lose, count Draw
+
+    [ scoreTrackerHandleState; scoreTrackerHandleTyped; scoreTrackerCancellable ]
+    |> List.forall (fun definition ->
+        let state = applyViaHandler definition commands
+        state.Wins = wins
+        && state.Losses = losses
+        && state.Draws = draws
+        && state.NetScore = wins - losses)
 
 [<Property>]
 let ``handleState score-tracker: net score equals wins minus losses`` (cmds: ScoreTrackerCommand list) =

@@ -32,9 +32,9 @@
     <PackageVersion Include="Microsoft.Orleans.Clustering.Redis"             Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Persistence.Redis"            Version="$(OrleansVersion)" />
     <PackageVersion Include="Microsoft.Orleans.Persistence.Memory"           Version="$(OrleansVersion)" />
-    <!-- Dashboard 10.1.0 depends on vulnerable OpenTelemetry.Api 1.15.0, while
-         Dashboard 10.2.2 and later require >= 1.16.0. Keep one patched version for both. -->
-    <PackageVersion Include="OpenTelemetry.Api"                              Version="1.16.0" />
+    <!-- Patch Dashboard 10.1's vulnerable 1.15 dependency without downgrading the
+         OpenTelemetry 1.18 dependency required by Dashboard 10.4.2. -->
+    <PackageVersion Include="OpenTelemetry.Api"                              Version="1.18.0" />
 
     <!-- Microsoft.Extensions / ASP.NET Core
          Previously floated at 10.*; reconciled to highest 10.x in local cache. -->
@@ -85,7 +85,9 @@
     <PackageVersion Include="Fable.Remoting.AspNetCore"                     Version="2.43.0" />
 
     <!-- Build-time tooling (referenced from Directory.Build.targets with PrivateAssets="All") -->
-    <PackageVersion Include="Microsoft.SourceLink.GitHub"                   Version="8.0.0" />
+    <!-- SourceLink 8.0.0 pulls Microsoft.Build.Tasks.Git affected by CVE-2026-62900.
+         This is build-time tooling only; it does not change the consumer SDK or Orleans floor. -->
+    <PackageVersion Include="Microsoft.SourceLink.GitHub"                   Version="10.0.403" />
     <PackageVersion Include="MinVer"                                        Version="6.1.0" />
   </ItemGroup>
 </Project>

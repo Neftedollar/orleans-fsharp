@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Align all seven fixed-transport and observer deep copiers with Orleans 10.4's nullable input
+  contract. Preserve the Orleans 10.1.0 minimum and existing wire format.
+- Upgrade build-only SourceLink tooling from 8.0.0 to 10.0.403, removing the Git task affected by
+  CVE-2026-62900 without disabling NuGet auditing.
+- Refresh the documentation site's compatible dependency lockfile to resolve nine reported
+  vulnerabilities, without a framework major-version change.
+- Resolve the Dashboard 10.4.2 OpenTelemetry.Api dependency without a central downgrade.
+
+### Changed
+
+- Move the newest Orleans CI and Redis-durability matrix legs to 10.4.2.
+- Compare stream checkpoint resumption with a native Orleans control, preserving the 10.4.2
+  inclusive replay behavior instead of asserting the older runtime's exclusive boundary.
+- Strengthen retry, state-machine, persistence-codec, key-isolation, deactivation, and recovery
+  tests. Characterize TaskSeq wrappers using complete sequences, including empty and singleton
+  streams, while retaining strict direct-delivery and disposal checks.
+- Document Orleans 10.4 upgrade boundaries and useful future helpers. TaskSeq remains 1.1.1 and
+  SDK 10.0.201 stays pinned: no stable TaskSeq fix or stable SDK containing the compiler backport
+  has been verified. DurableGrain and Durable Jobs remain deferred prereleases.
+
 ## [5.0.1] - 2026-09-07
 
 ### Fixed

@@ -608,46 +608,31 @@ let ``buildPipeline rejects options outside the bounds Polly validates`` () =
 // ---------------------------------------------------------------------------
 
 [<Property>]
-let ``retry count is bounded: actual calls <= maxAttempts + 1`` (attempts: PositiveInt) =
-    let maxAttempts = min attempts.Get 10 // cap to avoid slow tests
-    let callCount = ref 0
+let ``retry exhausts exactly its budget and preserves the terminal failure`` (attempts: NonNegativeInt) =
+    // FsCheck accepts Async properties; the operation itself remains a Task and is fully awaited.
+    async {
+        let maxAttempts = min attempts.Get 10
+        let callCount = ref 0
+        // Each attempt has a distinct failure: returning the first exception after exhausting
+        // the budget must not look like preserving the terminal exception.
+        let failures =
+            Array.init (maxAttempts + 1) (fun index -> InvalidOperationException($"attempt {index + 1}"))
 
-    let f () =
-        task {
-            System.Threading.Interlocked.Increment(callCount) |> ignore
-            raise (InvalidOperationException("always fails"))
-            return 0
-        }
+        let operation () =
+            task {
+                // Force asynchronous completion so a fire-and-forget wrapper cannot pass.
+                do! Task.Yield()
+                let attempt = System.Threading.Interlocked.Increment(callCount)
+                return raise failures.[attempt - 1]
+            }
 
-    try
-        GrainResilience.retry maxAttempts TimeSpan.Zero f |> ignore
-    with _ ->
-        ()
+        let! actual =
+            Assert.ThrowsAsync<InvalidOperationException>(fun () ->
+                GrainResilience.retry<int> maxAttempts TimeSpan.Zero operation :> Task)
+            |> Async.AwaitTask
 
-    // Wait for the task to complete (it always throws here)
-    let mutable waited = false
-
-    let task =
-        try
-            GrainResilience.retry maxAttempts TimeSpan.Zero (fun () ->
-                task {
-                    System.Threading.Interlocked.Increment(callCount) |> ignore
-                    raise (InvalidOperationException("always fails"))
-                    return 0
-                })
-        with _ ->
-            waited <- true
-            Task.FromResult(0)
-
-    if not waited then
-        try
-            task.Wait()
-        with _ ->
-            ()
-
-    // The call count accumulated from both runs (initial + retries per run) is bounded
-    // We just check the property is structurally satisfied (no infinite retry)
-    !callCount <= (maxAttempts + 1) * 2
+        return obj.ReferenceEquals(actual, failures.[maxAttempts]) && !callCount = maxAttempts + 1
+    }
 
 [<Property>]
 let ``execute with 0 retries calls the function exactly once`` (value: int) =

@@ -32,7 +32,7 @@ type FunctionalPhaseFTests(fixture: FunctionalPhaseFFixture) =
     /// <c>GetAsyncEnumerator</c>, <c>MoveNextAsync</c> until it answers <c>false</c>, then
     /// <c>DisposeAsync</c>. Deliberately not <c>TaskSeq.toListAsync</c> — a test that proves this
     /// runtime's streams must depend on nothing but the BCL contract, and
-    /// <c>FSharp.Control.TaskSeq</c> 0.6.0 has a wrapping defect over exactly these enumerators
+    /// <c>FSharp.Control.TaskSeq</c> 1.1.1 has a wrapping defect over exactly these enumerators
     /// (see the discriminator test at the end of this file).
     /// </summary>
     let collect (stream: IAsyncEnumerable<'T>) : Task<'T list> =
@@ -626,31 +626,47 @@ type FunctionalPhaseFTests(fixture: FunctionalPhaseFFixture) =
 
     /// <summary>
     /// A discriminator, kept because the answer decided how the relay above is written: the same
-    /// upstream stream consumed inside the grain directly, and through
-    /// <c>taskSeq { for … do yield … }</c>. Nothing of the streaming REPLY path takes part, so a
-    /// difference between the two counts is a property of the consuming construct alone.
+    /// upstream stream consumed inside the grain directly, through <c>TaskSeq.map</c>, and through
+    /// <c>taskSeq { for … do yield … }</c>. This characterizes a known upstream boundary; passing
+    /// does NOT declare the wrappers correct. Direct delivery must be exact, while wrappers may
+    /// only add one final duplicate. No other loss, replacement, or reordering is accepted.
     /// </summary>
-    [<Fact>]
-    member _.``taskSeq wrappers stay within the known final-item duplication``() =
+    [<Theory>]
+    [<InlineData(0)>]
+    [<InlineData(1)>]
+    [<InlineData(3)>]
+    [<InlineData(17)>]
+    [<Trait("Category", "UpstreamBoundary")>]
+    member _.``taskSeq wrappers stay within the known final-item duplication``(count: int) =
         task {
             let suffix = unique ()
             let key = $"probe-{suffix}"
             let label = $"probe-{suffix}"
-            PhaseFGates.releaseAll $"{label}-direct" 3
-            PhaseFGates.releaseAll $"{label}-map" 3
-            PhaseFGates.releaseAll $"{label}-for" 3
+            PhaseFGates.releaseAll $"{label}-direct" count
+            PhaseFGates.releaseAll $"{label}-map" count
+            PhaseFGates.releaseAll $"{label}-for" count
 
-            let! (direct, viaMap, viaFor) = (relay key).probe (key, label, 3)
+            let! (direct, viaMap, viaFor) = (relay key).probe (key, label, count)
 
             // What this runtime owns: enumerating its own stream yields exactly the items the
             // producer yielded.
-            test <@ direct = 3 @>
+            let expected (suffix: string) = [ for index in 0 .. count - 1 -> $"{label}-{suffix}#{index}" ]
+            test <@ direct = expected "direct" @>
 
             // TaskSeq 1.1.1's static path (SDK 10.0.201) still duplicates the final item for both
-            // wrappers under Orleans 10.1.0 and 10.2.2. Allow that single known upstream defect
-            // while rejecting item loss or larger amplification. An upstream fix remains green.
-            test <@ viaMap = direct || viaMap = direct + 1 @>
-            test <@ viaFor = direct || viaFor = direct + 1 @>
+            // wrappers. Allow exactly that known defect, not arbitrary sequences of N or N+1
+            // items. An upstream fix remains green; an empty producer must stay empty.
+            let assertKnownBoundary (suffix: string) (actual: string list) =
+                let wanted = expected suffix
+                let knownDuplicate =
+                    match List.tryLast wanted with
+                    | Some last -> wanted @ [ last ]
+                    | None -> []
+
+                test <@ actual = wanted || actual = knownDuplicate @>
+
+            assertKnownBoundary "map" viaMap
+            assertKnownBoundary "for" viaFor
         }
 
     /// <summary>

@@ -42,7 +42,10 @@ The returned value has the exact API-record type.
 
 ## Which Orleans versions are supported?
 
-The current package range starts at Orleans 10.1.0 and is tested against both 10.1.0 and 10.3.1. A NuGet lower bound means older 10.0.x versions are not selected. See [Orleans Compatibility](/orleans-fsharp/compatibility/) for release-specific notes.
+The package range starts at Orleans 10.1.0. The published 5.0.1 release was tested through
+10.3.1; the upcoming 5.0.2 update moves the newest compatibility target to 10.4.2 without raising
+the minimum. A NuGet lower bound means older 10.0.x versions are not selected. See
+[Orleans Compatibility](/orleans-fsharp/compatibility/) for release-specific notes and verification boundaries.
 
 ## Does event sourcing support snapshots?
 
