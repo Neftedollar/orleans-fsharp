@@ -8,10 +8,10 @@
 
 ## Start a new current-API project
 
-Install the published Orleans.FSharp 5.0.1 template:
+Install the Orleans.FSharp 5.0.2 template:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyApp
 ```
 

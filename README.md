@@ -22,12 +22,13 @@ continues to own routing, activation, clustering, persistence, streams, and tran
 [Examples](docs/examples.md) ·
 [Release status](docs/release-status.md)
 
-This README documents **Orleans.FSharp 5.0.1**, the current stable release. Applications upgrading
+This README documents **Orleans.FSharp 5.0.2** (release date: 2 November 2026). Applications upgrading
 from 4.x should review the [breaking changes](CHANGELOG.md#500---2026-09-07) and
 [Legacy migration guide](docs/legacy/migration.md).
 
-The development branch prepares **5.0.2** with an Orleans **10.4.2** compatibility target;
-the minimum remains 10.1.0. See [compatibility notes](docs/compatibility.md) for the update's scope.
+Version **5.0.2** retains the Orleans **10.1.0** minimum, with compatibility verified through
+**10.4.2**. It aligns copier nullable contracts without adding runtime features or changing the
+public F# API or wire format. See [compatibility notes](docs/compatibility.md) for the update's scope.
 
 ## Why Orleans.FSharp?
 
@@ -112,10 +113,10 @@ For a complete host, persistence, and tests, continue with
 
 ## Install
 
-Start a working solution with the 5.0.1 template:
+Start a working solution with the 5.0.2 template:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyApp
 cd MyApp
 dotnet build
@@ -130,14 +131,14 @@ updating packages does not rewrite existing application files.
 Or add the packages to an existing application:
 
 ```bash
-dotnet add package Orleans.FSharp --version 5.0.1
-dotnet add package Orleans.FSharp.Runtime --version 5.0.1
+dotnet add package Orleans.FSharp --version 5.0.2
+dotnet add package Orleans.FSharp.Runtime --version 5.0.2
 ```
 
 Add testing support when needed:
 
 ```bash
-dotnet add package Orleans.FSharp.Testing --version 5.0.1
+dotnet add package Orleans.FSharp.Testing --version 5.0.2
 ```
 
 `Orleans.FSharp.Abstractions`, which contains the fixed transport and precompiled Orleans
@@ -146,7 +147,7 @@ proxies, arrives transitively. Applications do not reference it directly.
 To run the repository examples:
 
 ```bash
-git clone --branch v5.0.1 https://github.com/Neftedollar/orleans-fsharp.git
+git clone --branch v5.0.2 https://github.com/Neftedollar/orleans-fsharp.git
 cd orleans-fsharp
 dotnet build Orleans.FSharp.slnx
 dotnet run --project examples/feature-tour/src/FeatureTour

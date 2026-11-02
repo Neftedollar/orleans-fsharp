@@ -278,6 +278,24 @@ last item of an arbitrary stream.
 
 ---
 
+## Native Orleans 10.4 subscription start positions
+
+Orleans 10.4 adds start-position APIs and a provider-wide default setting,
+`StreamPullingAgentOptions.InitialSubscriptionStartPosition`. `Latest` selects new arrivals and
+remains the default. `EarliestAvailable` begins at the oldest retained message for that stream in
+the pulling-agent queue cache, not the durable provider's entire history. If the cache has no
+message for the stream, it waits for new arrivals.
+
+`EarliestAvailable` requires a rewindable provider whose queue cache supports earliest-position
+lookup. An unsupported custom cache rejects `EarliestAvailable` instead of
+silently falling back to `Latest`.
+
+The selection order is: explicit sequence token > explicit position > provider default > `Latest`.
+Orleans.FSharp 5.0.2 does not add dedicated F# wrappers for these controls. Use native APIs only
+when targeting a supporting Orleans version, and upgrade pulling-agent silos before enabling
+them. See [Orleans PR #10936](https://github.com/dotnet/orleans/pull/10936) and
+[compatibility notes](/orleans-fsharp/compatibility/#useful-additions-separate-from-this-compatibility-update).
+
 ## Listing Subscriptions
 
 Get all active subscriptions for a stream:

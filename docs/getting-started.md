@@ -6,8 +6,7 @@
 > `FunctionalGrain.ref`. Earlier authoring models are isolated in the unsupported
 > [Legacy archive](legacy/index.md).
 
-> **Version scope.** This guide describes Orleans.FSharp 5.0.1, the current published stable
-> release; see [Release and Production Status](release-status.md).
+> **Version scope.** This guide describes Orleans.FSharp 5.0.2 (release date: 2 November 2026); see [Release and Production Status](release-status.md).
 
 ## What you'll learn
 
@@ -23,10 +22,10 @@
 
 ## Step 1: Create the project
 
-Install the published Orleans.FSharp 5.0.1 template, which uses the current functional API:
+Install the Orleans.FSharp 5.0.2 template, which uses the current functional API:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyCounter
 cd MyCounter
 ```
@@ -49,9 +48,9 @@ Or from scratch:
 mkdir MyCounter && cd MyCounter
 dotnet new console -lang F# -n MyCounter.Silo
 cd MyCounter.Silo
-dotnet add package Orleans.FSharp --version 5.0.1
-dotnet add package Orleans.FSharp.Runtime --version 5.0.1
-dotnet add package Microsoft.Orleans.Server --version 10.3.1
+dotnet add package Orleans.FSharp --version 5.0.2
+dotnet add package Orleans.FSharp.Runtime --version 5.0.2
+dotnet add package Microsoft.Orleans.Server --version 10.4.2
 ```
 
 `Orleans.FSharp.Abstractions` -- the C# assembly the functional runtime's pre-generated proxies live
@@ -209,7 +208,7 @@ dotnet test
 | Guide | Description |
 |---|---|
 | [Functional Grain Runtime](functional-runtime.md) | The short path through the current authoring model |
-| [Release and Production Status](release-status.md) | Orleans.FSharp 5.0.1 stable release and production boundaries |
+| [Release and Production Status](release-status.md) | Orleans.FSharp 5.0.2 release and production boundaries |
 | [Functional Runtime Reference](functional-grains.md) | Complete builder operations, invariants, and edge cases |
 | [Examples](examples.md) | Runnable projects mapped to features and use cases |
 | [Silo Configuration](silo-configuration.md) | Clustering, storage, streaming, security |
