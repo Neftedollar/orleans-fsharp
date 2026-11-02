@@ -5,7 +5,7 @@ description: "Quick reference for the public modules, types, and functions in Or
 
 # API Reference
 
-> This reference describes Orleans.FSharp 5.0.1, the current published stable release. See
+> This reference describes Orleans.FSharp 5.0.2 (release date: 2 November 2026). See
 > [Release and Production Status](/orleans-fsharp/release-status/) for verified production boundaries.
 
 **Quick reference for the public modules, types, and functions in Orleans.FSharp.**
@@ -878,7 +878,7 @@ the public `AllowAsync` suppression attribute; installing it alone does not run 
 [Analyzers guide](/orleans-fsharp/analyzers/).
 
 ```bash
-dotnet add package Orleans.FSharp.Analyzers --version 5.0.1
+dotnet add package Orleans.FSharp.Analyzers --version 5.0.2
 ```
 
 ### Diagnostics

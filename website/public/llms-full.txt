@@ -15,8 +15,8 @@ This file contains the complete published documentation. Current functional API 
 
 
 
-:::note[Orleans.FSharp 5.0.1]
-This website documents the current stable release. Review
+:::note[Orleans.FSharp 5.0.2]
+This website documents the 2 November 2026 release. Review
 [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for supported versions and
 verified production boundaries, or the [Legacy migration guide](https://neftedollar.com/orleans-fsharp/legacy/migration/)
 when upgrading from 4.x.
@@ -123,7 +123,7 @@ only the functional runtime.
 | Metric | Value |
 |--------|-------|
 | Test suite | Unit, integration, provider, rolling-update, and persisted-fixture coverage |
-| Orleans support | **10.1.0 – 10.3.1**, CI-tested at both ends of the range |
+| Orleans support | **10.1.0 – 10.4.2**, CI-tested at both ends of the range |
 | Feature tour | **16** Orleans capabilities demonstrated live in `examples/feature-tour` |
 | Production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
 | License | **MIT** |
@@ -132,14 +132,14 @@ only the functional runtime.
 ## Quick Start
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyApp
 cd MyApp
 dotnet build && dotnet test
 ```
 
-A working Orleans.FSharp 5.0.1 solution with a counter grain, FsCheck property tests, and
-silo configuration. The packaged template references the matching 5.0.1 packages.
+A working Orleans.FSharp 5.0.2 solution with a counter grain, FsCheck property tests, and
+silo configuration. The packaged template references the matching 5.0.2 packages.
 
 ## Packages
 
@@ -186,7 +186,7 @@ The current wrapped and composed surface includes:
 
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
-  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Orleans.FSharp 5.0.1, supported versions, and verified production boundaries." />
+  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Orleans.FSharp 5.0.2, supported versions, and verified production boundaries." />
   <LinkCard title="Recipes" href="/orleans-fsharp/how-to/" description="Task-oriented paths for persistence, streaming, upgrades, and production hosting." />
   <LinkCard title="Examples" href="/orleans-fsharp/examples/" description="Runnable projects mapped to the features they prove." />
   <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-runtime/" description="The short path through contracts, state, delivery, placement, and transactions." />
@@ -210,8 +210,7 @@ The current wrapped and composed surface includes:
 > `FunctionalGrain.ref`. Earlier authoring models are isolated in the unsupported
 > [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/).
 
-> **Version scope.** This guide describes Orleans.FSharp 5.0.1, the current published stable
-> release; see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
+> **Version scope.** This guide describes Orleans.FSharp 5.0.2 (release date: 2 November 2026); see [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
 
 ## What you'll learn
 
@@ -227,10 +226,10 @@ The current wrapped and composed surface includes:
 
 ## Step 1: Create the project
 
-Install the published Orleans.FSharp 5.0.1 template, which uses the current functional API:
+Install the Orleans.FSharp 5.0.2 template, which uses the current functional API:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyCounter
 cd MyCounter
 ```
@@ -253,9 +252,9 @@ Or from scratch:
 mkdir MyCounter && cd MyCounter
 dotnet new console -lang F# -n MyCounter.Silo
 cd MyCounter.Silo
-dotnet add package Orleans.FSharp --version 5.0.1
-dotnet add package Orleans.FSharp.Runtime --version 5.0.1
-dotnet add package Microsoft.Orleans.Server --version 10.3.1
+dotnet add package Orleans.FSharp --version 5.0.2
+dotnet add package Orleans.FSharp.Runtime --version 5.0.2
+dotnet add package Microsoft.Orleans.Server --version 10.4.2
 ```
 
 `Orleans.FSharp.Abstractions` -- the C# assembly the functional runtime's pre-generated proxies live
@@ -413,7 +412,7 @@ dotnet test
 | Guide | Description |
 |---|---|
 | [Functional Grain Runtime](https://neftedollar.com/orleans-fsharp/functional-runtime/) | The short path through the current authoring model |
-| [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) | Orleans.FSharp 5.0.1 stable release and production boundaries |
+| [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) | Orleans.FSharp 5.0.2 release and production boundaries |
 | [Functional Runtime Reference](https://neftedollar.com/orleans-fsharp/functional-grains/) | Complete builder operations, invariants, and edge cases |
 | [Examples](https://neftedollar.com/orleans-fsharp/examples/) | Runnable projects mapped to features and use cases |
 | [Silo Configuration](https://neftedollar.com/orleans-fsharp/silo-configuration/) | Clustering, storage, streaming, security |
@@ -432,33 +431,36 @@ isolated in the [Legacy archive](https://neftedollar.com/orleans-fsharp/legacy/)
 
 # Release and Production Status
 
-Orleans.FSharp 5.0.1 is the current published stable release. This page records its verified
-production boundaries and the status of earlier release lines.
+This page documents Orleans.FSharp 5.0.2 (release date: 2 November 2026), its verified
+compatibility boundaries, and the status of earlier release lines. Package availability is
+listed on [NuGet](https://www.nuget.org/packages/Orleans.FSharp/5.0.2).
 
 ## Release channels
 
 | Channel | Status | Use it for |
 |---|---|---|
-| Orleans.FSharp `5.0.1` | Published stable | New applications and production evaluation |
+| Orleans.FSharp `5.0.2` | Current release line | New applications and production evaluation |
+| Orleans.FSharp `5.0.1` | Previous stable release | Existing applications upgrading to 5.0.2 |
 | Orleans.FSharp `5.0.0` | Superseded | Existing applications; its project template has the startup defect documented below |
 | Orleans.FSharp `4.1.0` | Superseded stable line | Existing applications preparing a 5.0 migration |
 | Legacy authoring models | Archived and unsupported | Migration reference for existing applications only |
 
-The current documentation describes 5.0.1. For immutable release documentation, read the repository
-at the `v5.0.1` tag. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
+The current documentation describes 5.0.2. Use the `v5.0.2` tag for immutable release
+documentation. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
 tag while planning their migration.
 
 The runtime APIs are unchanged from 5.0.0. Version 5.0.1 corrects the packaged project template and
 adds startup regression coverage to the release gate.
 
-### Upcoming 5.0.2 update
+### 5.0.2 compatibility update
 
-The current branch prepares compatibility with **Orleans 10.4.2**, retaining the **10.1.0**
-minimum and the existing public F# API. It aligns the transport copiers with Orleans' nullable
-contract and updates build-time SourceLink tooling to remove a vulnerable Git task dependency.
+Version 5.0.2 targets compatibility through **Orleans 10.4.2**, retaining the **10.1.0**
+minimum, existing public F# API, and wire format. It adds no runtime features. It aligns the
+transport copiers with Orleans' nullable contract and updates build-time SourceLink tooling to
+remove a vulnerable Git task dependency.
 Test hardening checks concrete state, retry outcomes, JSON bytes, and stream contents instead of
-weaker count-only or paired round-trip assertions. This section is a candidate status, not a
-claim that 5.0.2 has already been published.
+weaker count-only or paired round-trip assertions. These checks do not certify every provider
+or application for production.
 
 See [Orleans Compatibility](https://neftedollar.com/orleans-fsharp/compatibility/#what-changed-in-orleans-104) for runtime changes,
 upgrade caveats, and new APIs considered separately from this patch.
@@ -467,7 +469,7 @@ The Legacy archive receives no new Legacy release line, features, compatibility 
 fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
 records, and `FunctionalGrain.ref`.
 
-## Production boundaries in 5.0.1
+## Production boundaries in 5.0.2
 
 ### The 5.0.0 project template needs a one-line contract correction
 
@@ -514,7 +516,7 @@ that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
-Orleans.FSharp 5.0.1 defaults to **16 MiB** for one encoded functional state value, journal event, or
+Orleans.FSharp 5.0.2 defaults to **16 MiB** for one encoded functional state value, journal event, or
 snapshot. Enveloped payloads are checked before decoding and before writing. Direct binary state
 keeps its old provider schema: its logical Orleans encoding is checked after the provider loads
 the value and before each explicit write. Pre-decode protection for that direct format belongs to
@@ -590,10 +592,10 @@ and N/N+1 rollback path with representative data.
 
 ## Start a new current-API project
 
-Install the published Orleans.FSharp 5.0.1 template:
+Install the Orleans.FSharp 5.0.2 template:
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyApp
 ```
 
@@ -3767,6 +3769,20 @@ for your own provider. This checkpoint replay is separate from the TaskSeq wrapp
 last item of an arbitrary stream.
 
 ---
+
+## Native Orleans 10.4 subscription start positions
+
+Orleans 10.4 adds start-position APIs and a provider-wide default setting,
+`StreamPullingAgentOptions.InitialSubscriptionStartPosition`. `Latest` selects new arrivals and
+remains the default. `EarliestAvailable` begins at the oldest retained message for that stream in
+the pulling-agent queue cache, not the durable provider's entire history. If the cache has no
+message for the stream, it waits for new arrivals.
+
+The selection order is: explicit sequence token > explicit position > provider default > `Latest`.
+Orleans.FSharp 5.0.2 does not add dedicated F# wrappers for these controls. Use native APIs only
+when targeting a supporting Orleans version, and upgrade pulling-agent silos before enabling
+them. See [Orleans PR #10936](https://github.com/dotnet/orleans/pull/10936) and
+[compatibility notes](https://neftedollar.com/orleans-fsharp/compatibility/#useful-additions-separate-from-this-compatibility-update).
 
 ## Listing Subscriptions
 
@@ -8642,9 +8658,9 @@ handler side is still an F# record. An observer facade is a possible future addi
 
 **Supported version policy, verified runtimes, and relevant changes in new Orleans releases.**
 
-This page describes the upcoming Orleans.FSharp 5.0.2 compatibility update. The current published
-stable release is still 5.0.1; the 10.4.2 source-compatibility changes below belong to the update,
-not retroactively to that release. See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
+This page describes Orleans.FSharp 5.0.2 (2 November 2026): compatibility verified from Orleans
+10.1.0 through 10.4.2, with no new runtime features, public F# API changes, or wire-format changes.
+See [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/).
 
 ## Version policy
 
@@ -8658,7 +8674,7 @@ current event-sourcing surface uses `JournaledGrain.ClearLogAsync`, which is abs
 | 10.0.x | Not supported | Missing an API required by the current Orleans.FSharp assemblies |
 | 10.1.0 | Supported floor | The version used to compile packages and one end of the CI matrix |
 | 10.3.1 | Previous compatibility target | Covered by the 5.0.1 release checks |
-| 10.4.2 | Latest stable Orleans release as of 1 November 2026 | The newest-version compatibility target for 5.0.2 |
+| 10.4.2 | Newest verified Orleans version | The newest-version compatibility target for 5.0.2 |
 
 The package floor should move only when Orleans.FSharp starts using a newer Orleans API. A new
 Orleans release alone is not a reason to force every consumer to upgrade.
@@ -8713,6 +8729,14 @@ unsupported-runtime error and tests for provider defaults, retained/empty caches
 and subscription cleanup. Falling back silently to ordinary live delivery would hide a semantic
 change. The [upstream enum contract](https://github.com/dotnet/orleans/blob/v10.4.2/src/Orleans.Streaming/Core/StreamSubscriptionStartPosition.cs)
 defines the cache boundary.
+
+Orleans 10.4 adds native start-position APIs and the provider setting
+`StreamPullingAgentOptions.InitialSubscriptionStartPosition`. `Latest` remains the default for
+new arrivals. `EarliestAvailable` starts inclusively at the oldest retained message for the stream
+in the pulling-agent queue cache, not the durable provider's full history; an empty cache waits
+for new messages. Selection precedence is: explicit sequence token, explicit position, provider
+default, then `Latest`. These are upstream APIs, not new F# wrappers in 5.0.2. See
+[Orleans PR #10936](https://github.com/dotnet/orleans/pull/10936).
 
 ## What changed in Orleans 10.3
 
@@ -8785,7 +8809,7 @@ persisted data can be rolled back without an explicit schema migration strategy.
 
 # API Reference
 
-> This reference describes Orleans.FSharp 5.0.1, the current published stable release. See
+> This reference describes Orleans.FSharp 5.0.2 (release date: 2 November 2026). See
 > [Release and Production Status](https://neftedollar.com/orleans-fsharp/release-status/) for verified production boundaries.
 
 **Quick reference for the public modules, types, and functions in Orleans.FSharp.**
@@ -9658,7 +9682,7 @@ the public `AllowAsync` suppression attribute; installing it alone does not run 
 [Analyzers guide](https://neftedollar.com/orleans-fsharp/analyzers/).
 
 ```bash
-dotnet add package Orleans.FSharp.Analyzers --version 5.0.1
+dotnet add package Orleans.FSharp.Analyzers --version 5.0.2
 ```
 
 ### Diagnostics
@@ -9735,7 +9759,7 @@ The returned value has the exact API-record type.
 ## Which Orleans versions are supported?
 
 The package range starts at Orleans 10.1.0. The published 5.0.1 release was tested through
-10.3.1; the upcoming 5.0.2 update moves the newest compatibility target to 10.4.2 without raising
+10.3.1; 5.0.2 moves the newest compatibility target to 10.4.2 without raising
 the minimum. A NuGet lower bound means older 10.0.x versions are not selected. See
 [Orleans Compatibility](https://neftedollar.com/orleans-fsharp/compatibility/) for release-specific notes and verification boundaries.
 
@@ -9764,7 +9788,7 @@ implemented, and the wrapper preserves that behavior.
 
 ## Are DurableGrain, Microsoft.Orleans.Journaling, and Durable Jobs included?
 
-Not in the current Orleans.FSharp 5.0.1 release. They are intentionally deferred; the journaled
+Not in the Orleans.FSharp 5.0.2 release. They are intentionally deferred; the journaled
 functional grain is built over Orleans log-consistency providers. Experimental journaling support
 can be isolated in a future opt-in subpackage instead of making the stable package depend on it.
 
@@ -9781,7 +9805,7 @@ The Dashboard activation table displays the functional manifest type, for exampl
 ## How do I start a project?
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyApp
 ```
 

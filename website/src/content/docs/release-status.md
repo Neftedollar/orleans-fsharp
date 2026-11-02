@@ -1,37 +1,40 @@
 ---
 title: "Release and Production Status"
-description: "Orleans.FSharp 5.0.1 stable release status and verified production boundaries."
+description: "Orleans.FSharp 5.0.2 release status and verified production boundaries."
 ---
 
 # Release and Production Status
 
-Orleans.FSharp 5.0.1 is the current published stable release. This page records its verified
-production boundaries and the status of earlier release lines.
+This page documents Orleans.FSharp 5.0.2 (release date: 2 November 2026), its verified
+compatibility boundaries, and the status of earlier release lines. Package availability is
+listed on [NuGet](https://www.nuget.org/packages/Orleans.FSharp/5.0.2).
 
 ## Release channels
 
 | Channel | Status | Use it for |
 |---|---|---|
-| Orleans.FSharp `5.0.1` | Published stable | New applications and production evaluation |
+| Orleans.FSharp `5.0.2` | Current release line | New applications and production evaluation |
+| Orleans.FSharp `5.0.1` | Previous stable release | Existing applications upgrading to 5.0.2 |
 | Orleans.FSharp `5.0.0` | Superseded | Existing applications; its project template has the startup defect documented below |
 | Orleans.FSharp `4.1.0` | Superseded stable line | Existing applications preparing a 5.0 migration |
 | Legacy authoring models | Archived and unsupported | Migration reference for existing applications only |
 
-The current documentation describes 5.0.1. For immutable release documentation, read the repository
-at the `v5.0.1` tag. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
+The current documentation describes 5.0.2. Use the `v5.0.2` tag for immutable release
+documentation. Applications remaining on 4.1 should use the documentation at the `v4.1.0`
 tag while planning their migration.
 
 The runtime APIs are unchanged from 5.0.0. Version 5.0.1 corrects the packaged project template and
 adds startup regression coverage to the release gate.
 
-### Upcoming 5.0.2 update
+### 5.0.2 compatibility update
 
-The current branch prepares compatibility with **Orleans 10.4.2**, retaining the **10.1.0**
-minimum and the existing public F# API. It aligns the transport copiers with Orleans' nullable
-contract and updates build-time SourceLink tooling to remove a vulnerable Git task dependency.
+Version 5.0.2 targets compatibility through **Orleans 10.4.2**, retaining the **10.1.0**
+minimum, existing public F# API, and wire format. It adds no runtime features. It aligns the
+transport copiers with Orleans' nullable contract and updates build-time SourceLink tooling to
+remove a vulnerable Git task dependency.
 Test hardening checks concrete state, retry outcomes, JSON bytes, and stream contents instead of
-weaker count-only or paired round-trip assertions. This section is a candidate status, not a
-claim that 5.0.2 has already been published.
+weaker count-only or paired round-trip assertions. These checks do not certify every provider
+or application for production.
 
 See [Orleans Compatibility](/orleans-fsharp/compatibility/#what-changed-in-orleans-104) for runtime changes,
 upgrade caveats, and new APIs considered separately from this patch.
@@ -40,7 +43,7 @@ The Legacy archive receives no new Legacy release line, features, compatibility 
 fixes. New applications should use `grainContract`, `grainFor`, `journaledGrainFor`, typed API
 records, and `FunctionalGrain.ref`.
 
-## Production boundaries in 5.0.1
+## Production boundaries in 5.0.2
 
 ### The 5.0.0 project template needs a one-line contract correction
 
@@ -87,7 +90,7 @@ that subscription when enumeration ends, including early exit.
 
 ### Functional persistence payloads are bounded per codec
 
-Orleans.FSharp 5.0.1 defaults to **16 MiB** for one encoded functional state value, journal event, or
+Orleans.FSharp 5.0.2 defaults to **16 MiB** for one encoded functional state value, journal event, or
 snapshot. Enveloped payloads are checked before decoding and before writing. Direct binary state
 keeps its old provider schema: its logical Orleans encoding is checked after the provider loads
 the value and before each explicit write. Pre-decode protection for that direct format belongs to

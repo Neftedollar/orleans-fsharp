@@ -5,7 +5,7 @@ Project template for the current functional Orleans.FSharp API: typed `grainCont
 It does not create an application CodeGen bridge or use the Legacy `grain { }` API.
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyApp
 ```
 

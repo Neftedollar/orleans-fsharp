@@ -20,8 +20,8 @@ hero:
 import { Card, CardGrid, Badge, LinkCard } from '@astrojs/starlight/components';
 import FeatureCard from '../../components/FeatureCard.astro';
 
-:::note[Orleans.FSharp 5.0.1]
-This website documents the current stable release. Review
+:::note[Orleans.FSharp 5.0.2]
+This website documents the 2 November 2026 release. Review
 [Release and Production Status](/orleans-fsharp/release-status/) for supported versions and
 verified production boundaries, or the [Legacy migration guide](/orleans-fsharp/legacy/migration/)
 when upgrading from 4.x.
@@ -128,7 +128,7 @@ only the functional runtime.
 | Metric | Value |
 |--------|-------|
 | Test suite | Unit, integration, provider, rolling-update, and persisted-fixture coverage |
-| Orleans support | **10.1.0 – 10.3.1**, CI-tested at both ends of the range |
+| Orleans support | **10.1.0 – 10.4.2**, CI-tested at both ends of the range |
 | Feature tour | **16** Orleans capabilities demonstrated live in `examples/feature-tour` |
 | Production package set | **6** — core, runtime, abstractions, testing, analyzers, templates |
 | License | **MIT** |
@@ -137,14 +137,14 @@ only the functional runtime.
 ## Quick Start
 
 ```bash
-dotnet new install Orleans.FSharp.Templates@5.0.1
+dotnet new install Orleans.FSharp.Templates@5.0.2
 dotnet new orleans-fsharp -n MyApp
 cd MyApp
 dotnet build && dotnet test
 ```
 
-A working Orleans.FSharp 5.0.1 solution with a counter grain, FsCheck property tests, and
-silo configuration. The packaged template references the matching 5.0.1 packages.
+A working Orleans.FSharp 5.0.2 solution with a counter grain, FsCheck property tests, and
+silo configuration. The packaged template references the matching 5.0.2 packages.
 
 ## Packages
 
@@ -191,7 +191,7 @@ The current wrapped and composed surface includes:
 
 <CardGrid>
   <LinkCard title="Getting Started" href="/orleans-fsharp/getting-started/" description="Zero to working grain in 15 minutes." />
-  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Orleans.FSharp 5.0.1, supported versions, and verified production boundaries." />
+  <LinkCard title="Release and Production Status" href="/orleans-fsharp/release-status/" description="Orleans.FSharp 5.0.2, supported versions, and verified production boundaries." />
   <LinkCard title="Recipes" href="/orleans-fsharp/how-to/" description="Task-oriented paths for persistence, streaming, upgrades, and production hosting." />
   <LinkCard title="Examples" href="/orleans-fsharp/examples/" description="Runnable projects mapped to the features they prove." />
   <LinkCard title="Functional Grain Runtime" href="/orleans-fsharp/functional-runtime/" description="The short path through contracts, state, delivery, placement, and transactions." />

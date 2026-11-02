@@ -7,9 +7,9 @@ description: "Supported Orleans versions, the 10.4.2 compatibility update, and n
 
 **Supported version policy, verified runtimes, and relevant changes in new Orleans releases.**
 
-This page describes the upcoming Orleans.FSharp 5.0.2 compatibility update. The current published
-stable release is still 5.0.1; the 10.4.2 source-compatibility changes below belong to the update,
-not retroactively to that release. See [Release and Production Status](/orleans-fsharp/release-status/).
+This page describes Orleans.FSharp 5.0.2 (2 November 2026): compatibility verified from Orleans
+10.1.0 through 10.4.2, with no new runtime features, public F# API changes, or wire-format changes.
+See [Release and Production Status](/orleans-fsharp/release-status/).
 
 ## Version policy
 
@@ -23,7 +23,7 @@ current event-sourcing surface uses `JournaledGrain.ClearLogAsync`, which is abs
 | 10.0.x | Not supported | Missing an API required by the current Orleans.FSharp assemblies |
 | 10.1.0 | Supported floor | The version used to compile packages and one end of the CI matrix |
 | 10.3.1 | Previous compatibility target | Covered by the 5.0.1 release checks |
-| 10.4.2 | Latest stable Orleans release as of 1 November 2026 | The newest-version compatibility target for 5.0.2 |
+| 10.4.2 | Newest verified Orleans version | The newest-version compatibility target for 5.0.2 |
 
 The package floor should move only when Orleans.FSharp starts using a newer Orleans API. A new
 Orleans release alone is not a reason to force every consumer to upgrade.
@@ -78,6 +78,14 @@ unsupported-runtime error and tests for provider defaults, retained/empty caches
 and subscription cleanup. Falling back silently to ordinary live delivery would hide a semantic
 change. The [upstream enum contract](https://github.com/dotnet/orleans/blob/v10.4.2/src/Orleans.Streaming/Core/StreamSubscriptionStartPosition.cs)
 defines the cache boundary.
+
+Orleans 10.4 adds native start-position APIs and the provider setting
+`StreamPullingAgentOptions.InitialSubscriptionStartPosition`. `Latest` remains the default for
+new arrivals. `EarliestAvailable` starts inclusively at the oldest retained message for the stream
+in the pulling-agent queue cache, not the durable provider's full history; an empty cache waits
+for new messages. Selection precedence is: explicit sequence token, explicit position, provider
+default, then `Latest`. These are upstream APIs, not new F# wrappers in 5.0.2. See
+[Orleans PR #10936](https://github.com/dotnet/orleans/pull/10936).
 
 ## What changed in Orleans 10.3
 
