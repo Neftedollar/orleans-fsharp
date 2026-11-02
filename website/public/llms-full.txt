@@ -2,7 +2,7 @@
 
 Canonical site: https://neftedollar.com/orleans-fsharp/
 Repository: https://github.com/Neftedollar/orleans-fsharp
-Published stable: Orleans.FSharp 5.0.1. Documentation channel: Orleans.FSharp 5.0 stable.
+Release documented: Orleans.FSharp 5.0.2. Documentation channel: Orleans.FSharp 5.0 stable.
 This file contains the complete published documentation. Current functional API pages come first. Unsupported migration material is isolated under the Legacy Archive heading near the end.
 
 ## Author
@@ -3777,6 +3777,10 @@ Orleans 10.4 adds start-position APIs and a provider-wide default setting,
 remains the default. `EarliestAvailable` begins at the oldest retained message for that stream in
 the pulling-agent queue cache, not the durable provider's entire history. If the cache has no
 message for the stream, it waits for new arrivals.
+
+`EarliestAvailable` requires a rewindable provider whose queue cache supports earliest-position
+lookup. An unsupported custom cache rejects `EarliestAvailable` instead of
+silently falling back to `Latest`.
 
 The selection order is: explicit sequence token > explicit position > provider default > `Latest`.
 Orleans.FSharp 5.0.2 does not add dedicated F# wrappers for these controls. Use native APIs only

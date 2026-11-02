@@ -286,6 +286,10 @@ remains the default. `EarliestAvailable` begins at the oldest retained message f
 the pulling-agent queue cache, not the durable provider's entire history. If the cache has no
 message for the stream, it waits for new arrivals.
 
+`EarliestAvailable` requires a rewindable provider whose queue cache supports earliest-position
+lookup. An unsupported custom cache rejects `EarliestAvailable` instead of
+silently falling back to `Latest`.
+
 The selection order is: explicit sequence token > explicit position > provider default > `Latest`.
 Orleans.FSharp 5.0.2 does not add dedicated F# wrappers for these controls. Use native APIs only
 when targeting a supporting Orleans version, and upgrade pulling-agent silos before enabling
